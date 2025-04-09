@@ -74,10 +74,16 @@ def register_route_backend_documents(app):
         
         filename = secure_filename(file.filename)
         file_ext = os.path.splitext(filename)[1].lower()
-
+        # Log the filename and file extension
+        print(f"Filename: {filename}")
+        print(f"File Extension: {file_ext}")
+        
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             file.save(tmp_file.name)
             temp_file_path = tmp_file.name
+
+        # Log the temporary file path
+        print(f"Temporary File Path: {temp_file_path}"
 
         extracted_content  = ''
         try:
