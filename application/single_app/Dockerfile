@@ -8,6 +8,9 @@ WORKDIR /app
 COPY application/single_app/requirements.txt .
 
 RUN pip install --upgrade pip
+RUN pip install --no-cache-dir wheel
+# Install the dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 # Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
