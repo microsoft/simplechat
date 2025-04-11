@@ -91,6 +91,7 @@ def register_route_backend_documents(app):
                 extracted_content  = extract_content_with_azure_di(temp_file_path)
             elif file_ext == '.txt':
                 extracted_content  = extract_text_file(temp_file_path)
+                print(f"Extracted text content: {extracted_content}")
             elif file_ext == '.md':
                 extracted_content  = extract_markdown_file(temp_file_path)
             elif file_ext == '.json':
