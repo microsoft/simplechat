@@ -83,7 +83,7 @@ def register_route_backend_documents(app):
             temp_file_path = tmp_file.name
 
         # Log the temporary file path
-        print(f"Temporary File Path: {temp_file_path}"
+        print(f"Temporary File Path: {temp_file_path}")
 
         extracted_content  = ''
         try:
