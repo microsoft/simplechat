@@ -89,6 +89,7 @@ def process_document_and_store_chunks(extracted_content , file_name, user_id):
     
     search_client_user = CLIENTS["search_client_user"]
     print(f"chunk documents before upload: {chunk_documents}")
+    print(f"Search client: {search_client_user}")
     search_client_user.upload_documents(documents=chunk_documents)
 
 def get_user_documents(user_id):
