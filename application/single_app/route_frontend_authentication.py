@@ -36,7 +36,14 @@ def register_route_frontend_authentication(app):
         session["user"] = result.get("id_token_claims")
         session["access_token"] = result.get("access_token")
         print("User logged in successfully.")
-        return redirect(url_for('index'))
+        # Check if PROXY_REDIRECT_URL is set
+        proxy_redirect_url = os.getenv("PROXY_REDIRECT_URL")
+        if proxy_redirect_url:
+            print(f"Redirecting to proxy URL: {proxy_redirect_url}")
+            return redirect(proxy_redirect_url)
+        else:
+            print("Redirecting to index.")
+            return redirect(url_for('index'))
 
     @app.route('/logout')
     def logout():
