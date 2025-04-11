@@ -8,9 +8,11 @@ def register_route_frontend_authentication(app):
         msal_app = ConfidentialClientApplication(
             CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
         )
+        # Check for GETATOKEN_REDIRECT_URL in environment variables
+        redirect_uri = os.getenv("GETATOKEN_REDIRECT_URL", url_for('authorized', _external=True, _scheme='https'))
         auth_url = msal_app.get_authorization_request_url(
             scopes=SCOPE,
-            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+            redirect_uri=redirect_uri
         )
         print("Redirecting to Azure AD for authentication.")
         return redirect(auth_url)
