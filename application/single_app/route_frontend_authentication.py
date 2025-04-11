@@ -26,10 +26,11 @@ def register_route_frontend_authentication(app):
         if not code:
             print("Authorization code not found.")
             return "Authorization code not found", 400
+        redirect_uri = os.getenv("GETATOKEN_REDIRECT_URL", url_for('authorized', _external=True, _scheme='https'))
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=SCOPE,
-            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+            redirect_uri=redirect_uri
         )
         if "error" in result:
             error_description = result.get("error_description", result.get("error"))
