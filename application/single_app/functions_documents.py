@@ -33,7 +33,7 @@ def process_document_and_store_chunks(extracted_content , file_name, user_id):
     settings = get_settings()
 
     chunks = chunk_text(extracted_content )
-
+    print(f"chunks: {chunks}")
     document_id = str(uuid.uuid4())
     chunks = chunk_text(extracted_content )
     num_chunks = len(chunks)
@@ -86,8 +86,9 @@ def process_document_and_store_chunks(extracted_content , file_name, user_id):
             "version": version
         }
         chunk_documents.append(chunk_document)
-
+    
     search_client_user = CLIENTS["search_client_user"]
+    print(f"chunk documents before upload: {chunk_documents}")
     search_client_user.upload_documents(documents=chunk_documents)
 
 def get_user_documents(user_id):
