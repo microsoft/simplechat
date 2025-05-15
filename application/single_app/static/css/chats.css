@@ -811,3 +811,9 @@ ol {
   border-radius: var(--bs-border-radius);
   margin-bottom: 0;
 }
+
+#classification-banner {
+  border-bottom: 1px solid #e0e0e0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  z-index: 1050;
+}

@@ -4,7 +4,11 @@
 {% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css">
+    <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css">
+     LOCAL VERSION BELOW
+    -->
+     <link rel="stylesheet" href="/static/css/simplemde.min.css">
+
     <style>
         /* Style for the color swatch in the table */
         .color-swatch-container {
@@ -187,6 +191,34 @@
                         class="p-2 border rounded"
                         style="white-space: pre-wrap; display: none;"
                     ></div>
+                </div>
+
+                <!-- New Classification Banner Section -->
+                <div class="card p-3 mb-3">
+                    <h5>Classification Banner</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="classification_banner_enabled" name="classification_banner_enabled"
+                            {% if settings.classification_banner_enabled %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="classification_banner_enabled">
+                            Enable Classification Banner
+                        </label>
+                    </div>
+                    <div class="mb-2">
+                        <label for="classification_banner_text" class="form-label">Banner Text</label>
+                        <input type="text" class="form-control" id="classification_banner_text" name="classification_banner_text"
+                            value="{{ settings.classification_banner_text }}">
+                    </div>
+                    <div class="mb-2">
+                        <label for="classification_banner_color" class="form-label">Banner Color</label>
+                        <input type="color" class="form-control form-control-color" id="classification_banner_color" name="classification_banner_color"
+                            value="{{ settings.classification_banner_color or '#ffc107' }}" style="width: 3rem; height: 2rem;">
+                    </div>
+                    <div class="mb-2">
+                        <span id="classification-banner-preview"
+                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                            {{ settings.classification_banner_text or 'Banner Preview' }}
+                        </span>
+                    </div>
                 </div>
             </div>
 
@@ -746,7 +778,7 @@
                                     value="{{ settings.video_indexer_api_key or '' }}">
                             <button type="button" class="btn btn-outline-secondary"
                                     id="toggle_video_indexer_api_key">Show</button>
-                            </div>
+                        </div>
                         </div>
 
                         <div class="mb-3">
@@ -1685,10 +1717,31 @@
     </form>
 </div>
 {% endblock %}
+<script>
+    // Live preview for banner in admin
+    document.addEventListener('DOMContentLoaded', function() {
+        const textInput = document.getElementById('classification_banner_text');
+        const colorInput = document.getElementById('classification_banner_color');
+        const preview = document.getElementById('classification-banner-preview');
+        function updatePreview() {
+            preview.textContent = textInput.value || 'Banner Preview';
+            preview.style.background = colorInput.value;
+            preview.style.color = '#fff'; // Always white text for preview
+        }
+        if (textInput && colorInput && preview) {
+            textInput.addEventListener('input', updatePreview);
+            colorInput.addEventListener('input', updatePreview);
+        }
+    });
+</script>
 
 {% block scripts %}
 
-<script src="https://cdn.jsdelivr.net/npm/simplemde@1.11.2/dist/simplemde.min.js"></script>
+<!-- <script src="https://cdn.jsdelivr.net/npm/simplemde@1.11.2/dist/simplemde.min.js"></script>
+ LOCAL VERSION BELOW
+-->
+ <script src="/static/js/simplemde.min.js"></script>
+ 
 <script>
     // Existing SimpleMDE script...
      // We’ll store the SimpleMDE instance globally so we can destroy or read its content

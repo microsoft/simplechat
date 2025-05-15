@@ -2,7 +2,10 @@
 {% extends "base.html" %}
 {% block title %} Your Workspace - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css" />
+  <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css" />
+   LOCAL VERSION BELOW -->
+   <link rel="stylesheet" href="/static/css/simplemde.min.css" />
+
   <style>
     /* Force fixed layout so columns don't expand when content changes */
     #documents-table, #prompts-table { /* Apply to both tables */
@@ -509,7 +512,9 @@
 {% endblock %}
 
 {% block scripts %}
-  <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
+  <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
+   LOCAL VERSION BELOW -->
+   <script src="/static/js/simplemde.min.js"></script>
 
   <script>
     // Pass settings/flags needed by JS

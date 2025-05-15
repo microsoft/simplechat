@@ -48,6 +48,14 @@ def register_route_frontend_admin_settings(app):
         # --- End Refined Default Checks ---
 
 
+        # --- Add defaults for classification banner ---
+        if 'classification_banner_enabled' not in settings:
+            settings['classification_banner_enabled'] = False
+        if 'classification_banner_text' not in settings:
+            settings['classification_banner_text'] = ''
+        if 'classification_banner_color' not in settings:
+            settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
             gpt_deployments = []
@@ -150,6 +158,11 @@ def register_route_frontend_admin_settings(app):
                 print(f"Error parsing image_gen_model_json: {e}")
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
+
+            # --- Extract banner fields from form_data ---
+            classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
+            classification_banner_text = form_data.get('classification_banner_text', '').strip()
+            classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
 
             # --- Construct new_settings Dictionary ---
             new_settings = {
@@ -296,6 +309,11 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
+
+                # --- Banner fields ---
+                'classification_banner_enabled': classification_banner_enabled,
+                'classification_banner_text': classification_banner_text,
+                'classification_banner_color': classification_banner_color,
             }
             
             logo_file = request.files.get('logo_file')

@@ -1110,29 +1110,29 @@ def get_document_version(user_id, document_id, version, group_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-# def delete_document(user_id, document_id, group_id=None):
-#     """Delete a document from the user's documents in Cosmos DB."""
-#     is_group = group_id is not None
-#     cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
+def delete_document(user_id, document_id, group_id=None):
+    """Delete a document from the user's documents in Cosmos DB."""
+    is_group = group_id is not None
+    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
 
-#     try:
-#         document_item = cosmos_container.read_item(
-#             item=document_id,
-#             partition_key=document_id
-#         )
+    try:
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
 
-#         if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
-#             raise Exception("Unauthorized access to document")
+        if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
+            raise Exception("Unauthorized access to document")
 
-#         cosmos_container.delete_item(
-#             item=document_id,
-#             partition_key=document_id
-#         )
+        cosmos_container.delete_item(
+            item=document_id,
+            partition_key=document_id
+        )
 
-#     except CosmosResourceNotFoundError:
-#         raise Exception("Document not found")
-#     except Exception as e:
-#         raise
+    except CosmosResourceNotFoundError:
+        raise Exception("Document not found")
+    except Exception as e:
+        raise
 
 def delete_document_chunks(document_id, group_id=None):
     """Delete document chunks from Azure Cognitive Search index."""
@@ -1158,78 +1158,6 @@ def delete_document_chunks(document_id, group_id=None):
         result = search_client.index_documents(batch)
     except Exception as e:
         raise
-
-def delete_document(user_id, document_id, group_id=None):
-    """
-    Delete a document from the user's documents in Cosmos DB
-    and remove any associated blobs in storage whose metadata
-    matches the user_id and document_id.
-    """
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
-    storage_account_container_name = (
-        storage_account_group_documents_container_name
-        if is_group else
-        storage_account_user_documents_container_name
-    )
-
-    try:
-        # 1. Verify the document is owned by this user
-        document_item = cosmos_container.read_item(
-            item=document_id,
-            partition_key=document_id
-        )
-        if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
-            raise Exception("Unauthorized access to document")
-
-        # 2. Delete from Cosmos DB
-        cosmos_container.delete_item(
-            item=document_id,
-            partition_key=document_id
-        )
-
-        # 3. Delete matching blobs from Azure Storage
-        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        container_client = blob_service_client.get_container_client(
-            storage_account_container_name
-        )
-
-        # List only blobs in "user_id/" prefix:
-        prefix = f"{group_id}/" if is_group else f"{user_id}/"
-        blob_list = container_client.list_blobs(name_starts_with=prefix)
-
-        for blob_item in blob_list:
-            # We need to retrieve the blob’s metadata to check document_id
-            blob_client = container_client.get_blob_client(blob_item.name)
-            properties = blob_client.get_blob_properties()
-            blob_metadata = properties.metadata or {}
-
-            # Compare metadata for user_id and document_id
-            if not is_group:
-                # User document - match only user_id and document_id
-                if (
-                    blob_metadata.get('user_id') == str(user_id) and
-                    blob_metadata.get('document_id') == str(document_id)
-                ):
-                    container_client.delete_blob(blob_item.name)
-
-            elif is_group:
-                # Group document - match only group_id and document_id
-                if (
-                    blob_metadata.get('group_id') == str(group_id) and
-                    blob_metadata.get('document_id') == str(document_id)
-                ):
-                    container_client.delete_blob(blob_item.name)
-
-        return {"message": "Document and associated blobs deleted successfully."}
-
-    except CosmosResourceNotFoundError:
-        raise Exception("Document not found")
-    except Exception as e:
-        # You can raise or return a custom JSON error
-        raise Exception(f"Error during delete: {str(e)}")
-
-
 
 def delete_document_version_chunks(document_id, version, group_id=None):
     """Delete document chunks from Azure Cognitive Search index for a specific version."""

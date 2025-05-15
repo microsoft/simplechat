@@ -43,6 +43,7 @@ def before_first_request():
 def inject_settings():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
+    # No change needed if you already return app_settings=public_settings
     return dict(app_settings=public_settings)
 
 @app.template_filter('to_datetime')
