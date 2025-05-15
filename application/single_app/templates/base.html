@@ -126,10 +126,14 @@
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
          style="background: {{ app_settings.classification_banner_color or '#ffc107' }};
-                color: #212529;
+                color: #fff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 text-align: center;
                 font-weight: bold;
-                padding: 0.5em 0;
+                padding: 0;
+                height: 40px;
                 font-size: 1.1em;
                 letter-spacing: 0.5px;
                 position: fixed;

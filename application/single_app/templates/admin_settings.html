@@ -211,7 +211,7 @@
                     </div>
                     <div class="mb-2">
                         <span id="classification-banner-preview"
-                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#212529; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
                     </div>
@@ -1722,6 +1722,7 @@
         function updatePreview() {
             preview.textContent = textInput.value || 'Banner Preview';
             preview.style.background = colorInput.value;
+            preview.style.color = '#fff'; // Always white text for preview
         }
         if (textInput && colorInput && preview) {
             textInput.addEventListener('input', updatePreview);
