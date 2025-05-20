@@ -21,27 +21,62 @@
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
 
   <style>
+    html, body {
+      height: 100%;
+    }
     body {
       /* Default: navbar height only */
       padding-top: 56px;
       overflow-x: hidden;
       height: 100%;
+      min-height: 100%;
     }
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
-      top: 40px; /* Height of the banner */
+      top: 32px; /* Height of the banner */
     }
     #classification-banner {
-      height: 40px;
-      line-height: 40px;
+      height: 32px;
+      line-height: 32px;
+      font-size: 0.95em;
+      padding: 0 10px;
+      /* Reduce horizontal padding for smaller banner */
     }
     /* Adjust body padding if banner is present */
     body.has-classification-banner {
-      padding-top: 96px; /* 56px navbar + 40px banner */
+      padding-top: 88px; /* 56px navbar + 32px banner */
+    }
+    @media (max-width: 576px) {
+      #classification-banner {
+        font-size: 0.85em;
+        height: 28px;
+        line-height: 28px;
+        padding: 0 4px;
+      }
+      body.has-classification-banner {
+        padding-top: 84px; /* 56 + 28 */
+      }
+      #classification-banner + nav.navbar.fixed-top {
+        top: 28px;
+      }
     }
 
     .main-content {
       margin-top: 10px;
+      padding-left: 0;
+      padding-right: 0;
+      /* Remove flex and min-height here */
+    }
+    /* Only apply chat layout on chat pages */
+    .main-content.chat-page {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: calc(100vh - 88px); /* 56px navbar + 32px banner */
+      overflow: hidden;
+    }
+    body:not(.has-classification-banner) .main-content.chat-page {
+      height: calc(100vh - 56px);
     }
 
     .modal-body {
@@ -103,19 +138,79 @@
     }
 
     .chat-container {
-      max-height: calc(100vh - 56px);
+      flex: 1 1 auto;
       display: flex;
       flex-direction: column;
+      min-height: 0;
+      height: 100%;
+      max-height: none;
       overflow: hidden;
+      /* Reduce padding for compactness */
+      padding: 0;
     }
 
     #chatbox {
+      flex: 1 1 auto;
       overflow-y: auto;
-      flex-grow: 1;
+      min-height: 0;
+      /* Limit max-height so input area is always visible */
+      max-height: 60vh;
+      padding: 8px 8px 0 8px;
     }
 
-    .p-3.border-top {
+    /* Make chat input area always visible and compact */
+    .chat-container > form,
+    .chat-container > .p-3.border-top {
       flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+      background: #fff;
+      padding: 8px 8px 8px 8px;
+      margin-bottom: 0;
+    }
+
+    /* Collapsible chat sidebar */
+    .chat-sidebar,
+    .chat-dock,
+    .chat-dock-fixed {
+      position: fixed !important;
+      left: 0;
+      top: 88px; /* 32px banner + 56px navbar */
+      height: calc(100vh - 88px);
+      width: 220px;
+      max-width: 90vw;
+      background: #fff;
+      box-shadow: 2px 0 8px rgba(0,0,0,0.08);
+      z-index: 1053 !important;
+      overflow-y: auto;
+      display: block;
+    }
+    body:not(.has-classification-banner) .chat-sidebar,
+    body:not(.has-classification-banner) .chat-dock,
+    body:not(.has-classification-banner) .chat-dock-fixed {
+      top: 56px !important;
+      height: calc(100vh - 56px);
+    }
+    /* Hide sidebar when undocked */
+    .chat-sidebar.undocked,
+    .chat-dock.undocked,
+    .chat-dock-fixed.undocked {
+      display: none !important;
+    }
+
+    /* Reduce font size and spacing for compactness */
+    .chat-message {
+      font-size: 0.97em;
+      margin-bottom: 6px;
+      padding: 6px 10px;
+    }
+
+    #classification-banner {
+      /* ...existing code... */
+      z-index: 1052; /* Increased to stay above sidebars */
+    }
+    nav.navbar.fixed-top {
+      z-index: 1051; /* Ensure navbar is above sidebars */
     }
   </style>
 
@@ -132,9 +227,9 @@
                 justify-content: center;
                 text-align: center;
                 font-weight: bold;
-                padding: 0;
-                height: 40px;
-                font-size: 1.1em;
+                padding: 0 10px;
+                height: 32px;
+                font-size: 0.95em;
                 letter-spacing: 0.5px;
                 position: fixed;
                 top: 0;
@@ -299,7 +394,7 @@
   </nav>
 
   <!-- Main Content Area -->
-  <div class="container main-content" id="main-content">
+  <div class="container-fluid main-content{% block main_content_class %}{% endblock %}" id="main-content">
     {% block content %}{% endblock %}
   </div>
   <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
