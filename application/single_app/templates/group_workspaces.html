@@ -73,6 +73,64 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
+  
+  /* Custom Dropdown Styles */
+  .custom-dropdown-container {
+    position: relative;
+    width: 100%;
+  }
+  
+  .custom-dropdown-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  .custom-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    max-height: 350px;
+    overflow-y: auto;
+    background-color: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 0.25rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.175);
+  }
+  
+  .custom-dropdown-menu.show {
+    display: block;
+  }
+  
+  .dropdown-search {
+    position: sticky;
+    top: 0;
+    background-color: #fff;
+    z-index: 1;
+  }
+  
+  .custom-dropdown-item {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+  
+  .custom-dropdown-item:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  
+  .custom-dropdown-item.active {
+    background-color: #0d6efd;
+    color: white;
+  }
+  
+  .custom-dropdown-item.filtered {
+    display: none;
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="container">
@@ -83,7 +141,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
     <div class="col-sm-6">
-      <select class="form-select" id="group-select"></select>
+      <div class="custom-dropdown-container">
+        <div class="form-select custom-dropdown-toggle" id="group-select-toggle">
+          <span id="group-select-text">Select a group...</span>
+          <i class="bi bi-chevron-down ms-auto"></i>
+        </div>
+        <div class="custom-dropdown-menu" id="group-dropdown-menu">
+          <div class="dropdown-search px-2 py-2 border-bottom">
+            <input type="text" class="form-control form-control-sm" id="group-search-input" placeholder="Search groups..." />
+          </div>
+          <div class="custom-dropdown-items" id="group-dropdown-items">
+            <!-- Groups will be populated here by JS -->
+          </div>
+        </div>
+        <select class="form-select d-none" id="group-select"></select>
+      </div>
     </div>
     <div class="col-sm-6">
       <!-- Adjusted column size -->
@@ -790,6 +862,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   document.addEventListener("DOMContentLoaded", () => {
     console.log("Group Workspace initializing...");
 
+    // Setup custom dropdown behavior
+    initCustomGroupDropdown();
+    
     // Load initial data
     fetchUserGroups().then(() => {
       // Only fetch data if a group is active
@@ -873,16 +948,111 @@ app_settings.app_title }} {% endblock %} {% block head %}
     });
   }); // End DOMContentLoaded
 
+  /* ===================== CUSTOM GROUP DROPDOWN ===================== */
+  // Toggle the dropdown visibility
+  function toggleDropdown(show = null) {
+    const dropdown = document.getElementById("group-dropdown-menu");
+    if (show === null) {
+      dropdown.classList.toggle("show");
+    } else if (show) {
+      dropdown.classList.add("show");
+    } else {
+      dropdown.classList.remove("show");
+    }
+  }
+
+  // Initialize the custom dropdown behavior
+  function initCustomDropdown(toggleId, dropdownId, itemSelector, hiddenSelectId) {
+    const toggle = document.getElementById(toggleId);
+    const dropdown = document.getElementById(dropdownId);
+    const hiddenSelect = document.getElementById(hiddenSelectId);
+    
+    // Toggle dropdown on click
+    toggle.addEventListener("click", () => {
+      toggleDropdown();
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener("click", (e) => {
+      if (!toggle.contains(e.target) && !dropdown.contains(e.target)) {
+        toggleDropdown(false);
+      }
+    });
+    
+    // Handle item selection
+    document.addEventListener("click", (e) => {
+      if (e.target.matches(itemSelector)) {
+        const selectedId = e.target.dataset.id;
+        const selectedText = e.target.textContent;
+        
+        // Update the toggle text
+        const textElement = toggle.querySelector("span") || toggle;
+        textElement.textContent = selectedText;
+        
+        // Update hidden select
+        hiddenSelect.value = selectedId;
+        
+        // Remove active class from all items
+        document.querySelectorAll(itemSelector).forEach(item => {
+          item.classList.remove("active");
+        });
+        
+        // Add active class to selected item
+        e.target.classList.add("active");
+      }
+    });
+  }
+
+  // Filter dropdown items based on search term
+  function filterDropdownItems(inputId, itemSelector) {
+    const input = document.getElementById(inputId);
+    input.addEventListener("input", () => {
+      const searchTerm = input.value.toLowerCase();
+      const items = document.querySelectorAll(itemSelector);
+      
+      items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        if (text.includes(searchTerm)) {
+          item.classList.remove("filtered");
+        } else {
+          item.classList.add("filtered");
+        }
+      });
+    });
+    
+    // Clear filter when dropdown is closed
+    document.addEventListener("click", (e) => {
+      if (!document.getElementById("group-dropdown-menu").classList.contains("show")) {
+        input.value = "";
+        document.querySelectorAll(itemSelector).forEach(item => {
+          item.classList.remove("filtered");
+        });
+      }
+    });
+  }
+
+  // Initialize all custom dropdown functionality
+  function initCustomGroupDropdown() {
+    initCustomDropdown("group-select-toggle", "group-dropdown-menu", ".custom-dropdown-item", "group-select");
+    filterDropdownItems("group-search-input", ".custom-dropdown-item");
+  }
+
   /* ===================== GROUPS / ROLE / CONTEXT ===================== */
   function fetchUserGroups() {
     console.log("Fetching user groups...");
-    // Add loading state to group selector?
-    const sel = document.getElementById("group-select");
-    sel.innerHTML = "<option>Loading groups...</option>";
-    sel.disabled = true;
+    // Add loading state to group selector
+    const dropdown = document.getElementById("group-dropdown-items");
+    const selectText = document.getElementById("group-select-text");
+    const hiddenSelect = document.getElementById("group-select");
+    
+    selectText.textContent = "Loading groups...";
+    dropdown.innerHTML = '<div class="p-3 text-center text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</div>';
+    hiddenSelect.innerHTML = "<option>Loading groups...</option>";
+    hiddenSelect.disabled = true;
     document.getElementById("btn-change-group").disabled = true;
+    document.getElementById("group-select-toggle").classList.add("disabled");
 
-    return fetch("/api/groups") // Assuming this endpoint returns the structure { groups: [], ... }
+    return fetch("/api/groups") // Endpoint returns the structure { groups: [], ... }
       .then((r) => {
         if (!r.ok) {
           // Handle HTTP errors (like 401, 500)
@@ -903,7 +1073,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
         userGroups = data.groups || [];
         // *** END FIX ***
 
-        sel.innerHTML = ""; // Clear loading message
+        // Get references to our custom dropdown elements
+        const dropdown = document.getElementById("group-dropdown-items");
+        const selectText = document.getElementById("group-select-text");
+        const hiddenSelect = document.getElementById("group-select");
+        
+        // Clear loading message
+        dropdown.innerHTML = "";
+        hiddenSelect.innerHTML = "";
+        
         const activeGroupNameEl = document.getElementById("active-group-name");
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
@@ -911,22 +1089,46 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
         let foundActive = false;
         if (userGroups.length === 0) {
-          sel.innerHTML = "<option>No groups found</option>";
+          selectText.textContent = "No groups found";
+          hiddenSelect.innerHTML = "<option>No groups found</option>";
+          dropdown.innerHTML = '<div class="p-3 text-center text-muted">No groups found</div>';
         } else {
+          // Update the visual part of the dropdown
           userGroups.forEach((g) => {
-            // Now userGroups is guaranteed to be an array
-            const opt = document.createElement("option");
-            opt.value = g.id;
-            opt.text = g.name;
+            // Create dropdown item
+            const item = document.createElement("div");
+            item.classList.add("custom-dropdown-item");
+            item.dataset.id = g.id;
+            item.textContent = g.name;
+            
             if (g.isActive) {
-              opt.selected = true;
+              item.classList.add("active");
+              selectText.textContent = g.name;
               activeGroupId = g.id;
               userRoleInActiveGroup = g.userRole;
               activeGroupName = g.name;
               foundActive = true;
             }
-            sel.appendChild(opt);
+            
+            dropdown.appendChild(item);
+            
+            // Also update the hidden select for compatibility
+            const opt = document.createElement("option");
+            opt.value = g.id;
+            opt.text = g.name;
+            if (g.isActive) {
+              opt.selected = true;
+            }
+            hiddenSelect.appendChild(opt);
           });
+          
+          // Show the filter when there are more than 10 groups
+          const searchContainer = document.querySelector(".dropdown-search");
+          if (userGroups.length > 10) {
+            searchContainer.style.display = "block";
+          } else {
+            searchContainer.style.display = "none";
+          }
         }
 
         if (foundActive) {
@@ -965,11 +1167,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
           "Could not fetch your groups: " +
             (err.error || err.message || "Unknown error")
         );
-        sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
+        
+        // Show error in dropdown
+        const dropdown = document.getElementById("group-dropdown-items");
+        const selectText = document.getElementById("group-select-text");
+        const hiddenSelect = document.getElementById("group-select");
+        
+        selectText.textContent = "Error loading groups";
+        dropdown.innerHTML = '<div class="p-3 text-center text-danger">Error loading groups</div>';
+        hiddenSelect.innerHTML = "<option>Error loading groups</option>";
       })
       .finally(() => {
         // Re-enable controls after fetch completes
-        sel.disabled = false;
+        const hiddenSelect = document.getElementById("group-select");
+        const toggleButton = document.getElementById("group-select-toggle");
+        
+        hiddenSelect.disabled = false;
+        toggleButton.classList.remove("disabled");
         document.getElementById("btn-change-group").disabled = false;
       });
   }
@@ -993,14 +1207,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function onChangeActiveGroup() {
-    const sel = document.getElementById("group-select");
+    const sel = document.getElementById("group-select"); // Still use hidden select for value
     const newGroupId = sel.value;
     if (newGroupId === activeGroupId) return; // No change
 
     console.log(`Attempting to change active group to: ${newGroupId}`);
-    // Add loading indicator?
+    // Add loading indicator
     const changeButton = document.getElementById("btn-change-group");
+    const toggleButton = document.getElementById("group-select-toggle");
+    
     changeButton.disabled = true;
+    toggleButton.classList.add("disabled");
     changeButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Changing...`;
 
     setActiveGroup(newGroupId)
@@ -1009,6 +1226,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Check if active group was successfully set
         if (activeGroupId === newGroupId) {
           loadActiveGroupData(); // Load data for the new group
+          toggleDropdown(false); // Close dropdown after selection
         } else {
           // This case might happen if setActiveGroup failed but didn't throw an error network-wise
           console.error("Failed to confirm active group change.");
@@ -1021,6 +1239,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .finally(() => {
         changeButton.disabled = false;
+        toggleButton.classList.remove("disabled");
         changeButton.textContent = "Change Active Group";
       });
   }
