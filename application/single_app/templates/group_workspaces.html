@@ -123,6 +123,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
     background-color: rgba(0, 0, 0, 0.05);
   }
   
+  .custom-dropdown-item.keyboard-active {
+    background-color: rgba(0, 0, 0, 0.075);
+  }
+  
   .custom-dropdown-item.active {
     background-color: #0d6efd;
     color: white;
@@ -142,19 +146,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <div class="row mb-3">
     <div class="col-sm-6">
       <div class="custom-dropdown-container">
-        <div class="form-select custom-dropdown-toggle" id="group-select-toggle">
+        <div class="form-select custom-dropdown-toggle" id="group-select-toggle" tabindex="0" role="combobox" aria-expanded="false" aria-controls="group-dropdown-menu" aria-haspopup="listbox">
           <span id="group-select-text">Select a group...</span>
           <i class="bi bi-chevron-down ms-auto"></i>
         </div>
-        <div class="custom-dropdown-menu" id="group-dropdown-menu">
+        <div class="custom-dropdown-menu" id="group-dropdown-menu" role="listbox" aria-labelledby="group-select-toggle">
           <div class="dropdown-search px-2 py-2 border-bottom">
-            <input type="text" class="form-control form-control-sm" id="group-search-input" placeholder="Search groups..." />
+            <input type="text" class="form-control form-control-sm" id="group-search-input" placeholder="Search groups..." aria-label="Search groups" />
           </div>
           <div class="custom-dropdown-items" id="group-dropdown-items">
             <!-- Groups will be populated here by JS -->
           </div>
         </div>
-        <select class="form-select d-none" id="group-select"></select>
+        <select class="form-select d-none" id="group-select" aria-hidden="true"></select>
       </div>
     </div>
     <div class="col-sm-6">
@@ -952,13 +956,25 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // Toggle the dropdown visibility
   function toggleDropdown(show = null) {
     const dropdown = document.getElementById("group-dropdown-menu");
+    const toggle = document.getElementById("group-select-toggle");
+    let isShown;
+    
     if (show === null) {
+      isShown = !dropdown.classList.contains("show");
       dropdown.classList.toggle("show");
-    } else if (show) {
-      dropdown.classList.add("show");
     } else {
-      dropdown.classList.remove("show");
+      isShown = show;
+      if (show) {
+        dropdown.classList.add("show");
+      } else {
+        dropdown.classList.remove("show");
+      }
     }
+    
+    // Update ARIA attributes
+    toggle.setAttribute("aria-expanded", isShown ? "true" : "false");
+    
+    return isShown;
   }
 
   // Initialize the custom dropdown behavior
@@ -966,10 +982,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const toggle = document.getElementById(toggleId);
     const dropdown = document.getElementById(dropdownId);
     const hiddenSelect = document.getElementById(hiddenSelectId);
+    const searchInput = document.getElementById("group-search-input");
+    let activeIndex = -1;
     
     // Toggle dropdown on click
     toggle.addEventListener("click", () => {
       toggleDropdown();
+      if (dropdown.classList.contains("show")) {
+        searchInput.focus();
+      }
     });
     
     // Close dropdown when clicking outside
@@ -992,13 +1013,70 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Update hidden select
         hiddenSelect.value = selectedId;
         
-        // Remove active class from all items
+        // Update ARIA attributes and classes
         document.querySelectorAll(itemSelector).forEach(item => {
           item.classList.remove("active");
+          item.setAttribute("aria-selected", "false");
         });
         
         // Add active class to selected item
         e.target.classList.add("active");
+        e.target.setAttribute("aria-selected", "true");
+      }
+    });
+    
+    // Handle keyboard navigation
+    document.addEventListener("keydown", (e) => {
+      if (!dropdown.classList.contains("show")) return;
+      
+      const items = Array.from(document.querySelectorAll(itemSelector))
+                    .filter(item => !item.classList.contains("filtered"));
+      
+      if (items.length === 0) return;
+      
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          activeIndex = Math.min(activeIndex + 1, items.length - 1);
+          updateActiveItem(items, activeIndex);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          activeIndex = Math.max(activeIndex - 1, 0);
+          updateActiveItem(items, activeIndex);
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (activeIndex >= 0 && activeIndex < items.length) {
+            items[activeIndex].click();
+            toggleDropdown(false);
+          }
+          break;
+        case "Escape":
+          e.preventDefault();
+          toggleDropdown(false);
+          break;
+      }
+    });
+    
+    // Focus handling
+    searchInput.addEventListener("focus", () => {
+      if (!dropdown.classList.contains("show")) {
+        toggleDropdown(true);
+      }
+    });
+  }
+  
+  // Update active item during keyboard navigation
+  function updateActiveItem(items, activeIndex) {
+    items.forEach((item, i) => {
+      if (i === activeIndex) {
+        item.classList.add("keyboard-active");
+        item.setAttribute("aria-current", "true");
+        item.scrollIntoView({ block: "nearest" });
+      } else {
+        item.classList.remove("keyboard-active");
+        item.removeAttribute("aria-current");
       }
     });
   }
@@ -1006,27 +1084,71 @@ app_settings.app_title }} {% endblock %} {% block head %}
   // Filter dropdown items based on search term
   function filterDropdownItems(inputId, itemSelector) {
     const input = document.getElementById(inputId);
+    
+    // Add clear button to search input
+    const wrapper = input.parentElement;
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "btn btn-sm position-absolute end-0 top-50 translate-middle-y text-muted";
+    clearButton.innerHTML = '<i class="bi bi-x"></i>';
+    clearButton.style.display = "none";
+    clearButton.addEventListener("click", (e) => {
+      e.preventDefault();
+      input.value = "";
+      clearButton.style.display = "none";
+      // Trigger input event to update filtering
+      input.dispatchEvent(new Event("input"));
+      input.focus();
+    });
+    wrapper.classList.add("position-relative");
+    wrapper.appendChild(clearButton);
+    
     input.addEventListener("input", () => {
       const searchTerm = input.value.toLowerCase();
       const items = document.querySelectorAll(itemSelector);
+      let visibleCount = 0;
+      
+      // Show/hide clear button
+      clearButton.style.display = searchTerm ? "block" : "none";
       
       items.forEach(item => {
         const text = item.textContent.toLowerCase();
         if (text.includes(searchTerm)) {
           item.classList.remove("filtered");
+          visibleCount++;
         } else {
           item.classList.add("filtered");
         }
       });
+      
+      // Show "no results" message if needed
+      const noResultsMsg = document.getElementById("no-groups-results");
+      if (visibleCount === 0 && searchTerm) {
+        if (!noResultsMsg) {
+          const msg = document.createElement("div");
+          msg.id = "no-groups-results";
+          msg.className = "p-3 text-center text-muted";
+          msg.textContent = `No groups matching "${searchTerm}"`;
+          document.getElementById("group-dropdown-items").appendChild(msg);
+        } else {
+          noResultsMsg.textContent = `No groups matching "${searchTerm}"`;
+          noResultsMsg.style.display = "block";
+        }
+      } else if (noResultsMsg) {
+        noResultsMsg.style.display = "none";
+      }
     });
     
     // Clear filter when dropdown is closed
     document.addEventListener("click", (e) => {
       if (!document.getElementById("group-dropdown-menu").classList.contains("show")) {
         input.value = "";
+        clearButton.style.display = "none";
         document.querySelectorAll(itemSelector).forEach(item => {
           item.classList.remove("filtered");
         });
+        const noResultsMsg = document.getElementById("no-groups-results");
+        if (noResultsMsg) noResultsMsg.style.display = "none";
       }
     });
   }
@@ -1094,12 +1216,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
           dropdown.innerHTML = '<div class="p-3 text-center text-muted">No groups found</div>';
         } else {
           // Update the visual part of the dropdown
-          userGroups.forEach((g) => {
+          userGroups.forEach((g, index) => {
             // Create dropdown item
             const item = document.createElement("div");
             item.classList.add("custom-dropdown-item");
             item.dataset.id = g.id;
             item.textContent = g.name;
+            item.setAttribute("role", "option");
+            item.setAttribute("aria-selected", g.isActive ? "true" : "false");
+            item.id = `group-option-${index}`;
+            item.tabIndex = -1; // For keyboard navigation
             
             if (g.isActive) {
               item.classList.add("active");
