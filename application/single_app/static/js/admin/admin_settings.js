@@ -847,27 +847,11 @@ function setupTestButtons() {
             const resultDiv = document.getElementById('test_redis_result');
             resultDiv.innerHTML = 'Testing Redis...';
 
-            const enableApim = document.getElementById('enable_redis_apim').checked;
-
             const payload = {
                 test_type: 'redis',
-                enable_apim: enableApim
+                endpoint: document.getElementById('redis_url').value,
+                key: document.getElementById('redis_key').value
             };
-
-            if (enableApim) {
-                payload.apim = {
-                    endpoint: document.getElementById('azure_apim_redis_endpoint').value,
-                    subscription_key: document.getElementById('azure_apim_redis_subscription_key').value,
-                    deployment: document.getElementById('azure_apim_redis_deployment').value,
-                    api_version: document.getElementById('azure_apim_redis_api_version').value
-                };
-            } else {
-                payload.direct = {
-                    endpoint: document.getElementById('redis_endpoint').value,
-                    auth_type: document.getElementById('redis_authentication_type').value,
-                    key: document.getElementById('redis_key').value
-                };
-            }
 
             try {
                 const resp = await fetch('/api/admin/settings/test_connection', {

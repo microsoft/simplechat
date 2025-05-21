@@ -67,14 +67,8 @@ def get_settings():
 
         # Redis Cache Settings
         'enable_redis': False,
-        'enable_redis_apim': False,
-        'redis_endpoint': '',
-        'redis_authentication_type': 'key',
+        'redis_url': '',
         'redis_key': '',
-        'azure_apim_redis_endpoint': '',
-        'azure_apim_redis_subscription_key': '',
-        'azure_apim_redis_deployment': '',
-        'azure_apim_redis_api_version': '',
 
 
         # Workspaces
