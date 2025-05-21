@@ -73,13 +73,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
-  /* Style for group select dropdown when it has many items */
-  #group-select {
-    max-height: 300px;
+  /* Style for custom group dropdown */
+  #group-dropdown-button {
+    text-align: left;
   }
-  /* Style to make the dropdown scrollable */
-  select#group-select[size] {
+  /* Style for scrollable dropdown menu */
+  #group-dropdown-menu {
+    max-height: 300px;
     overflow-y: auto;
+  }
+  /* Style for the filter input container */
+  #group-filter-container {
+    position: sticky;
+    top: 0;
+    background-color: white;
+    z-index: 1;
+    padding: 8px;
   }
 </style>
 {% endblock %} {% block content %}
@@ -91,11 +100,25 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
     <div class="col-sm-6">
-      <!-- Group search input - initially hidden, shown when needed -->
-      <div id="group-search-container" class="mb-2" style="display: none;">
-        <input type="search" id="group-search" class="form-control form-control-sm" placeholder="Filter groups...">
+      <!-- Group selector (single field showing current selection) -->
+      <div class="dropdown" id="group-selector">
+        <button class="form-select dropdown-toggle" type="button" id="group-dropdown-button" data-bs-toggle="dropdown" aria-expanded="false">
+          <span id="selected-group-display">Loading groups...</span>
+        </button>
+        
+        <ul class="dropdown-menu w-100" id="group-dropdown-menu" aria-labelledby="group-dropdown-button">
+          <!-- Filter input (only shown if more than 10 groups) -->
+          <li id="group-filter-container" style="display: none;">
+            <input type="search" class="form-control form-control-sm" id="group-filter-input" placeholder="Filter groups...">
+          </li>
+          
+          <!-- Divider after filter -->
+          <li id="group-filter-divider" style="display: none;"><hr class="dropdown-divider"></li>
+          
+          <!-- Group items will be inserted here by JavaScript -->
+          <li class="dropdown-item-text text-center text-muted py-2">Loading groups...</li>
+        </ul>
       </div>
-      <select class="form-select" id="group-select"></select>
     </div>
     <div class="col-sm-6">
       <!-- Adjusted column size -->
@@ -800,30 +823,65 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // --- Group Filtering Functions ---
   function populateGroupsDropdown(groups) {
-    const sel = document.getElementById("group-select");
-    sel.innerHTML = ""; // Clear existing options
+    const dropdownMenu = document.getElementById("group-dropdown-menu");
+    const selectedDisplay = document.getElementById("selected-group-display");
+    
+    // Clear existing options (except filter items)
+    const filterContainer = document.getElementById("group-filter-container");
+    const filterDivider = document.getElementById("group-filter-divider");
+    
+    // Remove all group items but keep the filter if it exists
+    while (dropdownMenu.lastChild) {
+      if (dropdownMenu.lastChild === filterDivider || dropdownMenu.lastChild === filterContainer) {
+        break;
+      }
+      dropdownMenu.removeChild(dropdownMenu.lastChild);
+    }
     
     let foundActive = false;
+    // Add each group as a dropdown item
     groups.forEach((g) => {
-      const opt = document.createElement("option");
-      opt.value = g.id;
-      opt.text = g.name;
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.classList.add("dropdown-item");
+      a.href = "#";
+      a.dataset.groupId = g.id;
+      a.textContent = g.name;
+      
+      // Mark active and update display
       if (g.isActive) {
-        opt.selected = true;
+        a.classList.add("active");
+        selectedDisplay.textContent = g.name;
         activeGroupId = g.id;
         userRoleInActiveGroup = g.userRole;
         activeGroupName = g.name;
         foundActive = true;
       }
-      sel.appendChild(opt);
+      
+      // Add click handler
+      a.addEventListener("click", function(e) {
+        e.preventDefault();
+        onGroupSelected(g.id);
+      });
+      
+      li.appendChild(a);
+      dropdownMenu.appendChild(li);
     });
+    
+    // Add "No groups found" message if filtered to nothing
+    if (groups.length === 0) {
+      const li = document.createElement("li");
+      li.classList.add("dropdown-item-text", "text-center", "text-muted", "py-2");
+      li.textContent = "No groups match your search";
+      dropdownMenu.appendChild(li);
+    }
     
     return foundActive;
   }
   
   function filterGroups() {
-    const searchInput = document.getElementById("group-search");
-    const searchTerm = searchInput.value.trim().toLowerCase();
+    const filterInput = document.getElementById("group-filter-input");
+    const searchTerm = filterInput.value.trim().toLowerCase();
     
     // Filter the groups based on the search term
     const filteredGroups = userGroups.filter(g => 
@@ -831,15 +889,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
     
     // Populate the dropdown with filtered groups
     populateGroupsDropdown(filteredGroups);
-    
-    // Show message when no results are found
-    const sel = document.getElementById("group-select");
-    if (filteredGroups.length === 0) {
-      const opt = document.createElement("option");
-      opt.disabled = true;
-      opt.text = "No groups match your search";
-      sel.appendChild(opt);
-    }
+  }
+  
+  function onGroupSelected(groupId) {
+    // Function to handle when a group is selected from the dropdown
+    setActiveGroup(groupId);
   }
 
   // --- Initialization ---
@@ -932,10 +986,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   /* ===================== GROUPS / ROLE / CONTEXT ===================== */
   function fetchUserGroups() {
     console.log("Fetching user groups...");
-    // Add loading state to group selector?
-    const sel = document.getElementById("group-select");
-    sel.innerHTML = "<option>Loading groups...</option>";
-    sel.disabled = true;
+    // Set loading state
+    const selectedDisplay = document.getElementById("selected-group-display");
+    selectedDisplay.textContent = "Loading groups...";
     document.getElementById("btn-change-group").disabled = true;
 
     // Request a large page size to get all groups
@@ -958,34 +1011,59 @@ app_settings.app_title }} {% endblock %} {% block head %}
         // Store all user groups
         userGroups = data.groups || [];
 
-        sel.innerHTML = ""; // Clear loading message
+        const dropdownMenu = document.getElementById("group-dropdown-menu");
+        // Clear loading message
+        dropdownMenu.innerHTML = "";
+        
         const activeGroupNameEl = document.getElementById("active-group-name");
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
         );
-        const searchContainer = document.getElementById("group-search-container");
-        const searchInput = document.getElementById("group-search");
+        const filterContainer = document.getElementById("group-filter-container");
+        const filterDivider = document.getElementById("group-filter-divider");
+        const filterInput = document.getElementById("group-filter-input");
 
         let foundActive = false;
         if (userGroups.length === 0) {
-          sel.innerHTML = "<option>No groups found</option>";
-          searchContainer.style.display = "none"; // Hide search if no groups
+          // Add a "No groups" message as dropdown item
+          const li = document.createElement("li");
+          li.classList.add("dropdown-item-text", "text-center", "text-muted", "py-2");
+          li.textContent = "No groups found";
+          dropdownMenu.appendChild(li);
+          
+          selectedDisplay.textContent = "No groups found";
+          
+          // Hide the filter
+          if (filterContainer) filterContainer.style.display = "none";
+          if (filterDivider) filterDivider.style.display = "none";
         } else {
-          // Show search input if we have more than 6 groups
-          if (userGroups.length > 6) {
-            searchContainer.style.display = "block";
+          // Configure dropdown based on number of groups
+          if (userGroups.length > 10) {
+            // Show filter for more than 10 groups
+            if (filterContainer) {
+              filterContainer.style.display = "block";
+              dropdownMenu.prepend(filterContainer);
+            }
+            if (filterDivider) {
+              filterDivider.style.display = "block";
+              if (filterContainer.nextSibling !== filterDivider) {
+                dropdownMenu.insertBefore(filterDivider, filterContainer.nextSibling);
+              }
+            }
             
-            // Add size attribute to make select element scrollable
-            sel.setAttribute("size", Math.min(userGroups.length, 8)); // Show max 8 groups at once
-            
-            // Add event listener for search input
-            searchInput.addEventListener("input", filterGroups);
+            // Add event listener for filter input
+            if (filterInput) {
+              filterInput.addEventListener("input", filterGroups);
+              filterInput.value = ""; // Clear any previous value
+            }
           } else {
-            searchContainer.style.display = "none";
+            // Hide filter for 10 or fewer groups
+            if (filterContainer) filterContainer.style.display = "none";
+            if (filterDivider) filterDivider.style.display = "none";
           }
           
           // Add groups to dropdown
-          populateGroupsDropdown(userGroups);
+          foundActive = populateGroupsDropdown(userGroups);
         }
 
         if (foundActive) {
@@ -998,10 +1076,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
           activeGroupId = null;
           userRoleInActiveGroup = null;
           activeGroupName = "";
+          
+          // Update display text
+          selectedDisplay.textContent = userGroups.length > 0 ? "Select a Group" : "No Groups Available";
+          
           activeGroupNameEl.textContent =
             userGroups.length > 0 ? "Select a Group" : "No Groups Available";
           activeGroupNameEl.style.display = "inline";
           document.getElementById("user-role-display").style.display = "none";
+          
           // Clear tables or show message
           if (groupDocumentsTableBody)
             groupDocumentsTableBody.innerHTML =
@@ -1024,11 +1107,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           "Could not fetch your groups: " +
             (err.error || err.message || "Unknown error")
         );
-        sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
+        // Show error in dropdown
+        const selectedDisplay = document.getElementById("selected-group-display");
+        selectedDisplay.textContent = "Error loading groups";
       })
       .finally(() => {
         // Re-enable controls after fetch completes
-        sel.disabled = false;
         document.getElementById("btn-change-group").disabled = false;
       });
   }
@@ -1052,12 +1136,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function onChangeActiveGroup() {
-    const sel = document.getElementById("group-select");
-    const newGroupId = sel.value;
+    // Find the currently selected group ID from active class in dropdown
+    const activeItem = document.querySelector("#group-dropdown-menu .dropdown-item.active");
+    if (!activeItem) {
+      alert("Please select a group first.");
+      return;
+    }
+    const newGroupId = activeItem.dataset.groupId;
     if (newGroupId === activeGroupId) return; // No change
 
     console.log(`Attempting to change active group to: ${newGroupId}`);
-    // Add loading indicator?
+    // Add loading indicator
     const changeButton = document.getElementById("btn-change-group");
     changeButton.disabled = true;
     changeButton.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Changing...`;
