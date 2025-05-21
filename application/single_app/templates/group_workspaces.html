@@ -73,6 +73,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
+  /* Style for group select dropdown when it has many items */
+  #group-select {
+    max-height: 300px;
+  }
+  /* Style to make the dropdown scrollable */
+  select#group-select[size] {
+    overflow-y: auto;
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="container">
@@ -83,6 +91,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
     <div class="col-sm-6">
+      <!-- Group search input - initially hidden, shown when needed -->
+      <div id="group-search-container" class="mb-2" style="display: none;">
+        <input type="search" id="group-search" class="form-control form-control-sm" placeholder="Filter groups...">
+      </div>
       <select class="form-select" id="group-select"></select>
     </div>
     <div class="col-sm-6">
@@ -786,6 +798,50 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return luminance > 0.5;
   }
 
+  // --- Group Filtering Functions ---
+  function populateGroupsDropdown(groups) {
+    const sel = document.getElementById("group-select");
+    sel.innerHTML = ""; // Clear existing options
+    
+    let foundActive = false;
+    groups.forEach((g) => {
+      const opt = document.createElement("option");
+      opt.value = g.id;
+      opt.text = g.name;
+      if (g.isActive) {
+        opt.selected = true;
+        activeGroupId = g.id;
+        userRoleInActiveGroup = g.userRole;
+        activeGroupName = g.name;
+        foundActive = true;
+      }
+      sel.appendChild(opt);
+    });
+    
+    return foundActive;
+  }
+  
+  function filterGroups() {
+    const searchInput = document.getElementById("group-search");
+    const searchTerm = searchInput.value.trim().toLowerCase();
+    
+    // Filter the groups based on the search term
+    const filteredGroups = userGroups.filter(g => 
+      g.name.toLowerCase().includes(searchTerm));
+    
+    // Populate the dropdown with filtered groups
+    populateGroupsDropdown(filteredGroups);
+    
+    // Show message when no results are found
+    const sel = document.getElementById("group-select");
+    if (filteredGroups.length === 0) {
+      const opt = document.createElement("option");
+      opt.disabled = true;
+      opt.text = "No groups match your search";
+      sel.appendChild(opt);
+    }
+  }
+
   // --- Initialization ---
   document.addEventListener("DOMContentLoaded", () => {
     console.log("Group Workspace initializing...");
@@ -882,7 +938,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     sel.disabled = true;
     document.getElementById("btn-change-group").disabled = true;
 
-    return fetch("/api/groups") // Assuming this endpoint returns the structure { groups: [], ... }
+    // Request a large page size to get all groups
+    return fetch("/api/groups?page_size=1000") // Use a large page size to get all groups
       .then((r) => {
         if (!r.ok) {
           // Handle HTTP errors (like 401, 500)
@@ -898,35 +955,37 @@ app_settings.app_title }} {% endblock %} {% block head %}
         return r.json();
       })
       .then((data) => {
-        // *** FIX IS HERE ***
-        // Assign the array from data.groups, or default to empty array
+        // Store all user groups
         userGroups = data.groups || [];
-        // *** END FIX ***
 
         sel.innerHTML = ""; // Clear loading message
         const activeGroupNameEl = document.getElementById("active-group-name");
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
         );
+        const searchContainer = document.getElementById("group-search-container");
+        const searchInput = document.getElementById("group-search");
 
         let foundActive = false;
         if (userGroups.length === 0) {
           sel.innerHTML = "<option>No groups found</option>";
+          searchContainer.style.display = "none"; // Hide search if no groups
         } else {
-          userGroups.forEach((g) => {
-            // Now userGroups is guaranteed to be an array
-            const opt = document.createElement("option");
-            opt.value = g.id;
-            opt.text = g.name;
-            if (g.isActive) {
-              opt.selected = true;
-              activeGroupId = g.id;
-              userRoleInActiveGroup = g.userRole;
-              activeGroupName = g.name;
-              foundActive = true;
-            }
-            sel.appendChild(opt);
-          });
+          // Show search input if we have more than 6 groups
+          if (userGroups.length > 6) {
+            searchContainer.style.display = "block";
+            
+            // Add size attribute to make select element scrollable
+            sel.setAttribute("size", Math.min(userGroups.length, 8)); // Show max 8 groups at once
+            
+            // Add event listener for search input
+            searchInput.addEventListener("input", filterGroups);
+          } else {
+            searchContainer.style.display = "none";
+          }
+          
+          // Add groups to dropdown
+          populateGroupsDropdown(userGroups);
         }
 
         if (foundActive) {
