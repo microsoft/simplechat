@@ -95,6 +95,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="redis-cache-tab" data-bs-toggle="tab" data-bs-target="#redis-cache"
+                    type="button" role="tab" aria-controls="redis-cache" aria-selected="false">
+                    Redis Cache
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces" type="button"
                     role="tab" aria-controls="workspaces" aria-selected="false">
                     Workspaces
@@ -621,7 +627,89 @@
                 <div id="test_image_result" class="mt-2"></div>
             </div>
 
-            
+
+            <div class="tab-pane fade" id="redis-cache" role="tabpanel" aria-labelledby="redis-cache-tab">
+
+                <p class="text-muted">
+                    Configure Redis cache settings. Enable/disable, set endpoints, and choose how to authenticate.
+                </p>
+
+                <div class="form-group form-check form-switch mb-3">
+                    <input type="checkbox" class="form-check-input" id="enable_redis_cache"
+                        name="enable_redis_cache" {% if settings.enable_redis_cache %}checked{% endif %}>
+                    <label class="form-check-label ms-2" for="enable_redis_cache">
+                        Enable Redis Cache
+                    </label>
+                </div>
+
+                <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
+
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input type="checkbox" class="form-check-input me-2" id="enable_redis_apim"
+                            name="enable_redis_apim" {% if settings.enable_redis_apim %}checked{% endif %}>
+                        <label class="form-check-label" for="enable_redis_apim">
+                            Use APIM instead of direct Redis connection.
+                        </label>
+                    </div>
+
+                    <div id="non_apim_redis_settings" {% if settings.enable_redis_apim %}style="display: none;" {% endif %}>
+                        <div class="card p-3 mb-3">
+                            <div class="mb-3">
+                                <label for="redis_endpoint" class="form-label">Redis Endpoint</label>
+                                <input type="text" class="form-control" id="redis_endpoint"
+                                    name="redis_endpoint" value="{{ settings.redis_endpoint or '' }}">
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="redis_authentication_type" class="form-label">Authentication Type</label>
+                                <select class="form-select" id="redis_authentication_type" name="redis_authentication_type">
+                                    <option value="key" {% if settings.redis_authentication_type == 'key' %}selected{% endif %}>Key</option>
+                                    <option value="managed_identity" {% if settings.redis_authentication_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3" id="redis_key_container" {% if settings.redis_authentication_type != 'key' %}style="display: none;"{% endif %}>
+                                <label for="redis_key" class="form-label">Redis Access Key</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="redis_key" name="redis_key"
+                                        value="{{ settings.redis_key or '' }}">
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="apim_redis_settings" class="card p-3 mb-3" {% if not settings.enable_redis_apim %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="azure_apim_redis_endpoint" class="form-label">Azure APIM Endpoint</label>
+                            <input type="text" class="form-control" id="azure_apim_redis_endpoint"
+                                name="azure_apim_redis_endpoint" value="{{ settings.azure_apim_redis_endpoint or '' }}">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="azure_apim_redis_api_version" class="form-label">Azure APIM API Version</label>
+                            <input type="text" class="form-control" id="azure_apim_redis_api_version"
+                                name="azure_apim_redis_api_version" value="{{ settings.azure_apim_redis_api_version or '' }}">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="azure_apim_redis_subscription_key" class="form-label">Azure APIM Subscription Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="azure_apim_redis_subscription_key"
+                                    name="azure_apim_redis_subscription_key" value="{{ settings.azure_apim_redis_subscription_key or '' }}">
+                                <button type="button" class="btn btn-outline-secondary" id="toggle_azure_apim_redis_subscription_key">Show</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
+                    Test Redis Connection
+                </button>
+                <div id="test_redis_result" class="mt-2"></div>
+            </div>
+
+
             <div class="tab-pane fade" id="workspaces" role="tabpanel" aria-labelledby="workspaces-tab">
                 <p class="text-muted">
                     Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.

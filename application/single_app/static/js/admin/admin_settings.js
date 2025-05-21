@@ -641,6 +641,17 @@ function setupToggles() {
         });
     }
 
+    const enableRedisCache = document.getElementById('enable_redis_cache');
+    const redisSettingsDiv = document.getElementById('redis_cache_settings');
+    if (enableRedisCache && redisSettingsDiv) {
+        // Set initial state
+        redisSettingsDiv.style.display = enableRedisCache.checked ? 'block' : 'none';
+        enableRedisCache.addEventListener('change', function () {
+            redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+
     const enableEnhancedCitation = document.getElementById('enable_enhanced_citations');
     if (enableEnhancedCitation) {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
@@ -829,6 +840,53 @@ function setupTestButtons() {
             }
         });
     }
+
+    const testRedisBtn = document.getElementById('test_redis_button');
+    if (testRedisBtn) {
+        testRedisBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_redis_result');
+            resultDiv.innerHTML = 'Testing Redis...';
+
+            const enableApim = document.getElementById('enable_redis_apim').checked;
+
+            const payload = {
+                test_type: 'redis',
+                enable_apim: enableApim
+            };
+
+            if (enableApim) {
+                payload.apim = {
+                    endpoint: document.getElementById('azure_apim_redis_endpoint').value,
+                    subscription_key: document.getElementById('azure_apim_redis_subscription_key').value,
+                    deployment: document.getElementById('azure_apim_redis_deployment').value,
+                    api_version: document.getElementById('azure_apim_redis_api_version').value
+                };
+            } else {
+                payload.direct = {
+                    endpoint: document.getElementById('redis_endpoint').value,
+                    auth_type: document.getElementById('redis_authentication_type').value,
+                    key: document.getElementById('redis_key').value
+                };
+            }
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Redis'}</span>`;
+                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+            }
+        });
+    }
+
 
     const testEmbeddingBtn = document.getElementById('test_embedding_button');
     if (testEmbeddingBtn) {
@@ -1296,3 +1354,5 @@ togglePassword('toggle_video_conn_str', 'video_files_storage_account_url');
 togglePassword('toggle_audio_conn_str', 'audio_files_storage_account_url');
 togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
+togglePassword('toggle_redis_key', 'redis_key');
+togglePassword('toggle_azure_apim_redis_subscription_key', 'azure_apim_redis_subscription_key');
