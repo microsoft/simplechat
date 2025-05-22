@@ -114,6 +114,12 @@ body.layout-docked #left-pane {
   flex-basis: auto !important;
 }
 
+/* Adjust position when banner is present */
+body.has-classification-banner.layout-docked #left-pane {
+  top: 106px !important; /* 66px navbar + 40px banner */
+  height: calc(100vh - 106px) !important; /* Full height minus header and banner */
+}
+
 body.layout-docked #right-pane {
   margin-left: 320px !important; /* Same as docked left pane width */
   width: calc(100% - 300px) !important;
