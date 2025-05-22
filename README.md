@@ -453,7 +453,8 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   **Account Kind**: StorageV2 (general purpose v2).
     *   **Enable hierarchical namespace** (Azure Data Lake Storage Gen2) is recommended for better organization if storing large volumes.
     *   Review Networking, Data protection, Encryption settings.
-    *   Note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
+    *   After deployment, note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
+    *   Navigate to **Data Storage** > **Containers** > **+ Container**. Add two new containers - `user-documents` and `group-documents`
 
 ### Application-Specific Configuration Steps
 
