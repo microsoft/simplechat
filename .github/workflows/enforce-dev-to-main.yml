@@ -1,0 +1,20 @@
+name: Enforce PRs to main only from development
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  require-dev-base:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if PR→main doesn’t come from development
+        if: >
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.pull_request.head.ref != 'development'
+        run: |
+          echo "::error ::Pull requests into 'main' must originate from branch 'development'."
+          exit 1
