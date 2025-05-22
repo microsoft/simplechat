@@ -2,6 +2,49 @@
 
 # Feature Release
 
+### **(v0.213.001)**
+
+#### New Features
+
+1. **Dark Mode Support**
+   - Added full dark mode theming with support for:
+     - Chat interface (left and right panes)
+     - File metadata panels
+     - Dropdowns, headers, buttons, and classification tables
+   - User preferences persist across sessions.
+   - Dark mode toggle in navbar with text labels and styling fixes (no flash during navigation).
+2. **Admin Management Enhancements**
+   - Admin Settings UI updated to show version check.
+   - Added logout_hint parameter to resolve multi-identity logout errors.
+   - Updated favicon and admin settings layout for improved clarity and usability.
+3. **UI Banner & Visual Updates**
+   - New top-of-page banner added (configurable).
+   - Local CSS/JS used across admin, group, and user workspaces for consistency and performance.
+   - Updated `base.html` and `workspace.html` to reflect visual improvements.
+4. **Security Improvements**
+   - Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
+5. **Build & Deployment**
+   - Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
+   - Updated Dockerfile to use **Python 3.12**.
+6. **Version Enforcement**
+   - GitHub workflow `enforce-dev-to-main.yml` added to prevent pull requests to `main` unless from `development`.
+
+#### Bug Fixes
+
+A. **Document Processing**
+
+- Resolved document deletion error.
+
+C. **UI & Usability**
+
+- Local assets now used for JS/CSS to improve load times and offline compatibility.
+- General CSS cleanups across admin and workspace UIs.
+
+D. **General Stability**
+
+- Merged contributions from multiple devs including UI fixes, backend updates, and config changes.
+- Removed unused video/audio container declarations for a leaner frontend.
+
 ## (v0.212.79)
 
 ### New Features

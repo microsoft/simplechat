@@ -16,7 +16,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ##### Screenshot of the Chat UI
 
-![Chat](./images/chat.png)
+![Chat w/ Dark Mode Enabled](./images/chat.png)
 
 ## Features
 
@@ -213,75 +213,54 @@ Enables detailed logging for the entire file ingestion and processing pipeline, 
 
 Below is a summary of recent additions, reflecting the state as of version `v0.212.91`.
 
-### (v0.212.91)
+Here's a structured changelog entry for version `v0.213.001` following your previous format:
+
+### **(v0.213.001)**
 
 #### New Features
 
-1.  **Audio & Video Processing**
-    *   Integrated Azure Speech Service for audio transcription during ingestion.
-    *   Integrated Azure Video Indexer for video transcription and OCR.
-    *   Added Admin Settings UI for Video Indexer (endpoint, key, locale) and Speech Service (endpoint, key, locale).
-    *   Audio transcripts split into ~400-word chunks; Video content uses timestamp-based chunking.
-2.  **Multi-Model Support**
-    *   Users can select from multiple configured Azure OpenAI GPT deployments at runtime via the chat interface.
-    *   Admin Settings dynamically populate the available model list based on configured endpoints (Direct or APIM).
-3.  **Advanced Chunking Logic**
-    *   **PDF & PPTX**: Page-based chunks via Document Intelligence layout analysis.
-    *   **DOC/DOCX**: ~400-word semantic chunks via Document Intelligence.
-    *   **Images** (`jpg`/`jpeg`/`png`/`bmp`/`tiff`/`tif`/`heif`): Single chunk containing OCR text from Document Intelligence.
-    *   **Plain Text** (`.txt`): ~400-word chunks.
-    *   **HTML**: Hierarchical splitting based on H1–H5 tags, preserving table structure, aiming for 600–1200-word chunks.
-    *   **Markdown** (`.md`): Header-based splitting (H1-H6), preserving table and code-block integrity, aiming for 600–1200-word chunks.
-    *   **JSON**: Recursive splitting using `RecursiveJsonSplitter` (`convert_lists=True`, `max_chunk_size=600`).
-    *   **Tabular** (`CSV`/`XLSX`/`XLS`): Row-based chunks (up to ~800 characters per chunk, including header context), treating sheets as separate logical documents, formulas stripped.
-4.  **Group Workspace Consolidation**
-    *   Unified backend logic for group document handling into `functions_documents.js`.
-    *   Removed redundant code previously in `functions_group_documents.js`.
-5.  **Bulk File Uploads**
-    *   Users can now upload **up to 10 files** simultaneously in a single operation. Ingestion and processing occur in parallel.
-6.  **GPT-Driven Metadata Extraction**
-    *   Admins can select a specific GPT model via Admin Settings to power automatic metadata extraction (keywords, summary, inferred author/date).
-    *   Newly uploaded documents are processed by the chosen model.
-7.  **Advanced Document Classification**
-    *   Admins can define multiple classification fields, each with custom **color-coded labels**.
-    *   Classification metadata is stored per document and used for filtering and display.
-8.  **Contextual Classification Propagation**
-    *   When a document with classification tags is used as a source in RAG, its tags are automatically displayed within the chat context, providing visibility into the nature of the referenced information.
-9.  **Chat UI Enhancements**
-    *   Conversation history menu is now **left-docked** for persistent navigation.
-    *   Conversation titles are **editable inline** directly in the left pane (changes sync with the main chat view).
-    *   Streamlined **new chat** creation: automatically starts when user types a message, selects a prompt, or uploads a file if no chat is active.
-    *   User-defined **custom prompts** are surfaced more clearly within the message input area.
-10.  **Semantic Reranking & Extractive Answers**
-     * Switched to semantic queries (`query_type="semantic"`) on both user and group indexes. 
-     * Enabled extractive highlights (`query_caption="extractive"`) to surface the most relevant snippet in each hit.  
-     * Enabled extractive answers (`query_answer="extractive"`) so the engine returns a concise, context-rich response directly from the index.  
-     * Automatically falls back to full-text search (`query_type="full"`, `search_mode="all"`) whenever no literal match is found, ensuring precise retrieval of references or other exact phrases.
+1. **Dark Mode Support**
+   - Added full dark mode theming with support for:
+     - Chat interface (left and right panes)
+     - File metadata panels
+     - Dropdowns, headers, buttons, and classification tables
+   - User preferences persist across sessions.
+   - Dark mode toggle in navbar with text labels and styling fixes (no flash during navigation).
+2. **Admin Management Enhancements**
+   - Admin Settings UI updated to show version check.
+   - Added logout_hint parameter to resolve multi-identity logout errors.
+   - Updated favicon and admin settings layout for improved clarity and usability.
+3. **UI Banner & Visual Updates**
+   - New top-of-page banner added (configurable).
+   - Local CSS/JS used across admin, group, and user workspaces for consistency and performance.
+   - Updated `base.html` and `workspace.html` to reflect visual improvements.
+4. **Security Improvements**
+   - Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
+5. **Build & Deployment**
+   - Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
+   - Updated Dockerfile to use **Python 3.12**.
+6. **Version Enforcement**
+   - GitHub workflow `enforce-dev-to-main.yml` added to prevent pull requests to `main` unless from `development`.
 
 #### Bug Fixes
 
-1. **Azure AI Search Index Migration**
-      - Implemented automatic schema updates: on every Admin page load, the application checks for and adds any **missing fields** (e.g., `author`, `chunk_keywords`, `document_classification`, `page_number`, `start_time`, `video_ocr_chunk_text`, etc.) to both user and group indexes using the Azure AI Search SDK.
-      - Corrected SDK usage (using `SearchIndexClient.create_or_update_index`) to update index schema without requiring a full index rebuild.
-2. **User & Group Management**
-   *   Resolved a **401 error** occurring when searching for users to add to a group by implementing `SerializableTokenCache` in MSAL tied to the Flask session, ensuring proper token acquisition and refresh (`acquire_token_by_authorization_code`, `_save_cache`, `acquire_token_silent`).
-   *   Restored missing **metadata extraction** and **classification** initiation buttons within the Group Workspace UI.
-   *   Updated role descriptions in Admin settings for clarity and published an OpenAPI specification (`/api/`).  
-3. **Conversation Flow & UI**
-   *   Ensured a new conversation is **auto-created** upon first user interaction (typing, prompt selection, file upload) if none is active.
-   *   Enabled **custom logo persistence** across application restarts by storing the logo as Base64 in Cosmos DB (constraints: max 100px height, ≤ 500 KB).
-   *   Fixed CSS to prevent uploaded file previews from **overflowing** the chat input area.
-   *   Ensured conversation title changes in the left pane sync automatically **without** requiring a manual refresh.
-   *   Corrected JavaScript errors related to `loadConversations()` in `chat-input-actions.js`.
-   *   Fixed feedback button behavior and ensured selecting a prompt correctly sends the full prompt content.
-   *   Included original `search_query` & `user_message` in Azure AI Search request telemetry for better logging.
-   *   Ensured existing documents correctly display processing status (`percent_complete`) instead of appearing “Not Available”.
-   *   Added support for **Unicode characters** (e.g., Japanese) in text file chunking logic.
-4. **Miscellaneous Fixes**
-   *   Fixed JavaScript error `loadConversations is not defined` occurring during file uploads.
-   *   Ensured classification labels are not displayed in the documents list or title area if the feature is disabled.
-   *   Selecting a prompt or uploading a file now reliably creates a new conversation if one doesn't exist.
-   *   Corrected an error related to "new categories" by seeding missing nested settings configurations with defaults on application startup.
+A. **Document Processing**
+
+- Resolved document deletion error.
+
+C. **UI & Usability**
+
+- Local assets now used for JS/CSS to improve load times and offline compatibility.
+- General CSS cleanups across admin and workspace UIs.
+
+D. **General Stability**
+
+- Merged contributions from multiple devs including UI fixes, backend updates, and config changes.
+- Removed unused video/audio container declarations for a leaner frontend.
+
+------
+
+Let me know if you'd like a markdown-formatted file or a GitHub release tag summary version.
 
 ## Release Notes
 
