@@ -313,6 +313,17 @@ function initializeDocumentDropdown() {
     item.style.display = '';
   });
   
+  // Adjust dropdown width based on window size
+  const windowWidth = window.innerWidth;
+  // Set responsive width - smaller for small screens, larger for big screens
+  let maxWidth = 280; // Default max width
+  if (windowWidth > 1200) {
+    maxWidth = 320; // Larger for big screens
+  } else if (windowWidth < 576) {
+    maxWidth = 240; // Smaller for mobile screens
+  }
+  docDropdownMenu.style.maxWidth = `${maxWidth}px`;
+  
   // Ensure dropdown stays within viewport bounds
   const menuRect = docDropdownMenu.getBoundingClientRect();
   const viewportHeight = window.innerHeight;
