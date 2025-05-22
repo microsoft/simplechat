@@ -313,16 +313,16 @@ function initializeDocumentDropdown() {
     item.style.display = '';
   });
   
-  // Adjust dropdown width based on window size
-  const windowWidth = window.innerWidth;
-  // Set responsive width - smaller for small screens, larger for big screens
-  let maxWidth = 280; // Default max width
-  if (windowWidth > 1200) {
-    maxWidth = 320; // Larger for big screens
-  } else if (windowWidth < 576) {
-    maxWidth = 240; // Smaller for mobile screens
-  }
+  // Set a fixed narrower width for the dropdown
+  let maxWidth = 220; // Narrower fixed width for all screen sizes
+  
+  // Calculate parent container width (we want dropdown to fit inside right pane)
+  const parentWidth = docDropdownButton.closest('.flex-grow-1').offsetWidth;
+  // Use the smaller of our fixed width or 90% of parent width
+  maxWidth = Math.min(maxWidth, parentWidth * 0.9);
+  
   docDropdownMenu.style.maxWidth = `${maxWidth}px`;
+  docDropdownMenu.style.width = `${maxWidth}px`;
   
   // Ensure dropdown stays within viewport bounds
   const menuRect = docDropdownMenu.getBoundingClientRect();
