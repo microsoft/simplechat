@@ -290,7 +290,19 @@ if (docSelectEl) {
 }
 
 // Add event listeners for custom document dropdown
+if (docDropdownMenu) {
+  // Prevent dropdown menu from closing when clicking inside
+  docDropdownMenu.addEventListener('click', function(e) {
+    e.stopPropagation();
+  });
+}
+
 if (docDropdownItems) {
+  // Prevent dropdown menu from closing when clicking inside items container
+  docDropdownItems.addEventListener('click', function(e) {
+    e.stopPropagation();
+  });
+  
   // Add click event for document items
   document.addEventListener('click', function(e) {
     if (e.target && (e.target.matches('#document-dropdown-items .dropdown-item') || e.target.closest('#document-dropdown-items .dropdown-item'))) {
