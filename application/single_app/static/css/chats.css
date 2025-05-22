@@ -138,6 +138,17 @@ body.layout-docked.has-classification-banner #left-pane {
 /* Adjust docked right pane when classification banner is present */
 body.layout-docked.has-classification-banner #right-pane {
   height: calc(100vh - 106px) !important; /* Adjusted height calculation */
+  overflow: hidden !important; /* Prevent scrollbars */
+}
+
+/* Adjust container-fluid height when classification banner is present */
+body.has-classification-banner .container-fluid {
+  height: calc(100vh - 106px) !important; /* 66px (navbar) + 40px (banner) */
+}
+
+/* Adjust chat container max-height when classification banner is present */
+body.has-classification-banner .chat-container {
+  max-height: calc(100vh - 106px) !important; /* 66px (navbar) + 40px (banner) */
 }
 
 /* Style when docked AND hidden */
