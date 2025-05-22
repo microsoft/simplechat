@@ -51,7 +51,6 @@ def before_first_request():
 
         if redis_url:
             app.config['SESSION_TYPE'] = 'redis'
-            # app.config['SESSION_REDIS'] = redis.StrictRedis.from_url(redis_url, password=redis_key)
             app.config['SESSION_REDIS'] = Redis(
                 host=redis_url,
                 port=6380,

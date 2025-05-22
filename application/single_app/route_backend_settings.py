@@ -233,20 +233,24 @@ def _test_gpt_connection(payload):
 
 def _test_redis_connection(payload):
     """
-    Attempts to connect to Redis using the provided URL and key.
+    Attempts to connect to Azure Redis using hostname and key over SSL.
     Performs a simple SET/GET round-trip test.
     """
-    redis_url = payload.get('endpoint', '').strip()
+    redis_host = payload.get('endpoint', '').strip()
     redis_key = payload.get('key', '').strip()
 
-    if not redis_url or not redis_key:
-        return jsonify({'error': 'Redis URL and key are required'}), 400
+    if not redis_host or not redis_key:
+        return jsonify({'error': 'Redis host and key are required'}), 400
 
     try:
-        # Create a Redis client using URL and key (as password)
-        r = redis.StrictRedis.from_url(redis_url, password=redis_key, socket_connect_timeout=5)
+        r = redis.Redis(
+            host=redis_host,
+            port=6380,            # Azure Redis default TLS port
+            password=redis_key,
+            ssl=True,
+            socket_connect_timeout=5
+        )
 
-        # Basic connection test: set and get a key
         test_key = "test_key_simplechat"
         test_value = "hello_redis"
         r.set(test_key, test_value, ex=10)
