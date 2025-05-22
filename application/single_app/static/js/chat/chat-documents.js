@@ -314,7 +314,7 @@ function initializeDocumentDropdown() {
   });
   
   // Set a fixed narrower width for the dropdown
-  let maxWidth = 220; // Narrower fixed width for all screen sizes
+  let maxWidth = 400; // Updated to 400px width
   
   // Calculate parent container width (we want dropdown to fit inside right pane)
   const parentWidth = docDropdownButton.closest('.flex-grow-1').offsetWidth;

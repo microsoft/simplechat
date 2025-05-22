@@ -14,8 +14,8 @@
 
 #document-dropdown .dropdown-menu {
   width: auto;
-  min-width: 220px; /* Minimum reasonable width for content */
-  max-width: 220px; /* Reduced max width to keep it narrower */
+  min-width: 400px; /* Increased width as requested */
+  max-width: 400px; /* Increased width as requested */
   max-height: 60vh; /* Use viewport height for better adaptation */
   overflow: hidden;
   padding: 8px 0;
