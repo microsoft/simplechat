@@ -248,6 +248,15 @@ export function loadAllDocs() {
    // Ensure container is visible if feature is enabled
    if (classificationContainer) classificationContainer.style.display = '';
 
+  // Initialize custom document dropdown if available
+  if (docDropdownButton && docDropdownItems) {
+    // Ensure the custom dropdown is properly initialized
+    const documentSearchContainer = document.querySelector('.document-search-container');
+    if (documentSearchContainer) {
+      // Hide search by default, it will be shown based on document count
+      documentSearchContainer.classList.add('d-none');
+    }
+  }
 
   return loadPersonalDocs()
     .then(() => loadGroupDocs())

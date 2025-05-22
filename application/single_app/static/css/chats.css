@@ -1,4 +1,9 @@
-/* Custom document dropdown styles */
+#document-dropdown .dropdown-menu {
+  width: 100%;
+  max-height: 400px;
+  overflow: hidden;
+}
+
 #document-dropdown .dropdown-items-container {
   max-height: 300px;
   overflow-y: auto;
@@ -6,6 +11,26 @@
 
 #document-dropdown-button {
   text-align: left;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.5rem; /* Leave space for the dropdown icon */
+}
+
+#document-dropdown-button .selected-document-text {
+  max-width: calc(100% - 20px); /* Make room for the dropdown icon */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+#document-dropdown-button i {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 #document-dropdown-items .dropdown-item {
