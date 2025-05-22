@@ -85,9 +85,7 @@ executor = Executor()
 executor.init_app(app)
 
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.213.020'
-Session(app)
+app.config['VERSION'] = '0.213.022'
 
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
