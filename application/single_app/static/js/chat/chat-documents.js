@@ -270,11 +270,16 @@ export function loadAllDocs() {
     console.log("Initializing document dropdown...");
     
     // Make sure dropdown shows when button is clicked
-    docDropdownButton.addEventListener('click', function() {
+    docDropdownButton.addEventListener('click', function(e) {
       // Keep dropdown open for interaction
       setTimeout(() => {
         initializeDocumentDropdown();
       }, 100);
+    });
+    
+    // Additionally listen for the bootstrap shown.bs.dropdown event
+    docDropdownButton.addEventListener('shown.bs.dropdown', function(e) {
+      initializeDocumentDropdown();
     });
   }
 
@@ -299,17 +304,30 @@ function initializeDocumentDropdown() {
   // Make sure dropdown menu is visible
   docDropdownMenu.classList.add('show');
   
-  // Make sure dropdown menu has proper position
-  const buttonRect = docDropdownButton.getBoundingClientRect();
-  docDropdownMenu.style.position = 'absolute';
-  docDropdownMenu.style.inset = '0px auto auto 0px';
-  docDropdownMenu.style.transform = `translate(0px, ${buttonRect.height}px)`;
+  // Let Bootstrap handle the positioning - remove manual positioning
+  // that might interfere with proper viewport boundary detection
   
   // Make sure all items are visible
   const items = docDropdownItems.querySelectorAll('.dropdown-item');
   items.forEach(item => {
     item.style.display = '';
   });
+  
+  // Ensure dropdown stays within viewport bounds
+  const menuRect = docDropdownMenu.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  
+  // If dropdown extends beyond viewport, adjust position or max-height
+  if (menuRect.bottom > viewportHeight) {
+    // Option 1: Adjust max-height to fit
+    const maxPossibleHeight = viewportHeight - menuRect.top - 10; // 10px buffer
+    docDropdownMenu.style.maxHeight = `${maxPossibleHeight}px`;
+    
+    // Also adjust the items container
+    if (docDropdownItems) {
+      docDropdownItems.style.maxHeight = `${maxPossibleHeight - 40}px`; // Account for search box
+    }
+  }
 }
 /* ---------------------------------------------------------------------------
    UI Event Listeners
@@ -328,7 +346,34 @@ if (searchDocumentsBtn) {
       searchDocumentsContainer.style.display = "block";
       // Ensure initial population and state is correct when opening
       loadAllDocs().then(() => {
-          // handleDocumentSelectChange() is called by populateDocumentSelectScope within loadAllDocs
+        // Force Bootstrap to update the Popper positioning
+        try {
+          const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
+          if (dropdownInstance) {
+            dropdownInstance.update();
+          } else {
+            // Initialize dropdown if not already done
+            new bootstrap.Dropdown(docDropdownButton, {
+              boundary: 'viewport',
+              reference: 'toggle',
+              popperConfig: {
+                strategy: 'fixed',
+                modifiers: [
+                  {
+                    name: 'preventOverflow',
+                    options: {
+                      boundary: 'viewport',
+                      padding: 10
+                    }
+                  }
+                ]
+              }
+            });
+          }
+        } catch (err) {
+          console.error("Error initializing dropdown:", err);
+        }
+        // handleDocumentSelectChange() is called by populateDocumentSelectScope within loadAllDocs
       });
     } else {
       searchDocumentsContainer.style.display = "none";
@@ -568,6 +613,28 @@ function updateClassificationDropdownLabelAndValue() {
 document.addEventListener('DOMContentLoaded', function() {
   // If search documents button exists, it needs to be clicked to show controls
   if (searchDocumentsBtn && docScopeSelect && docDropdownButton) {
+    try {
+      // Initialize Bootstrap dropdown with the right configuration
+      new bootstrap.Dropdown(docDropdownButton, {
+        boundary: 'viewport',
+        reference: 'toggle',
+        popperConfig: {
+          strategy: 'fixed',
+          modifiers: [
+            {
+              name: 'preventOverflow',
+              options: {
+                boundary: 'viewport',
+                padding: 10
+              }
+            }
+          ]
+        }
+      });
+    } catch (err) {
+      console.error("Error initializing bootstrap dropdown:", err);
+    }
+    
     // Listen for dropdown show event
     docDropdownButton.addEventListener('shown.bs.dropdown', function() {
       console.log("Dropdown shown - making sure items are visible");
