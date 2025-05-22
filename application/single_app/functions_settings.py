@@ -66,7 +66,7 @@ def get_settings():
         'azure_apim_image_gen_api_version': '',
 
         # Redis Cache Settings
-        'enable_redis': False,
+        'enable_redis_cache': False,
         'redis_url': '',
         'redis_key': '',
 

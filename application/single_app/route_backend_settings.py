@@ -4,6 +4,7 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+import redis 
 
 def register_route_backend_settings(app):
     @app.route('/api/admin/settings/check_index_fields', methods=['POST'])
@@ -136,6 +137,9 @@ def register_route_backend_settings(app):
             elif test_type == 'azure_ai_search':
                 return _test_azure_ai_search_connection(data)
 
+            elif test_type == 'redis':
+                return _test_redis_connection(data)
+
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
 
@@ -225,6 +229,38 @@ def _test_gpt_connection(payload):
     except Exception as e:
         print(str(e))
         return jsonify({'error': f'Error generating model response: {str(e)}'}), 500
+
+
+def _test_redis_connection(payload):
+    """
+    Attempts to connect to Redis using the provided URL and key.
+    Performs a simple SET/GET round-trip test.
+    """
+    redis_url = payload.get('endpoint', '').strip()
+    redis_key = payload.get('key', '').strip()
+
+    if not redis_url or not redis_key:
+        return jsonify({'error': 'Redis URL and key are required'}), 400
+
+    try:
+        # Create a Redis client using URL and key (as password)
+        r = redis.StrictRedis.from_url(redis_url, password=redis_key, socket_connect_timeout=5)
+
+        # Basic connection test: set and get a key
+        test_key = "test_key_simplechat"
+        test_value = "hello_redis"
+        r.set(test_key, test_value, ex=10)
+        result = r.get(test_key)
+
+        if result and result.decode() == test_value:
+            return jsonify({'message': 'Redis connection successful'}), 200
+        else:
+            return jsonify({'error': 'Redis test failed: unexpected value'}), 500
+
+    except Exception as e:
+        print(f"Redis test error: {e}")
+        return jsonify({'error': f'Redis connection error: {str(e)}'}), 500
+
 
 
 def _test_embedding_connection(payload):
