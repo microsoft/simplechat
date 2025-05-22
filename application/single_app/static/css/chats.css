@@ -129,6 +129,12 @@ body.layout-docked #right-pane {
   transform: none !important;
 }
 
+/* When banner is present, adjust docked left-pane position */
+body.has-classification-banner.layout-docked #left-pane {
+  top: 106px !important; /* 66px (original) + 40px (banner) */
+  height: calc(100vh - 106px) !important; /* Adjusted height */
+}
+
 /* Style when docked AND hidden */
 body.layout-docked.left-pane-hidden #left-pane {
    transform: translateX(-100%);
