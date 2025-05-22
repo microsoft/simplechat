@@ -69,6 +69,7 @@ def get_settings():
         'enable_redis_cache': False,
         'redis_url': '',
         'redis_key': '',
+        'redis_auth_type': '',
 
 
         # Workspaces

@@ -650,6 +650,13 @@
                             <input type="text" class="form-control" id="redis_url" name="redis_url" value="{{ settings.redis_url or '' }}">
                         </div>
                         <div class="mb-3">
+                            <label for="redis_auth_type" class="form-label">Redis Authentication Type</label>
+                            <select class="form-select" id="redis_auth_type" name="redis_auth_type">
+                                <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
+                                <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type != 'key' and settings.redis_auth_type %}style="display: none;"{% endif %}>
                             <label for="redis_key" class="form-label">Redis Access Key</label>
                             <div class="input-group">
                                 <input type="password" class="form-control" id="redis_key" name="redis_key" value="{{ settings.redis_key or '' }}">
@@ -1570,7 +1577,7 @@
                             name="enable_document_intelligence_apim"
                             {% if settings.enable_document_intelligence_apim %}checked{% endif %}
                         >
-                        <label class="form-check-label" for="enable_document_intelligence_apim">
+                        <label class="form-check-label" for="enable_document_intelligence_apim"></label>
                             Use APIM instead of direct Document Intelligence endpoint
                         </label>
                     </div>

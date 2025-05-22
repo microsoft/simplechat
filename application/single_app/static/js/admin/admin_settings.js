@@ -777,7 +777,22 @@ function setupToggles() {
             document.getElementById('audio_files_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
         });
-    }}
+    }
+
+    // Redis auth type dropdown logic
+    const redisAuthType = document.getElementById('redis_auth_type');
+    if (redisAuthType) {
+        const redisKeyContainer = document.getElementById('redis_key_container');
+        // Set initial state on load
+        if (redisKeyContainer) {
+            redisKeyContainer.style.display = (redisAuthType.value === 'key') ? 'block' : 'none';
+        }
+        redisAuthType.addEventListener('change', function () {
+            if (redisKeyContainer) {
+                redisKeyContainer.style.display = (this.value === 'key') ? 'block' : 'none';
+            }
+        });
+    }
 
     if (enableGroupWorkspacesToggle && createGroupPermissionSettingDiv) {
         // Initial state
@@ -787,7 +802,7 @@ function setupToggles() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
         });
     }
-
+}
 
 function setupTestButtons() {
 
