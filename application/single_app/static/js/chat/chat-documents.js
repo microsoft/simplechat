@@ -4,8 +4,14 @@ import { showToast } from "./chat-toast.js"; // Assuming you have this
 
 export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");
-const docSelectEl = document.getElementById("document-select");
+const docSelectEl = document.getElementById("document-select"); // Hidden select element
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
+
+// Custom dropdown elements
+const docDropdownButton = document.getElementById("document-dropdown-button");
+const docDropdownItems = document.getElementById("document-dropdown-items");
+const docDropdownMenu = document.getElementById("document-dropdown-menu");
+const docSearchInput = document.getElementById("document-search-input");
 
 // Classification elements
 const classificationContainer = document.querySelector(".classification-container"); // Main container div
@@ -48,12 +54,27 @@ export function populateDocumentSelectScope() {
 
   const previousValue = docSelectEl.value; // Store previous selection if needed
   docSelectEl.innerHTML = ""; // Clear existing options
+  
+  // Clear the dropdown items container
+  if (docDropdownItems) {
+    docDropdownItems.innerHTML = "";
+  }
 
-  // Always add an "All Documents" option
+  // Always add an "All Documents" option to the hidden select
   const allOpt = document.createElement("option");
   allOpt.value = ""; // Use empty string for "All"
   allOpt.textContent = "All Documents"; // Consistent label
   docSelectEl.appendChild(allOpt);
+  
+  // Add "All Documents" item to custom dropdown
+  if (docDropdownItems) {
+    const allItem = document.createElement("button");
+    allItem.type = "button";
+    allItem.classList.add("dropdown-item");
+    allItem.setAttribute("data-document-id", "");
+    allItem.textContent = "All Documents";
+    docDropdownItems.appendChild(allItem);
+  }
 
   const scopeVal = docScopeSelect.value || "all";
 
@@ -84,21 +105,74 @@ export function populateDocumentSelectScope() {
     }));
   }
 
-  // Add document options and store classification data directly on the option
+  // Add document options to the hidden select and populate the custom dropdown
   finalDocs.forEach((doc) => {
+    // Add to hidden select
     const opt = document.createElement("option");
     opt.value = doc.id;
     opt.textContent = doc.label;
-    // Store classification on the option element itself using dataset
     opt.dataset.classification = doc.classification || ""; // Store classification or empty string
     docSelectEl.appendChild(opt);
+    
+    // Add to custom dropdown
+    if (docDropdownItems) {
+      const dropdownItem = document.createElement("button");
+      dropdownItem.type = "button";
+      dropdownItem.classList.add("dropdown-item");
+      dropdownItem.setAttribute("data-document-id", doc.id);
+      dropdownItem.textContent = doc.label;
+      dropdownItems.appendChild(dropdownItem);
+    }
   });
+
+  // Show/hide search based on number of documents
+  if (docSearchInput && docDropdownItems) {
+    const documentsCount = finalDocs.length;
+    const searchContainer = docSearchInput.closest('.document-search-container');
+    
+    if (searchContainer) {
+      if (documentsCount > 10) {
+        searchContainer.classList.remove('d-none');
+      } else {
+        searchContainer.classList.add('d-none');
+      }
+    }
+  }
 
   // Try to restore previous selection if it still exists, otherwise default to "All"
   if (finalDocs.some(doc => doc.id === previousValue)) {
-      docSelectEl.value = previousValue;
+    docSelectEl.value = previousValue;
+    if (docDropdownButton) {
+      const selectedDoc = finalDocs.find(doc => doc.id === previousValue);
+      if (selectedDoc) {
+        docDropdownButton.querySelector(".selected-document-text").textContent = selectedDoc.label;
+      }
+      
+      // Update active state in dropdown
+      if (docDropdownItems) {
+        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
+          item.classList.remove("active");
+          if (item.getAttribute("data-document-id") === previousValue) {
+            item.classList.add("active");
+          }
+        });
+      }
+    }
   } else {
-      docSelectEl.value = ""; // Default to "All Documents"
+    docSelectEl.value = ""; // Default to "All Documents"
+    if (docDropdownButton) {
+      docDropdownButton.querySelector(".selected-document-text").textContent = "All Documents";
+      
+      // Set "All Documents" as active
+      if (docDropdownItems) {
+        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
+          item.classList.remove("active");
+          if (item.getAttribute("data-document-id") === "") {
+            item.classList.add("active");
+          }
+        });
+      }
+    }
   }
 
   // IMPORTANT: Trigger the classification update after populating
@@ -211,8 +285,68 @@ if (searchDocumentsBtn) {
 }
 
 if (docSelectEl) {
-  // Listen for changes on the document select dropdown
+  // Listen for changes on the document select dropdown (this is now hidden and used as state keeper)
   docSelectEl.addEventListener("change", handleDocumentSelectChange);
+}
+
+// Add event listeners for custom document dropdown
+if (docDropdownItems) {
+  // Add click event for document items
+  document.addEventListener('click', function(e) {
+    if (e.target && (e.target.matches('#document-dropdown-items .dropdown-item') || e.target.closest('#document-dropdown-items .dropdown-item'))) {
+      const item = e.target.matches('#document-dropdown-items .dropdown-item') ? e.target : e.target.closest('#document-dropdown-items .dropdown-item');
+      const docId = item.getAttribute('data-document-id');
+      
+      // Update hidden select
+      if (docSelectEl) {
+        docSelectEl.value = docId;
+        
+        // Trigger change event
+        const event = new Event('change', { bubbles: true });
+        docSelectEl.dispatchEvent(event);
+      }
+      
+      // Update dropdown button text
+      if (docDropdownButton) {
+        docDropdownButton.querySelector('.selected-document-text').textContent = item.textContent;
+      }
+      
+      // Update active state
+      document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(i => {
+        i.classList.remove('active');
+      });
+      item.classList.add('active');
+      
+      // Close dropdown
+      const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
+      if (dropdownInstance) {
+        dropdownInstance.hide();
+      }
+    }
+  });
+}
+
+// Add search functionality
+if (docSearchInput) {
+  docSearchInput.addEventListener('input', function() {
+    const searchTerm = this.value.toLowerCase().trim();
+    
+    if (!docDropdownItems) return;
+    
+    document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(item => {
+      const docName = item.textContent.toLowerCase();
+      if (docName.includes(searchTerm)) {
+        item.style.display = '';
+      } else {
+        item.style.display = 'none';
+      }
+    });
+  });
+  
+  // Prevent dropdown from closing when clicking in search input
+  docSearchInput.addEventListener('click', function(e) {
+    e.stopPropagation();
+  });
 }
 
 /* ---------------------------------------------------------------------------

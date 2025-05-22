@@ -1,4 +1,30 @@
-/* css/chats.css */
+/* Custom document dropdown styles */
+#document-dropdown .dropdown-items-container {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#document-dropdown-button {
+  text-align: left;
+}
+
+#document-dropdown-items .dropdown-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+#document-dropdown-items .dropdown-item.active {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+#document-dropdown-items .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+/* chats.css */
 /* Style for the classification badge in the chat header */
 
 
