@@ -1592,6 +1592,16 @@ def extract_document_metadata(document_id, user_id, group_id=None):
         search_results = "No Hybrid results"
 
     gpt_model = settings.get('metadata_extraction_model')
+    
+    # Safety check - if no model is specified, log an error and return current metadata
+    if not gpt_model:
+        add_file_task_to_file_processing_log(
+            document_id=document_id, 
+            user_id=group_id if is_group else user_id,
+            content=f"Error: No metadata extraction model specified for document {document_id}"
+        )
+        print(f"Error: No metadata extraction model specified for document {document_id}")
+        return meta_data
 
     # --- Step 5: Prepare GPT Client ---
     if enable_gpt_apim:
