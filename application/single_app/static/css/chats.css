@@ -151,10 +151,11 @@ body.has-classification-banner .chat-container {
   max-height: calc(100vh - 106px) !important; /* 66px (navbar) + 40px (banner) */
 }
 
-/* Ensure main content is properly positioned when banner is present */
+/* Styles specific to chat page with classification banner */
 body.has-classification-banner .container-fluid.p-0 {
-  padding-top: 0 !important; /* Override any inline padding */
-  margin-top: 0 !important; /* Ensure no extra space */
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+  position: relative;
 }
 
 /* Style when docked AND hidden */
@@ -909,20 +910,43 @@ body.has-classification-banner .navbar.fixed-top {
   overflow: visible; /* Allow dropdown menus to be visible */
 }
 
-/* Ensure navbar collapse content doesn't extend down over page content */
+/* Ensure navbar links stay inside the navbar */
 body.has-classification-banner .navbar-collapse {
+  display: flex;
+  flex-basis: auto;
+  flex-grow: 1;
+  align-items: center;
+  background: transparent;
+}
+
+/* Fix dropdown menus in the navbar */
+body.has-classification-banner .navbar .dropdown-menu {
   position: absolute;
-  top: 56px;
   background: var(--bs-body-bg, white);
-  width: auto;
-  right: 0;
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
   border-radius: 0 0 0.25rem 0.25rem;
   border: 1px solid var(--bs-border-color, #dee2e6);
-  border-top: none;
 }
 
-/* Dark mode styling for navbar collapse */
+/* Ensure proper mobile menu behavior */
+@media (max-width: 991.98px) {
+  body.has-classification-banner .navbar-collapse {
+    position: absolute;
+    top: 56px;
+    right: 0;
+    width: auto;
+    padding: 0.5rem 1rem;
+    background: var(--bs-body-bg, white);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    border-radius: 0 0 0.25rem 0.25rem;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-top: none;
+    display: block;
+  }
+}
+
+/* Dark mode styling for navbar dropdown menus */
+[data-bs-theme="dark"] body.has-classification-banner .navbar .dropdown-menu,
 [data-bs-theme="dark"] body.has-classification-banner .navbar-collapse {
   background: var(--bs-body-bg, #2b3035);
   border-color: var(--bs-border-color, #495057);
