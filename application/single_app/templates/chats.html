@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid p-0" style="height: calc(100vh - 66px);">
+<div class="container-fluid p-0" style="height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %});">
     <div id="split-container" class="h-100 w-100">
 
         <div id="left-pane" class="d-flex flex-column h-100">
