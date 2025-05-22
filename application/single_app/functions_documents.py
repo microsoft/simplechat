@@ -1596,6 +1596,8 @@ def extract_document_metadata(document_id, user_id, group_id=None):
     # --- Step 5: Prepare GPT Client ---
     if enable_gpt_apim:
         # APIM-based GPT client
+        # For APIM, we use the deployment name directly 
+        # The metadata_extraction_model already contains the correct deployment name
         gpt_client = AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
@@ -1625,7 +1627,7 @@ def extract_document_metadata(document_id, user_id, group_id=None):
         add_file_task_to_file_processing_log(
             document_id=document_id, 
             user_id=group_id if is_group else user_id,
-            content=f"Sending search results to AI to generate metadata {document_id}"
+            content=f"Sending search results to AI to generate metadata for document {document_id} using model: {gpt_model}"
         )
         messages = [
             {
