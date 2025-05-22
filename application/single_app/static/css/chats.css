@@ -105,7 +105,7 @@ body.layout-docked #left-pane {
   left: 0 !important;
   width: 320px !important; /* Default docked width - ADJUST AS NEEDED */
   height: calc(100vh - 66px) !important; /* Full height minus header */
-  z-index: 1031 !important;
+  z-index: 1030 !important; /* Lower than navbar (1040) with banner */
   background: var(--bs-body-bg, white) !important;
   border-right: 1px solid var(--bs-border-color, #dee2e6) !important;
   transform: translateX(0); /* Ensure it's visible initially */
@@ -893,4 +893,9 @@ ol {
   border-bottom: 1px solid #e0e0e0;
   box-shadow: 0 2px 4px rgba(0,0,0,0.02);
   z-index: 1050;
+}
+
+/* Fix navbar positioning when classification banner is present */
+body.has-classification-banner .navbar.fixed-top {
+  z-index: 1040;
 }
