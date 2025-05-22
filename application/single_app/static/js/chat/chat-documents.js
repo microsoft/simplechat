@@ -77,6 +77,9 @@ export function populateDocumentSelectScope() {
     allItem.classList.add("dropdown-item");
     allItem.setAttribute("data-document-id", "");
     allItem.textContent = "All Documents";
+    allItem.style.display = "block";
+    allItem.style.width = "100%";
+    allItem.style.textAlign = "left";
     docDropdownItems.appendChild(allItem);
   }
 
@@ -125,7 +128,10 @@ export function populateDocumentSelectScope() {
       dropdownItem.classList.add("dropdown-item");
       dropdownItem.setAttribute("data-document-id", doc.id);
       dropdownItem.textContent = doc.label;
-      dropdownItems.appendChild(dropdownItem);
+      dropdownItem.style.display = "block";
+      dropdownItem.style.width = "100%";
+      dropdownItem.style.textAlign = "left";
+      docDropdownItems.appendChild(dropdownItem);
     }
   });
 
@@ -557,3 +563,15 @@ function updateClassificationDropdownLabelAndValue() {
 
 // --- Ensure initial state is set after documents are loaded ---
 // The call within loadAllDocs -> populateDocumentSelectScope handles the initial setup.
+
+// Initialize the dropdown on page load
+document.addEventListener('DOMContentLoaded', function() {
+  // If search documents button exists, it needs to be clicked to show controls
+  if (searchDocumentsBtn && docScopeSelect && docDropdownButton) {
+    // Listen for dropdown show event
+    docDropdownButton.addEventListener('shown.bs.dropdown', function() {
+      console.log("Dropdown shown - making sure items are visible");
+      initializeDocumentDropdown();
+    });
+  }
+});

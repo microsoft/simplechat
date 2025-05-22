@@ -1,15 +1,26 @@
+/* Fix for document dropdown visibility */
+#document-dropdown .dropdown-menu.show {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
 #document-dropdown .dropdown-menu {
   width: 100%;
   max-height: 400px;
   overflow: hidden;
   padding: 8px 0;
-  display: block; /* Ensure the dropdown menu is visible */
+}
+
+#document-dropdown .dropdown-item {
+  display: block !important;
 }
 
 #document-dropdown .dropdown-items-container {
   max-height: 300px;
   overflow-y: auto;
   padding: 0;
+  width: 100%;
 }
 
 #document-dropdown-button {
