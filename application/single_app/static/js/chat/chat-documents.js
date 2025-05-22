@@ -52,6 +52,10 @@ let activeGroupName = "";
 export function populateDocumentSelectScope() {
   if (!docScopeSelect || !docSelectEl) return;
 
+  console.log("Populating document dropdown with scope:", docScopeSelect.value);
+  console.log("Personal docs:", personalDocs.length);
+  console.log("Group docs:", groupDocs.length);
+
   const previousValue = docSelectEl.value; // Store previous selection if needed
   docSelectEl.innerHTML = ""; // Clear existing options
   
@@ -256,15 +260,50 @@ export function loadAllDocs() {
       // Hide search by default, it will be shown based on document count
       documentSearchContainer.classList.add('d-none');
     }
+    
+    console.log("Initializing document dropdown...");
+    
+    // Make sure dropdown shows when button is clicked
+    docDropdownButton.addEventListener('click', function() {
+      // Keep dropdown open for interaction
+      setTimeout(() => {
+        initializeDocumentDropdown();
+      }, 100);
+    });
   }
 
-  return loadPersonalDocs()
-    .then(() => loadGroupDocs())
+  return Promise.all([loadPersonalDocs(), loadGroupDocs()])
     .then(() => {
+      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length);
       // After loading, populate the select and set initial classification state
       populateDocumentSelectScope();
       // handleDocumentSelectChange(); // Called within populateDocumentSelectScope now
+    })
+    .catch(err => {
+      console.error("Error loading documents:", err);
     });
+}
+
+// Function to ensure dropdown menu is properly displayed
+function initializeDocumentDropdown() {
+  if (!docDropdownMenu) return;
+  
+  console.log("Initializing dropdown display");
+  
+  // Make sure dropdown menu is visible
+  docDropdownMenu.classList.add('show');
+  
+  // Make sure dropdown menu has proper position
+  const buttonRect = docDropdownButton.getBoundingClientRect();
+  docDropdownMenu.style.position = 'absolute';
+  docDropdownMenu.style.inset = '0px auto auto 0px';
+  docDropdownMenu.style.transform = `translate(0px, ${buttonRect.height}px)`;
+  
+  // Make sure all items are visible
+  const items = docDropdownItems.querySelectorAll('.dropdown-item');
+  items.forEach(item => {
+    item.style.display = '';
+  });
 }
 /* ---------------------------------------------------------------------------
    UI Event Listeners
@@ -312,37 +351,43 @@ if (docDropdownItems) {
     e.stopPropagation();
   });
   
-  // Add click event for document items
-  document.addEventListener('click', function(e) {
-    if (e.target && (e.target.matches('#document-dropdown-items .dropdown-item') || e.target.closest('#document-dropdown-items .dropdown-item'))) {
-      const item = e.target.matches('#document-dropdown-items .dropdown-item') ? e.target : e.target.closest('#document-dropdown-items .dropdown-item');
-      const docId = item.getAttribute('data-document-id');
+  // Directly attach click handler to the container for better delegation
+  docDropdownItems.addEventListener('click', function(e) {
+    // Find closest dropdown-item whether clicked directly or on a child
+    const item = e.target.closest('.dropdown-item');
+    if (!item) return; // Exit if click wasn't on/in a dropdown item
+    
+    const docId = item.getAttribute('data-document-id');
+    console.log("Document item clicked:", docId, item.textContent);
+    
+    // Update hidden select
+    if (docSelectEl) {
+      docSelectEl.value = docId;
       
-      // Update hidden select
-      if (docSelectEl) {
-        docSelectEl.value = docId;
-        
-        // Trigger change event
-        const event = new Event('change', { bubbles: true });
-        docSelectEl.dispatchEvent(event);
-      }
-      
-      // Update dropdown button text
-      if (docDropdownButton) {
-        docDropdownButton.querySelector('.selected-document-text').textContent = item.textContent;
-      }
-      
-      // Update active state
-      document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(i => {
-        i.classList.remove('active');
-      });
-      item.classList.add('active');
-      
-      // Close dropdown
+      // Trigger change event
+      const event = new Event('change', { bubbles: true });
+      docSelectEl.dispatchEvent(event);
+    }
+    
+    // Update dropdown button text
+    if (docDropdownButton) {
+      docDropdownButton.querySelector('.selected-document-text').textContent = item.textContent;
+    }
+    
+    // Update active state
+    document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(i => {
+      i.classList.remove('active');
+    });
+    item.classList.add('active');
+    
+    // Close dropdown
+    try {
       const dropdownInstance = bootstrap.Dropdown.getInstance(docDropdownButton);
       if (dropdownInstance) {
         dropdownInstance.hide();
       }
+    } catch (err) {
+      console.error("Error closing dropdown:", err);
     }
   });
 }
