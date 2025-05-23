@@ -211,7 +211,8 @@ export function getDocumentMetadata(docId) {
    Loading Documents (Keep existing loadPersonalDocs, loadGroupDocs, loadAllDocs)
 --------------------------------------------------------------------------- */
 export function loadPersonalDocs() {
-  return fetch("/api/documents")
+  // Use a large page_size to load all documents at once, without pagination
+  return fetch("/api/documents?page_size=1000")
     .then((r) => r.json())
     .then((data) => {
       if (data.error) {
@@ -220,6 +221,7 @@ export function loadPersonalDocs() {
         return;
       }
       personalDocs = data.documents || [];
+      console.log(`Loaded ${personalDocs.length} personal documents`);
     })
     .catch((err) => {
       console.error("Error loading personal docs:", err);
@@ -228,18 +230,20 @@ export function loadPersonalDocs() {
 }
 
 export function loadGroupDocs() {
-  return fetch("/api/group_documents")
+  // Use a large page_size to load all documents at once, without pagination
+  return fetch("/api/group_documents?page_size=1000")
     .then((r) => r.json())
     .then((data) => {
       if (data.error) {
-        console.warn("Error fetching user docs:", data.error);
+        console.warn("Error fetching group docs:", data.error);
         groupDocs = [];
         return;
       }
-      groupDocs  = data.documents || [];
+      groupDocs = data.documents || [];
+      console.log(`Loaded ${groupDocs.length} group documents`);
     })
     .catch((err) => {
-      console.error("Error loading personal docs:", err);
+      console.error("Error loading group docs:", err);
       groupDocs = [];
     });
 }
