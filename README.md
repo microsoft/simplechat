@@ -396,7 +396,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 | **Video Indexer**            | Standard Tier (Optional)                                     | Required only if Video Extraction feature is enabled. Pay-as-you-go per input content minute (All Insights). |
 | **Speech Service**           | Standard S0 (Optional)                                       | Required only if Audio Extraction feature is enabled. Pay-as-you-go per audio hour (Standard fast transcription). |
 | **Storage Account**          | General Purpose V2, LRS, Hot Tier (Optional)                 | Required only if Enhanced Citations feature is enabled. Stores processed files. Hierarchical Namespace (ADLS Gen2) recommended. |
-| **Redis Cache**              | Standard Tier, C0 cache size (Optional)                      | Required only if need the performance and scalability a Redis Cache for session data |
+| **Azure Cache for Redis**    | Standard Tier, C0 cache size (Optional)                      | Required only if need the performance and scalability a Redis Cache for session data |
 
 > **Note**: Pricing is subject to change and varies significantly based on usage, region, specific configurations (e.g., network security, backup policies), and selected tiers. Always use the official Azure Pricing Calculator and monitor your Azure costs closely.
 
@@ -480,10 +480,13 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Create an **Azure Cache for Redis service**.
     *   **Cache SKU**: Standard.
     *   **Cache Size**: C0 (or higher based on requirements).
-    *   Review Networking,settings.
-    *   **Authentication**: Turn on Access Keys, unless using Entra and managed identities.
-    *   NOTE:  The Redis services can take 15-30 minutes to create
-    *   After Redis is created, note the **Endpoint and Keys**.
+    *   Review Networking settings.
+    *   Note the **Keys** if using key authenication.
+    *   After Redis is created, note the **Host Name**
+    *   **Authentication**: 
+    *    - If using keys, turn on Access Keys and note the primary key
+    *    - If using managed identities, enable Entra Authentication and select the app service managed identity 
+    *   NOTE: The Redis service can take 15-30 minutes to fully deploy
 
 ### Application-Specific Configuration Steps
 
