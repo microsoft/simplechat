@@ -141,7 +141,8 @@ export function populateDocumentSelectScope() {
     const searchContainer = docSearchInput.closest('.document-search-container');
     
     if (searchContainer) {
-      if (documentsCount > 10) {
+      // Always show search if there are more than 0 documents
+      if (documentsCount > 0) {
         searchContainer.classList.remove('d-none');
       } else {
         searchContainer.classList.add('d-none');
@@ -275,15 +276,28 @@ export function loadAllDocs() {
     
     // Make sure dropdown shows when button is clicked
     docDropdownButton.addEventListener('click', function(e) {
-      // Keep dropdown open for interaction
+      // Initialize dropdown after a short delay to ensure DOM is ready
       setTimeout(() => {
         initializeDocumentDropdown();
       }, 100);
     });
     
     // Additionally listen for the bootstrap shown.bs.dropdown event
-    docDropdownButton.addEventListener('shown.bs.dropdown', function(e) {
+    document.querySelector('#document-dropdown').addEventListener('shown.bs.dropdown', function(e) {
+      console.log("Dropdown shown event fired");
       initializeDocumentDropdown();
+    });
+    
+    // Handle dropdown hide event to clear search and reset item visibility
+    document.querySelector('#document-dropdown').addEventListener('hide.bs.dropdown', function(e) {
+      if (docSearchInput) {
+        docSearchInput.value = '';
+        // Reset all items to visible
+        const items = docDropdownItems.querySelectorAll('.dropdown-item');
+        items.forEach(item => {
+          item.style.display = 'block';
+        });
+      }
     });
   }
 
@@ -308,14 +322,16 @@ function initializeDocumentDropdown() {
   // Make sure dropdown menu is visible
   docDropdownMenu.classList.add('show');
   
-  // Let Bootstrap handle the positioning - remove manual positioning
-  // that might interfere with proper viewport boundary detection
-  
-  // Make sure all items are visible
+  // Make sure all items are visible by default (reset any filtering)
   const items = docDropdownItems.querySelectorAll('.dropdown-item');
   items.forEach(item => {
-    item.style.display = '';
+    item.style.display = 'block'; // Explicitly set display to block
   });
+  
+  // If there's a search term in the input, apply filtering immediately
+  if (docSearchInput && docSearchInput.value.trim()) {
+    docSearchInput.dispatchEvent(new Event('input'));
+  }
   
   // Set a fixed narrower width for the dropdown
   let maxWidth = 400; // Updated to 400px width
@@ -409,6 +425,15 @@ if (docDropdownMenu) {
   docDropdownMenu.addEventListener('click', function(e) {
     e.stopPropagation();
   });
+  
+  // Additional event handlers to prevent dropdown from closing
+  docDropdownMenu.addEventListener('keydown', function(e) {
+    e.stopPropagation();
+  });
+  
+  docDropdownMenu.addEventListener('keyup', function(e) {
+    e.stopPropagation();
+  });
 }
 
 if (docDropdownItems) {
@@ -465,18 +490,68 @@ if (docSearchInput) {
     
     if (!docDropdownItems) return;
     
-    document.querySelectorAll('#document-dropdown-items .dropdown-item').forEach(item => {
+    // Get all dropdown items directly from the items container
+    const items = docDropdownItems.querySelectorAll('.dropdown-item');
+    
+    // Keep track if any items matched
+    let matchFound = false;
+    
+    items.forEach(item => {
       const docName = item.textContent.toLowerCase();
       if (docName.includes(searchTerm)) {
-        item.style.display = '';
+        item.style.display = 'block'; // Explicitly set to block
+        matchFound = true;
       } else {
-        item.style.display = 'none';
+        item.style.display = 'none'; // Hide non-matching items
       }
     });
+    
+    // Optional: Show a message if no matches found
+    const noMatchesEl = docDropdownItems.querySelector('.no-matches');
+    if (!matchFound && searchTerm.length > 0) {
+      if (!noMatchesEl) {
+        const noMatchesMsg = document.createElement('div');
+        noMatchesMsg.className = 'no-matches text-center text-muted py-2';
+        noMatchesMsg.textContent = 'No matching documents found';
+        docDropdownItems.appendChild(noMatchesMsg);
+      }
+    } else {
+      // Remove the "no matches" message if it exists
+      if (noMatchesEl) {
+        noMatchesEl.remove();
+      }
+    }
+    
+    // Make sure dropdown stays open and visible
+    if (docDropdownMenu) {
+      docDropdownMenu.classList.add('show');
+    }
+  });
+  
+  // Clear search when dropdown closes
+  document.addEventListener('hidden.bs.dropdown', function(e) {
+    if (e.target.id === 'document-dropdown') {
+      docSearchInput.value = ''; // Clear search input
+      // Reset visibility of all items
+      const items = docDropdownItems.querySelectorAll('.dropdown-item');
+      items.forEach(item => {
+        item.style.display = 'block';
+      });
+      // Remove any "no matches" message
+      const noMatchesEl = docDropdownItems.querySelector('.no-matches');
+      if (noMatchesEl) {
+        noMatchesEl.remove();
+      }
+    }
   });
   
   // Prevent dropdown from closing when clicking in search input
   docSearchInput.addEventListener('click', function(e) {
+    e.stopPropagation();
+  });
+  
+  // Prevent dropdown from closing when pressing keys in search input
+  docSearchInput.addEventListener('keydown', function(e) {
     e.stopPropagation();
   });
 }
@@ -629,31 +704,49 @@ document.addEventListener('DOMContentLoaded', function() {
   // If search documents button exists, it needs to be clicked to show controls
   if (searchDocumentsBtn && docScopeSelect && docDropdownButton) {
     try {
-      // Initialize Bootstrap dropdown with the right configuration
-      new bootstrap.Dropdown(docDropdownButton, {
-        boundary: 'viewport',
-        reference: 'toggle',
-        popperConfig: {
-          strategy: 'fixed',
-          modifiers: [
-            {
-              name: 'preventOverflow',
-              options: {
-                boundary: 'viewport',
-                padding: 10
+      // Get the dropdown element
+      const dropdownEl = document.getElementById('document-dropdown');
+      
+      if (dropdownEl) {
+        // Initialize Bootstrap dropdown with the right configuration
+        new bootstrap.Dropdown(docDropdownButton, {
+          boundary: 'viewport',
+          reference: 'toggle',
+          autoClose: false, // Prevent auto-closing when clicking inside
+          popperConfig: {
+            strategy: 'fixed',
+            modifiers: [
+              {
+                name: 'preventOverflow',
+                options: {
+                  boundary: 'viewport',
+                  padding: 10
+                }
               }
+            ]
+          }
+        });
+        
+        // Listen for dropdown show event
+        dropdownEl.addEventListener('shown.bs.dropdown', function() {
+          console.log("Dropdown shown - making sure items are visible");
+          initializeDocumentDropdown();
+        });
+        
+        // Ensure search input works properly when dropdown is shown
+        if (docSearchInput) {
+          dropdownEl.addEventListener('shown.bs.dropdown', function() {
+            // Focus the search input when dropdown is shown if there are many items
+            if (!docSearchInput.closest('.document-search-container').classList.contains('d-none')) {
+              setTimeout(() => {
+                docSearchInput.focus();
+              }, 100);
             }
-          ]
+          });
         }
-      });
+      }
     } catch (err) {
       console.error("Error initializing bootstrap dropdown:", err);
     }
-    
-    // Listen for dropdown show event
-    docDropdownButton.addEventListener('shown.bs.dropdown', function() {
-      console.log("Dropdown shown - making sure items are visible");
-      initializeDocumentDropdown();
-    });
   }
 });
