@@ -1110,8 +1110,55 @@ def get_document_version(user_id, document_id, version, group_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
+def delete_from_blob_storage(document_id, user_id, file_name, group_id=None):
+    """Delete a document from Azure Blob Storage."""
+    is_group = group_id is not None
+    storage_account_container_name = (
+        storage_account_group_documents_container_name
+        if is_group else
+        storage_account_user_documents_container_name
+    )
+    
+    # Check if enhanced citations are enabled and blob client is available
+    settings = get_settings()
+    enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
+    
+    if not enable_enhanced_citations:
+        return  # No need to proceed if enhanced citations are disabled
+    
+    try:
+        # Construct the blob path using the same format as in upload_to_blob
+        blob_path = f"{group_id}/{file_name}" if is_group else f"{user_id}/{file_name}"
+        
+        # Get the blob client
+        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+        if not blob_service_client:
+            print(f"Warning: Enhanced citations enabled but blob service client not configured.")
+            return
+            
+        # Get container client
+        container_client = blob_service_client.get_container_client(storage_account_container_name)
+        if not container_client:
+            print(f"Warning: Could not get container client for {storage_account_container_name}")
+            return
+            
+        # Get blob client
+        blob_client = container_client.get_blob_client(blob_path)
+        
+        # Delete the blob if it exists
+        if blob_client.exists():
+            blob_client.delete_blob()
+            print(f"Successfully deleted blob at {blob_path}")
+        else:
+            print(f"No blob found at {blob_path} to delete")
+            
+    except Exception as e:
+        print(f"Error deleting document from blob storage: {str(e)}")
+        # Don't raise the exception, as we want the Cosmos DB deletion to proceed
+        # even if blob deletion fails
+
 def delete_document(user_id, document_id, group_id=None):
-    """Delete a document from the user's documents in Cosmos DB."""
+    """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     is_group = group_id is not None
     cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
 
@@ -1123,7 +1170,19 @@ def delete_document(user_id, document_id, group_id=None):
 
         if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
             raise Exception("Unauthorized access to document")
-
+            
+        # Get the file name from the document to use for blob deletion
+        file_name = document_item.get('file_name')
+        
+        # First try to delete from blob storage
+        try:
+            if file_name:
+                delete_from_blob_storage(document_id, user_id, file_name, group_id)
+        except Exception as blob_error:
+            # Log the error but continue with Cosmos DB deletion
+            print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
+        
+        # Then delete from Cosmos DB
         cosmos_container.delete_item(
             item=document_id,
             partition_key=document_id
