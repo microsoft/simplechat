@@ -427,6 +427,7 @@ if (searchDocumentsBtn) {
             new bootstrap.Dropdown(docDropdownButton, {
               boundary: 'viewport',
               reference: 'toggle',
+              autoClose: 'outside',
               popperConfig: {
                 strategy: 'fixed',
                 modifiers: [
@@ -787,7 +788,7 @@ document.addEventListener('DOMContentLoaded', function() {
         new bootstrap.Dropdown(docDropdownButton, {
           boundary: 'viewport',
           reference: 'toggle',
-          autoClose: false, // Prevent auto-closing when clicking inside
+          autoClose: 'outside', // Close when clicking outside, stay open when clicking inside
           popperConfig: {
             strategy: 'fixed',
             modifiers: [
