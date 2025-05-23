@@ -38,4 +38,4 @@ xlrd==2.0.1
 pillow==11.1.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
-redis>=4.0,<5.0
+redis>=5.0,<6.0

@@ -33,7 +33,6 @@ from route_backend_prompts import *
 from route_backend_group_prompts import *
 from flask_session import Session
 from redis import Redis
-import redis
 from functions_settings import get_settings
 
 
@@ -44,20 +43,37 @@ def before_first_request():
     settings = get_settings()
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
+
     # Setup session handling
     if settings.get('enable_redis_cache'):
         redis_url = settings.get('redis_url', '').strip()
-        redis_key = settings.get('redis_key', '').strip()
+        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
 
         if redis_url:
             app.config['SESSION_TYPE'] = 'redis'
-            app.config['SESSION_REDIS'] = Redis(
-                host=redis_url,
-                port=6380,
-                db=0,
-                password=redis_key,
-                ssl=True  )
-            print("Redis enabled")
+
+            if redis_auth_type == 'managed_identity':
+                print("Redis enabled using Managed Identity")
+                credential = DefaultAzureCredential()
+                token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid")  # Replace * as needed
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=token.token,
+                    ssl=True
+                )
+            else:
+                # Default to key-based auth
+                redis_key = settings.get('redis_key', '').strip()
+                print("Redis enabled using Access Key")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=redis_key,
+                    ssl=True
+                )
         else:
             print("Redis enabled but URL missing; falling back to filesystem.")
             app.config['SESSION_TYPE'] = 'filesystem'
@@ -65,7 +81,6 @@ def before_first_request():
         app.config['SESSION_TYPE'] = 'filesystem'
 
     Session(app)
-
 
 @app.context_processor
 def inject_settings():

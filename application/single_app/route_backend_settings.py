@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_settings import *
 import redis 
 
+
 def register_route_backend_settings(app):
     @app.route('/api/admin/settings/check_index_fields', methods=['POST'])
     @login_required
@@ -233,20 +234,31 @@ def _test_gpt_connection(payload):
 
 def _test_redis_connection(payload):
     """
-    Attempts to connect to Azure Redis using hostname and key over SSL.
+    Attempts to connect to Azure Redis using key or managed identity auth.
     Performs a simple SET/GET round-trip test.
     """
     redis_host = payload.get('endpoint', '').strip()
     redis_key = payload.get('key', '').strip()
+    redis_auth_type = payload.get('auth_type', 'key').strip()
 
-    if not redis_host or not redis_key:
-        return jsonify({'error': 'Redis host and key are required'}), 400
+    if not redis_host:
+        return jsonify({'error': 'Redis host is required'}), 400
 
     try:
+        if redis_auth_type == 'managed_identity':
+            # Acquire token from managed identity for Redis scope
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid/.default").token
+            redis_password = token
+        else:
+            if not redis_key:
+                return jsonify({'error': 'Redis key is required for key auth'}), 400
+            redis_password = redis_key
+
         r = redis.Redis(
             host=redis_host,
-            port=6380,            # Azure Redis default TLS port
-            password=redis_key,
+            port=6380,
+            password=redis_password,
             ssl=True,
             socket_connect_timeout=5
         )
