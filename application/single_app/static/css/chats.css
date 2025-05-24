@@ -1,4 +1,123 @@
-/* css/chats.css */
+/* Fix for document dropdown visibility */
+#document-dropdown .dropdown-menu.show {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 1050 !important; /* Ensure it's above other elements */
+}
+
+/* Handle dropdown positioning at the edge of viewport */
+#document-dropdown.dropup .dropdown-menu {
+  bottom: 100% !important;
+  top: auto !important;
+  margin-bottom: 0.125rem;
+}
+
+#document-dropdown .dropdown-menu {
+  width: auto;
+  min-width: 400px; /* Increased width as requested */
+  max-width: 400px; /* Increased width as requested */
+  max-height: 60vh; /* Use viewport height for better adaptation */
+  overflow: hidden;
+  padding: 8px;
+  position: absolute;
+  left: 0 !important; /* Keep it aligned to the left of its container */
+  right: auto !important; /* Prevent right positioning */
+}
+
+/* Document dropdown items must be explicitly displayed */
+#document-dropdown .dropdown-item {
+  display: block !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  width: 100%; /* Ensure items take full width of their container */
+  text-align: left;
+  max-width: 100%; /* Ensure items don't exceed container width */
+}
+
+/* Only hide when explicitly told to */
+#document-dropdown .dropdown-item[data-filtered="hidden"] {
+  display: none !important;
+}
+
+#document-dropdown .dropdown-items-container {
+  max-height: 55vh; /* A bit less than the menu to leave room for search */
+  overflow-y: auto;
+  padding: 0;
+  width: 100%; /* Take full width of parent */
+  max-width: 100%; /* Don't exceed parent width */
+}
+
+/* Search container styling */
+#document-dropdown .document-search-container {
+  margin-bottom: 8px;
+  padding: 0 8px;
+}
+
+#document-dropdown #document-search-input {
+  width: 100%; 
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+/* Style the no matches message */
+#document-dropdown .no-matches {
+  padding: 10px;
+  font-style: italic;
+  color: #6c757d;
+}
+
+#document-dropdown-button {
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.5rem; /* Leave space for the dropdown icon */
+}
+
+#document-dropdown-button .selected-document-text {
+  max-width: calc(100% - 20px); /* Make room for the dropdown icon */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+#document-dropdown-button i {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+#document-dropdown-items .dropdown-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  display: block;
+  width: 100%; /* Ensure items take full width of their container */
+  text-align: left;
+  max-width: 100%; /* Ensure items don't exceed container width */
+}
+
+#document-dropdown-items .dropdown-item.active {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+#document-dropdown-items .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+/* chats.css */
 /* Style for the classification badge in the chat header */
 
 
