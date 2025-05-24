@@ -12,12 +12,16 @@ let imageAll      = window.imageAll || [];
 let classificationCategories = window.classificationCategories || [];
 let enableDocumentClassification = window.enableDocumentClassification || false;
 
+// Track whether form has been modified since last save
+let formModified = false;
+
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
 const classificationTbody = document.getElementById('classification-categories-tbody');
 const addClassificationBtn = document.getElementById('add-classification-btn');
 const classificationJsonInput = document.getElementById('document_classification_categories_json');
 const adminForm = document.getElementById('admin-settings-form');
+const saveButton = adminForm ? adminForm.querySelector('button[type="submit"]') : null;
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
@@ -47,6 +51,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
+    
+    // --- Setup form change tracking ---
+    setupFormChangeTracking();
 });
 
 function activateTabFromHash() {
@@ -189,6 +196,7 @@ window.selectGptModel = (deploymentName, modelName) => {
   
     updateGptHiddenInput();  // rewrite the JSON payload
     renderGPTModels();       // refresh the button states
+    markFormAsModified();    // mark form as modified
   };
 
 function updateGptHiddenInput() {
@@ -226,6 +234,7 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     embeddingSelected = [{ deploymentName, modelName }];
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
+    markFormAsModified();    // mark form as modified
     //alert(`Selected embedding model: ${deploymentName}`);
 };
 
@@ -265,6 +274,7 @@ window.selectImageModel = (deploymentName, modelName) => {
     document.getElementById('image_gen_model').value = deploymentName;
     renderImageModels();
     updateImageHiddenInput();
+    markFormAsModified();    // mark form as modified
     // alert(`Selected image model: ${deploymentName}`);
 };
 
@@ -413,6 +423,7 @@ function handleAddClassification() {
     if (newLabelInput) {
         newLabelInput.focus();
     }
+    markFormAsModified(); // Mark form as modified when adding a new category
     // Do NOT update the main `classificationCategories` array or JSON input yet.
 }
 
@@ -505,6 +516,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
         row.removeAttribute('data-is-new');
         // Re-render the whole table to get correct indices and state
         renderClassificationCategories();
+        markFormAsModified(); // Mark form as modified
     } else {
         // Update existing item in the array
         const index = parseInt(indexAttr, 10);
@@ -533,6 +545,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
             if (saveBtn) saveBtn.style.display = 'none';
 
             updateClassificationJsonInput(); // Update hidden input
+            markFormAsModified(); // Mark form as modified
         } else {
             console.error("Invalid index for saving classification:", indexAttr);
             // Fallback to re-render if something went wrong
@@ -560,11 +573,13 @@ function handleDeleteClassification(row, indexAttr, isNew) {
                 classificationCategories.splice(index, 1); // Remove from array
                 // Re-render the table to update indices and UI
                 renderClassificationCategories();
+                markFormAsModified(); // Mark form as modified
             } else {
                 console.error("Invalid index for deleting classification:", indexAttr);
                 // Fallback: remove row from DOM and update JSON
                 row.remove();
                 updateClassificationJsonInput();
+                markFormAsModified(); // Mark form as modified
             }
         }
     }
@@ -588,6 +603,7 @@ function handleClassificationColorChange(event) {
              if (swatch) {
                 swatch.style.backgroundColor = newColor;
             }
+            markFormAsModified(); // Mark form as modified when color changes
         }
     }
 }
@@ -615,6 +631,7 @@ function setupToggles() {
         enableGptApim.addEventListener('change', function () {
             document.getElementById('non_apim_gpt_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_gpt_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -623,6 +640,7 @@ function setupToggles() {
         enableEmbeddingApim.addEventListener('change', function () {
             document.getElementById('non_apim_embedding_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_embedding_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -630,6 +648,7 @@ function setupToggles() {
     if (enableImageGen) {
         enableImageGen.addEventListener('change', function () {
             document.getElementById('image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -638,6 +657,7 @@ function setupToggles() {
         enableImageGenApim.addEventListener('change', function () {
             document.getElementById('non_apim_image_gen_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -646,6 +666,7 @@ function setupToggles() {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
         enableEnhancedCitation.addEventListener('change', function(){
             toggleEnhancedCitation(this.checked);
+            markFormAsModified();
         });
     }
 
@@ -654,6 +675,7 @@ function setupToggles() {
         enableContentSafetyCheckbox.addEventListener('change', function() {
             const safetySettings = document.getElementById('content_safety_settings');
             safetySettings.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -662,6 +684,7 @@ function setupToggles() {
         enableContentSafetyApim.addEventListener('change', function() {
             document.getElementById('non_apim_content_safety_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_content_safety_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -669,6 +692,7 @@ function setupToggles() {
     if (enableWebSearch) {
         enableWebSearch.addEventListener('change', function () {
             document.getElementById('web_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -677,6 +701,7 @@ function setupToggles() {
         enableWebSearchApim.addEventListener('change', function () {
             document.getElementById('non_apim_web_search_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_web_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -685,6 +710,7 @@ function setupToggles() {
         enableAiSearchApim.addEventListener('change', function () {
             document.getElementById('non_apim_ai_search_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_ai_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -693,6 +719,7 @@ function setupToggles() {
         enableDocumentIntelligenceApim.addEventListener('change', function () {
             document.getElementById('non_apim_document_intelligence_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_document_intelligence_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -701,6 +728,7 @@ function setupToggles() {
         gptAuthType.addEventListener('change', function () {
             document.getElementById('gpt_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -709,6 +737,7 @@ function setupToggles() {
         embeddingAuthType.addEventListener('change', function () {
             document.getElementById('embedding_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -717,6 +746,7 @@ function setupToggles() {
         imgAuthType.addEventListener('change', function () {
             document.getElementById('image_gen_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -725,6 +755,7 @@ function setupToggles() {
         contentSafetyAuthType.addEventListener('change', function () {
             document.getElementById('content_safety_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -733,6 +764,7 @@ function setupToggles() {
         aiSearchAuthType.addEventListener('change', function () {
             document.getElementById('azure_ai_search_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -741,6 +773,7 @@ function setupToggles() {
         docIntelAuthType.addEventListener('change', function () {
             document.getElementById('azure_document_intelligence_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -749,6 +782,7 @@ function setupToggles() {
         officeAuthType.addEventListener('change', function(){
             document.getElementById('office_docs_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -757,6 +791,7 @@ function setupToggles() {
         videoAuthType.addEventListener('change', function(){
             document.getElementById('video_files_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -765,6 +800,7 @@ function setupToggles() {
         audioAuthType.addEventListener('change', function(){
             document.getElementById('audio_files_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }}
 
@@ -774,6 +810,7 @@ function setupToggles() {
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -1155,6 +1192,7 @@ if (videoSupportToggle && videoIndexerDiv) {
   // on change
   videoSupportToggle.addEventListener('change', () => {
     videoIndexerDiv.style.display = videoSupportToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1166,6 +1204,7 @@ if (audioSupportToggle && audioServiceDiv) {
   audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
   audioSupportToggle.addEventListener('change', () => {
     audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1209,6 +1248,7 @@ if (extractToggle) {
   extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
   extractToggle.addEventListener('change', () => {
     extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1296,3 +1336,61 @@ togglePassword('toggle_video_conn_str', 'video_files_storage_account_url');
 togglePassword('toggle_audio_conn_str', 'audio_files_storage_account_url');
 togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
+
+/**
+ * Sets up event listeners to track form changes
+ */
+function setupFormChangeTracking() {
+    if (!adminForm || !saveButton) return;
+    
+    // Initialize button state
+    updateSaveButtonState();
+    
+    // Add event listeners to all form inputs, selects, and textareas
+    const formElements = adminForm.querySelectorAll('input, select, textarea');
+    formElements.forEach(element => {
+        // For checkboxes and radios, listen for change event
+        if (element.type === 'checkbox' || element.type === 'radio') {
+            element.addEventListener('change', markFormAsModified);
+        } 
+        // For other inputs, listen for input event
+        else {
+            element.addEventListener('input', markFormAsModified);
+        }
+    });
+    
+    // Reset form state when form is submitted
+    adminForm.addEventListener('submit', () => {
+        formModified = false;
+        updateSaveButtonState();
+    });
+}
+
+/**
+ * Mark the form as modified and update the save button
+ */
+function markFormAsModified() {
+    formModified = true;
+    updateSaveButtonState();
+}
+
+/**
+ * Update the save button appearance based on form state
+ */
+function updateSaveButtonState() {
+    if (!saveButton) return;
+    
+    if (formModified) {
+        // Enable button, make it blue, and update text
+        saveButton.disabled = false;
+        saveButton.classList.remove('btn-secondary');
+        saveButton.classList.add('btn-primary');
+        saveButton.textContent = 'Save Pending';
+    } else {
+        // Disable button, make it grey, and reset text
+        saveButton.disabled = true;
+        saveButton.classList.remove('btn-primary');
+        saveButton.classList.add('btn-secondary');
+        saveButton.textContent = 'Save Settings';
+    }
+}
