@@ -103,11 +103,31 @@
                                  <option value="group">Group</option>
                              </select>
                          </div>
-                         <div class="flex-grow-1" style="min-width: 200px;">
+                             <div class="flex-grow-1" style="min-width: 200px;">
                              <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
-                             <select class="form-select form-select-sm" id="document-select">
-                                 
-                             </select>
+                             <div class="dropdown" id="document-dropdown">
+                                <button class="form-select form-select-sm d-flex justify-content-between align-items-center" 
+                                        type="button" 
+                                        id="document-dropdown-button" 
+                                        data-bs-toggle="dropdown" 
+                                        data-bs-auto-close="outside"
+                                        data-bs-display="static"
+                                        data-bs-offset="0,5"
+                                        aria-expanded="false">
+                                    <span class="selected-document-text">All Documents</span>
+                                    <i class="bi bi-chevron-down"></i>
+                                </button>
+                                <div class="dropdown-menu p-2" id="document-dropdown-menu" style="width: 400px;">
+                                    <div class="document-search-container mb-2">
+                                        <input type="text" class="form-control form-control-sm" placeholder="Search documents..." id="document-search-input">
+                                    </div>
+                                    <div class="dropdown-items-container" id="document-dropdown-items">
+                                        <!-- Documents will be populated here -->
+                                    </div>
+                                </div>
+                                <!-- Hidden select element for compatibility -->
+                                <select class="d-none" id="document-select"></select>
+                             </div>
                          </div>
                         {% if settings.enable_document_classification %}
                         <div class="flex-grow-1 classification-container" style="max-width: 150px;">
