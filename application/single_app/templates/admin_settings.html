@@ -262,25 +262,18 @@
                             <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-2">Enable video file support and configure the necessary endpoints.</p>
+                        <p class="mb-3">Use the <strong>Video Support</strong> settings in the Workspaces tab to enable and configure video file processing.</p>
                         
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="walkthrough-enable-video" 
-                                   onchange="document.getElementById('enable_video_file_support').checked = this.checked;
-                                            document.getElementById('enable_video_file_support').dispatchEvent(new Event('change'));">
-                            <label class="form-check-label" for="walkthrough-enable-video">
-                                Enable Video File Support
-                            </label>
-                        </div>
-                        
-                        <div id="walkthrough-video-settings" style="display: none;">
-                            <ul class="list-group mb-4">
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Video Endpoint</span>
-                                    <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
-                                </li>
-                            </ul>
-                        </div>
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Video Indexer Endpoint</span>
+                                <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Video Indexer API Key</span>
+                                <span id="video-key-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
                     </div>
 
                     <!-- Step 9: Audio File Support -->
@@ -292,25 +285,18 @@
                             <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-2">Enable audio file support and configure the necessary endpoints.</p>
+                        <p class="mb-3">Use the <strong>Audio Support</strong> settings in the Workspaces tab to enable and configure audio file processing.</p>
                         
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="walkthrough-enable-audio" 
-                                   onchange="document.getElementById('enable_audio_file_support').checked = this.checked;
-                                            document.getElementById('enable_audio_file_support').dispatchEvent(new Event('change'));">
-                            <label class="form-check-label" for="walkthrough-enable-audio">
-                                Enable Audio File Support
-                            </label>
-                        </div>
-                        
-                        <div id="walkthrough-audio-settings" style="display: none;">
-                            <ul class="list-group mb-4">
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Speech Endpoint</span>
-                                    <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
-                                </li>
-                            </ul>
-                        </div>
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Service Endpoint</span>
+                                <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Service Key</span>
+                                <span id="audio-key-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
                     </div>
 
                     <!-- Step 10: Content Safety -->
@@ -2181,20 +2167,11 @@
             });
         }
         
-        // Handle video support toggle
-        const videoSupportToggle = document.getElementById('walkthrough-enable-video');
+        // Handle video support toggle in main form
+        const videoSupportToggle = document.getElementById('enable_video_file_support');
         if (videoSupportToggle) {
             videoSupportToggle.addEventListener('change', function() {
-                document.getElementById('walkthrough-video-settings').style.display = 
-                    this.checked ? 'block' : 'none';
                 updateWalkthroughRequirements();
-                
-                // Also update the regular form toggle to stay in sync
-                const mainToggle = document.getElementById('enable_video_file_support');
-                if (mainToggle) {
-                    mainToggle.checked = this.checked;
-                    mainToggle.dispatchEvent(new Event('change'));
-                }
                 
                 // Recalculate available steps and refresh navigation
                 const currentStep = getCurrentWalkthroughStep();
@@ -2202,20 +2179,11 @@
             });
         }
         
-        // Handle audio support toggle
-        const audioSupportToggle = document.getElementById('walkthrough-enable-audio');
+        // Handle audio support toggle in main form
+        const audioSupportToggle = document.getElementById('enable_audio_file_support');
         if (audioSupportToggle) {
             audioSupportToggle.addEventListener('change', function() {
-                document.getElementById('walkthrough-audio-settings').style.display = 
-                    this.checked ? 'block' : 'none';
                 updateWalkthroughRequirements();
-                
-                // Also update the regular form toggle to stay in sync
-                const mainToggle = document.getElementById('enable_audio_file_support');
-                if (mainToggle) {
-                    mainToggle.checked = this.checked;
-                    mainToggle.dispatchEvent(new Event('change'));
-                }
                 
                 // Recalculate available steps and refresh navigation
                 const currentStep = getCurrentWalkthroughStep();

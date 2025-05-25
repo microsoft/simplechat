@@ -1389,8 +1389,6 @@ function showWalkthrough() {
  */
 function syncWalkthroughToggles() {
     const syncToggles = [
-        { walkthrough: 'walkthrough-enable-video', form: 'enable_video_file_support' },
-        { walkthrough: 'walkthrough-enable-audio', form: 'enable_audio_file_support' },
         { walkthrough: 'walkthrough-enable-safety', form: 'enable_content_safety' }
     ];
     
@@ -1400,15 +1398,6 @@ function syncWalkthroughToggles() {
         if (walkthroughToggle && formToggle) {
             // Set walkthrough toggle to match form toggle
             walkthroughToggle.checked = formToggle.checked;
-            
-            // Update related UI
-            if (pair.walkthrough === 'walkthrough-enable-video') {
-                document.getElementById('walkthrough-video-settings').style.display = 
-                    walkthroughToggle.checked ? 'block' : 'none';
-            } else if (pair.walkthrough === 'walkthrough-enable-audio') {
-                document.getElementById('walkthrough-audio-settings').style.display = 
-                    walkthroughToggle.checked ? 'block' : 'none';
-            }
         }
     });
 }
@@ -1519,11 +1508,8 @@ function calculateAvailableWalkthroughSteps() {
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
     const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
-    const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || 
-                         document.getElementById('enable_video_file_support')?.checked;
-                         
-    const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || 
-                         document.getElementById('enable_audio_file_support')?.checked;
+    const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+    const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
     
     const availableSteps = [1, 2, 3, 4]; // Base steps always available
     
@@ -1761,8 +1747,7 @@ function isStepComplete(stepNumber) {
             return true;
             
         case 8: // Video support
-            const videoEnabled = document.getElementById('walkthrough-enable-video').checked || 
-                                document.getElementById('enable_video_file_support').checked;
+            const videoEnabled = document.getElementById('enable_video_file_support').checked || false;
             
             // If workspaces not enabled or video not enabled, it's always complete
             if (!workspacesEnabled || !videoEnabled) return true;
@@ -1775,8 +1760,7 @@ function isStepComplete(stepNumber) {
             return videoLocation && videoAccountId && videoApiKey;
             
         case 9: // Audio support
-            const audioEnabled = document.getElementById('walkthrough-enable-audio').checked || 
-                                document.getElementById('enable_audio_file_support').checked;
+            const audioEnabled = document.getElementById('enable_audio_file_support').checked || false;
             
             // If workspaces not enabled or audio not enabled, it's always complete
             if (!workspacesEnabled || !audioEnabled) return true;
@@ -1887,14 +1871,12 @@ function setupWalkthroughFieldListeners() {
             {selector: '#enable_document_intelligence_apim', event: 'change'}
         ],
         8: [ // Video settings
-            {selector: '#walkthrough-enable-video', event: 'change'},
             {selector: '#enable_video_file_support', event: 'change'},
             {selector: '#video_indexer_location', event: 'input'},
             {selector: '#video_indexer_account_id', event: 'input'},
             {selector: '#video_indexer_api_key', event: 'input'}
         ],
         9: [ // Audio settings
-            {selector: '#walkthrough-enable-audio', event: 'change'},
             {selector: '#enable_audio_file_support', event: 'change'},
             {selector: '#speech_service_endpoint', event: 'input'},
             {selector: '#speech_service_key', event: 'input'}
@@ -2125,6 +2107,25 @@ function validateAndMoveToNextStep(currentStep) {
         
         // Show alert for what's missing (this is now handled through the UI indicators)
         // No need for individual alerts as the button is disabled and visual cues are present
+    }
+}
+
+/**
+ * Navigate to the previous step in the walkthrough
+ */
+function navigatePreviousStep() {
+    // Get the current step
+    const currentStep = getCurrentWalkthroughStep();
+    
+    // Find the previous applicable step
+    const prevStep = findPreviousApplicableStep(currentStep);
+    
+    // Navigate to the previous step if one is found
+    if (prevStep > 0) {
+        navigateToWalkthroughStep(prevStep);
+    } else {
+        // If no previous step found, go to first step
+        navigateToWalkthroughStep(1);
     }
 }
 
