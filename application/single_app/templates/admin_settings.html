@@ -384,7 +384,7 @@
                     <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn" onclick="navigatePreviousStep()">Previous</button>
                     <div>
                         <button type="button" class="btn btn-primary" id="walkthrough-next-btn" onclick="validateAndMoveToNextStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]))">Next</button>
-                        <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;" onclick="hideWalkthrough()">Finish Setup</button>
+                        <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;" onclick="finishSetupAndSave()">Finish Setup and Save</button>
                     </div>
                 </div>
             </div>
@@ -2328,6 +2328,17 @@
         if (container) {
             container.style.display = 'none';
         }
+    }
+    
+    /**
+     * Finishes the walkthrough and saves the form
+     */
+    function finishSetupAndSave() {
+        // Hide the walkthrough
+        hideWalkthrough();
+        
+        // Submit the form
+        document.getElementById('admin-settings-form').submit();
     }
 </script>
 {% endblock %}

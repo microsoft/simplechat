@@ -1808,7 +1808,9 @@ function updateStepCompletionStatus(stepNumber) {
     
     // Find badge elements in this step
     const badges = stepElement.querySelectorAll('.badge.bg-danger');
+    const optionalBadges = stepElement.querySelectorAll('.badge.bg-secondary');
     const requirementAlert = stepElement.querySelector('.alert-danger');
+    const optionalAlert = stepElement.querySelector('.alert-info');
     
     // Update next button state
     const nextButton = document.getElementById('walkthrough-next-btn');
@@ -1821,21 +1823,15 @@ function updateStepCompletionStatus(stepNumber) {
             nextButton.classList.remove('btn-primary');
             nextButton.classList.add('btn-secondary');
             nextButton.disabled = true;
-/**
- * Navigate to the previous step in the walkthrough
- * Handles finding the previous applicable step
- */
-function navigatePreviousStep() {
-    const currentStep = getCurrentWalkthroughStep();
-    const prevStep = findPreviousApplicableStep(currentStep);
-    navigateToWalkthroughStep(prevStep);
-}
         }
     }
     
-    // Only update badges and alerts if the step is complete
+    // Check if optional features are enabled/configured for this step
+    const optionalFeaturesEnabled = checkOptionalFeaturesEnabled(stepNumber);
+    
+    // Update required badges and alerts if step is complete
     if (isComplete) {
-        // Update badge status
+        // Update badge status for required items
         badges.forEach(badge => {
             badge.classList.remove('bg-danger');
             badge.classList.add('bg-success');
@@ -1984,12 +1980,128 @@ function setupWalkthroughFieldListeners() {
             }
         }
     }
+    
+    // Update optional features status if they're enabled/configured
+    if (optionalFeaturesEnabled) {
+        // Update optional badges to show as complete
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-secondary');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update optional alert if present
+        if (optionalAlert) {
+            optionalAlert.classList.remove('alert-info');
+            optionalAlert.classList.add('alert-success');
+            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
+        }
+    } else {
+        // Keep optional badges as is
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-secondary');
+            badge.textContent = 'Optional';
+        });
+        
+        // Reset optional alert if it was changed
+        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
+            optionalAlert.classList.remove('alert-success');
+            optionalAlert.classList.add('alert-info');
+            
+            // Reset optional alert text based on step number
+            switch (stepNumber) {
+                case 1:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
+                    break;
+                case 4:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
+                    break;
+                case 10:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
+                    break;
+                case 11:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
+                    break;
+                case 12:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
+                    break;
+                default:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
+        }
+    }
 }
 
 /**
- * Validate the current step and move to the next if validation passes
- * @param {number} currentStep - The current step number
+ * Check if optional features are enabled and configured for a specific step
+ * @param {number} stepNumber - The step to check
+ * @returns {boolean} True if optional features are enabled/configured
  */
+function checkOptionalFeaturesEnabled(stepNumber) {
+    switch (stepNumber) {
+        case 1: // App title and logo
+            // Check if title or logo is configured
+            const appTitle = document.getElementById('app_title')?.value;
+            const logoFile = document.getElementById('app_logo_file')?.files?.length > 0;
+            const currentLogo = document.getElementById('current_logo_img');
+            return appTitle || logoFile || (currentLogo && currentLogo.src && !currentLogo.src.includes('default_logo.png'));
+        
+        case 4: // Workspaces
+            // Check if workspaces are enabled
+            const userWorkspace = document.getElementById('enable_user_workspace')?.checked;
+            const groupWorkspace = document.getElementById('enable_group_workspaces')?.checked;
+            return userWorkspace || groupWorkspace;
+            
+        case 10: // Content Safety
+            // Check if content safety is enabled and configured
+            const safetyEnabled = document.getElementById('enable_content_safety')?.checked;
+            if (!safetyEnabled) return false;
+            
+            // Check configuration based on APIM or direct
+            const safetyApim = document.getElementById('enable_content_safety_apim')?.checked;
+            if (safetyApim) {
+                const apimEndpoint = document.getElementById('azure_apim_content_safety_endpoint')?.value;
+                const apimKey = document.getElementById('azure_apim_content_safety_subscription_key')?.value;
+                return apimEndpoint && apimKey;
+            } else {
+                const endpoint = document.getElementById('content_safety_endpoint')?.value;
+                const key = document.getElementById('content_safety_key')?.value;
+                return endpoint && key;
+            }
+        
+        case 11: // User feedback and archiving
+            // Check if feedback is enabled
+            const feedbackEnabled = document.getElementById('enable_user_feedback')?.checked;
+            const archivingEnabled = document.getElementById('enable_conversation_archiving')?.checked;
+            return feedbackEnabled || archivingEnabled;
+            
+        case 12: // Enhanced citations and image generation
+            // Check if enhanced citations or image generation is enabled
+            const citationsEnabled = document.getElementById('enable_enhanced_citations')?.checked;
+            const imageGenEnabled = document.getElementById('enable_image_generation')?.checked;
+            
+            // For image generation, check if it's properly configured when enabled
+            if (imageGenEnabled) {
+                const imageApim = document.getElementById('enable_image_gen_apim')?.checked;
+                if (imageApim) {
+                    const apimEndpoint = document.getElementById('azure_apim_image_gen_endpoint')?.value;
+                    const apimKey = document.getElementById('azure_apim_image_gen_subscription_key')?.value;
+                    return citationsEnabled || (apimEndpoint && apimKey);
+                } else {
+                    const endpoint = document.getElementById('azure_openai_image_gen_endpoint')?.value;
+                    const key = document.getElementById('azure_openai_image_gen_key')?.value;
+                    return citationsEnabled || (endpoint && key);
+                }
+            }
+            
+            return citationsEnabled;
+            
+        default:
+            // For steps not specifically handled (like required steps), return false
+            return false;
+    }
+}
 function validateAndMoveToNextStep(currentStep) {
     // Synchronize walkthrough toggles with form before validation
     syncWalkthroughToggles();
