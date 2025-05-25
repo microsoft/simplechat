@@ -1373,6 +1373,18 @@ function showWalkthrough() {
     }
     
     // Sync walkthrough toggles with actual form toggles
+    syncWalkthroughToggles();
+    
+    // Reset to first step when launched
+    setTimeout(() => {
+        navigateToWalkthroughStep(1);
+    }, 100);
+}
+
+/**
+ * Synchronizes toggle states between the walkthrough and the main form
+ */
+function syncWalkthroughToggles() {
     const syncToggles = [
         { walkthrough: 'walkthrough-enable-video', form: 'enable_video_file_support' },
         { walkthrough: 'walkthrough-enable-audio', form: 'enable_audio_file_support' },
@@ -1383,7 +1395,9 @@ function showWalkthrough() {
         const walkthroughToggle = document.getElementById(pair.walkthrough);
         const formToggle = document.getElementById(pair.form);
         if (walkthroughToggle && formToggle) {
+            // Set walkthrough toggle to match form toggle
             walkthroughToggle.checked = formToggle.checked;
+            
             // Update related UI
             if (pair.walkthrough === 'walkthrough-enable-video') {
                 document.getElementById('walkthrough-video-settings').style.display = 
@@ -1394,11 +1408,6 @@ function showWalkthrough() {
             }
         }
     });
-    
-    // Reset to first step when launched
-    setTimeout(() => {
-        navigateToWalkthroughStep(1);
-    }, 100);
 }
 
 /**
@@ -1471,18 +1480,18 @@ function navigateToWalkthroughStep(stepNumber) {
 function handleTabNavigation(stepNumber) {
     // Map steps to tabs that need to be activated
     const stepToTab = {
-        1: 'general-tab',    // App title and logo (General tab)
-        2: 'gpt-tab',        // GPT settings
-        3: 'gpt-tab',        // GPT model selection
-        4: 'embeddings-tab', // Workspace and groups settings
-        5: 'embeddings-tab', // Embedding settings
-        6: 'ai-search-tab',  // AI Search settings
-        7: 'document-intelligence-tab', // Document Intelligence settings
-        8: 'video-tab',      // Video support
-        9: 'audio-tab',      // Audio support
-        10: 'safety-tab',    // Content safety
-        11: 'feedback-tab',  // User feedback and archiving
-        12: 'image-gen-tab'  // Image generation
+        1: 'general-tab',     // App title and logo (General tab)
+        2: 'gpt-tab',         // GPT settings
+        3: 'gpt-tab',         // GPT model selection
+        4: 'workspaces-tab',  // Workspace and groups settings
+        5: 'embeddings-tab',  // Embedding settings
+        6: 'search-extract-tab', // AI Search settings
+        7: 'search-extract-tab', // Document Intelligence settings
+        8: 'workspaces-tab',  // Video support
+        9: 'workspaces-tab',  // Audio support
+        10: 'safety-tab',     // Content safety
+        11: 'other-tab',      // User feedback and archiving
+        12: 'citation-tab'    // Enhanced Citations and Image Generation
     };
     
     // Activate the appropriate tab
@@ -1490,8 +1499,46 @@ function handleTabNavigation(stepNumber) {
     if (tabId) {
         const tab = document.getElementById(tabId);
         if (tab) {
-            tab.click();
+            // Use bootstrap Tab to show the tab
+            const bootstrapTab = new bootstrap.Tab(tab);
+            bootstrapTab.show();
+            
+            // Scroll to the relevant section after a small delay to allow tab to switch
+            setTimeout(() => {
+                // For tabs that need to jump to specific sections
+                scrollToRelevantSection(stepNumber, tabId);
+            }, 300);
         }
+    }
+}
+
+/**
+ * Scroll to relevant section within a tab based on the step
+ * @param {number} stepNumber - The current step number
+ * @param {string} tabId - The ID of the tab that was activated
+ */
+function scrollToRelevantSection(stepNumber, tabId) {
+    // Define which sections to scroll to for each step
+    let targetElement = null;
+    
+    switch (stepNumber) {
+        case 4: // Workspaces toggle section
+            targetElement = document.getElementById('enable_user_workspace')?.closest('.card');
+            break;
+        case 8: // Video file support
+            targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
+            break;
+        case 9: // Audio file support
+            targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
+            break;
+        default:
+            // For other steps, no specific scrolling
+            break;
+    }
+    
+    // If we found a target element, scroll to it
+    if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 }
 
@@ -1504,6 +1551,9 @@ function validateAndMoveToNextStep(currentStep) {
     const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
     const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    // Synchronize walkthrough toggles with form before validation
+    syncWalkthroughToggles();
     
     // Validate based on the current step
     switch (currentStep) {
@@ -1638,16 +1688,13 @@ function validateAndMoveToNextStep(currentStep) {
         case 8: // Video support
             const videoEnabled = document.getElementById('walkthrough-enable-video').checked;
             if (workspacesEnabled && videoEnabled) {
-                const videoEndpoint = document.getElementById('video_files_storage_account_url').value;
-                const videoAuthType = document.getElementById('video_files_authentication_type').value;
-                const videoKey = document.getElementById('video_files_key').value;
+                const videoLocation = document.getElementById('video_indexer_location')?.value;
+                const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
+                const videoApiKey = document.getElementById('video_indexer_api_key')?.value;
                 
-                if (!videoEndpoint) {
+                if (!videoLocation || !videoAccountId || !videoApiKey) {
                     isValid = false;
-                    alert('With video support enabled, you must configure the video endpoint.');
-                } else if (videoAuthType === 'key' && !videoKey) {
-                    isValid = false;
-                    alert('Please provide the API key for video endpoint authentication.');
+                    alert('With video support enabled, you must configure all required video indexer settings.');
                 }
             }
             break;
@@ -1655,8 +1702,8 @@ function validateAndMoveToNextStep(currentStep) {
         case 9: // Audio support
             const audioEnabled = document.getElementById('walkthrough-enable-audio').checked;
             if (workspacesEnabled && audioEnabled) {
-                const speechEndpoint = document.getElementById('speech_service_endpoint').value;
-                const speechKey = document.getElementById('speech_service_key').value;
+                const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
+                const speechKey = document.getElementById('speech_service_key')?.value;
                 
                 if (!speechEndpoint) {
                     isValid = false;
