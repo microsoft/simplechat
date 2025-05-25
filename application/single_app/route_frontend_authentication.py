@@ -63,6 +63,8 @@ def register_route_frontend_authentication(app):
     @app.route('/logout')
     def logout():
         user_name = session.get("user", {}).get("name", "User")
+        # Get the user's email before clearing the session
+        user_email = session.get("user", {}).get("preferred_username") or session.get("user", {}).get("email")
         # Clear Flask session data
         session.clear()
         # Redirect user to Azure AD logout endpoint
@@ -72,5 +74,9 @@ def register_route_frontend_authentication(app):
             f"{AUTHORITY}/oauth2/v2.0/logout"
             f"?post_logout_redirect_uri={quote(logout_uri)}"
         )
+        # Add logout_hint parameter if we have the user's email
+        if user_email:
+            logout_url += f"&logout_hint={quote(user_email)}"
+        
         print(f"{user_name} logged out. Redirecting to Azure AD logout.")
         return redirect(logout_url)

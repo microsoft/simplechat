@@ -43,6 +43,7 @@ def before_first_request():
 def inject_settings():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
+    # No change needed if you already return app_settings=public_settings
     return dict(app_settings=public_settings)
 
 @app.template_filter('to_datetime')
@@ -52,6 +53,11 @@ def to_datetime_filter(value):
 @app.template_filter('format_datetime')
 def format_datetime_filter(value):
     return value.strftime('%Y-%m-%d %H:%M')
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 # Register a custom Jinja filter for Markdown
 def markdown_filter(text):

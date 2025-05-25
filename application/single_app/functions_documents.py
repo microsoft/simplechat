@@ -1110,29 +1110,88 @@ def get_document_version(user_id, document_id, version, group_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-# def delete_document(user_id, document_id, group_id=None):
-#     """Delete a document from the user's documents in Cosmos DB."""
-#     is_group = group_id is not None
-#     cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
+def delete_from_blob_storage(document_id, user_id, file_name, group_id=None):
+    """Delete a document from Azure Blob Storage."""
+    is_group = group_id is not None
+    storage_account_container_name = (
+        storage_account_group_documents_container_name
+        if is_group else
+        storage_account_user_documents_container_name
+    )
+    
+    # Check if enhanced citations are enabled and blob client is available
+    settings = get_settings()
+    enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
+    
+    if not enable_enhanced_citations:
+        return  # No need to proceed if enhanced citations are disabled
+    
+    try:
+        # Construct the blob path using the same format as in upload_to_blob
+        blob_path = f"{group_id}/{file_name}" if is_group else f"{user_id}/{file_name}"
+        
+        # Get the blob client
+        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+        if not blob_service_client:
+            print(f"Warning: Enhanced citations enabled but blob service client not configured.")
+            return
+            
+        # Get container client
+        container_client = blob_service_client.get_container_client(storage_account_container_name)
+        if not container_client:
+            print(f"Warning: Could not get container client for {storage_account_container_name}")
+            return
+            
+        # Get blob client
+        blob_client = container_client.get_blob_client(blob_path)
+        
+        # Delete the blob if it exists
+        if blob_client.exists():
+            blob_client.delete_blob()
+            print(f"Successfully deleted blob at {blob_path}")
+        else:
+            print(f"No blob found at {blob_path} to delete")
+            
+    except Exception as e:
+        print(f"Error deleting document from blob storage: {str(e)}")
+        # Don't raise the exception, as we want the Cosmos DB deletion to proceed
+        # even if blob deletion fails
 
-#     try:
-#         document_item = cosmos_container.read_item(
-#             item=document_id,
-#             partition_key=document_id
-#         )
+def delete_document(user_id, document_id, group_id=None):
+    """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
+    is_group = group_id is not None
+    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
 
-#         if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
-#             raise Exception("Unauthorized access to document")
+    try:
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
 
-#         cosmos_container.delete_item(
-#             item=document_id,
-#             partition_key=document_id
-#         )
+        if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
+            raise Exception("Unauthorized access to document")
+            
+        # Get the file name from the document to use for blob deletion
+        file_name = document_item.get('file_name')
+        
+        # First try to delete from blob storage
+        try:
+            if file_name:
+                delete_from_blob_storage(document_id, user_id, file_name, group_id)
+        except Exception as blob_error:
+            # Log the error but continue with Cosmos DB deletion
+            print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
+        
+        # Then delete from Cosmos DB
+        cosmos_container.delete_item(
+            item=document_id,
+            partition_key=document_id
+        )
 
-#     except CosmosResourceNotFoundError:
-#         raise Exception("Document not found")
-#     except Exception as e:
-#         raise
+    except CosmosResourceNotFoundError:
+        raise Exception("Document not found")
+    except Exception as e:
+        raise
 
 def delete_document_chunks(document_id, group_id=None):
     """Delete document chunks from Azure Cognitive Search index."""
@@ -1158,78 +1217,6 @@ def delete_document_chunks(document_id, group_id=None):
         result = search_client.index_documents(batch)
     except Exception as e:
         raise
-
-def delete_document(user_id, document_id, group_id=None):
-    """
-    Delete a document from the user's documents in Cosmos DB
-    and remove any associated blobs in storage whose metadata
-    matches the user_id and document_id.
-    """
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
-    storage_account_container_name = (
-        storage_account_group_documents_container_name
-        if is_group else
-        storage_account_user_documents_container_name
-    )
-
-    try:
-        # 1. Verify the document is owned by this user
-        document_item = cosmos_container.read_item(
-            item=document_id,
-            partition_key=document_id
-        )
-        if (document_item.get('user_id') != user_id) or (is_group and document_item.get('group_id') != group_id):
-            raise Exception("Unauthorized access to document")
-
-        # 2. Delete from Cosmos DB
-        cosmos_container.delete_item(
-            item=document_id,
-            partition_key=document_id
-        )
-
-        # 3. Delete matching blobs from Azure Storage
-        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        container_client = blob_service_client.get_container_client(
-            storage_account_container_name
-        )
-
-        # List only blobs in "user_id/" prefix:
-        prefix = f"{group_id}/" if is_group else f"{user_id}/"
-        blob_list = container_client.list_blobs(name_starts_with=prefix)
-
-        for blob_item in blob_list:
-            # We need to retrieve the blob’s metadata to check document_id
-            blob_client = container_client.get_blob_client(blob_item.name)
-            properties = blob_client.get_blob_properties()
-            blob_metadata = properties.metadata or {}
-
-            # Compare metadata for user_id and document_id
-            if not is_group:
-                # User document - match only user_id and document_id
-                if (
-                    blob_metadata.get('user_id') == str(user_id) and
-                    blob_metadata.get('document_id') == str(document_id)
-                ):
-                    container_client.delete_blob(blob_item.name)
-
-            elif is_group:
-                # Group document - match only group_id and document_id
-                if (
-                    blob_metadata.get('group_id') == str(group_id) and
-                    blob_metadata.get('document_id') == str(document_id)
-                ):
-                    container_client.delete_blob(blob_item.name)
-
-        return {"message": "Document and associated blobs deleted successfully."}
-
-    except CosmosResourceNotFoundError:
-        raise Exception("Document not found")
-    except Exception as e:
-        # You can raise or return a custom JSON error
-        raise Exception(f"Error during delete: {str(e)}")
-
-
 
 def delete_document_version_chunks(document_id, version, group_id=None):
     """Delete document chunks from Azure Cognitive Search index for a specific version."""

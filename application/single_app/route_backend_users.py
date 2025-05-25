@@ -22,7 +22,11 @@ def register_route_backend_users(app):
         if not token:
             return jsonify({"error": "Could not acquire access token"}), 401
 
-        user_endpoint = "https://graph.microsoft.com/v1.0/users"
+        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "secret":
+            user_endpoint = "https://graph.microsoft.us/v1.0/users"
+        if AZURE_ENVIRONMENT == "public":
+            user_endpoint = "https://graph.microsoft.com/v1.0/users"
+            
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -112,7 +116,7 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden'} # Add others as needed
+                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled'} # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")

@@ -63,8 +63,36 @@ def register_route_backend_chats(app):
 
         try:
             if enable_gpt_apim:
-                gpt_model = settings.get('azure_apim_gpt_deployment')
-                if not gpt_model: raise ValueError("APIM GPT deployment name not configured.")
+                # read raw comma-delimited deployments
+                raw = settings.get('azure_apim_gpt_deployment', '')
+                if not raw:
+                    raise ValueError("APIM GPT deployment name not configured.")
+
+                # split, strip, and filter out empty entries
+                apim_models = [m.strip() for m in raw.split(',') if m.strip()]
+                if not apim_models:
+                    raise ValueError("No valid APIM GPT deployment names found.")
+
+                # if frontend specified one, use it (must be in the configured list)
+                if frontend_gpt_model:
+                    if frontend_gpt_model not in apim_models:
+                        raise ValueError(
+                            f"Requested model '{frontend_gpt_model}' is not configured for APIM."
+                        )
+                    gpt_model = frontend_gpt_model
+
+                # otherwise if there's exactly one deployment, default to it
+                elif len(apim_models) == 1:
+                    gpt_model = apim_models[0]
+
+                # otherwise you must pass model_deployment in the request
+                else:
+                    raise ValueError(
+                        "Multiple APIM GPT deployments configured; please include "
+                        "'model_deployment' in your request."
+                    )
+
+                # initialize the APIM client
                 gpt_client = AzureOpenAI(
                     api_version=settings.get('azure_apim_gpt_api_version'),
                     azure_endpoint=settings.get('azure_apim_gpt_endpoint'),

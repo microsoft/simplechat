@@ -86,7 +86,7 @@ executor.init_app(app)
 
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.212.091'
+app.config['VERSION'] = '0.213.003'
 Session(app)
 
 CLIENTS = {}
@@ -125,10 +125,6 @@ bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
-storage_account_user_video_files_container_name = "user-video-files"
-storage_account_group_video_files_container_name = "group-video-files"
-storage_account_user_audio_files_container_name = "user-audio-files"
-storage_account_group_audio_files_container_name = "group-audio-files"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")

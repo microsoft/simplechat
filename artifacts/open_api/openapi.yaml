@@ -5040,4 +5040,4 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT # Indicates the type of token expected
-      description: Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'.
+      description: "Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'."
