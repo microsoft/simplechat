@@ -2244,29 +2244,54 @@
         updateRequirementStatus('doc-intelligence', workspacesEnabled);
         
         // Update Video support requirements
-        const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || false;
+        const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || 
+                            document.getElementById('enable_video_file_support')?.checked || false;
         updateRequirementStatus('video-support', workspacesEnabled && videoEnabled);
         
         // Update Audio support requirements
-        const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || false;
+        const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || 
+                            document.getElementById('enable_audio_file_support')?.checked || false;
         updateRequirementStatus('audio-support', workspacesEnabled && audioEnabled);
+        
+        // If we're in the walkthrough, update completion status for current step
+        const currentStepElem = document.querySelector('.walkthrough-step:not([style*=\'display: none\'])');
+        if (currentStepElem) {
+            const currentStep = parseInt(currentStepElem.id?.split('-')[2]) || 1;
+            if (typeof updateStepCompletionStatus === 'function') {
+                updateStepCompletionStatus(currentStep);
+            }
+        }
     }
     
-    function updateRequirementStatus(section, isRequired) {
+    function updateRequirementStatus(section, isRequired, isComplete = false) {
         // Update requirement alert
         const requirementAlert = document.getElementById(`${section}-requirement-alert`);
         if (requirementAlert) {
-            requirementAlert.className = isRequired ? 'alert alert-danger' : 'alert alert-info';
-            requirementAlert.innerHTML = isRequired ? 
-                '<strong>Required:</strong> This configuration is required for workspace functionality.' : 
-                '<strong>Optional:</strong> This configuration is optional.';
+            if (isRequired && isComplete) {
+                requirementAlert.className = 'alert alert-success';
+                requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this section.';
+            } else if (isRequired) {
+                requirementAlert.className = 'alert alert-danger';
+                requirementAlert.innerHTML = '<strong>Required:</strong> This configuration is required for workspace functionality.';
+            } else {
+                requirementAlert.className = 'alert alert-info';
+                requirementAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
         }
         
         // Update badges
         const badges = document.querySelectorAll(`[id$="${section}-badge"], [id*="${section}-"][id$="badge"]`);
         badges.forEach(badge => {
-            badge.className = isRequired ? 'badge bg-danger' : 'badge bg-secondary';
-            badge.textContent = isRequired ? 'Required' : 'Optional';
+            if (isRequired && isComplete) {
+                badge.className = 'badge bg-success';
+                badge.textContent = 'Complete';
+            } else if (isRequired) {
+                badge.className = 'badge bg-danger';
+                badge.textContent = 'Required';
+            } else {
+                badge.className = 'badge bg-secondary';
+                badge.textContent = 'Optional';
+            }
         });
     }
 

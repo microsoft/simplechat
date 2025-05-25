@@ -1379,6 +1379,9 @@ function showWalkthrough() {
     setTimeout(() => {
         navigateToWalkthroughStep(1);
     }, 100);
+    
+    // Setup field change listeners for automatic validation
+    setupWalkthroughFieldListeners();
 }
 
 /**
@@ -1466,6 +1469,9 @@ function navigateToWalkthroughStep(stepNumber) {
         finishBtn.style.display = stepNumber === totalSteps ? 'inline-block' : 'none';
     }
     
+    // Update completion status for this step
+    updateStepCompletionStatus(stepNumber);
+    
     // Dispatch a custom event to notify that the step has changed
     const event = new CustomEvent('walkthroughStepChanged', { 
         detail: { step: stepNumber, totalSteps: totalSteps } 
@@ -1543,20 +1549,19 @@ function scrollToRelevantSection(stepNumber, tabId) {
 }
 
 /**
- * Validate the current step and move to the next if validation passes
- * @param {number} currentStep - The current step number
+ * Check if a step is complete by validating its required fields
+ * @param {number} stepNumber - The step number to validate
+ * @returns {boolean} True if the step is complete, false otherwise
  */
-function validateAndMoveToNextStep(currentStep) {
-    let isValid = true;
+function isStepComplete(stepNumber) {
     const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
     const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
-    // Synchronize walkthrough toggles with form before validation
-    syncWalkthroughToggles();
-    
-    // Validate based on the current step
-    switch (currentStep) {
+    switch (stepNumber) {
+        case 1: // App title and logo - always complete (optional)
+            return true;
+            
         case 2: // GPT settings
             // Check if GPT endpoint is configured when required
             if (!document.getElementById('enable_gpt_apim').checked) {
@@ -1564,160 +1569,386 @@ function validateAndMoveToNextStep(currentStep) {
                 const authType = document.getElementById('azure_openai_gpt_authentication_type').value;
                 const key = document.getElementById('azure_openai_gpt_key').value;
                 
-                if (!endpoint) {
-                    isValid = false;
-                    alert('Please configure the GPT API endpoint.');
-                } else if (authType === 'key' && !key) {
-                    isValid = false;
-                    alert('Please provide the API key for authentication.');
-                }
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
             } else {
                 const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint').value;
                 const apimKey = document.getElementById('azure_apim_gpt_subscription_key').value;
                 
-                if (!apimEndpoint) {
-                    isValid = false;
-                    alert('Please configure the GPT APIM endpoint.');
-                } else if (!apimKey) {
-                    isValid = false;
-                    alert('Please provide the APIM subscription key.');
-                }
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
             }
-            break;
+            return true;
             
         case 3: // GPT model selection
-            if (!gptSelected || gptSelected.length === 0) {
-                isValid = false;
-                alert('Please select at least one GPT model.');
-            }
-            break;
+            return gptSelected && gptSelected.length > 0;
+            
+        case 4: // Workspace and groups settings - always complete (optional)
+            return true;
             
         case 5: // Embedding settings (if workspace or groups enabled)
-            if (workspacesEnabled) {
-                if (!document.getElementById('enable_embedding_apim').checked) {
-                    const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
-                    const authType = document.getElementById('azure_openai_embedding_authentication_type').value;
-                    const key = document.getElementById('azure_openai_embedding_key').value;
-                    
-                    if (!endpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the Embedding API endpoint.');
-                    } else if (authType === 'key' && !key) {
-                        isValid = false;
-                        alert('Please provide the API key for Embedding authentication.');
-                    }
-                } else {
-                    const apimEndpoint = document.getElementById('azure_apim_embedding_endpoint').value;
-                    const apimKey = document.getElementById('azure_apim_embedding_subscription_key').value;
-                    
-                    if (!apimEndpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the Embedding APIM endpoint.');
-                    } else if (!apimKey) {
-                        isValid = false;
-                        alert('Please provide the Embedding APIM subscription key.');
-                    }
-                }
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_embedding_apim').checked) {
+                const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
+                const authType = document.getElementById('azure_openai_embedding_authentication_type').value;
+                const key = document.getElementById('azure_openai_embedding_key').value;
                 
-                // Also check if embedding models are selected
-                if (embeddingSelected.length === 0) {
-                    isValid = false;
-                    alert('With workspaces enabled, you must select at least one embedding model.');
-                }
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_embedding_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_embedding_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
             }
-            break;
+            
+            // Also check if embedding models are selected
+            if (embeddingSelected.length === 0) return false;
+            
+            return true;
             
         case 6: // AI Search settings
-            if (workspacesEnabled) {
-                if (!document.getElementById('enable_ai_search_apim').checked) {
-                    const endpoint = document.getElementById('azure_ai_search_endpoint').value;
-                    const authType = document.getElementById('azure_ai_search_authentication_type').value;
-                    const key = document.getElementById('azure_ai_search_key').value;
-                    
-                    if (!endpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the AI Search endpoint.');
-                    } else if (authType === 'key' && !key) {
-                        isValid = false;
-                        alert('Please provide the API key for AI Search authentication.');
-                    }
-                } else {
-                    const apimEndpoint = document.getElementById('azure_apim_ai_search_endpoint').value;
-                    const apimKey = document.getElementById('azure_apim_ai_search_subscription_key').value;
-                    
-                    if (!apimEndpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the AI Search APIM endpoint.');
-                    } else if (!apimKey) {
-                        isValid = false;
-                        alert('Please provide the AI Search APIM subscription key.');
-                    }
-                }
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_ai_search_apim').checked) {
+                const endpoint = document.getElementById('azure_ai_search_endpoint').value;
+                const authType = document.getElementById('azure_ai_search_authentication_type').value;
+                const key = document.getElementById('azure_ai_search_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_ai_search_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_ai_search_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
             }
-            break;
+            return true;
             
         case 7: // Document Intelligence settings
-            if (workspacesEnabled) {
-                if (!document.getElementById('enable_document_intelligence_apim').checked) {
-                    const endpoint = document.getElementById('azure_document_intelligence_endpoint').value;
-                    const authType = document.getElementById('azure_document_intelligence_authentication_type').value;
-                    const key = document.getElementById('azure_document_intelligence_key').value;
-                    
-                    if (!endpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the Document Intelligence endpoint.');
-                    } else if (authType === 'key' && !key) {
-                        isValid = false;
-                        alert('Please provide the API key for Document Intelligence authentication.');
-                    }
-                } else {
-                    const apimEndpoint = document.getElementById('azure_apim_document_intelligence_endpoint').value;
-                    const apimKey = document.getElementById('azure_apim_document_intelligence_subscription_key').value;
-                    
-                    if (!apimEndpoint) {
-                        isValid = false;
-                        alert('With workspaces enabled, you must configure the Document Intelligence APIM endpoint.');
-                    } else if (!apimKey) {
-                        isValid = false;
-                        alert('Please provide the Document Intelligence APIM subscription key.');
-                    }
-                }
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_document_intelligence_apim').checked) {
+                const endpoint = document.getElementById('azure_document_intelligence_endpoint').value;
+                const authType = document.getElementById('azure_document_intelligence_authentication_type').value;
+                const key = document.getElementById('azure_document_intelligence_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_document_intelligence_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_document_intelligence_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
             }
-            break;
+            return true;
             
         case 8: // Video support
-            const videoEnabled = document.getElementById('walkthrough-enable-video').checked;
-            if (workspacesEnabled && videoEnabled) {
-                const videoLocation = document.getElementById('video_indexer_location')?.value;
-                const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
-                const videoApiKey = document.getElementById('video_indexer_api_key')?.value;
-                
-                if (!videoLocation || !videoAccountId || !videoApiKey) {
-                    isValid = false;
-                    alert('With video support enabled, you must configure all required video indexer settings.');
-                }
-            }
-            break;
+            const videoEnabled = document.getElementById('walkthrough-enable-video').checked || 
+                                document.getElementById('enable_video_file_support').checked;
+            
+            // If workspaces not enabled or video not enabled, it's always complete
+            if (!workspacesEnabled || !videoEnabled) return true;
+            
+            // Otherwise check settings
+            const videoLocation = document.getElementById('video_indexer_location')?.value;
+            const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
+            const videoApiKey = document.getElementById('video_indexer_api_key')?.value;
+            
+            return videoLocation && videoAccountId && videoApiKey;
             
         case 9: // Audio support
-            const audioEnabled = document.getElementById('walkthrough-enable-audio').checked;
-            if (workspacesEnabled && audioEnabled) {
-                const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
-                const speechKey = document.getElementById('speech_service_key')?.value;
-                
-                if (!speechEndpoint) {
-                    isValid = false;
-                    alert('With audio support enabled, you must configure the speech service endpoint.');
-                } else if (!speechKey) {
-                    isValid = false;
-                    alert('Please provide the speech service key.');
-                }
-            }
-            break;
+            const audioEnabled = document.getElementById('walkthrough-enable-audio').checked || 
+                                document.getElementById('enable_audio_file_support').checked;
+            
+            // If workspaces not enabled or audio not enabled, it's always complete
+            if (!workspacesEnabled || !audioEnabled) return true;
+            
+            // Otherwise check settings
+            const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
+            const speechKey = document.getElementById('speech_service_key')?.value;
+            
+            return speechEndpoint && speechKey;
+            
+        case 10: // Content safety - always complete (optional)
+        case 11: // User feedback and archiving - always complete (optional)
+        case 12: // Enhanced Citations and Image Generation - always complete (optional)
+            return true;
+            
+        default:
+            return true; // Default to true for any unknown steps
+    }
+}
+
+/**
+ * Update UI to show completion status for a step
+ * @param {number} stepNumber - The step number to update
+ */
+function updateStepCompletionStatus(stepNumber) {
+    const isComplete = isStepComplete(stepNumber);
+    const stepElement = document.getElementById(`walkthrough-step-${stepNumber}`);
+    if (!stepElement) return;
+    
+    // Find badge elements in this step
+    const badges = stepElement.querySelectorAll('.badge.bg-danger');
+    const requirementAlert = stepElement.querySelector('.alert-danger');
+    
+    // Update next button state
+    const nextButton = document.getElementById('walkthrough-next-btn');
+    if (nextButton) {
+        if (isComplete) {
+            nextButton.classList.remove('btn-secondary');
+            nextButton.classList.add('btn-primary');
+            nextButton.disabled = false;
+        } else {
+            nextButton.classList.remove('btn-primary');
+            nextButton.classList.add('btn-secondary');
+            nextButton.disabled = true;
+        }
     }
     
-    // If valid, proceed to the next step
-    if (isValid) {
-        navigateToWalkthroughStep(currentStep + 1);
+    // Only update badges and alerts if the step is complete
+    if (isComplete) {
+        // Update badge status
+        badges.forEach(badge => {
+            badge.classList.remove('bg-danger');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update or hide the requirement alert
+        if (requirementAlert) {
+/**
+ * Setup field change listeners for real-time validation during walkthrough
+ */
+function setupWalkthroughFieldListeners() {
+    // Define field groups by step number
+    const fieldGroups = {
+        2: [ // GPT settings
+            {selector: '#azure_openai_gpt_endpoint', event: 'input'},
+            {selector: '#azure_openai_gpt_key', event: 'input'},
+            {selector: '#azure_openai_gpt_authentication_type', event: 'change'},
+            {selector: '#azure_apim_gpt_endpoint', event: 'input'},
+            {selector: '#azure_apim_gpt_subscription_key', event: 'input'},
+            {selector: '#enable_gpt_apim', event: 'change'}
+        ],
+        3: [ // GPT Models
+            {selector: '#fetch_gpt_models_btn', event: 'click', delay: 1000}
+        ],
+        4: [ // Workspace toggles
+            {selector: '#enable_user_workspace', event: 'change'},
+            {selector: '#enable_group_workspaces', event: 'change'}
+        ],
+        5: [ // Embedding settings
+            {selector: '#azure_openai_embedding_endpoint', event: 'input'},
+            {selector: '#azure_openai_embedding_key', event: 'input'},
+            {selector: '#azure_openai_embedding_authentication_type', event: 'change'},
+            {selector: '#azure_apim_embedding_endpoint', event: 'input'},
+            {selector: '#azure_apim_embedding_subscription_key', event: 'input'},
+            {selector: '#enable_embedding_apim', event: 'change'},
+            {selector: '#fetch_embedding_models_btn', event: 'click', delay: 1000}
+        ],
+        6: [ // AI Search settings
+            {selector: '#azure_ai_search_endpoint', event: 'input'},
+            {selector: '#azure_ai_search_key', event: 'input'},
+            {selector: '#azure_ai_search_authentication_type', event: 'change'},
+            {selector: '#azure_apim_ai_search_endpoint', event: 'input'},
+            {selector: '#azure_apim_ai_search_subscription_key', event: 'input'},
+            {selector: '#enable_ai_search_apim', event: 'change'}
+        ],
+        7: [ // Document Intelligence settings
+            {selector: '#azure_document_intelligence_endpoint', event: 'input'},
+            {selector: '#azure_document_intelligence_key', event: 'input'},
+            {selector: '#azure_document_intelligence_authentication_type', event: 'change'},
+            {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
+            {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
+            {selector: '#enable_document_intelligence_apim', event: 'change'}
+        ],
+        8: [ // Video settings
+            {selector: '#walkthrough-enable-video', event: 'change'},
+            {selector: '#enable_video_file_support', event: 'change'},
+            {selector: '#video_indexer_location', event: 'input'},
+            {selector: '#video_indexer_account_id', event: 'input'},
+            {selector: '#video_indexer_api_key', event: 'input'}
+        ],
+        9: [ // Audio settings
+            {selector: '#walkthrough-enable-audio', event: 'change'},
+            {selector: '#enable_audio_file_support', event: 'change'},
+            {selector: '#speech_service_endpoint', event: 'input'},
+            {selector: '#speech_service_key', event: 'input'}
+        ]
+    };
+    
+    // Add listeners to each group of fields
+    for (const [stepNumber, fields] of Object.entries(fieldGroups)) {
+        const step = parseInt(stepNumber, 10);
+        fields.forEach(field => {
+            const element = document.querySelector(field.selector);
+            if (element) {
+                // Create the handler function, using any delay specified
+                const handler = () => {
+                    if (field.delay) {
+                        setTimeout(() => updateStepCompletionStatus(step), field.delay);
+                    } else {
+                        updateStepCompletionStatus(step);
+                    }
+                };
+                
+                // Remove any existing listeners (to prevent duplicates)
+                element.removeEventListener(field.event, handler);
+                
+                // Add the new listener
+                element.addEventListener(field.event, handler);
+            }
+        });
     }
+    
+    // Special case for model selection buttons which are dynamically created
+    // We'll use event delegation for these
+    document.addEventListener('click', event => {
+        if (event.target.matches('button') && event.target.onclick && 
+            event.target.onclick.toString().includes('selectGptModel')) {
+            setTimeout(() => updateStepCompletionStatus(3), 100);
+        } else if (event.target.matches('button') && event.target.onclick && 
+            event.target.onclick.toString().includes('selectEmbeddingModel')) {
+            setTimeout(() => updateStepCompletionStatus(5), 100);
+        }
+    });
+}
+            requirementAlert.classList.remove('alert-danger');
+            requirementAlert.classList.add('alert-success');
+            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
+        }
+    } else {
+        // Ensure badges show required status
+        badges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-danger');
+            badge.textContent = 'Required';
+        });
+        
+        // Reset requirement alert if needed
+        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
+            requirementAlert.classList.remove('alert-success');
+            requirementAlert.classList.add('alert-danger');
+            
+            // Reset alert text based on step number
+            switch (stepNumber) {
+                case 2:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
+                    break;
+                case 3:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
+                    break;
+                case 5:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
+                    break;
+                case 6:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
+                    break;
+                case 7:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
+                    break;
+                case 8:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
+                    break;
+                case 9:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
+                    break;
+            }
+        }
+    }
+}
+
+/**
+ * Validate the current step and move to the next if validation passes
+ * @param {number} currentStep - The current step number
+ */
+function validateAndMoveToNextStep(currentStep) {
+    // Synchronize walkthrough toggles with form before validation
+    syncWalkthroughToggles();
+    
+    // Check if the current step is complete
+    const complete = isStepComplete(currentStep);
+    
+    // If step is complete, we can proceed
+    if (complete) {
+        // Find next applicable step that should be shown
+        const nextStep = findNextApplicableStep(currentStep);
+        if (nextStep > 0) {
+            navigateToWalkthroughStep(nextStep);
+        } else {
+            // If no more applicable steps, we're at the end
+            navigateToWalkthroughStep(12); // Go to final step
+        }
+    } else {
+        // Highlight missing fields with validation (handled by updateStepCompletionStatus)
+        updateStepCompletionStatus(currentStep);
+        
+        // Show alert for what's missing (this is now handled through the UI indicators)
+        // No need for individual alerts as the button is disabled and visual cues are present
+    }
+}
+
+/**
+ * Find the next applicable step based on enabled features
+ * @param {number} currentStep - The current step number
+ * @returns {number} The next applicable step number or -1 if none found
+ */
+function findNextApplicableStep(currentStep) {
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    // Start checking from the next step
+    let nextStep = currentStep + 1;
+    
+    // Maximum step to avoid infinite loop
+    const maxSteps = 12;
+    
+    while (nextStep <= maxSteps) {
+        // Check if this step is applicable based on conditions
+        switch (nextStep) {
+            case 5: // Embedding settings
+            case 6: // AI Search settings 
+            case 7: // Document Intelligence settings
+                if (!workspacesEnabled) {
+                    // Skip these steps if workspaces not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 8: // Video support
+                const videoEnabled = document.getElementById('walkthrough-enable-video').checked || 
+                                    document.getElementById('enable_video_file_support').checked;
+                if (!workspacesEnabled || !videoEnabled) {
+                    // Skip this step if workspaces not enabled or video not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 9: // Audio support
+                const audioEnabled = document.getElementById('walkthrough-enable-audio').checked || 
+                                    document.getElementById('enable_audio_file_support').checked;
+                if (!workspacesEnabled || !audioEnabled) {
+                    // Skip this step if workspaces not enabled or audio not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            default:
+                // All other steps are always applicable
+                return nextStep;
+        }
+    }
+    
+    // If we've gone past all steps, return -1
+    return -1;
 }
