@@ -1444,6 +1444,9 @@ function handleTabNavigation(stepNumber) {
  */
 function validateAndMoveToNextStep(currentStep) {
     let isValid = true;
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
     // Validate based on the current step
     switch (currentStep) {
@@ -1451,17 +1454,26 @@ function validateAndMoveToNextStep(currentStep) {
             // Check if GPT endpoint is configured when required
             if (!document.getElementById('enable_gpt_apim').checked) {
                 const endpoint = document.getElementById('azure_openai_gpt_endpoint').value;
+                const authType = document.getElementById('azure_openai_gpt_authentication_type').value;
                 const key = document.getElementById('azure_openai_gpt_key').value;
-                if (!endpoint || (!key && document.getElementById('azure_openai_gpt_authentication_type').value === 'key')) {
+                
+                if (!endpoint) {
                     isValid = false;
-                    alert('Please configure the GPT API endpoint and authentication details.');
+                    alert('Please configure the GPT API endpoint.');
+                } else if (authType === 'key' && !key) {
+                    isValid = false;
+                    alert('Please provide the API key for authentication.');
                 }
             } else {
                 const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint').value;
                 const apimKey = document.getElementById('azure_apim_gpt_subscription_key').value;
-                if (!apimEndpoint || !apimKey) {
+                
+                if (!apimEndpoint) {
                     isValid = false;
-                    alert('Please configure the GPT APIM endpoint and subscription key.');
+                    alert('Please configure the GPT APIM endpoint.');
+                } else if (!apimKey) {
+                    isValid = false;
+                    alert('Please provide the APIM subscription key.');
                 }
             }
             break;
@@ -1474,29 +1486,130 @@ function validateAndMoveToNextStep(currentStep) {
             break;
             
         case 5: // Embedding settings (if workspace or groups enabled)
-            const workspaceEnabled = document.getElementById('enable_user_workspace').checked;
-            const groupsEnabled = document.getElementById('enable_group_workspaces').checked;
-            
-            if (workspaceEnabled || groupsEnabled) {
+            if (workspacesEnabled) {
                 if (!document.getElementById('enable_embedding_apim').checked) {
                     const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
+                    const authType = document.getElementById('azure_openai_embedding_authentication_type').value;
                     const key = document.getElementById('azure_openai_embedding_key').value;
-                    if (!endpoint || (!key && document.getElementById('azure_openai_embedding_authentication_type').value === 'key')) {
+                    
+                    if (!endpoint) {
                         isValid = false;
-                        alert('Please configure the Embedding API endpoint and authentication details.');
+                        alert('With workspaces enabled, you must configure the Embedding API endpoint.');
+                    } else if (authType === 'key' && !key) {
+                        isValid = false;
+                        alert('Please provide the API key for Embedding authentication.');
                     }
                 } else {
                     const apimEndpoint = document.getElementById('azure_apim_embedding_endpoint').value;
                     const apimKey = document.getElementById('azure_apim_embedding_subscription_key').value;
-                    if (!apimEndpoint || !apimKey) {
+                    
+                    if (!apimEndpoint) {
                         isValid = false;
-                        alert('Please configure the Embedding APIM endpoint and subscription key.');
+                        alert('With workspaces enabled, you must configure the Embedding APIM endpoint.');
+                    } else if (!apimKey) {
+                        isValid = false;
+                        alert('Please provide the Embedding APIM subscription key.');
+                    }
+                }
+                
+                // Also check if embedding models are selected
+                if (embeddingSelected.length === 0) {
+                    isValid = false;
+                    alert('With workspaces enabled, you must select at least one embedding model.');
+                }
+            }
+            break;
+            
+        case 6: // AI Search settings
+            if (workspacesEnabled) {
+                if (!document.getElementById('enable_ai_search_apim').checked) {
+                    const endpoint = document.getElementById('azure_ai_search_endpoint').value;
+                    const authType = document.getElementById('azure_ai_search_authentication_type').value;
+                    const key = document.getElementById('azure_ai_search_key').value;
+                    
+                    if (!endpoint) {
+                        isValid = false;
+                        alert('With workspaces enabled, you must configure the AI Search endpoint.');
+                    } else if (authType === 'key' && !key) {
+                        isValid = false;
+                        alert('Please provide the API key for AI Search authentication.');
+                    }
+                } else {
+                    const apimEndpoint = document.getElementById('azure_apim_ai_search_endpoint').value;
+                    const apimKey = document.getElementById('azure_apim_ai_search_subscription_key').value;
+                    
+                    if (!apimEndpoint) {
+                        isValid = false;
+                        alert('With workspaces enabled, you must configure the AI Search APIM endpoint.');
+                    } else if (!apimKey) {
+                        isValid = false;
+                        alert('Please provide the AI Search APIM subscription key.');
                     }
                 }
             }
             break;
             
-        // Add more validations for other steps as needed
+        case 7: // Document Intelligence settings
+            if (workspacesEnabled) {
+                if (!document.getElementById('enable_document_intelligence_apim').checked) {
+                    const endpoint = document.getElementById('azure_document_intelligence_endpoint').value;
+                    const authType = document.getElementById('azure_document_intelligence_authentication_type').value;
+                    const key = document.getElementById('azure_document_intelligence_key').value;
+                    
+                    if (!endpoint) {
+                        isValid = false;
+                        alert('With workspaces enabled, you must configure the Document Intelligence endpoint.');
+                    } else if (authType === 'key' && !key) {
+                        isValid = false;
+                        alert('Please provide the API key for Document Intelligence authentication.');
+                    }
+                } else {
+                    const apimEndpoint = document.getElementById('azure_apim_document_intelligence_endpoint').value;
+                    const apimKey = document.getElementById('azure_apim_document_intelligence_subscription_key').value;
+                    
+                    if (!apimEndpoint) {
+                        isValid = false;
+                        alert('With workspaces enabled, you must configure the Document Intelligence APIM endpoint.');
+                    } else if (!apimKey) {
+                        isValid = false;
+                        alert('Please provide the Document Intelligence APIM subscription key.');
+                    }
+                }
+            }
+            break;
+            
+        case 8: // Video support
+            const videoEnabled = document.getElementById('walkthrough-enable-video').checked;
+            if (workspacesEnabled && videoEnabled) {
+                const videoEndpoint = document.getElementById('video_files_storage_account_url').value;
+                const videoAuthType = document.getElementById('video_files_authentication_type').value;
+                const videoKey = document.getElementById('video_files_key').value;
+                
+                if (!videoEndpoint) {
+                    isValid = false;
+                    alert('With video support enabled, you must configure the video endpoint.');
+                } else if (videoAuthType === 'key' && !videoKey) {
+                    isValid = false;
+                    alert('Please provide the API key for video endpoint authentication.');
+                }
+            }
+            break;
+            
+        case 9: // Audio support
+            const audioEnabled = document.getElementById('walkthrough-enable-audio').checked;
+            if (workspacesEnabled && audioEnabled) {
+                const speechEndpoint = document.getElementById('speech_service_endpoint').value;
+                const speechKey = document.getElementById('speech_service_key').value;
+                
+                if (!speechEndpoint) {
+                    isValid = false;
+                    alert('With audio support enabled, you must configure the speech service endpoint.');
+                } else if (!speechKey) {
+                    isValid = false;
+                    alert('Please provide the speech service key.');
+                }
+            }
+            break;
     }
     
     // If valid, proceed to the next step
