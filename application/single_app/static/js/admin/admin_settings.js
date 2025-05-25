@@ -47,6 +47,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
+
+    // --- Setup Settings Walkthrough ---
+    setupSettingsWalkthrough(); 
 });
 
 function activateTabFromHash() {
@@ -1296,3 +1299,208 @@ togglePassword('toggle_video_conn_str', 'video_files_storage_account_url');
 togglePassword('toggle_audio_conn_str', 'audio_files_storage_account_url');
 togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
+
+/**
+ * Checks if this is a first-time setup based on critical settings
+ * @returns {boolean} True if this appears to be a first-time setup
+ */
+function isFirstTimeSetup() {
+    // Check for critical settings that would indicate a first-time setup
+    
+    // 1. No GPT models selected
+    if (!gptSelected || gptSelected.length === 0) {
+        return true;
+    }
+    
+    // 2. No embedding models selected but workspaces enabled
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    
+    if ((workspaceEnabled || groupsEnabled) && 
+        (!embeddingSelected || embeddingSelected.length === 0)) {
+        return true;
+    }
+    
+    // 3. Check if GPT endpoint is empty
+    const useGptApim = document.getElementById('enable_gpt_apim')?.checked || false;
+    
+    if (!useGptApim) {
+        const gptEndpoint = document.getElementById('azure_openai_gpt_endpoint')?.value;
+        if (!gptEndpoint) {
+            return true;
+        }
+    } else {
+        const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint')?.value;
+        if (!apimEndpoint) {
+            return true;
+        }
+    }
+    
+    // Not first time setup
+    return false;
+}
+
+/**
+ * Setup the walkthrough modal for first-time configuration
+ */
+function setupSettingsWalkthrough() {
+    // Check if this is a first-time setup
+    if (!isFirstTimeSetup()) {
+        return; // Not first time, don't show walkthrough
+    }
+    
+    // Show the walkthrough modal
+    const walkthroughModal = new bootstrap.Modal(document.getElementById('settings-walkthrough-modal'));
+    walkthroughModal.show();
+}
+
+/**
+ * Navigate to the specified step in the walkthrough
+ * @param {number} stepNumber - The step number to navigate to
+ */
+function navigateToWalkthroughStep(stepNumber) {
+    // Get all steps and total count
+    const steps = document.querySelectorAll('.walkthrough-step');
+    const totalSteps = steps.length;
+    
+    // Validate step number
+    if (stepNumber < 1) stepNumber = 1;
+    if (stepNumber > totalSteps) stepNumber = totalSteps;
+    
+    // Hide all steps
+    steps.forEach(step => {
+        step.style.display = 'none';
+    });
+    
+    // Show the requested step
+    const stepElement = document.getElementById(`walkthrough-step-${stepNumber}`);
+    if (stepElement) {
+        stepElement.style.display = 'block';
+    }
+    
+    // Update the progress indicator
+    const progressBar = document.getElementById('walkthrough-progress');
+    if (progressBar) {
+        progressBar.style.width = `${(stepNumber / totalSteps) * 100}%`;
+        progressBar.setAttribute('aria-valuenow', stepNumber);
+    }
+    
+    // Handle special tab navigation based on step
+    handleTabNavigation(stepNumber);
+    
+    // Update prev/next buttons
+    const prevBtn = document.getElementById('walkthrough-prev-btn');
+    const nextBtn = document.getElementById('walkthrough-next-btn');
+    const finishBtn = document.getElementById('walkthrough-finish-btn');
+    
+    if (prevBtn) prevBtn.style.display = stepNumber === 1 ? 'none' : 'inline-block';
+    
+    if (nextBtn && finishBtn) {
+        nextBtn.style.display = stepNumber === totalSteps ? 'none' : 'inline-block';
+        finishBtn.style.display = stepNumber === totalSteps ? 'inline-block' : 'none';
+    }
+    
+    // Dispatch a custom event to notify that the step has changed
+    const event = new CustomEvent('walkthroughStepChanged', { 
+        detail: { step: stepNumber, totalSteps: totalSteps } 
+    });
+    document.getElementById('settings-walkthrough-modal')?.dispatchEvent(event);
+}
+
+/**
+ * Navigate to the appropriate tab based on the walkthrough step
+ * @param {number} stepNumber - The current step number
+ */
+function handleTabNavigation(stepNumber) {
+    // Map steps to tabs that need to be activated
+    const stepToTab = {
+        1: 'general-tab',    // App title and logo (General tab)
+        2: 'gpt-tab',        // GPT settings
+        3: 'gpt-tab',        // GPT model selection
+        4: 'embeddings-tab', // Workspace and groups settings
+        5: 'embeddings-tab', // Embedding settings
+        6: 'ai-search-tab',  // AI Search settings
+        7: 'document-intelligence-tab', // Document Intelligence settings
+        8: 'video-tab',      // Video support
+        9: 'audio-tab',      // Audio support
+        10: 'safety-tab',    // Content safety
+        11: 'feedback-tab',  // User feedback and archiving
+        12: 'image-gen-tab'  // Image generation
+    };
+    
+    // Activate the appropriate tab
+    const tabId = stepToTab[stepNumber];
+    if (tabId) {
+        const tab = document.getElementById(tabId);
+        if (tab) {
+            tab.click();
+        }
+    }
+}
+
+/**
+ * Validate the current step and move to the next if validation passes
+ * @param {number} currentStep - The current step number
+ */
+function validateAndMoveToNextStep(currentStep) {
+    let isValid = true;
+    
+    // Validate based on the current step
+    switch (currentStep) {
+        case 2: // GPT settings
+            // Check if GPT endpoint is configured when required
+            if (!document.getElementById('enable_gpt_apim').checked) {
+                const endpoint = document.getElementById('azure_openai_gpt_endpoint').value;
+                const key = document.getElementById('azure_openai_gpt_key').value;
+                if (!endpoint || (!key && document.getElementById('azure_openai_gpt_authentication_type').value === 'key')) {
+                    isValid = false;
+                    alert('Please configure the GPT API endpoint and authentication details.');
+                }
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_gpt_subscription_key').value;
+                if (!apimEndpoint || !apimKey) {
+                    isValid = false;
+                    alert('Please configure the GPT APIM endpoint and subscription key.');
+                }
+            }
+            break;
+            
+        case 3: // GPT model selection
+            if (!gptSelected || gptSelected.length === 0) {
+                isValid = false;
+                alert('Please select at least one GPT model.');
+            }
+            break;
+            
+        case 5: // Embedding settings (if workspace or groups enabled)
+            const workspaceEnabled = document.getElementById('enable_user_workspace').checked;
+            const groupsEnabled = document.getElementById('enable_group_workspaces').checked;
+            
+            if (workspaceEnabled || groupsEnabled) {
+                if (!document.getElementById('enable_embedding_apim').checked) {
+                    const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
+                    const key = document.getElementById('azure_openai_embedding_key').value;
+                    if (!endpoint || (!key && document.getElementById('azure_openai_embedding_authentication_type').value === 'key')) {
+                        isValid = false;
+                        alert('Please configure the Embedding API endpoint and authentication details.');
+                    }
+                } else {
+                    const apimEndpoint = document.getElementById('azure_apim_embedding_endpoint').value;
+                    const apimKey = document.getElementById('azure_apim_embedding_subscription_key').value;
+                    if (!apimEndpoint || !apimKey) {
+                        isValid = false;
+                        alert('Please configure the Embedding APIM endpoint and subscription key.');
+                    }
+                }
+            }
+            break;
+            
+        // Add more validations for other steps as needed
+    }
+    
+    // If valid, proceed to the next step
+    if (isValid) {
+        navigateToWalkthroughStep(currentStep + 1);
+    }
+}
