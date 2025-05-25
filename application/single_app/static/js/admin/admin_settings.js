@@ -1345,13 +1345,29 @@ function isFirstTimeSetup() {
  */
 function setupSettingsWalkthrough() {
     // Check if this is a first-time setup
-    if (!isFirstTimeSetup()) {
-        return; // Not first time, don't show walkthrough
+    if (isFirstTimeSetup()) {
+        // Auto-show the walkthrough for first-time setup
+        showWalkthroughModal();
     }
     
-    // Show the walkthrough modal
+    // Setup the manual walkthrough button
+    const walkthroughBtn = document.getElementById('launch-walkthrough-btn');
+    if (walkthroughBtn) {
+        walkthroughBtn.addEventListener('click', showWalkthroughModal);
+    }
+}
+
+/**
+ * Shows the walkthrough modal and resets to the first step
+ */
+function showWalkthroughModal() {
     const walkthroughModal = new bootstrap.Modal(document.getElementById('settings-walkthrough-modal'));
     walkthroughModal.show();
+    
+    // Reset to first step when manually launched
+    setTimeout(() => {
+        navigateToWalkthroughStep(1);
+    }, 100);
 }
 
 /**
