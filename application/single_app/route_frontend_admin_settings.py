@@ -72,42 +72,51 @@ def register_route_frontend_admin_settings(app):
                  print(f"Error retrieving GPT deployments: {e}")
             # ... similar try/except for embedding and image models ...
 
-            # --- Check for updates using extract_latest_version_from_html ---
+            # Check for application updates
+            current_version = app.config['VERSION']
             update_available = False
             latest_version = None
-            download_url = None
+            download_url = "https://github.com/microsoft/simplechat/releases"
             
-            try:
-                # Get the current version from app config
-                current_version = app.config.get('VERSION', '0.0.0')
-                
-                # GitHub releases page URL for simplechat
-                github_url = "https://github.com/microsoft/simplechat/releases"
-                
-                # Fetch HTML content from GitHub releases page
-                response = requests.get(github_url, timeout=5)
-                if response.status_code == 200:
-                    # Extract latest version from HTML
-                    html_content = response.text
-                    latest_version = extract_latest_version_from_html(html_content)
-                    
-                    if latest_version:
-                        # Compare with current version
-                        comparison_result = compare_versions(latest_version, current_version)
+            # Only check for updates every 24 hours at most
+            last_check_time = settings.get('last_update_check_time')
+            check_needed = last_check_time is None or (
+                datetime.now(timezone.utc) - 
+                datetime.fromisoformat(last_check_time)
+            ).total_seconds() > 86400  # 24 hours in seconds
+            
+            if check_needed:
+                try:
+                    # Fetch latest release from GitHub
+                    response = requests.get(
+                        "https://github.com/microsoft/simplechat/releases", 
+                        timeout=3
+                    )
+                    if response.status_code == 200:
+                        # Extract the latest version
+                        latest_version = extract_latest_version_from_html(response.text)
                         
-                        if comparison_result == 1:  # latest_version > current_version
-                            update_available = True
-                            download_url = f"{github_url}/tag/v{latest_version}"
-                            print(f"Update available: Current version {current_version}, Latest version {latest_version}")
+                        # Store the results in settings for persistence
+                        new_settings = {
+                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
+                            'latest_version_available': latest_version
+                        }
+                        
+                        # Compare with current version
+                        if latest_version and compare_versions(latest_version, current_version) == 1:
+                            new_settings['update_available'] = True
                         else:
-                            print(f"No update needed: Current version {current_version}, Latest version {latest_version}")
-                else:
-                    print(f"Failed to fetch GitHub releases page: Status code {response.status_code}")
-            except Exception as e:
-                print(f"Error checking for updates: {e}")
-
-            # !!! REMOVE THIS LINE FROM GET HANDLER !!!
-            # update_settings(settings) # <--- Remove this
+                            new_settings['update_available'] = False
+                        
+                        # Update settings to persist these values
+                        update_settings(new_settings)
+                        settings.update(new_settings)
+                except Exception as e:
+                    print(f"Error checking for updates: {e}")
+            
+            # Get the persisted values for template rendering
+            update_available = settings.get('update_available', False)
+            latest_version = settings.get('latest_version_available')
 
             return render_template(
                 'admin_settings.html',
