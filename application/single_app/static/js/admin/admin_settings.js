@@ -1436,6 +1436,21 @@ function navigateToWalkthroughStep(stepNumber) {
     if (stepNumber < 1) stepNumber = 1;
     if (stepNumber > totalSteps) stepNumber = totalSteps;
     
+    // Check if we should skip this step (based on workspace and feature enablement)
+    const shouldSkipStep = shouldSkipWalkthroughStep(stepNumber);
+    if (shouldSkipStep && stepNumber < totalSteps && stepNumber > 1) {
+        // Recursively navigate to next applicable step
+        if (stepNumber > getCurrentWalkthroughStep()) {
+            // Moving forward - go to next applicable step
+            navigateToWalkthroughStep(findNextApplicableStep(stepNumber));
+            return;
+        } else {
+            // Moving backward - go to previous applicable step
+            navigateToWalkthroughStep(findPreviousApplicableStep(stepNumber));
+            return;
+        }
+    }
+    
     // Hide all steps
     steps.forEach(step => {
         step.style.display = 'none';
@@ -1447,11 +1462,15 @@ function navigateToWalkthroughStep(stepNumber) {
         stepElement.style.display = 'block';
     }
     
-    // Update the progress indicator
+    // Update the progress indicator - calculate visible steps
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    const stepPosition = availableSteps.indexOf(stepNumber) + 1;
+    const totalAvailableSteps = availableSteps.length;
+    
     const progressBar = document.getElementById('walkthrough-progress');
     if (progressBar) {
-        progressBar.style.width = `${(stepNumber / totalSteps) * 100}%`;
-        progressBar.setAttribute('aria-valuenow', stepNumber);
+        progressBar.style.width = `${(stepPosition / totalAvailableSteps) * 100}%`;
+        progressBar.setAttribute('aria-valuenow', stepPosition);
     }
     
     // Handle special tab navigation based on step
@@ -1477,6 +1496,100 @@ function navigateToWalkthroughStep(stepNumber) {
         detail: { step: stepNumber, totalSteps: totalSteps } 
     });
     document.getElementById('settings-walkthrough-container')?.dispatchEvent(event);
+}
+
+/**
+ * Get the current step displayed in the walkthrough
+ * @returns {number} Current step number or 1 if none found
+ */
+function getCurrentWalkthroughStep() {
+    const currentStepElem = document.querySelector('.walkthrough-step:not([style*=\'display: none\'])');
+    if (currentStepElem) {
+        return parseInt(currentStepElem.id?.split('-')[2]) || 1;
+    }
+    return 1;
+}
+
+/**
+ * Calculate which walkthrough steps should be available based on current settings
+ * @returns {number[]} Array of step numbers that should be available
+ */
+function calculateAvailableWalkthroughSteps() {
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || 
+                         document.getElementById('enable_video_file_support')?.checked;
+                         
+    const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || 
+                         document.getElementById('enable_audio_file_support')?.checked;
+    
+    const availableSteps = [1, 2, 3, 4]; // Base steps always available
+    
+    // Include workspace-dependent steps if workspaces enabled
+    if (workspacesEnabled) {
+        availableSteps.push(5, 6, 7); // Embedding, AI Search, Doc Intelligence
+        
+        if (videoEnabled) {
+            availableSteps.push(8); // Video support
+        }
+        
+        if (audioEnabled) {
+            availableSteps.push(9); // Audio support
+        }
+    }
+    
+    // Optional steps always available
+    availableSteps.push(10, 11, 12); // Safety, Feedback, Enhanced Citations
+    
+    return availableSteps.sort((a, b) => a - b); // Ensure steps are in order
+}
+
+/**
+ * Determine if we should skip a particular walkthrough step
+ * @param {number} stepNumber - The step to check
+ * @returns {boolean} True if the step should be skipped, false otherwise
+ */
+function shouldSkipWalkthroughStep(stepNumber) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    return !availableSteps.includes(stepNumber);
+}
+
+/**
+ * Find the next applicable step after a given step
+ * @param {number} currentStep - Current step number
+ * @returns {number} Next applicable step number or 12 (last step) if none found
+ */
+function findNextApplicableStep(currentStep) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    
+    // Find the first available step after the current one
+    for (let i = 0; i < availableSteps.length; i++) {
+        if (availableSteps[i] > currentStep) {
+            return availableSteps[i];
+        }
+    }
+    
+    return 12; // Default to last step if no next step found
+}
+
+/**
+ * Find the previous applicable step before a given step
+ * @param {number} currentStep - Current step number
+ * @returns {number} Previous applicable step number or 1 (first step) if none found
+ */
+function findPreviousApplicableStep(currentStep) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    
+    // Find the first available step before the current one (in reverse)
+    for (let i = availableSteps.length - 1; i >= 0; i--) {
+        if (availableSteps[i] < currentStep) {
+            return availableSteps[i];
+        }
+    }
+    
+    return 1; // Default to first step if no previous step found
 }
 
 /**
@@ -1708,6 +1821,15 @@ function updateStepCompletionStatus(stepNumber) {
             nextButton.classList.remove('btn-primary');
             nextButton.classList.add('btn-secondary');
             nextButton.disabled = true;
+/**
+ * Navigate to the previous step in the walkthrough
+ * Handles finding the previous applicable step
+ */
+function navigatePreviousStep() {
+    const currentStep = getCurrentWalkthroughStep();
+    const prevStep = findPreviousApplicableStep(currentStep);
+    navigateToWalkthroughStep(prevStep);
+}
         }
     }
     

@@ -381,7 +381,7 @@
 
                 <!-- Navigation buttons -->
                 <div class="mt-3 d-flex justify-content-between">
-                    <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn" onclick="navigateToWalkthroughStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]) - 1)">Previous</button>
+                    <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn" onclick="navigatePreviousStep()">Previous</button>
                     <div>
                         <button type="button" class="btn btn-primary" id="walkthrough-next-btn" onclick="validateAndMoveToNextStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]))">Next</button>
                         <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;" onclick="hideWalkthrough()">Finish Setup</button>
@@ -2172,7 +2172,12 @@
         
         if (userWorkspaceToggle && groupWorkspaceToggle) {
             [userWorkspaceToggle, groupWorkspaceToggle].forEach(toggle => {
-                toggle.addEventListener('change', updateWalkthroughRequirements);
+                toggle.addEventListener('change', function() {
+                    updateWalkthroughRequirements();
+                    // Recalculate available steps and refresh navigation
+                    const currentStep = getCurrentWalkthroughStep();
+                    navigateToWalkthroughStep(currentStep);
+                });
             });
         }
         
@@ -2183,6 +2188,17 @@
                 document.getElementById('walkthrough-video-settings').style.display = 
                     this.checked ? 'block' : 'none';
                 updateWalkthroughRequirements();
+                
+                // Also update the regular form toggle to stay in sync
+                const mainToggle = document.getElementById('enable_video_file_support');
+                if (mainToggle) {
+                    mainToggle.checked = this.checked;
+                    mainToggle.dispatchEvent(new Event('change'));
+                }
+                
+                // Recalculate available steps and refresh navigation
+                const currentStep = getCurrentWalkthroughStep();
+                navigateToWalkthroughStep(currentStep);
             });
         }
         
@@ -2193,6 +2209,17 @@
                 document.getElementById('walkthrough-audio-settings').style.display = 
                     this.checked ? 'block' : 'none';
                 updateWalkthroughRequirements();
+                
+                // Also update the regular form toggle to stay in sync
+                const mainToggle = document.getElementById('enable_audio_file_support');
+                if (mainToggle) {
+                    mainToggle.checked = this.checked;
+                    mainToggle.dispatchEvent(new Event('change'));
+                }
+                
+                // Recalculate available steps and refresh navigation
+                const currentStep = getCurrentWalkthroughStep();
+                navigateToWalkthroughStep(currentStep);
             });
         }
         
