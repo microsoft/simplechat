@@ -17,7 +17,7 @@ def register_route_backend_settings(app):
         fname = secure_filename(f'ai_search-index-{idx_type}.json')
         base_path = os.path.join(current_app.root_path, 'static', 'json')
         fpath = os.path.normpath(os.path.join(base_path, fname))
-        if not fpath.startswith(base_path):
+        if os.path.commonpath([base_path, fpath]) != base_path:
             raise Exception("Invalid file path")
         with open(fpath, 'r') as f:
             expected = json.load(f)
