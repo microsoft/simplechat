@@ -1341,33 +1341,74 @@ function isFirstTimeSetup() {
 }
 
 /**
- * Setup the walkthrough modal for first-time configuration
+ * Setup the walkthrough for first-time configuration
  */
 function setupSettingsWalkthrough() {
     // Check if this is a first-time setup
     if (isFirstTimeSetup()) {
         // Auto-show the walkthrough for first-time setup
-        showWalkthroughModal();
+        showWalkthrough();
     }
     
     // Setup the manual walkthrough button
     const walkthroughBtn = document.getElementById('launch-walkthrough-btn');
     if (walkthroughBtn) {
-        walkthroughBtn.addEventListener('click', showWalkthroughModal);
+        walkthroughBtn.addEventListener('click', showWalkthrough);
+    }
+    
+    // Setup the close button
+    const closeBtn = document.getElementById('close-walkthrough-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', hideWalkthrough);
     }
 }
 
 /**
- * Shows the walkthrough modal and resets to the first step
+ * Shows the walkthrough container and resets to the first step
  */
-function showWalkthroughModal() {
-    const walkthroughModal = new bootstrap.Modal(document.getElementById('settings-walkthrough-modal'));
-    walkthroughModal.show();
+function showWalkthrough() {
+    const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+    if (walkthroughContainer) {
+        walkthroughContainer.style.display = 'block';
+    }
     
-    // Reset to first step when manually launched
+    // Sync walkthrough toggles with actual form toggles
+    const syncToggles = [
+        { walkthrough: 'walkthrough-enable-video', form: 'enable_video_file_support' },
+        { walkthrough: 'walkthrough-enable-audio', form: 'enable_audio_file_support' },
+        { walkthrough: 'walkthrough-enable-safety', form: 'enable_content_safety' }
+    ];
+    
+    syncToggles.forEach(pair => {
+        const walkthroughToggle = document.getElementById(pair.walkthrough);
+        const formToggle = document.getElementById(pair.form);
+        if (walkthroughToggle && formToggle) {
+            walkthroughToggle.checked = formToggle.checked;
+            // Update related UI
+            if (pair.walkthrough === 'walkthrough-enable-video') {
+                document.getElementById('walkthrough-video-settings').style.display = 
+                    walkthroughToggle.checked ? 'block' : 'none';
+            } else if (pair.walkthrough === 'walkthrough-enable-audio') {
+                document.getElementById('walkthrough-audio-settings').style.display = 
+                    walkthroughToggle.checked ? 'block' : 'none';
+            }
+        }
+    });
+    
+    // Reset to first step when launched
     setTimeout(() => {
         navigateToWalkthroughStep(1);
     }, 100);
+}
+
+/**
+ * Hides the walkthrough container
+ */
+function hideWalkthrough() {
+    const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+    if (walkthroughContainer) {
+        walkthroughContainer.style.display = 'none';
+    }
 }
 
 /**
@@ -1420,7 +1461,7 @@ function navigateToWalkthroughStep(stepNumber) {
     const event = new CustomEvent('walkthroughStepChanged', { 
         detail: { step: stepNumber, totalSteps: totalSteps } 
     });
-    document.getElementById('settings-walkthrough-modal')?.dispatchEvent(event);
+    document.getElementById('settings-walkthrough-container')?.dispatchEvent(event);
 }
 
 /**

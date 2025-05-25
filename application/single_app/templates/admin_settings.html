@@ -76,6 +76,319 @@
             </button>
         </div>
 
+        <!-- Settings Walkthrough Inline Container -->
+        <div id="settings-walkthrough-container" class="card mb-4" style="display: none;">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Setup Walkthrough</h5>
+                <button type="button" class="btn-close btn-close-white" id="close-walkthrough-btn" aria-label="Close"></button>
+            </div>
+            <div class="card-body">
+                <!-- Progress bar -->
+                <div class="progress mb-4">
+                    <div id="walkthrough-progress" class="progress-bar" role="progressbar" style="width: 8%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="12"></div>
+                </div>
+
+                <!-- Step content area -->
+                <div id="walkthrough-step-content">
+                    <!-- Step 1: App Title and Logo -->
+                    <div id="walkthrough-step-1" class="walkthrough-step">
+                        <h4>1. Configure Application Basics</h4>
+                        <p class="text-muted">Let's set up your Simple Chat instance. Let's start with some basic configuration options.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Configure your application title and logo.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Application Title</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Custom Logo</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <p>Use the <strong>General</strong> tab to configure these settings.</p>
+                    </div>
+
+                    <!-- Step 2: Configure GPT Settings -->
+                    <div id="walkthrough-step-2" class="walkthrough-step" style="display: none;">
+                        <h4>2. Configure GPT API Settings</h4>
+                        <p class="text-muted">Configure the Azure OpenAI GPT API settings.</p>
+                        
+                        <div class="alert alert-danger">
+                            <strong>Required:</strong> GPT API configuration is required for Simple Chat to function.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>GPT Endpoint</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <p>Configure GPT API settings in the <strong>GPT</strong> tab.</p>
+                    </div>
+
+                    <!-- Step 3: Select GPT Models -->
+                    <div id="walkthrough-step-3" class="walkthrough-step" style="display: none;">
+                        <h4>3. Select GPT Models</h4>
+                        <p class="text-muted">Now that you've configured the GPT API settings, fetch and select the GPT models to use.</p>
+                        
+                        <div class="alert alert-danger">
+                            <strong>Required:</strong> Select at least one GPT model for users to use.
+                        </div>
+                        
+                        <p class="mb-4">
+                            <ol>
+                                <li>Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
+                                <li>Select one or more models from the list</li>
+                            </ol>
+                        </p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Workspaces -->
+                    <div id="walkthrough-step-4" class="walkthrough-step" style="display: none;">
+                        <h4>4. Configure Workspaces</h4>
+                        <p class="text-muted">Enable workspace features for your users.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable personal and group workspaces for document management.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Your Workspace (Personal Workspace)</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>My Groups (Group Workspaces)</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <p class="alert alert-warning">
+                            <strong>Important:</strong> If you enable either workspace feature, you will need to configure additional services in the next steps.
+                        </p>
+                    </div>
+
+                    <!-- Step 5: Embedding Settings -->
+                    <div id="walkthrough-step-5" class="walkthrough-step" style="display: none;">
+                        <h4>5. Configure Embedding API Settings</h4>
+                        <p class="text-muted">Configure the embedding service for document processing.</p>
+                        
+                        <div id="embedding-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Embedding Endpoint</span>
+                                <span id="embedding-required-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="embedding-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Fetch Models</span>
+                                <span id="fetch-models-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
+                        </div>
+                    </div>
+
+                    <!-- Step 6: AI Search Settings -->
+                    <div id="walkthrough-step-6" class="walkthrough-step" style="display: none;">
+                        <h4>6. Configure Azure AI Search</h4>
+                        <p class="text-muted">Configure Azure AI Search for document indexing.</p>
+                        
+                        <div id="ai-search-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Azure AI Search is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>AI Search Endpoint</span>
+                                <span id="search-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="search-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 7: Document Intelligence -->
+                    <div id="walkthrough-step-7" class="walkthrough-step" style="display: none;">
+                        <h4>7. Configure Document Intelligence</h4>
+                        <p class="text-muted">Configure Azure Document Intelligence for processing documents.</p>
+                        
+                        <div id="doc-intelligence-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Document Intelligence is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Document Intelligence Endpoint</span>
+                                <span id="doc-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="doc-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 8: Video File Support -->
+                    <div id="walkthrough-step-8" class="walkthrough-step" style="display: none;">
+                        <h4>8. Enable Video File Support</h4>
+                        <p class="text-muted">Configure support for video file processing.</p>
+                        
+                        <div id="video-support-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <p class="mb-2">Enable video file support and configure the necessary endpoints.</p>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="walkthrough-enable-video" 
+                                   onchange="document.getElementById('enable_video_file_support').checked = this.checked;
+                                            document.getElementById('enable_video_file_support').dispatchEvent(new Event('change'));">
+                            <label class="form-check-label" for="walkthrough-enable-video">
+                                Enable Video File Support
+                            </label>
+                        </div>
+                        
+                        <div id="walkthrough-video-settings" style="display: none;">
+                            <ul class="list-group mb-4">
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span>Video Endpoint</span>
+                                    <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Step 9: Audio File Support -->
+                    <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
+                        <h4>9. Enable Audio File Support</h4>
+                        <p class="text-muted">Configure support for audio file processing.</p>
+                        
+                        <div id="audio-support-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <p class="mb-2">Enable audio file support and configure the necessary endpoints.</p>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="walkthrough-enable-audio" 
+                                   onchange="document.getElementById('enable_audio_file_support').checked = this.checked;
+                                            document.getElementById('enable_audio_file_support').dispatchEvent(new Event('change'));">
+                            <label class="form-check-label" for="walkthrough-enable-audio">
+                                Enable Audio File Support
+                            </label>
+                        </div>
+                        
+                        <div id="walkthrough-audio-settings" style="display: none;">
+                            <ul class="list-group mb-4">
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span>Speech Endpoint</span>
+                                    <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Step 10: Content Safety -->
+                    <div id="walkthrough-step-10" class="walkthrough-step" style="display: none;">
+                        <h4>10. Content Safety Settings</h4>
+                        <p class="text-muted">Configure content safety features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable content safety features to filter inappropriate content.
+                        </div>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="walkthrough-enable-safety"
+                                   onchange="document.getElementById('enable_content_safety').checked = this.checked;
+                                            document.getElementById('enable_content_safety').dispatchEvent(new Event('change'));">
+                            <label class="form-check-label" for="walkthrough-enable-safety">
+                                Enable Content Safety
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Step 11: User Feedback and Archiving -->
+                    <div id="walkthrough-step-11" class="walkthrough-step" style="display: none;">
+                        <h4>11. User Feedback and Conversation Archiving</h4>
+                        <p class="text-muted">Configure user feedback and conversation archiving features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable user feedback and conversation archiving.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>User Feedback</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Conversation Archiving</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 12: Enhanced Citations and Image Generation -->
+                    <div id="walkthrough-step-12" class="walkthrough-step" style="display: none;">
+                        <h4>12. Enhanced Citations and Image Generation</h4>
+                        <p class="text-muted">Configure additional features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable enhanced citations and image generation features.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Enhanced Citations</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Image Generation</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-success">
+                            <strong>Congratulations!</strong> You've completed the initial setup walkthrough. You can now continue to configure your Simple Chat instance in detail.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation buttons -->
+                <div class="mt-3 d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn" onclick="navigateToWalkthroughStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]) - 1)">Previous</button>
+                    <div>
+                        <button type="button" class="btn btn-primary" id="walkthrough-next-btn" onclick="validateAndMoveToNextStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]))">Next</button>
+                        <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;" onclick="hideWalkthrough()">Finish Setup</button>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
             
@@ -1850,317 +2163,6 @@
 </script>
 <script src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
 
-<!-- Settings Walkthrough Modal -->
-<div class="modal fade" id="settings-walkthrough-modal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="settings-walkthrough-title" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title" id="settings-walkthrough-title">Welcome to Simple Chat Setup</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <!-- Progress bar -->
-                <div class="progress mb-4">
-                    <div id="walkthrough-progress" class="progress-bar" role="progressbar" style="width: 8%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="12"></div>
-                </div>
-
-                <!-- Step 1: App Title and Logo -->
-                <div id="walkthrough-step-1" class="walkthrough-step">
-                    <h4>1. Configure Application Basics</h4>
-                    <p class="text-muted">Let's set up your Simple Chat instance. Let's start with some basic configuration options.</p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Optional:</strong> Configure your application title and logo.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Application Title</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Custom Logo</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                    </ul>
-                    
-                    <p>Use the <strong>General</strong> tab to configure these settings.</p>
-                </div>
-
-                <!-- Step 2: Configure GPT Settings -->
-                <div id="walkthrough-step-2" class="walkthrough-step" style="display: none;">
-                    <h4>2. Configure GPT API Settings</h4>
-                    <p class="text-muted">Configure the Azure OpenAI GPT API settings.</p>
-                    
-                    <div class="alert alert-danger">
-                        <strong>Required:</strong> GPT API configuration is required for Simple Chat to function.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>GPT Endpoint</span>
-                            <span class="badge bg-danger">Required</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Authentication</span>
-                            <span class="badge bg-danger">Required</span>
-                        </li>
-                    </ul>
-                    
-                    <p>Configure GPT API settings in the <strong>GPT</strong> tab.</p>
-                </div>
-
-                <!-- Step 3: Select GPT Models -->
-                <div id="walkthrough-step-3" class="walkthrough-step" style="display: none;">
-                    <h4>3. Select GPT Models</h4>
-                    <p class="text-muted">Now that you've configured the GPT API settings, fetch and select the GPT models to use.</p>
-                    
-                    <div class="alert alert-danger">
-                        <strong>Required:</strong> Select at least one GPT model for users to use.
-                    </div>
-                    
-                    <p class="mb-4">
-                        <ol>
-                            <li>Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
-                            <li>Select one or more models from the list</li>
-                        </ol>
-                    </p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
-                    </div>
-                </div>
-
-                <!-- Step 4: Workspaces -->
-                <div id="walkthrough-step-4" class="walkthrough-step" style="display: none;">
-                    <h4>4. Configure Workspaces</h4>
-                    <p class="text-muted">Enable workspace features for your users.</p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Optional:</strong> Enable personal and group workspaces for document management.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Your Workspace (Personal Workspace)</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>My Groups (Group Workspaces)</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                    </ul>
-                    
-                    <p class="alert alert-warning">
-                        <strong>Important:</strong> If you enable either workspace feature, you will need to configure additional services in the next steps.
-                    </p>
-                </div>
-
-                <!-- Step 5: Embedding Settings -->
-                <div id="walkthrough-step-5" class="walkthrough-step" style="display: none;">
-                    <h4>5. Configure Embedding API Settings</h4>
-                    <p class="text-muted">Configure the embedding service for document processing.</p>
-                    
-                    <div id="embedding-requirement-alert" class="alert alert-danger">
-                        <strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Embedding Endpoint</span>
-                            <span id="embedding-required-badge" class="badge bg-danger">Required</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Authentication</span>
-                            <span id="embedding-auth-badge" class="badge bg-danger">Required</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Fetch Models</span>
-                            <span id="fetch-models-badge" class="badge bg-danger">Required</span>
-                        </li>
-                    </ul>
-                    
-                    <div class="alert alert-info">
-                        <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
-                    </div>
-                </div>
-
-                <!-- Step 6: AI Search Settings -->
-                <div id="walkthrough-step-6" class="walkthrough-step" style="display: none;">
-                    <h4>6. Configure Azure AI Search</h4>
-                    <p class="text-muted">Configure Azure AI Search for document indexing.</p>
-                    
-                    <div id="ai-search-requirement-alert" class="alert alert-danger">
-                        <strong>Required:</strong> Azure AI Search is required if workspaces are enabled.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>AI Search Endpoint</span>
-                            <span id="search-endpoint-badge" class="badge bg-danger">Required</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Authentication</span>
-                            <span id="search-auth-badge" class="badge bg-danger">Required</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <!-- Step 7: Document Intelligence -->
-                <div id="walkthrough-step-7" class="walkthrough-step" style="display: none;">
-                    <h4>7. Configure Document Intelligence</h4>
-                    <p class="text-muted">Configure Azure Document Intelligence for processing documents.</p>
-                    
-                    <div id="doc-intelligence-requirement-alert" class="alert alert-danger">
-                        <strong>Required:</strong> Document Intelligence is required if workspaces are enabled.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Document Intelligence Endpoint</span>
-                            <span id="doc-endpoint-badge" class="badge bg-danger">Required</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Authentication</span>
-                            <span id="doc-auth-badge" class="badge bg-danger">Required</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <!-- Step 8: Video File Support -->
-                <div id="walkthrough-step-8" class="walkthrough-step" style="display: none;">
-                    <h4>8. Enable Video File Support</h4>
-                    <p class="text-muted">Configure support for video file processing.</p>
-                    
-                    <div id="video-support-requirement-alert" class="alert alert-danger">
-                        <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
-                    </div>
-                    
-                    <p class="mb-2">Enable video file support and configure the necessary endpoints.</p>
-                    
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="walkthrough-enable-video" 
-                               onchange="document.getElementById('enable_video_file_support').checked = this.checked;
-                                        document.getElementById('enable_video_file_support').dispatchEvent(new Event('change'));">
-                        <label class="form-check-label" for="walkthrough-enable-video">
-                            Enable Video File Support
-                        </label>
-                    </div>
-                    
-                    <div id="walkthrough-video-settings" style="display: none;">
-                        <ul class="list-group mb-4">
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Video Endpoint</span>
-                                <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-
-                <!-- Step 9: Audio File Support -->
-                <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
-                    <h4>9. Enable Audio File Support</h4>
-                    <p class="text-muted">Configure support for audio file processing.</p>
-                    
-                    <div id="audio-support-requirement-alert" class="alert alert-danger">
-                        <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
-                    </div>
-                    
-                    <p class="mb-2">Enable audio file support and configure the necessary endpoints.</p>
-                    
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="walkthrough-enable-audio" 
-                               onchange="document.getElementById('enable_audio_file_support').checked = this.checked;
-                                        document.getElementById('enable_audio_file_support').dispatchEvent(new Event('change'));">
-                        <label class="form-check-label" for="walkthrough-enable-audio">
-                            Enable Audio File Support
-                        </label>
-                    </div>
-                    
-                    <div id="walkthrough-audio-settings" style="display: none;">
-                        <ul class="list-group mb-4">
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Speech Endpoint</span>
-                                <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-
-                <!-- Step 10: Content Safety -->
-                <div id="walkthrough-step-10" class="walkthrough-step" style="display: none;">
-                    <h4>10. Content Safety Settings</h4>
-                    <p class="text-muted">Configure content safety features.</p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Optional:</strong> Enable content safety features to filter inappropriate content.
-                    </div>
-                    
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="walkthrough-enable-safety"
-                               onchange="document.getElementById('enable_content_safety').checked = this.checked;
-                                        document.getElementById('enable_content_safety').dispatchEvent(new Event('change'));">
-                        <label class="form-check-label" for="walkthrough-enable-safety">
-                            Enable Content Safety
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Step 11: User Feedback and Archiving -->
-                <div id="walkthrough-step-11" class="walkthrough-step" style="display: none;">
-                    <h4>11. User Feedback and Conversation Archiving</h4>
-                    <p class="text-muted">Configure user feedback and conversation archiving features.</p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Optional:</strong> Enable user feedback and conversation archiving.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>User Feedback</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Conversation Archiving</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <!-- Step 12: Enhanced Citations and Image Generation -->
-                <div id="walkthrough-step-12" class="walkthrough-step" style="display: none;">
-                    <h4>12. Enhanced Citations and Image Generation</h4>
-                    <p class="text-muted">Configure additional features.</p>
-                    
-                    <div class="alert alert-info">
-                        <strong>Optional:</strong> Enable enhanced citations and image generation features.
-                    </div>
-                    
-                    <ul class="list-group mb-4">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Enhanced Citations</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>Image Generation</span>
-                            <span class="badge bg-secondary">Optional</span>
-                        </li>
-                    </ul>
-                    
-                    <div class="alert alert-success">
-                        <strong>Congratulations!</strong> You've completed the initial setup walkthrough. You can now continue to configure your Simple Chat instance in detail.
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn" onclick="navigateToWalkthroughStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]) - 1)">Previous</button>
-                <button type="button" class="btn btn-primary" id="walkthrough-next-btn" onclick="validateAndMoveToNextStep(parseInt(document.querySelector('.walkthrough-step:not([style*=\'display: none\'])')?.id?.split('-')[2]))">Next</button>
-                <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;" data-bs-dismiss="modal">Finish Setup</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- Script to update the walkthrough steps based on form changes -->
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -2194,40 +2196,17 @@
             });
         }
         
-        // Handle walkthrough modal events
-        const walkthroughModal = document.getElementById('settings-walkthrough-modal');
-        if (walkthroughModal) {
-            walkthroughModal.addEventListener('shown.bs.modal', function() {
-                // Sync walkthrough toggles with actual form toggles
-                const syncToggles = [
-                    { walkthrough: 'walkthrough-enable-video', form: 'enable_video_file_support' },
-                    { walkthrough: 'walkthrough-enable-audio', form: 'enable_audio_file_support' },
-                    { walkthrough: 'walkthrough-enable-safety', form: 'enable_content_safety' }
-                ];
-                
-                syncToggles.forEach(pair => {
-                    const walkthroughToggle = document.getElementById(pair.walkthrough);
-                    const formToggle = document.getElementById(pair.form);
-                    if (walkthroughToggle && formToggle) {
-                        walkthroughToggle.checked = formToggle.checked;
-                        // Update related UI
-                        if (pair.walkthrough === 'walkthrough-enable-video') {
-                            document.getElementById('walkthrough-video-settings').style.display = 
-                                walkthroughToggle.checked ? 'block' : 'none';
-                        } else if (pair.walkthrough === 'walkthrough-enable-audio') {
-                            document.getElementById('walkthrough-audio-settings').style.display = 
-                                walkthroughToggle.checked ? 'block' : 'none';
-                        }
-                    }
-                });
-                
-                // Initialize the first step
-                navigateToWalkthroughStep(1);
-                updateWalkthroughRequirements();
-            });
-            
-            // Update buttons when steps change
-            walkthroughModal.addEventListener('walkthroughStepChanged', function(e) {
+        // Handle walkthrough container events
+        const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+        if (walkthroughContainer) {
+            // Close button functionality
+            const closeBtn = document.getElementById('close-walkthrough-btn');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', hideWalkthrough);
+            }
+
+            // Custom event listener for step changes
+            walkthroughContainer.addEventListener('walkthroughStepChanged', function(e) {
                 const currentStep = e.detail?.step || 1;
                 const totalSteps = document.querySelectorAll('.walkthrough-step').length;
                 
@@ -2289,6 +2268,14 @@
             badge.className = isRequired ? 'badge bg-danger' : 'badge bg-secondary';
             badge.textContent = isRequired ? 'Required' : 'Optional';
         });
+    }
+
+    // Function to hide the walkthrough
+    function hideWalkthrough() {
+        const container = document.getElementById('settings-walkthrough-container');
+        if (container) {
+            container.style.display = 'none';
+        }
     }
 </script>
 {% endblock %}
