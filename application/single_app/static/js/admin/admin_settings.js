@@ -2159,8 +2159,7 @@ function findNextApplicableStep(currentStep) {
                 return nextStep;
                 
             case 8: // Video support
-                const videoEnabled = document.getElementById('walkthrough-enable-video').checked || 
-                                    document.getElementById('enable_video_file_support').checked;
+                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
                 if (!workspacesEnabled || !videoEnabled) {
                     // Skip this step if workspaces not enabled or video not enabled
                     nextStep++;
@@ -2169,8 +2168,7 @@ function findNextApplicableStep(currentStep) {
                 return nextStep;
                 
             case 9: // Audio support
-                const audioEnabled = document.getElementById('walkthrough-enable-audio').checked || 
-                                    document.getElementById('enable_audio_file_support').checked;
+                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
                 if (!workspacesEnabled || !audioEnabled) {
                     // Skip this step if workspaces not enabled or audio not enabled
                     nextStep++;
