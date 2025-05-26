@@ -1536,7 +1536,7 @@ function setupWalkthroughButtons() {
  */
 function syncWalkthroughToggles() {
     const syncToggles = [
-        { walkthrough: 'walkthrough-enable-safety', form: 'enable_content_safety' }
+        // Content safety toggle removed from walkthrough
     ];
     
     syncToggles.forEach(pair => {
