@@ -51,10 +51,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
-    // --- Setup Settings Walkthrough ---
-    setupSettingsWalkthrough(); 
+    
     // --- Setup form change tracking ---
     setupFormChangeTracking();
+    
+    // --- Setup Settings Walkthrough (after all other components are ready) ---
+    setTimeout(() => {
+        setupSettingsWalkthrough();
+    }, 100);
     
     // --- Add form submission validation ---
     if (adminForm) {
@@ -64,6 +68,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (classificationJsonInput) {
                     const jsonString = updateClassificationJsonInput();
                     console.log("Classification categories before submission:", jsonString);
+                    
+                    // Verify JSON is valid by parsing it
+                    try {
+                        JSON.parse(jsonString);
+                    } catch (jsonErr) {
+                        console.error("Invalid JSON for classification categories:", jsonErr);
+                        // Set to empty array if invalid
+                        classificationJsonInput.value = "[]";
+                    }
                 }
             } catch (err) {
                 console.error("Error in form submission validation:", err);
@@ -631,15 +644,26 @@ function handleClassificationColorChange(event) {
 function updateClassificationJsonInput() {
     if (classificationJsonInput) {
         try {
-             // Ensure we only stringify valid categories (though save/delete should keep the array clean)
-             const validCategories = classificationCategories.filter(cat => cat && typeof cat.label === 'string' && typeof cat.color === 'string');
-             const jsonString = JSON.stringify(validCategories);
-             classificationJsonInput.value = jsonString;
-             return jsonString;
+            // First make sure classificationCategories is an array
+            if (!Array.isArray(classificationCategories)) {
+                classificationCategories = [];
+            }
+            
+            // Ensure we only stringify valid categories with required properties
+            const validCategories = classificationCategories.filter(cat => 
+                cat && 
+                typeof cat === 'object' &&
+                typeof cat.label === 'string' && 
+                typeof cat.color === 'string'
+            );
+            
+            const jsonString = JSON.stringify(validCategories);
+            classificationJsonInput.value = jsonString;
+            return jsonString;
         } catch (e) {
-             console.error("Error stringifying classification categories:", e);
-             classificationJsonInput.value = "[]"; // Set to empty array on error
-             return "[]";
+            console.error("Error stringifying classification categories:", e);
+            classificationJsonInput.value = "[]"; // Set to empty array on error
+            return "[]";
         }
     }
     return "[]";
@@ -1402,6 +1426,11 @@ function isFirstTimeSetup() {
  * Setup the walkthrough for first-time configuration
  */
 function setupSettingsWalkthrough() {
+    console.log("Setting up walkthrough...");
+    
+    // Setup the walkthrough buttons first thing
+    setupWalkthroughButtons();
+    
     // Check if this is a first-time setup
     if (isFirstTimeSetup()) {
         // Auto-show the walkthrough for first-time setup
@@ -1413,8 +1442,16 @@ function setupSettingsWalkthrough() {
     // Setup the manual walkthrough button
     const walkthroughBtn = document.getElementById('launch-walkthrough-btn');
     if (walkthroughBtn) {
-        walkthroughBtn.addEventListener('click', function(e) {
+        // Remove any existing listeners to prevent duplicates
+        const newWalkthroughBtn = walkthroughBtn.cloneNode(true);
+        if (walkthroughBtn.parentNode) {
+            walkthroughBtn.parentNode.replaceChild(newWalkthroughBtn, walkthroughBtn);
+        }
+        
+        // Add new event listener
+        newWalkthroughBtn.addEventListener('click', function(e) {
             e.preventDefault();
+            e.stopPropagation();
             console.log("Walkthrough button clicked");
             showWalkthrough();
         });
@@ -1425,7 +1462,11 @@ function setupSettingsWalkthrough() {
     // Setup the close button
     const closeBtn = document.getElementById('close-walkthrough-btn');
     if (closeBtn) {
-        closeBtn.addEventListener('click', hideWalkthrough);
+        const newCloseBtn = closeBtn.cloneNode(true);
+        if (closeBtn.parentNode) {
+            closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+        }
+        newCloseBtn.addEventListener('click', hideWalkthrough);
     }
 }
 
@@ -1441,6 +1482,10 @@ function showWalkthrough() {
             return;
         }
         
+        // Make sure walkthrough button events are working
+        setupWalkthroughButtons();
+        
+        // Show the container
         walkthroughContainer.style.display = 'block';
         
         // Sync walkthrough toggles with actual form toggles
@@ -1459,6 +1504,30 @@ function showWalkthrough() {
         setupWalkthroughFieldListeners();
     } catch (err) {
         console.error("Error showing walkthrough:", err);
+    }
+}
+
+/**
+ * Make sure walkthrough navigation buttons are properly set up
+ */
+function setupWalkthroughButtons() {
+    const nextButton = document.getElementById('walkthrough-next-btn');
+    if (nextButton) {
+        nextButton.onclick = function() {
+            const currentStep = getCurrentWalkthroughStep();
+            console.log("Next button clicked, current step:", currentStep);
+            validateAndMoveToNextStep(currentStep);
+        };
+    }
+    
+    const prevButton = document.getElementById('walkthrough-prev-btn');
+    if (prevButton) {
+        prevButton.onclick = navigatePreviousStep;
+    }
+    
+    const finishButton = document.getElementById('walkthrough-finish-btn');
+    if (finishButton) {
+        finishButton.onclick = finishSetupAndSave;
     }
 }
 
@@ -2262,7 +2331,9 @@ function findNextApplicableStep(currentStep) {
     
     // If we've gone past all steps, return -1
     return -1;
-=======
+}
+
+/**
  * Sets up event listeners to track form changes
  */
 function setupFormChangeTracking() {
