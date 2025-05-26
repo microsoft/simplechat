@@ -14,9 +14,12 @@ def register_route_backend_settings(app):
         idx_type = data.get('indexType')  # 'user' or 'group'
 
         # load your golden JSON
-        fname = f'ai_search-index-{idx_type}.json'
-        fpath = os.path.join(current_app.root_path, 'static', 'json', fname)
-        with open(fpath,'r') as f:
+        fname = secure_filename(f'ai_search-index-{idx_type}.json')
+        base_path = os.path.join(current_app.root_path, 'static', 'json')
+        fpath = os.path.normpath(os.path.join(base_path, fname))
+        if os.path.commonpath([base_path, fpath]) != base_path:
+            raise Exception("Invalid file path")
+        with open(fpath, 'r') as f:
             expected = json.load(f)
 
         client  = get_index_client()
@@ -38,8 +41,11 @@ def register_route_backend_settings(app):
             idx_type = data.get('indexType')  # 'user' or 'group'
 
             # load your “golden” JSON schema
-            json_name = f'ai_search-index-{idx_type}.json'
-            json_path = os.path.join(current_app.root_path, 'static', 'json', json_name)
+            json_name = secure_filename(f'ai_search-index-{idx_type}.json')
+            base_path = os.path.join(current_app.root_path, 'static', 'json')
+            json_path = os.path.normpath(os.path.join(base_path, json_name))
+            if not json_path.startswith(base_path):
+                raise Exception("Invalid file path")
             with open(json_path, 'r') as f:
                 full_def = json.load(f)
 
