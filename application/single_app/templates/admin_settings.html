@@ -2150,7 +2150,13 @@
     window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');
 
     // *** NEW: Classification Data ***
-    window.classificationCategories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    try {
+        const categoriesStr = '{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]';
+        window.classificationCategories = JSON.parse(categoriesStr);
+    } catch (e) {
+        console.error("Error parsing classification categories:", e);
+        window.classificationCategories = [];
+    }
     // Ensure it's always an array
     if (!Array.isArray(window.classificationCategories)) {
         window.classificationCategories = [];

@@ -55,6 +55,22 @@ document.addEventListener('DOMContentLoaded', () => {
     setupSettingsWalkthrough(); 
     // --- Setup form change tracking ---
     setupFormChangeTracking();
+    
+    // --- Add form submission validation ---
+    if (adminForm) {
+        adminForm.addEventListener('submit', function(e) {
+            try {
+                // Ensure classification categories is valid JSON before submission
+                if (classificationJsonInput) {
+                    const jsonString = updateClassificationJsonInput();
+                    console.log("Classification categories before submission:", jsonString);
+                }
+            } catch (err) {
+                console.error("Error in form submission validation:", err);
+                // Allow form to submit even if there's an error to avoid blocking users
+            }
+        });
+    }
 });
 
 function activateTabFromHash() {
@@ -617,12 +633,16 @@ function updateClassificationJsonInput() {
         try {
              // Ensure we only stringify valid categories (though save/delete should keep the array clean)
              const validCategories = classificationCategories.filter(cat => cat && typeof cat.label === 'string' && typeof cat.color === 'string');
-             classificationJsonInput.value = JSON.stringify(validCategories);
+             const jsonString = JSON.stringify(validCategories);
+             classificationJsonInput.value = jsonString;
+             return jsonString;
         } catch (e) {
              console.error("Error stringifying classification categories:", e);
              classificationJsonInput.value = "[]"; // Set to empty array on error
+             return "[]";
         }
     }
+    return "[]";
 }
 
 function setupToggles() {
@@ -1385,13 +1405,21 @@ function setupSettingsWalkthrough() {
     // Check if this is a first-time setup
     if (isFirstTimeSetup()) {
         // Auto-show the walkthrough for first-time setup
-        showWalkthrough();
+        setTimeout(() => {
+            showWalkthrough();
+        }, 500); // Small delay to ensure DOM is ready
     }
     
     // Setup the manual walkthrough button
     const walkthroughBtn = document.getElementById('launch-walkthrough-btn');
     if (walkthroughBtn) {
-        walkthroughBtn.addEventListener('click', showWalkthrough);
+        walkthroughBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            console.log("Walkthrough button clicked");
+            showWalkthrough();
+        });
+    } else {
+        console.error("Walkthrough button not found in the DOM");
     }
     
     // Setup the close button
@@ -1405,21 +1433,33 @@ function setupSettingsWalkthrough() {
  * Shows the walkthrough container and resets to the first step
  */
 function showWalkthrough() {
-    const walkthroughContainer = document.getElementById('settings-walkthrough-container');
-    if (walkthroughContainer) {
+    try {
+        console.log("Showing walkthrough");
+        const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+        if (!walkthroughContainer) {
+            console.error("Walkthrough container not found!");
+            return;
+        }
+        
         walkthroughContainer.style.display = 'block';
+        
+        // Sync walkthrough toggles with actual form toggles
+        syncWalkthroughToggles();
+        
+        // Reset to first step when launched
+        setTimeout(() => {
+            try {
+                navigateToWalkthroughStep(1);
+            } catch (err) {
+                console.error("Error navigating to first walkthrough step:", err);
+            }
+        }, 100);
+        
+        // Setup field change listeners for automatic validation
+        setupWalkthroughFieldListeners();
+    } catch (err) {
+        console.error("Error showing walkthrough:", err);
     }
-    
-    // Sync walkthrough toggles with actual form toggles
-    syncWalkthroughToggles();
-    
-    // Reset to first step when launched
-    setTimeout(() => {
-        navigateToWalkthroughStep(1);
-    }, 100);
-    
-    // Setup field change listeners for automatic validation
-    setupWalkthroughFieldListeners();
 }
 
 /**
