@@ -383,10 +383,32 @@ def initialize_clients(settings):
 
         try:
             if enable_enhanced_citations:
-                CLIENTS["storage_account_office_docs_client"] = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
+                blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
+                CLIENTS["storage_account_office_docs_client"] = blob_service_client
+                
+                # Create containers if they don't exist
+                # This addresses the issue where the application assumes containers exist
+                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                    try:
+                        container_client = blob_service_client.get_container_client(container_name)
+                        if not container_client.exists():
+                            print(f"Container '{container_name}' does not exist. Creating...")
+                            container_client.create_container()
+                            print(f"Container '{container_name}' created successfully.")
+                        else:
+                            print(f"Container '{container_name}' already exists.")
+                    except Exception as container_error:
+                        print(f"Error creating container {container_name}: {str(container_error)}")
+                
+                # Handle video and audio support when enabled
                 # if enable_video_file_support:
-                #     CLIENTS["storage_account_video_files_client"] = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
+                #     video_client = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
+                #     CLIENTS["storage_account_video_files_client"] = video_client
+                #     # Create video containers if needed
+                #
                 # if enable_audio_file_support:
-                #     CLIENTS["storage_account_audio_files_client"] = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
+                #     audio_client = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
+                #     CLIENTS["storage_account_audio_files_client"] = audio_client
+                #     # Create audio containers if needed
         except Exception as e:
             print(f"Failed to initialize Blob Storage clients: {e}")

@@ -54,7 +54,17 @@
     <button id="fix-group-index-btn" class="btn btn-sm btn-primary ms-2">Add missing group-fields</button>
 </div>
   
-
+<!-- Flash messages display section -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 
 <div class="container">
     <h2>Admin Settings</h2>
@@ -112,6 +122,7 @@
                         
                         <p>Use the <strong>General</strong> tab to configure these settings.</p>
                     </div>
+        <button type="submit" class="btn btn-secondary mt-3 mb-3" disabled>Save Settings</button>
 
                     <!-- Step 2: Configure GPT Settings -->
                     <div id="walkthrough-step-2" class="walkthrough-step" style="display: none;">
@@ -2066,7 +2077,7 @@
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde@1.11.2/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW
 -->
- <script src="/static/js/simplemde.min.js"></script>
+ <script src="/static/js/simplemde/simplemde.min.js"></script>
  
 <script>
     // Existing SimpleMDE script...
