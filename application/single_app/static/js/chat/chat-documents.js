@@ -1,6 +1,7 @@
 // chat-documents.js
 
 import { showToast } from "./chat-toast.js"; // Assuming you have this
+import { toBoolean } from "./chat-utils.js"; // Import the toBoolean helper
 
 export const docScopeSelect = document.getElementById("doc-scope-select");
 const searchDocumentsBtn = document.getElementById("search-documents-btn");
@@ -163,7 +164,9 @@ export function loadGroupDocs() {
 
 export function loadAllDocs() {
   const hasDocControls = searchDocumentsBtn || docScopeSelect || docSelectEl;
-  const classificationEnabled = window.enable_document_classification === true || window.enable_document_classification === "true";
+  
+  // Use the toBoolean helper for consistent checking
+  const classificationEnabled = toBoolean(window.enable_document_classification);
 
   if (!hasDocControls || !classificationEnabled) { // Only load if feature enabled
     // Hide classification container entirely if feature disabled
@@ -226,7 +229,8 @@ export function handleDocumentSelectChange() {
       return;
   }
    // Ensure classification container is visible (might be hidden if feature was disabled)
-   const classificationEnabled = window.enable_document_classification === true || window.enable_document_classification === "true";
+   const classificationEnabled = toBoolean(window.enable_document_classification);
+   
    if (classificationEnabled) {
         classificationContainer.style.display = '';
    } else {
