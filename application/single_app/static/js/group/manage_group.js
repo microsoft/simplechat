@@ -1,6 +1,8 @@
 // manage_group.js
 
 let currentUserRole = null;
+let originalGroupName = '';
+let originalGroupDescription = '';
 
 $(document).ready(function () {
   loadGroupInfo(function () {
@@ -14,6 +16,11 @@ $(document).ready(function () {
   $("#editGroupForm").on("submit", function (e) {
     e.preventDefault();
     updateGroupInfo();
+  });
+
+  // Track changes in group name and description
+  $("#editGroupName, #editGroupDescription").on("input", function() {
+    checkFormChanges();
   });
 
   $("#addMemberBtn").on("click", function () {
@@ -171,6 +178,11 @@ function loadGroupInfo(doneCallback) {
       $("#editGroupContainer").show();
       $("#editGroupName").val(group.name);
       $("#editGroupDescription").val(group.description);
+      // Store original values for change detection
+      originalGroupName = group.name;
+      originalGroupDescription = group.description || "";
+      // Reset button state
+      updateSaveButtonState(false);
       $("#ownerActionsContainer").show();
     } else {
       $("#leaveGroupContainer").show();
@@ -225,6 +237,11 @@ function updateGroupInfo() {
     data: JSON.stringify(data),
     success: function () {
       alert("Group updated successfully!");
+      // Update original values after successful save
+      originalGroupName = data.name;
+      originalGroupDescription = data.description;
+      // Reset save button state
+      updateSaveButtonState(false);
       loadGroupInfo();
     },
     error: function (err) {
@@ -232,6 +249,31 @@ function updateGroupInfo() {
       alert("Failed to update group info.");
     },
   });
+}
+
+// Check if the form values have changed
+function checkFormChanges() {
+  const currentName = $("#editGroupName").val();
+  const currentDesc = $("#editGroupDescription").val();
+  
+  const hasChanged = 
+    currentName !== originalGroupName || 
+    currentDesc !== originalGroupDescription;
+  
+  updateSaveButtonState(hasChanged);
+}
+
+// Update the save button appearance based on changes
+function updateSaveButtonState(hasChanges) {
+  const $saveBtn = $("#saveGroupBtn");
+  
+  if (hasChanges) {
+    $saveBtn.prop("disabled", false);
+    $saveBtn.text("Save Pending");
+  } else {
+    $saveBtn.prop("disabled", true);
+    $saveBtn.text("Save Changes");
+  }
 }
 
 function loadMembers(searchTerm, roleFilter) {
