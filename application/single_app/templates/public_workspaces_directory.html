@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">Public Workspaces</h1>
+    <p class="lead mb-4">Browse available public workspaces below. These workspaces are visible to everyone in the organization.</p>
+
+    {% for workspace in workspaces %}
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">{{ workspace.name }}</h5>
+            <form method="GET" action="{{ url_for('public_workspace', workspace_id=workspace.id) }}">
+                <button type="submit" class="btn btn-primary btn-sm">Open</button>
+            </form>
+        </div>
+        <div class="card-body">
+            <p>{{ workspace.description }}</p>
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Content</h6>
+                    <ul class="list-unstyled">
+                        <li><i class="fas fa-file-alt"></i> {{ workspace.documentsCount }} document{{ workspace.documentsCount|pluralize }}</li>
+                        <li><i class="fas fa-lightbulb"></i> {{ workspace.promptsCount }} prompt{{ workspace.promptsCount|pluralize }}</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6>Workspace Management</h6>
+                    <ul class="list-unstyled">
+                        <li><strong>Owner:</strong> {{ workspace.ownerInfo.displayName }}</li>
+                        {% if workspace.adminInfo|length > 0 %}
+                        <li><strong>Admin{{ workspace.adminInfo|length|pluralize }}:</strong> {{ workspace.adminInfo|length }}</li>
+                        {% endif %}
+                        {% if workspace.documentManagerInfo|length > 0 %}
+                        <li><strong>Document Manager{{ workspace.documentManagerInfo|length|pluralize }}:</strong> {{ workspace.documentManagerInfo|length }}</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+            {% if workspace.userRole %}
+            <div class="alert alert-info mb-0 mt-2">
+                <small>Your role in this workspace: <strong>{{ workspace.userRole }}</strong></small>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-secondary">
+        <p class="mb-0">No public workspaces have been created yet.</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

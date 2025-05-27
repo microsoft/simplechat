@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Administrate Public Workspace</h1>
+        <div>
+            <span class="badge bg-info text-dark me-2">Role: {{ user_role }}</span>
+            <div class="btn-group">
+                <a href="{{ url_for('my_public_workspaces') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-list"></i> My Workspaces
+                </a>
+                <a href="{{ url_for('manage_public_workspace', workspace_id=workspace.id) }}" class="btn btn-outline-primary">
+                    <i class="fas fa-folder-open"></i> Manage Content
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Workspace Information -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Workspace Information</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}">
+                        <input type="hidden" name="action" value="update_info">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Workspace Name</label>
+                            <input type="text" class="form-control" id="name" name="name" value="{{ workspace.name }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="3">{{ workspace.description }}</textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Update Information</button>
+                    </form>
+                </div>
+                <div class="card-footer">
+                    <div class="text-muted">
+                        <small>Created: {{ workspace.createdDate|datetime }}</small>
+                        {% if workspace.modifiedDate %}
+                        <br>
+                        <small>Last Modified: {{ workspace.modifiedDate|datetime }}</small>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Workspace Members -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Workspace Managers</h5>
+                    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addMemberModal">
+                        <i class="fas fa-plus"></i> Add Manager
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="mb-4">
+                        <h6>Owner</h6>
+                        <div class="list-group">
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="fw-bold">{{ workspace.owner.displayName }}</span>
+                                    <small class="d-block text-muted">{{ workspace.owner.email }}</small>
+                                </div>
+                                <span class="badge bg-success">Owner</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <h6>Admins</h6>
+                        {% if workspace.admins|length > 0 %}
+                        <div class="list-group">
+                            {% for admin_id in workspace.admins %}
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="fw-bold">{{ admin_id }}</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary">Admin</span>
+                                    {% if user_role == "Owner" %}
+                                    <button class="btn btn-sm btn-outline-danger ms-2 remove-member-btn"
+                                            data-member-id="{{ admin_id }}"
+                                            data-member-role="Admin">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-muted">No admins assigned</p>
+                        {% endif %}
+                    </div>
+                    
+                    <div>
+                        <h6>Document Managers</h6>
+                        {% if workspace.documentManagers|length > 0 %}
+                        <div class="list-group">
+                            {% for manager_id in workspace.documentManagers %}
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="fw-bold">{{ manager_id }}</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-info text-dark">Document Manager</span>
+                                    {% if user_role == "Owner" or user_role == "Admin" %}
+                                    <button class="btn btn-sm btn-outline-danger ms-2 remove-member-btn"
+                                            data-member-id="{{ manager_id }}"
+                                            data-member-role="DocumentManager">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-muted">No document managers assigned</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Danger Zone -->
+    {% if user_role == "Owner" %}
+    <div class="card mb-4 border-danger">
+        <div class="card-header bg-danger text-white">
+            <h5 class="mb-0">Danger Zone</h5>
+        </div>
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="text-danger mb-1">Delete this Public Workspace</h5>
+                    <p class="mb-0">Once deleted, this action cannot be undone. All documents and prompts will be permanently deleted.</p>
+                </div>
+                <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteWorkspaceModal">
+                    Delete Workspace
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Add Member Modal -->
+<div class="modal fade" id="addMemberModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Workspace Manager</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}">
+                <input type="hidden" name="action" value="add_member">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="member_id" class="form-label">User ID</label>
+                        <input type="text" class="form-control" id="member_id" name="member_id" required>
+                        <div class="form-text">Enter the Azure AD Object ID of the user you want to add</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="role" class="form-label">Role</label>
+                        <select class="form-select" id="role" name="role" required>
+                            <option value="">Select a role</option>
+                            <option value="Admin">Admin</option>
+                            <option value="DocumentManager">Document Manager</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Manager</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Workspace Modal -->
+{% if user_role == "Owner" %}
+<div class="modal fade" id="deleteWorkspaceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title text-danger">Delete Workspace</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you absolutely sure you want to delete the "<strong>{{ workspace.name }}</strong>" public workspace?</p>
+                <div class="alert alert-danger">
+                    <p class="mb-0"><strong>WARNING:</strong> This action is irreversible. All documents and prompts will be permanently deleted.</p>
+                </div>
+                <p>Please type the workspace name to confirm deletion:</p>
+                <input type="text" class="form-control" id="confirmWorkspaceName" placeholder="{{ workspace.name }}">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="POST" action="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}" id="deleteWorkspaceForm">
+                    <input type="hidden" name="action" value="delete_workspace">
+                    <button type="submit" class="btn btn-danger" id="confirmDeleteWorkspaceBtn" disabled>Delete Workspace</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Delete workspace confirmation
+    const confirmInput = document.getElementById('confirmWorkspaceName');
+    const confirmButton = document.getElementById('confirmDeleteWorkspaceBtn');
+    const workspaceName = "{{ workspace.name }}";
+    
+    confirmInput.addEventListener('input', function() {
+        confirmButton.disabled = confirmInput.value !== workspaceName;
+    });
+});
+</script>
+{% endif %}
+
+{% endblock %}

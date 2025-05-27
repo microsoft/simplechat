@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>{{ workspace.name }}</h1>
+        <div>
+            {% if user_role %}
+            <span class="badge bg-info text-dark me-2">Role: {{ user_role }}</span>
+            {% endif %}
+            <a href="{{ url_for('public_workspaces_directory') }}" class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Directory
+            </a>
+            {% if user_role in ['Owner', 'Admin'] %}
+            <a href="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}" class="btn btn-sm btn-primary">
+                <i class="fas fa-cogs"></i> Admin Settings
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">About this Workspace</h5>
+            <p class="card-text">{{ workspace.description }}</p>
+            <div class="text-muted">
+                <small>Created: {{ workspace.createdDate|datetime }}</small>
+                {% if workspace.modifiedDate %}
+                <br>
+                <small>Last Modified: {{ workspace.modifiedDate|datetime }}</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Documents section -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Documents</h5>
+                    {% if can_edit %}
+                    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadDocumentModal">
+                        <i class="fas fa-plus"></i> Upload
+                    </button>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if documents %}
+                    <div class="list-group">
+                        {% for doc in documents %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-0">{{ doc.file_name }}</h6>
+                                <small class="text-muted">Uploaded: {{ doc.upload_date|datetime }}</small>
+                            </div>
+                            {% if can_edit %}
+                            <button class="btn btn-sm btn-danger delete-document" 
+                                    data-document-id="{{ doc.id }}" 
+                                    data-document-name="{{ doc.file_name }}">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="mb-0 text-center text-muted">No documents have been uploaded to this workspace.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Prompts section -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Prompts</h5>
+                    {% if can_edit %}
+                    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createPromptModal">
+                        <i class="fas fa-plus"></i> Create
+                    </button>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if prompts %}
+                    <div class="list-group">
+                        {% for prompt in prompts %}
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">{{ prompt.name }}</h6>
+                                <div>
+                                    <button class="btn btn-sm btn-secondary view-prompt-btn" 
+                                            data-prompt-name="{{ prompt.name }}"
+                                            data-prompt-content="{{ prompt.content }}">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    {% if can_edit %}
+                                    <button class="btn btn-sm btn-primary edit-prompt-btn" 
+                                            data-prompt-id="{{ prompt.id }}"
+                                            data-prompt-name="{{ prompt.name }}"
+                                            data-prompt-content="{{ prompt.content }}">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-danger delete-prompt-btn"
+                                            data-prompt-id="{{ prompt.id }}"
+                                            data-prompt-name="{{ prompt.name }}">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <small class="text-muted">Created: {{ prompt.created_at|datetime }}</small>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="mb-0 text-center text-muted">No prompts have been created for this workspace.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Document Modal -->
+{% if can_edit %}
+<div class="modal fade" id="uploadDocumentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upload Document</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="uploadDocumentForm" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="documentFile" class="form-label">Select File</label>
+                        <input type="file" class="form-control" id="documentFile" name="file" required>
+                    </div>
+                    <div class="progress d-none" id="uploadProgress">
+                        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Create/Edit Prompt Modal -->
+<div class="modal fade" id="promptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="promptModalTitle">Create Prompt</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="promptForm">
+                <div class="modal-body">
+                    <input type="hidden" id="promptId" name="promptId">
+                    <div class="mb-3">
+                        <label for="promptName" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="promptName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="promptContent" class="form-label">Content</label>
+                        <textarea class="form-control" id="promptContent" name="content" rows="5" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="savePromptBtn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- View Prompt Modal -->
+<div class="modal fade" id="viewPromptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="viewPromptTitle"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="viewPromptContent" class="p-3 bg-light"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmDeleteText"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    {% if can_edit %}
+    // Document upload functionality
+    const uploadForm = document.getElementById('uploadDocumentForm');
+    const progressBar = document.querySelector('#uploadProgress .progress-bar');
+    const progressContainer = document.getElementById('uploadProgress');
+    
+    uploadForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        progressContainer.classList.remove('d-none');
+        progressBar.style.width = '0%';
+        progressBar.textContent = 'Uploading...';
+        
+        fetch(`/api/public_workspaces/{{ workspace.id }}/documents`, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            progressBar.style.width = '100%';
+            progressBar.textContent = 'Complete';
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        })
+        .catch(error => {
+            progressBar.classList.add('bg-danger');
+            progressBar.textContent = `Error: ${error.message}`;
+        });
+    });
+
+    // Delete document functionality
+    const deleteDocumentButtons = document.querySelectorAll('.delete-document');
+    deleteDocumentButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const docId = this.getAttribute('data-document-id');
+            const docName = this.getAttribute('data-document-name');
+            
+            document.getElementById('confirmDeleteText').textContent = `Are you sure you want to delete the document "${docName}"?`;
+            
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            confirmBtn.onclick = function() {
+                fetch(`/api/public_workspaces/{{ workspace.id }}/documents/${docId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.error || 'Failed to delete'); });
+                    }
+                    return response.json();
+                })
+                .then(() => {
+                    window.location.reload();
+                })
+                .catch(error => {
+                    alert(`Error: ${error.message}`);
+                });
+            };
+            
+            new bootstrap.Modal(document.getElementById('confirmDeleteModal')).show();
+        });
+    });
+
+    // Prompt functionality
+    const createPromptButton = document.querySelector('[data-bs-target="#createPromptModal"]');
+    if (createPromptButton) {
+        createPromptButton.addEventListener('click', function() {
+            document.getElementById('promptModalTitle').textContent = 'Create Prompt';
+            document.getElementById('promptId').value = '';
+            document.getElementById('promptName').value = '';
+            document.getElementById('promptContent').value = '';
+            document.getElementById('savePromptBtn').textContent = 'Create';
+            new bootstrap.Modal(document.getElementById('promptModal')).show();
+        });
+    }
+
+    // Edit prompt functionality
+    const editPromptButtons = document.querySelectorAll('.edit-prompt-btn');
+    editPromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptId = this.getAttribute('data-prompt-id');
+            const promptName = this.getAttribute('data-prompt-name');
+            const promptContent = this.getAttribute('data-prompt-content');
+            
+            document.getElementById('promptModalTitle').textContent = 'Edit Prompt';
+            document.getElementById('promptId').value = promptId;
+            document.getElementById('promptName').value = promptName;
+            document.getElementById('promptContent').value = promptContent;
+            document.getElementById('savePromptBtn').textContent = 'Update';
+            
+            new bootstrap.Modal(document.getElementById('promptModal')).show();
+        });
+    });
+
+    // View prompt functionality
+    const viewPromptButtons = document.querySelectorAll('.view-prompt-btn');
+    viewPromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptName = this.getAttribute('data-prompt-name');
+            const promptContent = this.getAttribute('data-prompt-content');
+            
+            document.getElementById('viewPromptTitle').textContent = promptName;
+            document.getElementById('viewPromptContent').textContent = promptContent;
+            
+            new bootstrap.Modal(document.getElementById('viewPromptModal')).show();
+        });
+    });
+
+    // Save prompt functionality
+    const promptForm = document.getElementById('promptForm');
+    promptForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const promptId = document.getElementById('promptId').value;
+        const promptName = document.getElementById('promptName').value;
+        const promptContent = document.getElementById('promptContent').value;
+        
+        const data = {
+            name: promptName,
+            content: promptContent
+        };
+        
+        let url = `/api/public_workspaces/{{ workspace.id }}/prompts`;
+        let method = 'POST';
+        
+        if (promptId) {
+            url = `${url}/${promptId}`;
+            method = 'PUT';
+        }
+        
+        fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || 'Failed to save prompt'); });
+            }
+            return response.json();
+        })
+        .then(() => {
+            window.location.reload();
+        })
+        .catch(error => {
+            alert(`Error: ${error.message}`);
+        });
+    });
+
+    // Delete prompt functionality
+    const deletePromptButtons = document.querySelectorAll('.delete-prompt-btn');
+    deletePromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptId = this.getAttribute('data-prompt-id');
+            const promptName = this.getAttribute('data-prompt-name');
+            
+            document.getElementById('confirmDeleteText').textContent = `Are you sure you want to delete the prompt "${promptName}"?`;
+            
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            confirmBtn.onclick = function() {
+                fetch(`/api/public_workspaces/{{ workspace.id }}/prompts/${promptId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.error || 'Failed to delete'); });
+                    }
+                    return response.json();
+                })
+                .then(() => {
+                    window.location.reload();
+                })
+                .catch(error => {
+                    alert(`Error: ${error.message}`);
+                });
+            };
+            
+            new bootstrap.Modal(document.getElementById('confirmDeleteModal')).show();
+        });
+    });
+    {% endif %}
+});
+</script>
+{% endblock %}
