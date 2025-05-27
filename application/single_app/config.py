@@ -125,6 +125,7 @@ bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
+storage_account_public_documents_container_name = "public-documents"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -213,6 +214,12 @@ cosmos_user_prompts_container = cosmos_database.create_container_if_not_exists(
 cosmos_group_prompts_container_name = "group_prompts"
 cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
 )
 
@@ -388,7 +395,7 @@ def initialize_clients(settings):
                 
                 # Create containers if they don't exist
                 # This addresses the issue where the application assumes containers exist
-                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name]:
                     try:
                         container_client = blob_service_client.get_container_client(container_name)
                         if not container_client.exists():

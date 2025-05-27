@@ -194,6 +194,10 @@
                                 <span>My Groups (Group Workspaces)</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Public Workspaces</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
                         </ul>
                         
                         <p class="alert alert-warning">
@@ -1067,6 +1071,24 @@
                         </p>
                     </div>
                     
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable Public Workspaces</h5>
+                    <p class="text-muted">
+                        Turn this on to allow access to public workspaces, centrally managed knowledge sources available across the platform.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                    </div>
                 </div>
 
                 <div class="card mb-3 p-3">
@@ -2191,9 +2213,10 @@
         // Handle workspace toggle changes to update requirement status
         const userWorkspaceToggle = document.getElementById('enable_user_workspace');
         const groupWorkspaceToggle = document.getElementById('enable_group_workspaces');
+        const publicWorkspaceToggle = document.getElementById('enable_public_workspaces');
         
-        if (userWorkspaceToggle && groupWorkspaceToggle) {
-            [userWorkspaceToggle, groupWorkspaceToggle].forEach(toggle => {
+        if (userWorkspaceToggle && groupWorkspaceToggle && publicWorkspaceToggle) {
+            [userWorkspaceToggle, groupWorkspaceToggle, publicWorkspaceToggle].forEach(toggle => {
                 toggle.addEventListener('change', function() {
                     updateWalkthroughRequirements();
                     // Recalculate available steps and refresh navigation

@@ -14,6 +14,10 @@ const docDropdownItems = document.getElementById("document-dropdown-items");
 const docDropdownMenu = document.getElementById("document-dropdown-menu");
 const docSearchInput = document.getElementById("document-search-input");
 
+// Public workspaces filter elements
+const publicContentFilter = document.querySelector(".public-content-filter");
+const publicContentType = document.getElementById("public-content-type");
+
 // Classification elements
 const classificationContainer = document.querySelector(".classification-container"); // Main container div
 const classificationSelectInput = document.getElementById("classification-select"); // The input field (now dual purpose)
@@ -50,6 +54,154 @@ let activeGroupName = "";
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
 --------------------------------------------------------------------------- */
+// Public documents state
+let publicDocs = [];
+
+// Function to load public documents based on content type
+function loadPublicDocs(contentType = "all") {
+  console.log("Loading public documents with content type:", contentType);
+  publicDocs = []; // Reset
+  
+  // Fetch public documents from the API
+  return fetch(`/api/public_documents?content_type=${encodeURIComponent(contentType)}`)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Failed to load public documents");
+      }
+      return response.json();
+    })
+    .then(data => {
+      // Filter for only visible workspaces
+      publicDocs = data.documents
+        .filter(doc => doc.is_visible_to_user)
+        .map(doc => ({
+          id: doc.id,
+          label: `[Public] ${doc.filename || doc.name || "Unnamed"}`,
+          classification: doc.classification || "",
+          content_types: doc.content_types || ["Documents"]
+        }));
+      
+      console.log("Loaded public documents:", publicDocs.length);
+      return publicDocs;
+    })
+    .catch(err => {
+      console.error("Error loading public documents:", err);
+      return [];
+    });
+}
+
+// Helper function to refresh the document dropdown content
+function refreshDocumentDropdown(documents) {
+  // Clear existing options
+  if (docSelectEl) {
+    docSelectEl.innerHTML = "";
+    
+    // Always add the default "All Documents" option
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = "All Documents";
+    docSelectEl.appendChild(defaultOpt);
+  }
+  
+  if (docDropdownItems) {
+    docDropdownItems.innerHTML = "";
+    
+    // Add "All Documents" option to dropdown
+    const allDocsItem = document.createElement("button");
+    allDocsItem.type = "button";
+    allDocsItem.classList.add("dropdown-item");
+    allDocsItem.setAttribute("data-document-id", "");
+    allDocsItem.textContent = "All Documents";
+    allDocsItem.style.display = "block";
+    allDocsItem.style.width = "100%";
+    allDocsItem.style.textAlign = "left";
+    docDropdownItems.appendChild(allDocsItem);
+  }
+  
+  // Add document options to the hidden select and populate the custom dropdown
+  documents.forEach((doc) => {
+    // Add to hidden select
+    const opt = document.createElement("option");
+    opt.value = doc.id;
+    opt.textContent = doc.label;
+    opt.dataset.classification = doc.classification || ""; // Store classification or empty string
+    docSelectEl.appendChild(opt);
+    
+    // Add to custom dropdown
+    if (docDropdownItems) {
+      const dropdownItem = document.createElement("button");
+      dropdownItem.type = "button";
+      dropdownItem.classList.add("dropdown-item");
+      dropdownItem.setAttribute("data-document-id", doc.id);
+      dropdownItem.textContent = doc.label;
+      dropdownItem.style.display = "block";
+      dropdownItem.style.width = "100%";
+      dropdownItem.style.textAlign = "left";
+      docDropdownItems.appendChild(dropdownItem);
+    }
+  });
+  
+  // Show/hide search based on number of documents
+  if (docSearchInput && docDropdownItems) {
+    const documentsCount = documents.length;
+    const searchContainer = docSearchInput.closest('.document-search-container');
+    
+    if (searchContainer) {
+      // Always show search if there are more than 0 documents
+      if (documentsCount > 0) {
+        searchContainer.style.display = "block";
+      } else {
+        searchContainer.style.display = "none";
+      }
+    }
+  }
+  
+  // Set up click handlers for the dropdown items
+  setupDocumentDropdownItemHandlers();
+  
+  // IMPORTANT: Trigger the classification update
+  handleDocumentSelectChange();
+}
+
+// Set up click handlers for dropdown items
+function setupDocumentDropdownItemHandlers() {
+  if (!docDropdownItems) return;
+  
+  const items = docDropdownItems.querySelectorAll('.dropdown-item');
+  items.forEach(item => {
+    item.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const docId = item.getAttribute('data-document-id');
+      if (docSelectEl) {
+        docSelectEl.value = docId;
+        
+        // Update dropdown button text
+        if (docDropdownButton) {
+          const selectedText = docId ? item.textContent : "All Documents";
+          docDropdownButton.querySelector(".selected-document-text").textContent = selectedText;
+        }
+        
+        // Mark this item as active and remove active from others
+        items.forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        
+        // Trigger the classification update
+        handleDocumentSelectChange();
+        
+        // Hide dropdown (if using bootstrap)
+        try {
+          const dropdown = bootstrap.Dropdown.getInstance(docDropdownButton);
+          if (dropdown) dropdown.hide();
+        } catch (err) {
+          console.error("Error hiding dropdown:", err);
+        }
+      }
+    });
+  });
+}
+
 export function populateDocumentSelectScope() {
   if (!docScopeSelect || !docSelectEl) return;
 
@@ -111,6 +263,35 @@ export function populateDocumentSelectScope() {
       label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
       classification: d.document_classification,
     }));
+  } else if (scopeVal === "public") {
+    // Public workspaces are handled differently - they're filtered by content type
+    const contentTypeFilter = publicContentType ? publicContentType.value : "all";
+    
+    // Load public documents if not already loaded or if content type changed
+    loadPublicDocs(contentTypeFilter)
+      .then(docs => {
+        finalDocs = docs.map(d => ({
+          id: d.id,
+          label: d.label,
+          classification: d.classification
+        }));
+        
+        // We need to update the dropdown after the async call completes
+        refreshDocumentDropdown(finalDocs);
+      });
+      
+    // Show the content type filter for public workspaces
+    if (publicContentFilter) {
+      publicContentFilter.style.display = "block";
+    }
+    
+    // Return early as we're handling this asynchronously
+    return;
+  }
+  
+  // Handle any scope change by toggling public content filter visibility
+  if (scopeVal !== "public" && publicContentFilter) {
+    publicContentFilter.style.display = "none";
   }
 
   // Add document options to the hidden select and populate the custom dropdown
@@ -409,6 +590,17 @@ function initializeDocumentDropdown() {
 --------------------------------------------------------------------------- */
 if (docScopeSelect) {
   docScopeSelect.addEventListener("change", populateDocumentSelectScope);
+}
+
+// Add listener for public content type filter 
+if (publicContentType) {
+  publicContentType.addEventListener("change", function() {
+    // If scope is public, refresh documents with the new content type
+    if (docScopeSelect && docScopeSelect.value === "public") {
+      loadPublicDocs(publicContentType.value)
+        .then(() => populateDocumentSelectScope());
+    }
+  });
 }
 
 if (searchDocumentsBtn) {

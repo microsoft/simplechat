@@ -1,0 +1,627 @@
+<!-- templates/public_workspaces.html -->
+{% extends "base.html" %} {% block title %} Public Workspaces - {{
+app_settings.app_title }} {% endblock %} {% block head %}
+<link
+  rel="stylesheet"
+  href="/static/css/simplemde.min.css"
+/>
+
+<style>
+  /* Copy relevant styles from workspace.html for consistency */
+  #public-documents-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  #public-documents-table th:nth-child(1), /* Expand */
+      #public-documents-table td:nth-child(1) {
+    width: 50px;
+    text-align: Left;
+  }
+  #public-documents-table th:nth-child(2), /* Filename */
+      #public-documents-table td:nth-child(2) {
+    min-width: 50px;
+    max-width: 150px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #public-documents-table th:nth-child(3), /* Description */
+      #public-documents-table td:nth-child(3) {
+    min-width: 120px;
+    max-width: 300px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #public-documents-table th:nth-child(4), /* Content Types */
+      #public-documents-table td:nth-child(4) {
+    width: 120px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #public-documents-table th:last-child, /* Actions */
+      #public-documents-table td:last-child {
+    width: 120px;
+    text-align: center;
+  }
+  
+  /* Public workspace specific styles */
+  .visibility-switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 28px;
+  }
+  .visibility-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .visibility-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 34px;
+  }
+  .visibility-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+  }
+  input:checked + .visibility-slider {
+    background-color: var(--bs-primary);
+  }
+  input:focus + .visibility-slider {
+    box-shadow: 0 0 1px var(--bs-primary);
+  }
+  input:checked + .visibility-slider:before {
+    transform: translateX(32px);
+  }
+
+  /* Badge styles */
+  .badge-file-type {
+    display: inline-block;
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+
+  /* Expanded content */
+  .details-row pre {
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  
+  /* Content type pill styles */
+  .content-type-pill {
+    display: inline-block;
+    padding: 0.25em 0.6em;
+    font-size: 75%;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.25rem;
+    margin-right: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+  
+  .documents-pill {
+    background-color: #0d6efd;
+    color: white;
+  }
+  
+  .video-pill {
+    background-color: #dc3545;
+    color: white;
+  }
+  
+  .audio-pill {
+    background-color: #198754;
+    color: white;
+  }
+  
+  .database-pill {
+    background-color: #6f42c1;
+    color: white;
+  }
+  
+  .api-pill {
+    background-color: #fd7e14;
+    color: white;
+  }
+  
+  .index-pill {
+    background-color: #20c997;
+    color: white;
+  }
+</style>
+{% endblock %} {% block content %}
+<div class="container mt-3">
+  <h1>Public Workspaces</h1>
+  <p class="lead">
+    Discover and access centrally managed knowledge and data sources.
+  </p>
+
+  <!-- Search and Filter Bar -->
+  <div class="row mb-3">
+    <div class="col-md-8">
+      <div class="input-group">
+        <input
+          type="text"
+          class="form-control"
+          placeholder="Search public workspaces..."
+          id="public-search-input"
+        />
+        <button class="btn btn-primary" id="btn-search-public-workspaces">
+          Search
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="card p-3 my-3">
+    <h5>Available Public Workspaces</h5>
+    <p class="text-muted small">
+      These workspaces are curated and managed centrally. Toggle visibility to control which ones appear in your chat interface.
+    </p>
+
+    <div class="table-responsive">
+      <table class="table" id="public-documents-table">
+        <thead>
+          <tr>
+            <th scope="col"></th>
+            <th scope="col">Name</th>
+            <th scope="col">Description</th>
+            <th scope="col">Content Types</th>
+            <th scope="col">Show in Chat</th>
+          </tr>
+        </thead>
+        <tbody id="public-docs-table-body">
+          <tr>
+            <td colspan="5" class="text-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div
+      class="d-flex justify-content-between align-items-center mt-3"
+      id="pagination-container"
+    >
+      <div>
+        <span id="showing-entries-text">Showing 0 entries</span>
+      </div>
+      <nav aria-label="Page navigation">
+        <ul class="pagination mb-0" id="pagination-links"></ul>
+      </nav>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script src="/static/js/simplemde/simplemde.min.js"></script>
+
+<!-- Pass backend flags to JS -->
+<script>
+  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+  if (!Array.isArray(window.classification_categories)) {
+      window.classification_categories = [];
+  }
+  window.enable_document_classification = "{{ enable_document_classification | tojson }}";
+  window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
+  window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
+  window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
+</script>
+
+<!-- Main JS Logic for Public Workspaces -->
+<script>
+  // --- Global State ---
+  let publicDocsCurrentPage = 1;
+  let publicDocsPageSize = 10;
+  let publicDocsSearchTerm = "";
+  let publicDocsPaginationContainer = document.getElementById("pagination-links");
+  
+  // --- Initialize Public Workspace Page ---
+  document.addEventListener("DOMContentLoaded", function() {
+    // Initial load of public documents
+    loadPublicDocuments();
+    
+    // Setup search handler
+    const searchBtn = document.getElementById("btn-search-public-workspaces");
+    const searchInput = document.getElementById("public-search-input");
+    
+    if (searchBtn && searchInput) {
+      searchBtn.addEventListener("click", function() {
+        publicDocsSearchTerm = searchInput.value;
+        publicDocsCurrentPage = 1; // Reset to first page when searching
+        loadPublicDocuments();
+      });
+      
+      searchInput.addEventListener("keyup", function(event) {
+        if (event.key === "Enter") {
+          publicDocsSearchTerm = searchInput.value;
+          publicDocsCurrentPage = 1;
+          loadPublicDocuments();
+        }
+      });
+    }
+  });
+  
+  // --- Load Public Documents ---
+  function loadPublicDocuments() {
+    const tableBody = document.getElementById("public-docs-table-body");
+    
+    if (!tableBody) return;
+    
+    // Show loading state
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="5" class="text-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </td>
+      </tr>
+    `;
+    
+    // Fetch documents
+    const params = new URLSearchParams({
+      page: publicDocsCurrentPage,
+      page_size: publicDocsPageSize,
+      search_term: publicDocsSearchTerm
+    });
+    
+    fetch(`/api/public_documents?${params.toString()}`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error("Failed to load public documents");
+        }
+        return response.json();
+      })
+      .then(data => {
+        renderPublicDocuments(data);
+      })
+      .catch(error => {
+        console.error("Error loading public documents:", error);
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="5" class="text-center text-danger">
+              Failed to load public documents. ${error.message}
+            </td>
+          </tr>
+        `;
+      });
+  }
+  
+  // --- Render Public Documents ---
+  function renderPublicDocuments(data) {
+    const tableBody = document.getElementById("public-docs-table-body");
+    const showingText = document.getElementById("showing-entries-text");
+    const documents = data.documents;
+    const totalCount = data.total_count;
+    
+    if (!tableBody) return;
+    
+    // Update showing text
+    if (showingText) {
+      const start = (data.page - 1) * data.page_size + 1;
+      const end = Math.min(start + documents.length - 1, totalCount);
+      showingText.textContent = `Showing ${start} to ${end} of ${totalCount} entries`;
+      
+      if (totalCount === 0) {
+        showingText.textContent = "No public workspaces found";
+      }
+    }
+    
+    // Clear table
+    tableBody.innerHTML = "";
+    
+    if (documents.length === 0) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center">
+            No public workspaces found
+          </td>
+        </tr>
+      `;
+      return;
+    }
+    
+    // Render documents
+    documents.forEach(doc => {
+      const row = document.createElement("tr");
+      
+      // Create expand/collapse button
+      const expandCell = document.createElement("td");
+      expandCell.innerHTML = `
+        <button class="btn btn-sm btn-link p-0" onclick="togglePublicDetails('${doc.id}')">
+          <i id="public-arrow-icon-${doc.id}" class="bi bi-chevron-right"></i>
+        </button>
+      `;
+      
+      // Name cell
+      const nameCell = document.createElement("td");
+      nameCell.textContent = doc.filename || doc.name || "Unnamed";
+      nameCell.title = doc.filename || doc.name || "Unnamed";
+      
+      // Description cell
+      const descCell = document.createElement("td");
+      descCell.textContent = doc.description || "No description";
+      descCell.title = doc.description || "No description";
+      
+      // Content types cell
+      const contentTypesCell = document.createElement("td");
+      // Get content types from document meta
+      const contentTypes = doc.content_types || ["Documents"];
+      contentTypesCell.innerHTML = contentTypes.map(type => {
+        const typeClass = type.toLowerCase() + "-pill";
+        return `<span class="content-type-pill ${typeClass}">${type}</span>`;
+      }).join("");
+      
+      // Visibility toggle cell
+      const visibilityCell = document.createElement("td");
+      visibilityCell.innerHTML = `
+        <label class="visibility-switch">
+          <input type="checkbox" ${doc.is_visible_to_user ? 'checked' : ''} onchange="toggleWorkspaceVisibility('${doc.id}', this.checked)">
+          <span class="visibility-slider"></span>
+        </label>
+      `;
+      
+      // Append all cells
+      row.appendChild(expandCell);
+      row.appendChild(nameCell);
+      row.appendChild(descCell);
+      row.appendChild(contentTypesCell);
+      row.appendChild(visibilityCell);
+      
+      tableBody.appendChild(row);
+      
+      // Create detail row (hidden by default)
+      const detailRow = document.createElement("tr");
+      detailRow.id = `public-details-row-${doc.id}`;
+      detailRow.style.display = "none";
+      detailRow.classList.add("details-row");
+      
+      const detailCell = document.createElement("td");
+      detailCell.colSpan = 5;
+      
+      // Get content counts
+      const documentCount = doc.document_count || 0;
+      const videoCount = doc.video_count || 0;
+      const audioCount = doc.audio_count || 0;
+      const databaseCount = doc.database_count || 0;
+      const apiCount = doc.api_count || 0;
+      const indexCount = doc.index_count || 0;
+      
+      detailCell.innerHTML = `
+        <div class="card p-3">
+          <h6>Workspace Content</h6>
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <strong>Created:</strong> ${new Date(doc._ts * 1000).toLocaleString()}
+            </div>
+            <div class="col-md-4">
+              <strong>Last Updated:</strong> ${new Date((doc.last_updated_ts || doc._ts) * 1000).toLocaleString()}
+            </div>
+          </div>
+          
+          <div class="content-summary">
+            <h6>Content Summary</h6>
+            <div class="row">
+              ${documentCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-file-text"></i> ${documentCount} Documents</div>` : ''}
+              ${videoCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-film"></i> ${videoCount} Videos</div>` : ''}
+              ${audioCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-music-note-beamed"></i> ${audioCount} Audio</div>` : ''}
+              ${databaseCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-database"></i> ${databaseCount} Databases</div>` : ''}
+              ${apiCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-code-slash"></i> ${apiCount} APIs</div>` : ''}
+              ${indexCount > 0 ? `<div class="col-md-3 mb-2"><i class="bi bi-search"></i> ${indexCount} Indexes</div>` : ''}
+              ${(documentCount + videoCount + audioCount + databaseCount + apiCount + indexCount) === 0 ? 
+                '<div class="col-12"><em>No content details available</em></div>' : ''}
+            </div>
+          </div>
+          
+          ${doc.additional_info ? `
+          <div class="mt-3">
+            <h6>Additional Information</h6>
+            <p>${doc.additional_info}</p>
+          </div>
+          ` : ''}
+        </div>
+      `;
+      
+      detailRow.appendChild(detailCell);
+      tableBody.appendChild(detailRow);
+    });
+    
+    // Render pagination
+    renderPublicDocsPaginationControls(data.page, data.page_size, data.total_count);
+  }
+  
+  // --- Toggle Public Document Details ---
+  function togglePublicDetails(docId) {
+    const detailsRow = document.getElementById(`public-details-row-${docId}`);
+    const arrowIcon = document.getElementById(`public-arrow-icon-${docId}`);
+    if (!detailsRow || !arrowIcon) return;
+    if (detailsRow.style.display === "none") {
+      detailsRow.style.display = "";
+      arrowIcon.className = "bi bi-chevron-down";
+    } else {
+      detailsRow.style.display = "none";
+      arrowIcon.className = "bi bi-chevron-right";
+    }
+  }
+  // Make globally available if called directly from HTML onclick
+  window.togglePublicDetails = togglePublicDetails;
+  
+  // --- Toggle Workspace Visibility ---
+  function toggleWorkspaceVisibility(docId, isVisible) {
+    fetch('/api/public_documents/toggle_visibility', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        document_id: docId,
+        visibility: isVisible
+      })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Failed to update workspace visibility");
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (data.success) {
+        showToast(isVisible ? "Workspace will now appear in chat" : "Workspace hidden from chat", "success");
+      }
+    })
+    .catch(error => {
+      console.error("Error toggling workspace visibility:", error);
+      showToast("Failed to update visibility. Please try again.", "danger");
+    });
+  }
+  window.toggleWorkspaceVisibility = toggleWorkspaceVisibility;
+  
+  // --- Render Public Docs Pagination Controls ---
+  function renderPublicDocsPaginationControls(page, pageSize, totalCount) {
+    if (!publicDocsPaginationContainer) return;
+    publicDocsPaginationContainer.innerHTML = "";
+    const totalPages = Math.ceil(totalCount / pageSize);
+    if (totalPages <= 1) return;
+
+    const createPageLink = (p, text, isDisabled, isActive) => {
+      const li = document.createElement("li");
+      li.className = `page-item ${isDisabled ? "disabled" : ""} ${isActive ? "active" : ""}`;
+      
+      const a = document.createElement("a");
+      a.className = "page-link";
+      a.href = "#";
+      a.innerHTML = text;
+      
+      if (!isDisabled && !isActive) {
+        a.addEventListener("click", function(e) {
+          e.preventDefault();
+          publicDocsCurrentPage = p;
+          loadPublicDocuments();
+        });
+      }
+      
+      li.appendChild(a);
+      return li;
+    };
+
+    // Previous button
+    publicDocsPaginationContainer.appendChild(
+      createPageLink(page - 1, "&laquo;", page === 1, false)
+    );
+
+    // First page
+    publicDocsPaginationContainer.appendChild(
+      createPageLink(1, "1", false, page === 1)
+    );
+
+    // Ellipsis if needed (start)
+    if (page > 3) {
+      const ellipsis = document.createElement("li");
+      ellipsis.className = "page-item disabled";
+      ellipsis.innerHTML = '<a class="page-link">...</a>';
+      publicDocsPaginationContainer.appendChild(ellipsis);
+    }
+
+    // Pages around current
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+      if (i <= totalPages - 1 && i >= 2) {
+        publicDocsPaginationContainer.appendChild(
+          createPageLink(i, i.toString(), false, page === i)
+        );
+      }
+    }
+
+    // Ellipsis if needed (end)
+    if (page < totalPages - 2) {
+      const ellipsis = document.createElement("li");
+      ellipsis.className = "page-item disabled";
+      ellipsis.innerHTML = '<a class="page-link">...</a>';
+      publicDocsPaginationContainer.appendChild(ellipsis);
+    }
+
+    // Last page if not already included
+    if (totalPages > 1) {
+      publicDocsPaginationContainer.appendChild(
+        createPageLink(totalPages, totalPages.toString(), false, page === totalPages)
+      );
+    }
+
+    // Next button
+    publicDocsPaginationContainer.appendChild(
+      createPageLink(page + 1, "&raquo;", page === totalPages, false)
+    );
+  }
+  
+  // --- Toast Notification ---
+  function showToast(message, type = "info") {
+    // Check if toast container exists
+    let toastContainer = document.getElementById("toast-container");
+    
+    if (!toastContainer) {
+      // Create toast container if it doesn't exist
+      toastContainer = document.createElement("div");
+      toastContainer.id = "toast-container";
+      toastContainer.className = "toast-container position-fixed bottom-0 end-0 p-3";
+      document.body.appendChild(toastContainer);
+    }
+    
+    // Create a unique ID for this toast
+    const toastId = "toast-" + Date.now();
+    
+    // Create toast HTML
+    const toastHtml = `
+      <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header">
+          <strong class="me-auto">Notification</strong>
+          <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body bg-${type} text-white">
+          ${message}
+        </div>
+      </div>
+    `;
+    
+    // Add toast to container
+    toastContainer.insertAdjacentHTML("beforeend", toastHtml);
+    
+    // Initialize and show toast
+    const toastElement = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastElement, {
+      autohide: true,
+      delay: 3000
+    });
+    toast.show();
+    
+    // Remove toast after it's hidden
+    toastElement.addEventListener("hidden.bs.toast", function() {
+      toastElement.remove();
+    });
+  }
+  window.showToast = showToast;
+</script>
+{% endblock %}

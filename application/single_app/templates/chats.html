@@ -101,6 +101,7 @@
                                  <option value="all" selected>All</option>
                                  <option value="personal">Personal</option>
                                  <option value="group">Group</option>
+                                 {% if app_settings.enable_public_workspaces %}<option value="public">Public</option>{% endif %}
                              </select>
                          </div>
                              <div class="flex-grow-1" style="min-width: 200px;">
@@ -129,6 +130,22 @@
                                 <select class="d-none" id="document-select"></select>
                              </div>
                          </div>
+                         
+                         {% if app_settings.enable_public_workspaces %}
+                         <div class="public-content-filter flex-grow-1" style="min-width: 120px; display: none;">
+                             <label for="public-content-type" class="form-label mb-1 small text-muted">Content Type</label>
+                             <select class="form-select form-select-sm" id="public-content-type">
+                                 <option value="all" selected>All</option>
+                                 <option value="documents">Documents</option>
+                                 {% if app_settings.enable_video_file_support %}<option value="video">Video</option>{% endif %}
+                                 {% if app_settings.enable_audio_file_support %}<option value="audio">Audio</option>{% endif %}
+                                 <option value="databases">Databases</option>
+                                 <option value="apis">APIs</option>
+                                 <option value="external_index">External Index</option>
+                             </select>
+                         </div>
+                         {% endif %}
+                         
                         {% if settings.enable_document_classification %}
                         <div class="flex-grow-1 classification-container" style="max-width: 150px;">
                              <label for="classification-control" class="form-label mb-1 small text-muted">Classification</label>
