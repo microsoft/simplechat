@@ -636,7 +636,17 @@ Core configuration values are managed via environment variables, typically set i
     *   To verify or synchronize settings from Azure back to a local `.env` file:
     *   Press `Ctrl+Shift+P`, type `Azure App Service: Download Remote Settings`, select your App Service, and choose where to save the file (e.g., overwrite your local `.env`). This is useful to capture settings automatically added by Azure (like `APPLICATIONINSIGHTS_CONNECTION_STRING` or `WEBSITE_AUTH_AAD_ALLOWED_TENANTS`).
 
-    ![Download remote settings command](./images/download_remote_settings.png) 
+    ![Download remote settings command](./images/download_remote_settings.png)
+
+5.  **First-Time Configuration Wizard**:
+    *   When you first access the admin settings page, a configuration wizard will guide you through the required and optional settings.
+    *   The wizard will help you configure:
+        *   **Application basics**: Title and logo customization
+        *   **GPT API settings**: Configure Azure OpenAI endpoints and models
+        *   **Workspace settings**: Enable personal and group workspaces
+        *   **Additional services**: Configure embedding, AI Search, Document Intelligence, and other required services
+        *   **Optional features**: Content safety, user feedback, conversation archiving, and other optional features
+    *   Required settings are clearly marked, ensuring that you configure all necessary components for your deployment scenario.
 
 #### Alternate Method: Update App Settings via JSON (Advanced)
 

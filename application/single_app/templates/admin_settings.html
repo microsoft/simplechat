@@ -79,8 +79,327 @@
                 </span>
             {% endif %}
         </p>
-        <button type="submit" class="btn btn-secondary mt-3 mb-3" disabled>Save Settings</button>
+        <div class="d-flex align-items-center mb-3">
+            <button type="submit" class="btn btn-primary mt-3">Save Settings</button>
+            <button type="button" class="btn btn-outline-secondary mt-3 ms-2" id="launch-walkthrough-btn">
+                <i class="bi bi-signpost-split"></i> Start Setup Walkthrough
+            </button>
+        </div>
 
+        <!-- Settings Walkthrough Inline Container -->
+        <div id="settings-walkthrough-container" class="card mb-4 shadow-sm" style="display: none;">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Setup Walkthrough</h5>
+                <button type="button" class="btn-close btn-close-white" id="close-walkthrough-btn" aria-label="Close"></button>
+            </div>
+            <div class="card-body">
+                <!-- Progress bar -->
+                <div class="progress mb-4" style="height: 8px;">
+                    <div id="walkthrough-progress" class="progress-bar bg-primary" role="progressbar" style="width: 8%;" aria-valuenow="1" aria-valuemin="0" aria-valuemax="12"></div>
+                </div>
+
+                <!-- Step content area -->
+                <div id="walkthrough-step-content">
+                    <!-- Step 1: App Title and Logo -->
+                    <div id="walkthrough-step-1" class="walkthrough-step">
+                        <h4>1. Configure Application Basics</h4>
+                        <p class="text-muted">Let's set up your Simple Chat instance. Let's start with some basic configuration options.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Configure your application title and logo.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Application Title</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Custom Logo</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <p>Use the <strong>General</strong> tab to configure these settings.</p>
+                    </div>
+
+                    <!-- Step 2: Configure GPT Settings -->
+                    <div id="walkthrough-step-2" class="walkthrough-step" style="display: none;">
+                        <h4>2. Configure GPT API Settings</h4>
+                        <p class="text-muted">Configure the Azure OpenAI GPT API settings.</p>
+                        
+                        <div class="alert alert-danger">
+                            <strong>Required:</strong> GPT API configuration is required for Simple Chat to function.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>GPT Endpoint</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure OpenAI resources."></i>
+                        </div>
+                        
+                        <p>Configure GPT API settings in the <strong>GPT</strong> tab.</p>
+                    </div>
+
+                    <!-- Step 3: Select GPT Models -->
+                    <div id="walkthrough-step-3" class="walkthrough-step" style="display: none;">
+                        <h4>3. Select GPT Models</h4>
+                        <p class="text-muted">Now that you've configured the GPT API settings, fetch and select the GPT models to use.</p>
+                        
+                        <div class="alert alert-danger">
+                            <strong>Required:</strong> Select at least one GPT model for users to use.
+                        </div>
+                        
+                        <p class="mb-4">
+                            <ol>
+                                <li id="fetch-models-step">Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
+                                <li>Select one or more models from the list</li>
+                            </ol>
+                        </p>
+                        
+                        <div class="alert alert-info" id="apim-model-note" style="display: none;">
+                            <strong>APIM Configuration:</strong> When using APIM, enter model names directly in the "Azure APIM Deployment" field (e.g., "gpt-4o, gpt-35-turbo"). Fetching models is not available with APIM.
+                        </div>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Workspaces -->
+                    <div id="walkthrough-step-4" class="walkthrough-step" style="display: none;">
+                        <h4>4. Configure Workspaces</h4>
+                        <p class="text-muted">Enable workspace features for your users.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable personal and group workspaces for document management.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Your Workspace (Personal Workspace)</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>My Groups (Group Workspaces)</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <p class="alert alert-warning">
+                            <strong>Important:</strong> If you enable either workspace feature, you will need to configure additional services in the next steps.
+                        </p>
+                    </div>
+
+                    <!-- Step 5: Embedding Settings -->
+                    <div id="walkthrough-step-5" class="walkthrough-step" style="display: none;">
+                        <h4>5. Configure Embedding API Settings</h4>
+                        <p class="text-muted">Configure the embedding service for document processing.</p>
+                        
+                        <div id="embedding-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Embedding Endpoint</span>
+                                <span id="embedding-required-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="embedding-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Fetch Models</span>
+                                <span id="fetch-models-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. APIM requires manual model configuration as the fetch functionality is not available."></i>
+                        </div>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
+                        </div>
+                    </div>
+
+                    <!-- Step 6: AI Search Settings -->
+                    <div id="walkthrough-step-6" class="walkthrough-step" style="display: none;">
+                        <h4>6. Configure Azure AI Search</h4>
+                        <p class="text-muted">Configure Azure AI Search for document indexing.</p>
+                        
+                        <div id="ai-search-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Azure AI Search is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>AI Search Endpoint</span>
+                                <span id="search-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="search-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure AI Search or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
+                        </div>
+                    </div>
+
+                    <!-- Step 7: Document Intelligence -->
+                    <div id="walkthrough-step-7" class="walkthrough-step" style="display: none;">
+                        <h4>7. Configure Document Intelligence</h4>
+                        <p class="text-muted">Configure Azure Document Intelligence for processing documents.</p>
+                        
+                        <div id="doc-intelligence-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Document Intelligence is required if workspaces are enabled.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Document Intelligence Endpoint</span>
+                                <span id="doc-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Authentication</span>
+                                <span id="doc-auth-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Document Intelligence or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
+                        </div>
+                    </div>
+
+                    <!-- Step 8: Video File Support -->
+                    <div id="walkthrough-step-8" class="walkthrough-step" style="display: none;">
+                        <h4>8. Enable Video File Support</h4>
+                        <p class="text-muted">Configure support for video file processing.</p>
+                        
+                        <div id="video-support-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <p class="mb-3">Use the <strong>Video Support</strong> settings in the Workspaces tab to enable and configure video file processing.</p>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Video Indexer Endpoint</span>
+                                <span id="video-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Video Indexer API Key</span>
+                                <span id="video-key-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 9: Audio File Support -->
+                    <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
+                        <h4>9. Enable Audio File Support</h4>
+                        <p class="text-muted">Configure support for audio file processing.</p>
+                        
+                        <div id="audio-support-requirement-alert" class="alert alert-danger">
+                            <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
+                        </div>
+                        
+                        <p class="mb-3">Use the <strong>Audio Support</strong> settings in the Workspaces tab to enable and configure audio file processing.</p>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Service Endpoint</span>
+                                <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Speech Service Key</span>
+                                <span id="audio-key-badge" class="badge bg-danger">Required</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 10: Content Safety -->
+                    <div id="walkthrough-step-10" class="walkthrough-step" style="display: none;">
+                        <h4>10. Content Safety Settings</h4>
+                        <p class="text-muted">Configure content safety features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable content safety features to filter inappropriate content.
+                        </div>
+                    </div>
+
+                    <!-- Step 11: User Feedback and Archiving -->
+                    <div id="walkthrough-step-11" class="walkthrough-step" style="display: none;">
+                        <h4>11. User Feedback and Conversation Archiving</h4>
+                        <p class="text-muted">Configure user feedback and conversation archiving features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable user feedback and conversation archiving.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>User Feedback</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Conversation Archiving</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Step 12: Enhanced Citations and Image Generation -->
+                    <div id="walkthrough-step-12" class="walkthrough-step" style="display: none;">
+                        <h4>12. Enhanced Citations and Image Generation</h4>
+                        <p class="text-muted">Configure additional features.</p>
+                        
+                        <div class="alert alert-info">
+                            <strong>Optional:</strong> Enable enhanced citations and image generation features.
+                        </div>
+                        
+                        <ul class="list-group mb-4">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Enhanced Citations</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Image Generation</span>
+                                <span class="badge bg-secondary">Optional</span>
+                            </li>
+                        </ul>
+                        
+                        <div class="alert alert-success">
+                            <strong>Congratulations!</strong> You've completed the initial setup walkthrough. You can now continue to configure your Simple Chat instance in detail.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation buttons -->
+                <div class="mt-3 d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" id="walkthrough-prev-btn">Previous</button>
+                    <div>
+                        <button type="button" class="btn btn-primary" id="walkthrough-next-btn">Next</button>
+                        <button type="button" class="btn btn-success" id="walkthrough-finish-btn" style="display: none;">Finish Setup and Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
             
@@ -265,7 +584,8 @@
                     <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
                         if settings.enable_gpt_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
-                        endpoint.</label>
+                        endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
                 </div>
 
                 <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
@@ -399,7 +719,8 @@
                     <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
                         name="enable_embedding_apim" {% if settings.enable_embedding_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_embedding_apim">Use APIM instead of direct to Azure
-                        OpenAI endpoint.</label>
+                        OpenAI endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
                 </div>
 
                 <div id="non_apim_embedding_settings" {% if settings.enable_embedding_apim %}style="display: none;" {%
@@ -1845,7 +2166,16 @@
     window.imageAll      = JSON.parse('{{ settings.image_gen_model.all|tojson()|safe }}' || '[]');
 
     // *** NEW: Classification Data ***
-    window.classificationCategories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    try {
+        let categoriesStr = '{{ settings.document_classification_categories|tojson(indent=None)|safe }}';
+        if (!categoriesStr || categoriesStr.trim() === '') {
+            categoriesStr = '[]';
+        }
+        window.classificationCategories = JSON.parse(categoriesStr);
+    } catch (e) {
+        console.error("Error parsing classification categories:", e);
+        window.classificationCategories = [];
+    }
     // Ensure it's always an array
     if (!Array.isArray(window.classificationCategories)) {
         window.classificationCategories = [];
@@ -1854,4 +2184,165 @@
 
 </script>
 <script src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+
+<!-- Script to update the walkthrough steps based on form changes -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle workspace toggle changes to update requirement status
+        const userWorkspaceToggle = document.getElementById('enable_user_workspace');
+        const groupWorkspaceToggle = document.getElementById('enable_group_workspaces');
+        
+        if (userWorkspaceToggle && groupWorkspaceToggle) {
+            [userWorkspaceToggle, groupWorkspaceToggle].forEach(toggle => {
+                toggle.addEventListener('change', function() {
+                    updateWalkthroughRequirements();
+                    // Recalculate available steps and refresh navigation
+                    const currentStep = getCurrentWalkthroughStep();
+                    navigateToWalkthroughStep(currentStep);
+                });
+            });
+        }
+        
+        // Handle video support toggle in main form
+        const videoSupportToggle = document.getElementById('enable_video_file_support');
+        if (videoSupportToggle) {
+            videoSupportToggle.addEventListener('change', function() {
+                updateWalkthroughRequirements();
+                
+                // Recalculate available steps and refresh navigation
+                const currentStep = getCurrentWalkthroughStep();
+                navigateToWalkthroughStep(currentStep);
+            });
+        }
+        
+        // Handle audio support toggle in main form
+        const audioSupportToggle = document.getElementById('enable_audio_file_support');
+        if (audioSupportToggle) {
+            audioSupportToggle.addEventListener('change', function() {
+                updateWalkthroughRequirements();
+                
+                // Recalculate available steps and refresh navigation
+                const currentStep = getCurrentWalkthroughStep();
+                navigateToWalkthroughStep(currentStep);
+            });
+        }
+        
+        // Handle walkthrough container events
+        const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+        if (walkthroughContainer) {
+            // Close button functionality
+            const closeBtn = document.getElementById('close-walkthrough-btn');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', hideWalkthrough);
+            }
+
+            // Custom event listener for step changes
+            walkthroughContainer.addEventListener('walkthroughStepChanged', function(e) {
+                const currentStep = e.detail?.step || 1;
+                const totalSteps = document.querySelectorAll('.walkthrough-step').length;
+                
+                const prevBtn = document.getElementById('walkthrough-prev-btn');
+                const nextBtn = document.getElementById('walkthrough-next-btn');
+                const finishBtn = document.getElementById('walkthrough-finish-btn');
+                
+                // Hide/show previous button based on first step
+                if (prevBtn) prevBtn.style.display = currentStep === 1 ? 'none' : 'inline-block';
+                
+                // Show finish button on last step, next button otherwise
+                if (nextBtn && finishBtn) {
+                    nextBtn.style.display = currentStep === totalSteps ? 'none' : 'inline-block';
+                    finishBtn.style.display = currentStep === totalSteps ? 'inline-block' : 'none';
+                }
+            });
+        }
+        
+        // Initial update
+        updateWalkthroughRequirements();
+    });
+    
+    function updateWalkthroughRequirements() {
+        const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+        const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+        const workspacesEnabled = workspaceEnabled || groupsEnabled;
+        
+        // Update embedding requirements
+        updateRequirementStatus('embedding', workspacesEnabled);
+        
+        // Update AI Search requirements
+        updateRequirementStatus('ai-search', workspacesEnabled);
+        
+        // Update Document Intelligence requirements
+        updateRequirementStatus('doc-intelligence', workspacesEnabled);
+        
+        // Update Video support requirements
+        const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || 
+                            document.getElementById('enable_video_file_support')?.checked || false;
+        updateRequirementStatus('video-support', workspacesEnabled && videoEnabled);
+        
+        // Update Audio support requirements
+        const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || 
+                            document.getElementById('enable_audio_file_support')?.checked || false;
+        updateRequirementStatus('audio-support', workspacesEnabled && audioEnabled);
+        
+        // If we're in the walkthrough, update completion status for current step
+        const currentStepElem = document.querySelector('.walkthrough-step:not([style*=\'display: none\'])');
+        if (currentStepElem) {
+            const currentStep = parseInt(currentStepElem.id?.split('-')[2]) || 1;
+            if (typeof updateStepCompletionStatus === 'function') {
+                updateStepCompletionStatus(currentStep);
+            }
+        }
+    }
+    
+    function updateRequirementStatus(section, isRequired, isComplete = false) {
+        // Update requirement alert
+        const requirementAlert = document.getElementById(`${section}-requirement-alert`);
+        if (requirementAlert) {
+            if (isRequired && isComplete) {
+                requirementAlert.className = 'alert alert-success';
+                requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this section.';
+            } else if (isRequired) {
+                requirementAlert.className = 'alert alert-danger';
+                requirementAlert.innerHTML = '<strong>Required:</strong> This configuration is required for workspace functionality.';
+            } else {
+                requirementAlert.className = 'alert alert-info';
+                requirementAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
+        }
+        
+        // Update badges
+        const badges = document.querySelectorAll(`[id$="${section}-badge"], [id*="${section}-"][id$="badge"]`);
+        badges.forEach(badge => {
+            if (isRequired && isComplete) {
+                badge.className = 'badge bg-success';
+                badge.textContent = 'Complete';
+            } else if (isRequired) {
+                badge.className = 'badge bg-danger';
+                badge.textContent = 'Required';
+            } else {
+                badge.className = 'badge bg-secondary';
+                badge.textContent = 'Optional';
+            }
+        });
+    }
+
+    // Function to hide the walkthrough
+    function hideWalkthrough() {
+        const container = document.getElementById('settings-walkthrough-container');
+        if (container) {
+            container.style.display = 'none';
+        }
+    }
+    
+    /**
+     * Finishes the walkthrough and saves the form
+     */
+    function finishSetupAndSave() {
+        // Hide the walkthrough
+        hideWalkthrough();
+        
+        // Submit the form
+        document.getElementById('admin-settings-form').submit();
+    }
+</script>
 {% endblock %}
