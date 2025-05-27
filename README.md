@@ -945,7 +945,7 @@ To run the application in Azure Government cloud:
 
 3. **Endpoint URLs**: Ensure all endpoint URLs configured (in App Settings or via the Admin UI) point to the correct .usgovernment.azure.com (or specific service) domains. Azure OpenAI endpoints in Gov are different from Commercial.
 
-4. **App Registration**: Ensure the App Registration is done within your Azure Government Azure AD tenant. The Redirect URI for the App Service will use the .azurewebsites.us domain.
+4. **App Registration**: Ensure the App Registration is done within your Azure Government Azure AD tenant. The Redirect URIs for the App Service will use the .azurewebsites.us domain (e.g., `https://<your-app-service-name>.azurewebsites.us/.auth/login/aad/callback` and `https://<your-app-service-name>.azurewebsites.us/getAToken`).
 
 ### How to use Managed Identity
 
