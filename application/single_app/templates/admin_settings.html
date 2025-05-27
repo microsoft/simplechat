@@ -143,6 +143,11 @@
                             </li>
                         </ul>
                         
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure OpenAI resources."></i>
+                        </div>
+                        
                         <p>Configure GPT API settings in the <strong>GPT</strong> tab.</p>
                     </div>
 
@@ -157,10 +162,14 @@
                         
                         <p class="mb-4">
                             <ol>
-                                <li>Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
+                                <li id="fetch-models-step">Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
                                 <li>Select one or more models from the list</li>
                             </ol>
                         </p>
+                        
+                        <div class="alert alert-info" id="apim-model-note" style="display: none;">
+                            <strong>APIM Configuration:</strong> When using APIM, enter model names directly in the "Azure APIM Deployment" field (e.g., "gpt-4o, gpt-35-turbo"). Fetching models is not available with APIM.
+                        </div>
                         
                         <div class="alert alert-info">
                             <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
@@ -217,6 +226,11 @@
                         </ul>
                         
                         <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. APIM requires manual model configuration as the fetch functionality is not available."></i>
+                        </div>
+                        
+                        <div class="alert alert-info">
                             <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
                         </div>
                     </div>
@@ -240,6 +254,11 @@
                                 <span id="search-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Azure AI Search or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
+                        </div>
                     </div>
 
                     <!-- Step 7: Document Intelligence -->
@@ -261,6 +280,11 @@
                                 <span id="doc-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>API Management Option:</strong> You can configure a direct connection to Document Intelligence or use Azure API Management (APIM).
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
+                        </div>
                     </div>
 
                     <!-- Step 8: Video File Support -->
@@ -560,7 +584,8 @@
                     <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
                         if settings.enable_gpt_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
-                        endpoint.</label>
+                        endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
                 </div>
 
                 <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
@@ -694,7 +719,8 @@
                     <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
                         name="enable_embedding_apim" {% if settings.enable_embedding_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_embedding_apim">Use APIM instead of direct to Azure
-                        OpenAI endpoint.</label>
+                        OpenAI endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
                 </div>
 
                 <div id="non_apim_embedding_settings" {% if settings.enable_embedding_apim %}style="display: none;" {%

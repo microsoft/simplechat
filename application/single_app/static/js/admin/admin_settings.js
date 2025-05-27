@@ -36,6 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
     updateImageHiddenInput();
 
     setupToggles(); // This function will be extended below
+    
+    // Initialize tooltips
+    initializeTooltips();
 
     setupTestButtons();
 
@@ -676,6 +679,15 @@ function setupToggles() {
         enableGptApim.addEventListener('change', function () {
             document.getElementById('non_apim_gpt_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_gpt_settings').style.display = this.checked ? 'block' : 'none';
+            
+            // Toggle visibility of APIM model note and fetch step in the walkthrough
+            const apimModelNote = document.getElementById('apim-model-note');
+            const fetchModelsStep = document.getElementById('fetch-models-step');
+            if (apimModelNote && fetchModelsStep) {
+                apimModelNote.style.display = this.checked ? 'block' : 'none';
+                fetchModelsStep.style.display = this.checked ? 'none' : 'block';
+            }
+            
             markFormAsModified();
         });
     }
@@ -1491,6 +1503,17 @@ function showWalkthrough() {
         // Sync walkthrough toggles with actual form toggles
         syncWalkthroughToggles();
         
+        // Check if GPT APIM is enabled and update the model note visibility
+        const enableGptApim = document.getElementById('enable_gpt_apim');
+        if (enableGptApim) {
+            const apimModelNote = document.getElementById('apim-model-note');
+            const fetchModelsStep = document.getElementById('fetch-models-step');
+            if (apimModelNote && fetchModelsStep) {
+                apimModelNote.style.display = enableGptApim.checked ? 'block' : 'none';
+                fetchModelsStep.style.display = enableGptApim.checked ? 'none' : 'block';
+            }
+        }
+        
         // Reset to first step when launched
         setTimeout(() => {
             try {
@@ -1827,7 +1850,14 @@ function isStepComplete(stepNumber) {
             return true;
             
         case 3: // GPT model selection
-            return gptSelected && gptSelected.length > 0;
+            if (!document.getElementById('enable_gpt_apim').checked) {
+                // For direct Azure OpenAI, check if models are selected
+                return gptSelected && gptSelected.length > 0;
+            } else {
+                // For APIM, check if deployment field is filled
+                const apimDeployment = document.getElementById('azure_apim_gpt_deployment')?.value;
+                return apimDeployment && apimDeployment.trim() !== '';
+            }
             
         case 4: // Workspace and groups settings - always complete (optional)
             return true;
@@ -1850,8 +1880,15 @@ function isStepComplete(stepNumber) {
                 if (!apimKey) return false;
             }
             
-            // Also check if embedding models are selected
-            if (embeddingSelected.length === 0) return false;
+            // Also check if embedding models are selected or APIM deployment is specified
+            if (!document.getElementById('enable_embedding_apim').checked) {
+                // For direct Azure OpenAI, check models
+                if (embeddingSelected.length === 0) return false;
+            } else {
+                // For APIM, check deployment field
+                const apimDeployment = document.getElementById('azure_apim_embedding_deployment')?.value;
+                if (!apimDeployment || apimDeployment.trim() === '') return false;
+            }
             
             return true;
             
@@ -1983,6 +2020,7 @@ function setupWalkthroughFieldListeners() {
             {selector: '#azure_openai_gpt_authentication_type', event: 'change'},
             {selector: '#azure_apim_gpt_endpoint', event: 'input'},
             {selector: '#azure_apim_gpt_subscription_key', event: 'input'},
+            {selector: '#azure_apim_gpt_deployment', event: 'input'},
             {selector: '#enable_gpt_apim', event: 'change'}
         ],
         3: [ // GPT Models
@@ -2163,6 +2201,19 @@ function setupWalkthroughFieldListeners() {
 }
 
 /**
+ * Initialize Bootstrap tooltips for any elements with data-bs-toggle="tooltip"
+ */
+function initializeTooltips() {
+    // Find all tooltip elements
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    
+    // Initialize Bootstrap tooltips
+    if (tooltipTriggerList.length > 0) {
+        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+    }
+}
+
+/**
  * Check if optional features are enabled and configured for a specific step
  * @param {number} stepNumber - The step to check
  * @returns {boolean} True if optional features are enabled/configured
@@ -2234,6 +2285,9 @@ function checkOptionalFeaturesEnabled(stepNumber) {
 function validateAndMoveToNextStep(currentStep) {
     // Synchronize walkthrough toggles with form before validation
     syncWalkthroughToggles();
+    
+    // Initialize tooltips for APIM help
+    initializeTooltips();
     
     // Check if the current step is complete
     const complete = isStepComplete(currentStep);
