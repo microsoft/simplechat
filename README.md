@@ -1027,7 +1027,7 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
 2. **Q: Users are getting authentication errors or cannot log in.**
 
    - **A:** Check the following:
-     - **App Registration**: Is the Redirect URI (.../.auth/login/aad/callback) correctly configured in the Azure AD App Registration?
+     - **App Registration**: Is the Redirect URI (.../.auth/login/aad/callback) correctly configured in the Azure AD App Registration? Also check if the additional redirect URI for `/getAToken` is configured.
      - **App Service Authentication**: Is Authentication turned on in the App Service, linked to the correct App Registration, and set to "Require authentication"? Is the Issuer URL correct?
      - **Enterprise Application**: Are users or groups correctly assigned to the application in **Enterprise Applications > Users and groups**? If "User assignment required" is enabled on the Enterprise App, only assigned users/groups can log in.
      - **API Permissions**: Have the required Microsoft Graph permissions (`User.Read`, `openid`, `profile`, etc., and potentially `People.Read.All` for groups) been added *and* granted admin consent in the App Registration?
