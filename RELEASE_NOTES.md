@@ -2,6 +2,54 @@
 
 # Feature Release
 
+### **(v0.214.001)**
+
+#### New Features
+
+*   **Dark Mode Support**
+    *   Added full dark mode theming with support for:
+        *   Chat interface (left and right panes)
+        *   File metadata panels
+        *   Dropdowns, headers, buttons, and classification tables
+    *   User preferences persist across sessions.
+    *   Dark mode toggle in navbar with text labels and styling fixes (no flash during navigation).
+*   **Admin Management Enhancements**
+    *   **First-Time Configuration Wizard**: Introduced a guided setup wizard on the Admin Settings page. This wizard simplifies the initial configuration process for application basics (title, logo), GPT API settings, workspace settings, additional services (Embedding, AI Search, Document Intelligence), and optional features. (Ref: `README.md`, `admin_settings.js`, `admin_settings.html`)
+    *   Admin Settings UI updated to show application version check status, comparing against the latest GitHub release. (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`)
+    *   Added `logout_hint` parameter to resolve multi-identity logout errors.
+    *   Updated favicon and admin settings layout for improved clarity and usability.
+*   **UI Banner & Visual Updates**
+    *   **Enhanced Document Dropdown (Chat Interface)**: The document selection dropdown in the chat interface has been significantly improved:
+        *   Increased width and scrollability for better handling of numerous documents.
+        *   Client-side search/filter functionality added to quickly find documents.
+        *   Improved visual feedback, including a "no matches found" message. (Ref: `chats.css`, `chat-documents.js`, `chats.html`)
+    *   New top-of-page banner added (configurable).
+    *   Local CSS/JS used across admin, group, and user workspaces for consistency and performance.
+    *   Updated `base.html` and `workspace.html` to reflect visual improvements.
+*   **Application Setup & Configuration**
+    *   **Automatic Storage Container Creation**: The application now attempts to automatically create the `user-documents` and `group-documents` Azure Storage containers during initialization if they are not found, provided "Enhanced Citations" are enabled and a valid storage connection string is configured. Manual creation as per documentation is still the recommended primary approach. (Ref: `config.py`)
+    *   Updated documentation for Azure Storage Account setup, including guidance for the new First-Time Configuration Wizard. (Ref: `README.md`)
+*   **Security Improvements**
+    *   Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
+    *   Enhanced security for loading AI Search index schema JSON files by implementing path validation and using `secure_filename` in backend settings. (Ref: `route_backend_settings.py`)
+*   **Build & Deployment**
+    *   Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
+    *   Updated Dockerfile to use Python 3.12.
+*   **Version Enforcement**
+    *   GitHub workflow `enforce-dev-to-main.yml` added to prevent pull requests to `main` unless from `development`.
+
+#### Bug Fixes
+
+*   **A. Document Processing**
+    *   **Document Deletion**: Resolved an issue where documents were not properly deleted from Azure Blob Storage. Now, when a document is deleted from the application, its corresponding blob is also removed from the `user-documents` or `group-documents` container if enhanced citations are enabled. (Ref: `functions_documents.py`)
+    *   **Configuration Validation (Enhanced Citations)**: Added validation in Admin Settings to ensure that if "Enhanced Citations" is enabled, the "Office Docs Storage Account Connection String" is also provided. If the connection string is missing, Enhanced Citations will be automatically disabled, and a warning message will be displayed to the admin, preventing silent failures. (Ref: `route_frontend_admin_settings.py`)
+*   **C. UI & Usability**
+    *   **Local Assets for SimpleMDE**: The SimpleMDE Markdown editor assets (JS/CSS) are now served locally from `/static/js/simplemde/` and `/static/css/simplemde.min.css` instead of a CDN. This improves page load times, reduces external dependencies, and allows for use in offline or air-gapped environments. (Ref: `simplemde.min.js`, `simplemde.min.css` additions, template updates in `group_workspaces.html`, `workspace.html`)
+    *   General CSS cleanups across admin and workspace UIs.
+*   **D. General Stability**
+    *   Merged contributions from multiple devs including UI fixes, backend updates, and config changes.
+    *   Removed unused video/audio container declarations for a leaner frontend.
+
 ### **(v0.213.001)**
 
 #### New Features
