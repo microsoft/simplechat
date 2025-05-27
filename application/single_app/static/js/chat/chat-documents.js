@@ -163,10 +163,11 @@ export function loadGroupDocs() {
 
 export function loadAllDocs() {
   const hasDocControls = searchDocumentsBtn || docScopeSelect || docSelectEl;
+  const classificationEnabled = window.enable_document_classification === true || window.enable_document_classification === "true";
 
-  if (!hasDocControls || !window.enable_document_classification) { // Only load if feature enabled
+  if (!hasDocControls || !classificationEnabled) { // Only load if feature enabled
     // Hide classification container entirely if feature disabled
-    if (classificationContainer && !window.enable_document_classification) {
+    if (classificationContainer && !classificationEnabled) {
         classificationContainer.style.display = 'none';
     }
     return Promise.resolve();
@@ -225,7 +226,8 @@ export function handleDocumentSelectChange() {
       return;
   }
    // Ensure classification container is visible (might be hidden if feature was disabled)
-   if (window.enable_document_classification) {
+   const classificationEnabled = window.enable_document_classification === true || window.enable_document_classification === "true";
+   if (classificationEnabled) {
         classificationContainer.style.display = '';
    } else {
         classificationContainer.style.display = 'none';

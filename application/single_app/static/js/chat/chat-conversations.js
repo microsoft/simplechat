@@ -325,7 +325,7 @@ export function selectConversation(conversationId) {
   // Update Header Classifications
   if (currentConversationClassificationsEl) {
     currentConversationClassificationsEl.innerHTML = ""; // Clear previous
-    if (window.enable_document_classification) {
+    if (window.enable_document_classification === true || window.enable_document_classification === "true") {
       try {
         const classificationLabels = JSON.parse(convoItem.dataset.classifications || '[]');
         if (Array.isArray(classificationLabels) && classificationLabels.length > 0) {
