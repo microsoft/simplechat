@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Manage Public Workspace: {{ workspace.name }}</h1>
+        <div>
+            <span class="badge bg-info text-dark me-2">Role: {{ user_role }}</span>
+            <div class="btn-group">
+                <a href="{{ url_for('my_public_workspaces') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-list"></i> My Workspaces
+                </a>
+                <a href="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}" class="btn btn-outline-primary">
+                    <i class="fas fa-cogs"></i> Admin Settings
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Documents Tab -->
+    <nav>
+        <div class="nav nav-tabs mb-4" id="nav-tab" role="tablist">
+            <button class="nav-link active" id="nav-documents-tab" data-bs-toggle="tab" data-bs-target="#nav-documents" type="button" role="tab" aria-controls="nav-documents" aria-selected="true">
+                <i class="fas fa-file-alt"></i> Documents
+            </button>
+            <button class="nav-link" id="nav-prompts-tab" data-bs-toggle="tab" data-bs-target="#nav-prompts" type="button" role="tab" aria-controls="nav-prompts" aria-selected="false">
+                <i class="fas fa-lightbulb"></i> Prompts
+            </button>
+        </div>
+    </nav>
+    
+    <div class="tab-content" id="nav-tabContent">
+        <!-- Documents Tab Content -->
+        <div class="tab-pane fade show active" id="nav-documents" role="tabpanel" aria-labelledby="nav-documents-tab">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Documents</h5>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadDocumentModal">
+                        <i class="fas fa-plus"></i> Upload Document
+                    </button>
+                </div>
+                <div class="card-body">
+                    {% if documents %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Upload Date</th>
+                                    <th>Status</th>
+                                    <th>Progress</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for doc in documents %}
+                                <tr>
+                                    <td>{{ doc.file_name }}</td>
+                                    <td>{{ doc.upload_date|datetime }}</td>
+                                    <td>
+                                        {% if doc.status == "Processing complete" %}
+                                        <span class="badge bg-success">Complete</span>
+                                        {% elif "Error" in doc.status %}
+                                        <span class="badge bg-danger">Error</span>
+                                        {% else %}
+                                        <span class="badge bg-warning text-dark">Processing</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="progress">
+                                            <div class="progress-bar {% if doc.percentage_complete < 100 %}progress-bar-striped progress-bar-animated{% endif %}" 
+                                                 role="progressbar" 
+                                                 style="width: {{ doc.percentage_complete }}%"
+                                                 aria-valuenow="{{ doc.percentage_complete }}" 
+                                                 aria-valuemin="0" 
+                                                 aria-valuemax="100">{{ doc.percentage_complete }}%</div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-danger delete-document" 
+                                                    data-document-id="{{ doc.id }}" 
+                                                    data-document-name="{{ doc.file_name }}">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        <p class="mb-0">No documents uploaded yet. Upload documents to make them available to everyone.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Prompts Tab Content -->
+        <div class="tab-pane fade" id="nav-prompts" role="tabpanel" aria-labelledby="nav-prompts-tab">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Prompts</h5>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createPromptModal">
+                        <i class="fas fa-plus"></i> Create Prompt
+                    </button>
+                </div>
+                <div class="card-body">
+                    {% if prompts %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Created</th>
+                                    <th>Updated</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prompt in prompts %}
+                                <tr>
+                                    <td>{{ prompt.name }}</td>
+                                    <td>{{ prompt.created_at|datetime }}</td>
+                                    <td>{{ prompt.updated_at|datetime }}</td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-info view-prompt" 
+                                                    data-prompt-name="{{ prompt.name }}"
+                                                    data-prompt-content="{{ prompt.content }}">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                            <button class="btn btn-primary edit-prompt" 
+                                                    data-prompt-id="{{ prompt.id }}" 
+                                                    data-prompt-name="{{ prompt.name }}"
+                                                    data-prompt-content="{{ prompt.content }}">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-danger delete-prompt" 
+                                                    data-prompt-id="{{ prompt.id }}" 
+                                                    data-prompt-name="{{ prompt.name }}">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        <p class="mb-0">No prompts created yet. Create prompts to help users interact with documents in this workspace.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Document Modal -->
+<div class="modal fade" id="uploadDocumentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upload Document</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="uploadDocumentForm" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="documentFile" class="form-label">Select File</label>
+                        <input type="file" class="form-control" id="documentFile" name="file" required>
+                        <div class="form-text">Supported formats: PDF, DOCX, TXT, CSV, etc.</div>
+                    </div>
+                    <div class="progress d-none" id="uploadProgress">
+                        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Create/Edit Prompt Modal -->
+<div class="modal fade" id="promptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="promptModalTitle">Create Prompt</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="promptForm">
+                <div class="modal-body">
+                    <input type="hidden" id="promptId" name="promptId">
+                    <div class="mb-3">
+                        <label for="promptName" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="promptName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="promptContent" class="form-label">Content</label>
+                        <textarea class="form-control" id="promptContent" name="content" rows="8" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="savePromptBtn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- View Prompt Modal -->
+<div class="modal fade" id="viewPromptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="viewPromptTitle"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="viewPromptContent" class="p-3 bg-light"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary edit-from-view">Edit</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmDeleteText"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Document upload functionality
+    const uploadForm = document.getElementById('uploadDocumentForm');
+    const progressBar = document.querySelector('#uploadProgress .progress-bar');
+    const progressContainer = document.getElementById('uploadProgress');
+    
+    uploadForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        progressContainer.classList.remove('d-none');
+        progressBar.style.width = '0%';
+        progressBar.textContent = 'Uploading...';
+        
+        fetch(`/api/public_workspaces/{{ workspace.id }}/documents`, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            progressBar.style.width = '100%';
+            progressBar.textContent = 'Complete';
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        })
+        .catch(error => {
+            progressBar.classList.add('bg-danger');
+            progressBar.textContent = `Error: ${error.message}`;
+        });
+    });
+
+    // Delete document functionality
+    const deleteDocumentButtons = document.querySelectorAll('.delete-document');
+    deleteDocumentButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const docId = this.getAttribute('data-document-id');
+            const docName = this.getAttribute('data-document-name');
+            
+            document.getElementById('confirmDeleteText').textContent = `Are you sure you want to delete the document "${docName}"?`;
+            
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            confirmBtn.onclick = function() {
+                fetch(`/api/public_workspaces/{{ workspace.id }}/documents/${docId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.error || 'Failed to delete'); });
+                    }
+                    return response.json();
+                })
+                .then(() => {
+                    window.location.reload();
+                })
+                .catch(error => {
+                    alert(`Error: ${error.message}`);
+                });
+            };
+            
+            new bootstrap.Modal(document.getElementById('confirmDeleteModal')).show();
+        });
+    });
+
+    // Create new prompt
+    document.querySelector('[data-bs-target="#createPromptModal"]').addEventListener('click', function() {
+        document.getElementById('promptModalTitle').textContent = 'Create Prompt';
+        document.getElementById('promptId').value = '';
+        document.getElementById('promptName').value = '';
+        document.getElementById('promptContent').value = '';
+        document.getElementById('savePromptBtn').textContent = 'Create';
+        new bootstrap.Modal(document.getElementById('promptModal')).show();
+    });
+
+    // Edit prompt
+    const editPromptButtons = document.querySelectorAll('.edit-prompt');
+    editPromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptId = this.getAttribute('data-prompt-id');
+            const promptName = this.getAttribute('data-prompt-name');
+            const promptContent = this.getAttribute('data-prompt-content');
+            
+            document.getElementById('promptModalTitle').textContent = 'Edit Prompt';
+            document.getElementById('promptId').value = promptId;
+            document.getElementById('promptName').value = promptName;
+            document.getElementById('promptContent').value = promptContent;
+            document.getElementById('savePromptBtn').textContent = 'Update';
+            
+            new bootstrap.Modal(document.getElementById('promptModal')).show();
+        });
+    });
+
+    // View prompt
+    const viewPromptButtons = document.querySelectorAll('.view-prompt');
+    viewPromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptName = this.getAttribute('data-prompt-name');
+            const promptContent = this.getAttribute('data-prompt-content');
+            
+            document.getElementById('viewPromptTitle').textContent = promptName;
+            document.getElementById('viewPromptContent').textContent = promptContent;
+            
+            // Store reference for edit button
+            document.querySelector('.edit-from-view').setAttribute('data-prompt-id', this.closest('tr').querySelector('.edit-prompt').getAttribute('data-prompt-id'));
+            document.querySelector('.edit-from-view').setAttribute('data-prompt-name', promptName);
+            document.querySelector('.edit-from-view').setAttribute('data-prompt-content', promptContent);
+            
+            new bootstrap.Modal(document.getElementById('viewPromptModal')).show();
+        });
+    });
+
+    // Edit from view
+    document.querySelector('.edit-from-view').addEventListener('click', function() {
+        const promptId = this.getAttribute('data-prompt-id');
+        const promptName = this.getAttribute('data-prompt-name');
+        const promptContent = this.getAttribute('data-prompt-content');
+        
+        // Hide view modal
+        bootstrap.Modal.getInstance(document.getElementById('viewPromptModal')).hide();
+        
+        // Setup and show edit modal
+        document.getElementById('promptModalTitle').textContent = 'Edit Prompt';
+        document.getElementById('promptId').value = promptId;
+        document.getElementById('promptName').value = promptName;
+        document.getElementById('promptContent').value = promptContent;
+        document.getElementById('savePromptBtn').textContent = 'Update';
+        
+        new bootstrap.Modal(document.getElementById('promptModal')).show();
+    });
+
+    // Save prompt functionality
+    const promptForm = document.getElementById('promptForm');
+    promptForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const promptId = document.getElementById('promptId').value;
+        const promptName = document.getElementById('promptName').value;
+        const promptContent = document.getElementById('promptContent').value;
+        
+        const data = {
+            name: promptName,
+            content: promptContent
+        };
+        
+        let url = `/api/public_workspaces/{{ workspace.id }}/prompts`;
+        let method = 'POST';
+        
+        if (promptId) {
+            url = `${url}/${promptId}`;
+            method = 'PUT';
+        }
+        
+        fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || 'Failed to save prompt'); });
+            }
+            return response.json();
+        })
+        .then(() => {
+            window.location.reload();
+        })
+        .catch(error => {
+            alert(`Error: ${error.message}`);
+        });
+    });
+
+    // Delete prompt functionality
+    const deletePromptButtons = document.querySelectorAll('.delete-prompt');
+    deletePromptButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const promptId = this.getAttribute('data-prompt-id');
+            const promptName = this.getAttribute('data-prompt-name');
+            
+            document.getElementById('confirmDeleteText').textContent = `Are you sure you want to delete the prompt "${promptName}"?`;
+            
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            confirmBtn.onclick = function() {
+                fetch(`/api/public_workspaces/{{ workspace.id }}/prompts/${promptId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.error || 'Failed to delete'); });
+                    }
+                    return response.json();
+                })
+                .then(() => {
+                    window.location.reload();
+                })
+                .catch(error => {
+                    alert(`Error: ${error.message}`);
+                });
+            };
+            
+            new bootstrap.Modal(document.getElementById('confirmDeleteModal')).show();
+        });
+    });
+});
+</script>
+{% endblock %}

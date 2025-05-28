@@ -16,6 +16,8 @@ from route_frontend_chats import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
+from route_frontend_public_workspaces import *
+from route_frontend_my_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
 
@@ -54,6 +56,19 @@ def to_datetime_filter(value):
 def format_datetime_filter(value):
     return value.strftime('%Y-%m-%d %H:%M')
 
+@app.template_filter('datetime')
+def datetime_filter(value):
+    """Format ISO datetime string to readable format."""
+    if not value:
+        return ''
+    try:
+        # Try to parse as ISO format with timezone
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M')
+    except ValueError:
+        # If parsing fails, return original
+        return value
+
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -72,8 +87,17 @@ def markdown_filter(text):
 
     return Markup(html)
 
-# Add the filter to the Jinja environment
+# Add a custom filter for pluralization
+def pluralize_filter(n):
+    """Return 's' when n is not 1, otherwise empty string."""
+    if n == 1:
+        return ''
+    else:
+        return 's'
+
+# Add the filters to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
+app.jinja_env.filters['pluralize'] = pluralize_filter
 
 # =================== Default Routes =====================
 @app.route('/')
@@ -127,6 +151,10 @@ register_route_frontend_groups(app)
 # ------------------- Group Documents Routes -------------
 register_route_frontend_group_workspaces(app)
 
+# ------------------- Public Workspaces Routes -----------
+register_route_frontend_public_workspaces(app)
+register_route_frontend_my_public_workspaces(app)
+
 # ------------------- Safety Routes ----------------------
 register_route_frontend_safety(app)
 
@@ -169,6 +197,14 @@ register_route_backend_prompts(app)
 
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
+
+# ------------------- API Public Documents Routes --------
+from route_backend_public_documents import *
+register_route_backend_public_documents(app)
+
+# ------------------- API Public Prompts Routes ---------
+from route_backend_public_prompts import *
+register_route_backend_public_prompts(app)
 
 if __name__ == '__main__':
     settings = get_settings()

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>My Public Workspaces</h1>
+        <a href="{{ url_for('create_new_public_workspace') }}" class="btn btn-primary">
+            <i class="fas fa-plus"></i> New Public Workspace
+        </a>
+    </div>
+
+    {% if workspaces %}
+    <div class="row">
+        {% for workspace in workspaces %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ workspace.name }}</h5>
+                    <p class="card-text">{{ workspace.description }}</p>
+                </div>
+                <div class="card-footer">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <span class="badge bg-info text-dark">Role: {{ workspace.owner.id == session.user.oid and 'Owner' or 'Manager' }}</span>
+                        </div>
+                        <div class="btn-group" role="group">
+                            <a href="{{ url_for('manage_public_workspace', workspace_id=workspace.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-folder-open"></i> Manage
+                            </a>
+                            <a href="{{ url_for('administrate_public_workspace', workspace_id=workspace.id) }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="fas fa-cogs"></i> Admin
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        <p class="mb-0">You don't have any public workspaces yet. <a href="{{ url_for('create_new_public_workspace') }}">Create one</a> to get started!</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -57,7 +57,7 @@
                         <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
                     </button>
                     {% endif %}
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                    {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                     <button
                         id="search-documents-btn"
                         class="btn btn-outline-secondary btn-sm search-btn"
@@ -83,7 +83,7 @@
                          </span>
                      </button>
                      <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                    {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                     <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
                         <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
                     </button>
@@ -91,7 +91,7 @@
                 </div>
 
                 
-                {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
@@ -101,6 +101,9 @@
                                  <option value="all" selected>All</option>
                                  <option value="personal">Personal</option>
                                  <option value="group">Group</option>
+                                 {% if settings.enable_public_workspaces %}
+                                 <option value="public">Public</option>
+                                 {% endif %}
                              </select>
                          </div>
                              <div class="flex-grow-1" style="min-width: 200px;">
@@ -153,7 +156,7 @@
                      <textarea id="user-input" class="form-control flex-grow-1" placeholder="Type your message..." rows="1" style="resize: none;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px';"></textarea>
 
                     <!-- Prompt Selector Container (conditionally visible) -->
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                    {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                      <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
                           <select class="form-select" id="prompt-select"></select>
                           <!-- Optional: Add a small label above if needed -->
