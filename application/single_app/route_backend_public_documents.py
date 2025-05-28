@@ -1,5 +1,8 @@
 # route_backend_public_documents.py
 
+import uuid
+import tempfile
+import os
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -205,3 +208,105 @@ def register_route_backend_public_documents(app):
             return jsonify(meta_data), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+
+    @app.route('/api/public_documents/upload', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_upload_public_document():
+        """
+        Upload one or more documents to the currently active public workspace.
+        Mirrors logic from api_upload_group_document but scoped to public workspace context.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid")
+        if not active_public_workspace_id:
+            return jsonify({'error': 'No active public workspace selected'}), 400
+
+        workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+        if not workspace_doc:
+            return jsonify({'error': 'Active public workspace not found'}), 404
+
+        role = get_user_role_in_public_workspace(workspace_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to upload documents'}), 403
+
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part in the request'}), 400
+
+        files = request.files.getlist('file')
+        if not files or all(not f.filename for f in files):
+            return jsonify({'error': 'No file selected or files have no name'}), 400
+
+        processed_docs = []
+        upload_errors = []
+
+        for file in files:
+            if not file.filename:
+                upload_errors.append(f"Skipped a file with no name.")
+                continue
+            
+            original_filename = file.filename
+            safe_suffix_filename = secure_filename(original_filename)
+            file_ext = os.path.splitext(safe_suffix_filename)[1].lower()
+
+            if not allowed_file(original_filename):
+                upload_errors.append(f"File type not allowed for: {original_filename}")
+                continue
+
+            if not os.path.splitext(original_filename)[1]:
+                upload_errors.append(f"Could not determine file extension for: {original_filename}")
+                continue
+
+            parent_document_id = str(uuid.uuid4())
+
+            try:
+                # Save file temporarily
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+                file.save(temp_file.name)
+                temp_file.close()
+                
+                # Process the document upload using existing functions_documents.py logic
+                if file_ext in ['.pdf', '.txt', '.md', '.html', '.docx', '.xlsx', '.xls', '.csv', '.pptx', '.json']:
+                    # Text-based documents
+                    process_document_upload_background.delay(
+                        document_id=parent_document_id,
+                        user_id=user_id,
+                        temp_file_path=temp_file.name,
+                        original_filename=original_filename,
+                        group_id=active_public_workspace_id
+                    )
+                else:
+                    # Media files (images, videos, audio)
+                    process_document_upload_background.delay( 
+                        document_id=parent_document_id,
+                        user_id=user_id,
+                        temp_file_path=temp_file.name,
+                        original_filename=original_filename,
+                        group_id=active_public_workspace_id
+                    )
+                
+                processed_docs.append({
+                    'document_id': parent_document_id,
+                    'filename': original_filename
+                })
+                
+            except Exception as e:
+                upload_errors.append(f"Failed to save temporary file for {original_filename}: {e}")
+                continue
+
+        # Return response similar to group documents upload
+        response_status = 200 if processed_docs and not upload_errors else 207
+        if not processed_docs and upload_errors:
+            response_status = 400
+
+        return jsonify({
+            'message': f'Processed {len(processed_docs)} document(s) for upload',
+            'document_ids': [doc['document_id'] for doc in processed_docs],
+            'errors': upload_errors
+        }), response_status
