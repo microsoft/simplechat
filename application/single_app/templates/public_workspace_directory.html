@@ -1,0 +1,325 @@
+<!-- templates/public_workspace_directory.html -->
+
+{% extends "base.html" %}
+{% block title %}
+  Public Workspaces Directory - {{ settings.app_title }}
+{% endblock %}
+
+{% block head %}
+<style>
+    .workspace-card {
+        transition: all 0.2s ease;
+    }
+    
+    .workspace-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .workspace-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .workspace-stats {
+        font-size: 0.85rem;
+        color: #6c757d;
+    }
+    
+    .workspace-toggle {
+        margin-left: 12px;
+    }
+    
+    .role-badge {
+        display: inline-block;
+        padding: 0.25em 0.6em;
+        font-size: 75%;
+        font-weight: 600;
+        line-height: 1;
+        text-align: center;
+        white-space: nowrap;
+        vertical-align: baseline;
+        border-radius: 0.25rem;
+        margin-right: 0.3rem;
+        margin-bottom: 0.3rem;
+    }
+    
+    .role-badge.owner {
+        background-color: #007bff;
+        color: white;
+    }
+    
+    .role-badge.admin {
+        background-color: #6c757d;
+        color: white;
+    }
+    
+    .role-badge.docmanager {
+        background-color: #28a745;
+        color: white;
+    }
+    
+    .search-box-container {
+        max-width: 500px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>Public Workspaces Directory</h2>
+        <div>
+            <a href="/my_public_workspaces" class="btn btn-outline-primary">
+                <i class="bi bi-gear"></i> My Public Workspaces
+            </a>
+        </div>
+    </div>
+    
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-2"></i>
+        Public workspaces contain documents and prompts available to everyone in the organization.
+        Use the toggle switches to enable or disable each workspace in your chat context.
+    </div>
+    
+    <!-- Search Box -->
+    <div class="search-box-container mx-auto mb-4">
+        <div class="input-group">
+            <input type="text" id="workspaceSearch" class="form-control" placeholder="Search public workspaces...">
+            <button class="btn btn-outline-secondary" type="button" id="workspaceSearchBtn">
+                <i class="bi bi-search"></i>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Enabled Workspaces Section -->
+    <h4 class="mb-3">Enabled Workspaces</h4>
+    <div id="enabled-workspaces" class="mb-5">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading public workspaces...</p>
+        </div>
+    </div>
+    
+    <!-- Available Workspaces Section -->
+    <h4 class="mb-3">Available Workspaces</h4>
+    <div id="available-workspaces">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading public workspaces...</p>
+        </div>
+    </div>
+    
+    <!-- No Results Message -->
+    <div id="no-results-message" class="text-center py-5 d-none">
+        <i class="bi bi-search" style="font-size: 2rem;"></i>
+        <p class="mt-2">No public workspaces found matching your search.</p>
+    </div>
+</div>
+
+<script>
+    // Global state
+    let allPublicWorkspaces = [];
+    let enabledWorkspaces = [];
+    let userSettings = {};
+    let searchTerm = '';
+    
+    // Document ready handler
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize by loading workspaces
+        fetchPublicWorkspaces();
+        
+        // Set up search functionality
+        document.getElementById('workspaceSearchBtn').addEventListener('click', function() {
+            searchTerm = document.getElementById('workspaceSearch').value.toLowerCase();
+            renderWorkspaces();
+        });
+        
+        document.getElementById('workspaceSearch').addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') {
+                searchTerm = this.value.toLowerCase();
+                renderWorkspaces();
+            }
+        });
+    });
+    
+    // Fetch public workspaces from API
+    function fetchPublicWorkspaces() {
+        Promise.all([
+            fetch('/api/public_workspaces').then(response => response.json()),
+            fetch('/api/users/settings').then(response => response.json())
+        ])
+        .then(([workspaces, settings]) => {
+            allPublicWorkspaces = workspaces;
+            userSettings = settings;
+            
+            // Extract enabled public workspaces from user settings
+            enabledWorkspaces = userSettings.settings?.enabledPublicWorkspaces || [];
+            
+            renderWorkspaces();
+        })
+        .catch(error => {
+            console.error('Error loading public workspaces:', error);
+            document.getElementById('enabled-workspaces').innerHTML = 
+                '<div class="alert alert-danger">Failed to load public workspaces. Please try again later.</div>';
+            document.getElementById('available-workspaces').innerHTML = '';
+        });
+    }
+    
+    // Render workspaces based on current state and search term
+    function renderWorkspaces() {
+        const filteredWorkspaces = searchTerm ? 
+            allPublicWorkspaces.filter(w => 
+                w.name.toLowerCase().includes(searchTerm) || 
+                (w.description && w.description.toLowerCase().includes(searchTerm))
+            ) : 
+            [...allPublicWorkspaces];
+            
+        if (filteredWorkspaces.length === 0) {
+            document.getElementById('enabled-workspaces').innerHTML = '';
+            document.getElementById('available-workspaces').innerHTML = '';
+            document.getElementById('no-results-message').classList.remove('d-none');
+            return;
+        }
+        
+        document.getElementById('no-results-message').classList.add('d-none');
+        
+        // Split into enabled and available workspaces
+        const enabled = filteredWorkspaces.filter(w => enabledWorkspaces.includes(w.id));
+        const available = filteredWorkspaces.filter(w => !enabledWorkspaces.includes(w.id));
+        
+        // Render enabled workspaces
+        renderWorkspaceSection('enabled-workspaces', enabled, true);
+        
+        // Render available workspaces 
+        renderWorkspaceSection('available-workspaces', available, false);
+    }
+    
+    // Render a section of workspaces (enabled or available)
+    function renderWorkspaceSection(containerId, workspaces, isEnabled) {
+        const container = document.getElementById(containerId);
+        
+        if (workspaces.length === 0) {
+            container.innerHTML = `<p class="text-muted">No ${isEnabled ? 'enabled' : 'available'} public workspaces${searchTerm ? ' matching your search' : ''}.</p>`;
+            return;
+        }
+        
+        let html = '<div class="row g-4">';
+        
+        workspaces.forEach(workspace => {
+            html += createWorkspaceCard(workspace, isEnabled);
+        });
+        
+        html += '</div>';
+        container.innerHTML = html;
+        
+        // Add event listeners for toggle switches
+        document.querySelectorAll('.workspace-toggle-switch').forEach(toggle => {
+            toggle.addEventListener('change', function() {
+                const workspaceId = this.dataset.workspaceId;
+                toggleWorkspaceEnabled(workspaceId, this.checked);
+            });
+        });
+    }
+    
+    // Create HTML for a workspace card
+    function createWorkspaceCard(workspace, isEnabled) {
+        // Count documents and prompts (these would come from the API in a real implementation)
+        // For this implementation, we'll use placeholder values
+        const docsCount = workspace.documents_count || 0;
+        const promptsCount = workspace.prompts_count || 0;
+        
+        return `
+            <div class="col-md-6 col-lg-4">
+                <div class="card workspace-card h-100">
+                    <div class="card-header workspace-card-header bg-light">
+                        <h5 class="mb-0">${workspace.name}</h5>
+                        <div class="form-check form-switch workspace-toggle">
+                            <input class="form-check-input workspace-toggle-switch" 
+                                   type="checkbox" 
+                                   data-workspace-id="${workspace.id}" 
+                                   ${isEnabled ? 'checked' : ''}>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">${workspace.description || 'No description available.'}</p>
+                        
+                        <div class="workspace-stats d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <i class="bi bi-file-earmark-text me-1"></i> ${docsCount} documents
+                            </div>
+                            <div>
+                                <i class="bi bi-lightbulb me-1"></i> ${promptsCount} prompts
+                            </div>
+                        </div>
+                        
+                        <div class="workspace-roles">
+                            <small class="text-muted d-block mb-2">Role holders:</small>
+                            <span class="role-badge owner" title="Owner">${workspace.owner?.displayName || 'N/A'}</span>
+                            
+                            ${(workspace.admins || []).map(adminId => 
+                                `<span class="role-badge admin" title="Admin">Admin</span>`
+                            ).join('')}
+                            
+                            ${(workspace.documentManagers || []).length > 0 ? 
+                                `<span class="role-badge docmanager" title="Document Managers">
+                                    ${workspace.documentManagers.length} document manager${workspace.documentManagers.length !== 1 ? 's' : ''}
+                                </span>` : ''}
+                        </div>
+                    </div>
+                    <div class="card-footer bg-white border-top-0">
+                        <a href="/public_workspaces?workspace_id=${workspace.id}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-box-arrow-in-right me-1"></i> Open Workspace
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Toggle a workspace's enabled status
+    function toggleWorkspaceEnabled(workspaceId, isEnabled) {
+        // Update local state first for responsive UI
+        if (isEnabled && !enabledWorkspaces.includes(workspaceId)) {
+            enabledWorkspaces.push(workspaceId);
+        } else if (!isEnabled && enabledWorkspaces.includes(workspaceId)) {
+            enabledWorkspaces = enabledWorkspaces.filter(id => id !== workspaceId);
+        }
+        
+        // Update user settings via API
+        fetch('/api/users/settings', {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                enabledPublicWorkspaces: enabledWorkspaces
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to update settings');
+            }
+            return response.json();
+        })
+        .then(() => {
+            // Re-render to show the workspace in the correct section
+            renderWorkspaces();
+        })
+        .catch(error => {
+            console.error('Error updating public workspace settings:', error);
+            alert('Failed to update workspace settings. Please try again.');
+            
+            // Revert local state on error
+            fetchPublicWorkspaces();
+        });
+    }
+</script>
+
+{% endblock %}

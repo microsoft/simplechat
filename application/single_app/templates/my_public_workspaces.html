@@ -1,0 +1,377 @@
+<!-- templates/my_public_workspaces.html -->
+
+{% extends "base.html" %}
+{% block title %}
+  My Public Workspaces - {{ settings.app_title}}
+{% endblock %}
+
+{% block head %}
+<style>
+    /* Consistent table styling */
+    #my-public-workspaces-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    /* Example Column Widths */
+    #my-public-workspaces-table th:nth-child(1), /* Name */
+    #my-public-workspaces-table td:nth-child(1) {
+        width: 40%;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    #my-public-workspaces-table th:nth-child(2), /* Role */
+    #my-public-workspaces-table td:nth-child(2) { width: 15%; }
+    #my-public-workspaces-table th:nth-child(3), /* Active Workspace */
+    #my-public-workspaces-table td:nth-child(3) { width: 20%; text-align: center; }
+    #my-public-workspaces-table th:nth-child(4), /* Actions */
+    #my-public-workspaces-table td:nth-child(4) { width: 15%; text-align: center; }
+
+    #my-public-workspaces-table td {
+        vertical-align: middle;
+    }
+    .table-loading-row td {
+        text-align: center; padding: 2rem; color: #6c757d;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="container">
+  <h2>My Public Workspaces</h2>
+  <p class="text-muted">View and manage public workspaces you have a role in (owner, admin, or document manager).</p>
+  <hr/>
+
+  <div class="row mb-3 gy-2">
+      <div class="col-md-auto">
+          <!-- Create Public Workspace Button trigger modal -->
+          <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createPublicWorkspaceModal">
+              <i class="bi bi-plus-circle-fill me-1"></i> Create New Public Workspace
+          </button>
+      </div>
+      <div class="col-md-auto ms-auto">
+          <div class="input-group">
+              <input type="text" id="searchPublicWorkspace" class="form-control form-control-sm" placeholder="Search...">
+              <button class="btn btn-outline-secondary btn-sm" type="button" id="searchPublicWorkspaceBtn">
+                  <i class="bi bi-search"></i>
+              </button>
+          </div>
+      </div>
+  </div>
+
+  <div class="table-responsive">
+      <table class="table table-hover table-striped" id="my-public-workspaces-table">
+          <thead>
+              <tr>
+                  <th>Name</th>
+                  <th>Your Role</th>
+                  <th>Active</th>
+                  <th>Actions</th>
+              </tr>
+          </thead>
+          <tbody id="my-public-workspaces-table-body">
+              <tr class="table-loading-row">
+                  <td colspan="4">
+                      <i class="bi bi-hourglass"></i> Loading your public workspaces...
+                  </td>
+              </tr>
+          </tbody>
+      </table>
+  </div>
+
+  <!-- Pagination component -->
+  <nav id="public-workspace-pagination" aria-label="Public workspace list pagination" class="mt-3 d-flex justify-content-center">
+      <ul class="pagination pagination-sm">
+          <li class="page-item disabled">
+              <a class="page-link" href="#" tabindex="-1" aria-disabled="true">Previous</a>
+          </li>
+          <li class="page-item active"><a class="page-link" href="#">1</a></li>
+          <li class="page-item disabled">
+              <a class="page-link" href="#">Next</a>
+          </li>
+      </ul>
+  </nav>
+</div>
+
+<!-- Modal for Create New Public Workspace -->
+<div class="modal fade" id="createPublicWorkspaceModal" tabindex="-1" aria-labelledby="createPublicWorkspaceModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+      <div class="modal-content">
+          <div class="modal-header">
+              <h5 class="modal-title" id="createPublicWorkspaceModalLabel">Create New Public Workspace</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+              <form id="createPublicWorkspaceForm">
+                  <div class="mb-3">
+                      <label for="publicWorkspaceName" class="form-label">Public Workspace Name</label>
+                      <input type="text" class="form-control" id="publicWorkspaceName" placeholder="Enter name for your public workspace" required>
+                  </div>
+                  <div class="mb-3">
+                      <label for="publicWorkspaceDescription" class="form-label">Description</label>
+                      <textarea class="form-control" id="publicWorkspaceDescription" rows="3" placeholder="Enter a description for the public workspace"></textarea>
+                  </div>
+              </form>
+          </div>
+          <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="button" id="createPublicWorkspaceSubmit" class="btn btn-primary">Create</button>
+          </div>
+      </div>
+  </div>
+</div>
+
+<!-- JavaScript for the My Public Workspaces page -->
+<script>
+  // Global state
+  let publicWorkspaces = [];
+  let currentPage = 1;
+  const pageSize = 10;
+  let filterText = '';
+  
+  // Document ready handler
+  $(document).ready(function() {
+      loadMyPublicWorkspaces();
+      
+      // Search functionality
+      $('#searchPublicWorkspaceBtn').on('click', function() {
+          filterText = $('#searchPublicWorkspace').val().toLowerCase();
+          currentPage = 1;
+          displayWorkspaces();
+      });
+      
+      $('#searchPublicWorkspace').on('keypress', function(e) {
+          if (e.which === 13) {
+              filterText = $(this).val().toLowerCase();
+              currentPage = 1;
+              displayWorkspaces();
+          }
+      });
+      
+      // Create public workspace form submit
+      $('#createPublicWorkspaceSubmit').on('click', function() {
+          const name = $('#publicWorkspaceName').val();
+          const description = $('#publicWorkspaceDescription').val();
+          
+          if (!name) {
+              alert('Please enter a name for your public workspace');
+              return;
+          }
+          
+          createPublicWorkspace(name, description);
+      });
+  });
+  
+  // Fetch public workspaces where the user has a role
+  function loadMyPublicWorkspaces() {
+      $('#my-public-workspaces-table-body').html(`
+          <tr class="table-loading-row">
+              <td colspan="4">
+                  <i class="bi bi-hourglass"></i> Loading your public workspaces...
+              </td>
+          </tr>
+      `);
+      
+      $.get('/api/public_workspaces/my', function(data) {
+          publicWorkspaces = data;
+          displayWorkspaces();
+      }).fail(function(err) {
+          console.error('Failed to load public workspaces:', err);
+          $('#my-public-workspaces-table-body').html(`
+              <tr class="table-danger">
+                  <td colspan="4" class="text-center">
+                      <i class="bi bi-exclamation-triangle"></i> Failed to load public workspaces. Please try again.
+                  </td>
+              </tr>
+          `);
+      });
+  }
+  
+  // Display workspaces with pagination and filtering
+  function displayWorkspaces() {
+      let filtered = publicWorkspaces;
+      
+      if (filterText) {
+          filtered = publicWorkspaces.filter(workspace => 
+              workspace.name.toLowerCase().includes(filterText) || 
+              workspace.description.toLowerCase().includes(filterText)
+          );
+      }
+      
+      const startIndex = (currentPage - 1) * pageSize;
+      const endIndex = Math.min(startIndex + pageSize, filtered.length);
+      const paginatedWorkspaces = filtered.slice(startIndex, endIndex);
+      
+      const tbody = $('#my-public-workspaces-table-body');
+      tbody.empty();
+      
+      if (paginatedWorkspaces.length === 0) {
+          tbody.html(`
+              <tr>
+                  <td colspan="4" class="text-center">
+                      ${filterText ? 'No public workspaces match your search.' : 'You have no public workspaces.'}
+                  </td>
+              </tr>
+          `);
+          $('#public-workspace-pagination').hide();
+          return;
+      }
+      
+      paginatedWorkspaces.forEach(workspace => {
+          const isActive = workspace.isActive ? 'checked' : '';
+          const activeLabel = workspace.isActive ? 'Active' : 'Set Active';
+          
+          tbody.append(`
+              <tr>
+                  <td title="${workspace.name}">
+                      <div class="text-truncate">${workspace.name}</div>
+                      <small class="text-muted text-truncate d-block">${workspace.description || ''}</small>
+                  </td>
+                  <td>${workspace.userRole}</td>
+                  <td>
+                      <div class="form-check form-switch d-flex justify-content-center">
+                          <input 
+                              class="form-check-input workspace-active-toggle" 
+                              type="checkbox" 
+                              data-workspace-id="${workspace.id}" 
+                              ${isActive}>
+                      </div>
+                  </td>
+                  <td>
+                      <div class="btn-group btn-group-sm" role="group">
+                          <button 
+                              type="button" 
+                              class="btn btn-outline-primary manage-workspace-btn" 
+                              data-workspace-id="${workspace.id}"
+                              title="View and manage documents and prompts">
+                              Manage
+                          </button>
+                          ${(workspace.userRole === 'Owner' || workspace.userRole === 'Admin') ? 
+                          `<button 
+                              type="button" 
+                              class="btn btn-outline-secondary admin-workspace-btn" 
+                              data-workspace-id="${workspace.id}"
+                              title="Administer workspace settings and roles">
+                              Admin
+                          </button>` : ''}
+                      </div>
+                  </td>
+              </tr>
+          `);
+      });
+      
+      // Setup event handlers for the newly added elements
+      $('.workspace-active-toggle').on('change', function() {
+          const workspaceId = $(this).data('workspace-id');
+          setActiveWorkspace(workspaceId);
+      });
+      
+      $('.manage-workspace-btn').on('click', function() {
+          const workspaceId = $(this).data('workspace-id');
+          window.location.href = `/public_workspaces?workspace_id=${workspaceId}`;
+      });
+      
+      $('.admin-workspace-btn').on('click', function() {
+          const workspaceId = $(this).data('workspace-id');
+          window.location.href = `/manage_public_workspace/${workspaceId}`;
+      });
+      
+      // Update pagination
+      updatePagination(filtered.length);
+  }
+  
+  // Update pagination controls
+  function updatePagination(totalItems) {
+      const totalPages = Math.ceil(totalItems / pageSize);
+      
+      if (totalPages <= 1) {
+          $('#public-workspace-pagination').hide();
+          return;
+      }
+      
+      $('#public-workspace-pagination').show();
+      const paginationEl = $('#public-workspace-pagination .pagination');
+      paginationEl.empty();
+      
+      // Previous button
+      const prevDisabled = currentPage === 1 ? 'disabled' : '';
+      paginationEl.append(`
+          <li class="page-item ${prevDisabled}">
+              <a class="page-link" href="#" data-page="${currentPage - 1}">Previous</a>
+          </li>
+      `);
+      
+      // Page numbers
+      const startPage = Math.max(1, currentPage - 2);
+      const endPage = Math.min(totalPages, startPage + 4);
+      
+      for (let i = startPage; i <= endPage; i++) {
+          const active = i === currentPage ? 'active' : '';
+          paginationEl.append(`
+              <li class="page-item ${active}">
+                  <a class="page-link" href="#" data-page="${i}">${i}</a>
+              </li>
+          `);
+      }
+      
+      // Next button
+      const nextDisabled = currentPage === totalPages ? 'disabled' : '';
+      paginationEl.append(`
+          <li class="page-item ${nextDisabled}">
+              <a class="page-link" href="#" data-page="${currentPage + 1}">Next</a>
+          </li>
+      `);
+      
+      // Add event handlers for pagination
+      $('#public-workspace-pagination .page-link').on('click', function(e) {
+          e.preventDefault();
+          if ($(this).parent().hasClass('disabled')) return;
+          
+          currentPage = parseInt($(this).data('page'));
+          displayWorkspaces();
+      });
+  }
+  
+  // Set a workspace as active
+  function setActiveWorkspace(workspaceId) {
+      $.post(`/api/public_workspaces/${workspaceId}/set_active`)
+          .done(function() {
+              publicWorkspaces.forEach(w => w.isActive = w.id === workspaceId);
+              displayWorkspaces();
+          })
+          .fail(function(err) {
+              console.error('Failed to set active workspace:', err);
+              alert('Failed to set active workspace. Please try again.');
+              // Revert the UI state
+              displayWorkspaces();
+          });
+  }
+  
+  // Create a new public workspace
+  function createPublicWorkspace(name, description) {
+      const data = { name, description };
+      
+      $.ajax({
+          url: '/api/public_workspaces',
+          type: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify(data),
+          success: function(response) {
+              // Close modal and reload workspaces
+              $('#createPublicWorkspaceModal').modal('hide');
+              $('#publicWorkspaceName').val('');
+              $('#publicWorkspaceDescription').val('');
+              loadMyPublicWorkspaces();
+          },
+          error: function(err) {
+              console.error('Failed to create public workspace:', err);
+              let errorMsg = 'Failed to create public workspace.';
+              if (err.responseJSON && err.responseJSON.error) {
+                  errorMsg += ' ' + err.responseJSON.error;
+              }
+              alert(errorMsg);
+          }
+      });
+  }
+</script>
+{% endblock %}

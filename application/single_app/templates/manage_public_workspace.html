@@ -1,0 +1,647 @@
+<!-- templates/manage_public_workspace.html -->
+
+{% extends "base.html" %}
+{% block title %}
+  Manage Public Workspace - {{ settings.app_title }}
+{% endblock %}
+
+{% block head %}
+<style>
+    /* Table styling */
+    #roles-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+    
+    #roles-table th:nth-child(1), /* User */
+    #roles-table td:nth-child(1) {
+        width: 40%;
+    }
+    
+    #roles-table th:nth-child(2), /* Email */
+    #roles-table td:nth-child(2) {
+        width: 40%; 
+    }
+    
+    #roles-table th:nth-child(3), /* Role */
+    #roles-table td:nth-child(3) {
+        width: 20%; 
+        text-align: center;
+    }
+    
+    #user-search-results {
+        max-height: 200px;
+        overflow-y: auto;
+        margin-top: 10px;
+    }
+    
+    .table-loading-row td {
+        text-align: center; 
+        padding: 2rem; 
+        color: #6c757d;
+    }
+    
+    .user-row {
+        cursor: pointer;
+    }
+    
+    .user-row:hover {
+        background-color: #f5f5f5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center">
+        <h2>Manage Public Workspace</h2>
+        <div>
+            <a href="/public_workspaces" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Public Workspace
+            </a>
+        </div>
+    </div>
+    
+    <hr/>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Public Workspace Information</h5>
+                </div>
+                <div class="card-body">
+                    <div id="workspaceInfoContainer">
+                        <div class="text-center p-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading workspace information...</p>
+                        </div>
+                    </div>
+                    
+                    <div id="editWorkspaceContainer" style="display: none;">
+                        <form id="editWorkspaceForm">
+                            <div class="mb-3">
+                                <label for="editWorkspaceName" class="form-label">Workspace Name</label>
+                                <input type="text" class="form-control" id="editWorkspaceName">
+                            </div>
+                            <div class="mb-3">
+                                <label for="editWorkspaceDescription" class="form-label">Description</label>
+                                <textarea class="form-control" id="editWorkspaceDescription" rows="3"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Roles & Permissions</h5>
+                    <button id="addMemberBtn" class="btn btn-sm btn-primary" style="display: none;">
+                        <i class="bi bi-plus-circle"></i> Add Member
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>Roles in Public Workspaces</strong>
+                        <ul class="mb-0">
+                            <li><strong>Owner:</strong> Full control over the workspace, can delete it</li>
+                            <li><strong>Admin:</strong> Can manage workspace settings and roles</li>
+                            <li><strong>Document Manager:</strong> Can upload and manage documents and prompts</li>
+                        </ul>
+                        <p class="mb-0 mt-2">Unlike Group Workspaces, there is no "User" role - all documents and prompts are visible to everyone in the organization.</p>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table" id="roles-table">
+                            <thead>
+                                <tr>
+                                    <th>User</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                </tr>
+                            </thead>
+                            <tbody id="roles-table-body">
+                                <tr class="table-loading-row">
+                                    <td colspan="3">
+                                        <div class="spinner-border spinner-border-sm" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        Loading members...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Member Modal -->
+<div class="modal fade" id="addMemberModal" tabindex="-1" aria-labelledby="addMemberModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addMemberModalLabel">Add Member to Public Workspace</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="userSearchTerm" class="form-label">Search for user</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="userSearchTerm" placeholder="Enter name or email">
+                        <button class="btn btn-outline-secondary" type="button" id="searchUsersBtn">Search</button>
+                    </div>
+                    <div id="searchStatus" class="form-text"></div>
+                </div>
+                
+                <div id="user-search-results" style="display: none;">
+                    <table class="table table-hover table-sm" id="userSearchResultsTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                
+                <hr>
+                
+                <form id="addMemberForm">
+                    <div class="mb-3">
+                        <label for="newUserDisplayName" class="form-label">Selected User</label>
+                        <input type="text" class="form-control" id="newUserDisplayName" readonly>
+                        <input type="hidden" id="newUserId">
+                        <input type="hidden" id="newUserEmail">
+                    </div>
+                    <div class="mb-3">
+                        <label for="newUserRole" class="form-label">Role</label>
+                        <select class="form-select" id="newUserRole" required>
+                            <option value="">Select a role</option>
+                            <option value="Admin">Admin</option>
+                            <option value="DocumentManager">Document Manager</option>
+                        </select>
+                        <div class="form-text">
+                            Note: Only users with a role can manage this public workspace.
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="addMemberSubmit" disabled>Add Member</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Change Role Modal -->
+<div class="modal fade" id="changeRoleModal" tabindex="-1" aria-labelledby="changeRoleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="changeRoleModalLabel">Change Member Role</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="changeRoleForm">
+                    <div class="mb-3">
+                        <p>Changing role for: <strong id="roleChangeUserName"></strong></p>
+                        <input type="hidden" id="roleChangeUserId">
+                    </div>
+                    <div class="mb-3">
+                        <label for="roleSelect" class="form-label">New Role</label>
+                        <select class="form-select" id="roleSelect" required>
+                            <option value="">Select a role</option>
+                            <option value="Admin">Admin</option>
+                            <option value="DocumentManager">Document Manager</option>
+                            <option value="Remove">Remove from Workspace</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="changeRoleSubmit">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+  const workspaceId = "{{ workspace_id }}";
+  let currentUserRole = null;
+  let userId = null;
+  
+  $(document).ready(function() {
+    // Get user ID from session storage 
+    userId = sessionStorage.getItem("userId");
+    
+    // Load workspace info first
+    loadWorkspaceInfo(function() {
+      loadMembers();
+    });
+    
+    // Setup form submission handlers
+    $("#editWorkspaceForm").on("submit", function(e) {
+      e.preventDefault();
+      updateWorkspaceInfo();
+    });
+    
+    $("#addMemberForm").on("submit", function(e) {
+      e.preventDefault();
+      addMemberDirectly();
+    });
+    
+    $("#changeRoleForm").on("submit", function(e) {
+      e.preventDefault();
+      const memberUserId = $("#roleChangeUserId").val();
+      const newRole = $("#roleSelect").val();
+      setRole(memberUserId, newRole);
+    });
+    
+    // Search users button click
+    $("#searchUsersBtn").on("click", function() {
+      searchUsers();
+    });
+    
+    // Search on Enter key
+    $("#userSearchTerm").on("keypress", function(e) {
+      if (e.which == 13) {
+        searchUsers();
+      }
+    });
+    
+    // Add member button click
+    $("#addMemberBtn").on("click", function() {
+      $("#userSearchTerm").val("");
+      $("#userSearchResultsTable tbody").empty();
+      $("#newUserId").val("");
+      $("#newUserDisplayName").val("");
+      $("#newUserEmail").val("");
+      $("#searchStatus").text("");
+      $("#user-search-results").hide();
+      $("#addMemberSubmit").prop("disabled", true);
+      
+      $("#addMemberModal").modal("show");
+    });
+    
+    // Add member submit button click
+    $("#addMemberSubmit").on("click", function() {
+      addMemberDirectly();
+    });
+    
+    // Change role submit button click
+    $("#changeRoleSubmit").on("click", function() {
+      const memberUserId = $("#roleChangeUserId").val();
+      const newRole = $("#roleSelect").val();
+      setRole(memberUserId, newRole);
+    });
+  });
+  
+  function loadWorkspaceInfo(doneCallback) {
+    $.get(`/api/public_workspaces/${workspaceId}`, function(workspace) {
+      const ownerName = workspace.owner?.displayName || "N/A";
+      const ownerEmail = workspace.owner?.email || "N/A";
+      
+      $("#workspaceInfoContainer").html(`
+        <h4>${workspace.name}</h4>
+        <p>${workspace.description || ""}</p>
+        <p>
+          <strong>Owner Name:</strong> ${ownerName}<br/>
+          <strong>Owner Email:</strong> ${ownerEmail}
+        </p>
+      `);
+      
+      const admins = workspace.admins || [];
+      const docManagers = workspace.documentManagers || [];
+      
+      if (userId === workspace.owner?.id) {
+        currentUserRole = "Owner";
+      } else if (admins.includes(userId)) {
+        currentUserRole = "Admin";
+      } else if (docManagers.includes(userId)) {
+        currentUserRole = "DocumentManager";
+      } else {
+        currentUserRole = null;
+      }
+      
+      if (currentUserRole === "Owner") {
+        $("#editWorkspaceContainer").show();
+        $("#editWorkspaceName").val(workspace.name);
+        $("#editWorkspaceDescription").val(workspace.description);
+      }
+      
+      if (currentUserRole === "Owner" || currentUserRole === "Admin") {
+        $("#addMemberBtn").show();
+      }
+      
+      if (typeof doneCallback === "function") {
+        doneCallback();
+      }
+    }).fail(function(err) {
+      console.error(err);
+      alert("Failed to load workspace info.");
+    });
+  }
+  
+  function loadMembers(searchTerm, roleFilter) {
+    $("#roles-table-body").html(`
+      <tr class="table-loading-row">
+        <td colspan="3">
+          <div class="spinner-border spinner-border-sm" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          Loading members...
+        </td>
+      </tr>
+    `);
+    
+    $.get(`/api/public_workspaces/${workspaceId}`, function(workspace) {
+      // Start with the owner
+      const members = [];
+      if (workspace.owner) {
+        members.push({
+          userId: workspace.owner.id,
+          displayName: workspace.owner.displayName,
+          email: workspace.owner.email,
+          role: "Owner"
+        });
+      }
+      
+      // Add admins
+      const admins = workspace.admins || [];
+      admins.forEach(adminId => {
+        // We'll need to look up user details - leaving placeholder for now
+        members.push({
+          userId: adminId,
+          displayName: "Loading...",
+          email: "Loading...",
+          role: "Admin"
+        });
+      });
+      
+      // Add document managers
+      const docManagers = workspace.documentManagers || [];
+      docManagers.forEach(managerId => {
+        members.push({
+          userId: managerId,
+          displayName: "Loading...",
+          email: "Loading...",
+          role: "DocumentManager"
+        });
+      });
+      
+      if (members.length === 0) {
+        $("#roles-table-body").html(`
+          <tr>
+            <td colspan="3" class="text-center">No members found.</td>
+          </tr>
+        `);
+        return;
+      }
+      
+      // Now fetch details for each user that's not the owner 
+      // (we already have owner details)
+      const promises = [];
+      members.forEach((member, index) => {
+        if (member.role !== "Owner") {
+          promises.push(
+            $.get(`/api/users/${member.userId}`).then(user => {
+              members[index].displayName = user.displayName || user.name || "N/A";
+              members[index].email = user.email || "N/A";
+            }).catch(() => {
+              members[index].displayName = "Unknown User";
+              members[index].email = "N/A";
+            })
+          );
+        }
+      });
+      
+      // Once all promises are resolved, populate the table
+      Promise.all(promises).then(() => {
+        let html = "";
+        
+        members.forEach(member => {
+          const canChangeRole = (currentUserRole === "Owner" || 
+                             (currentUserRole === "Admin" && member.role !== "Owner" && member.role !== "Admin"));
+          
+          html += `<tr>
+            <td>${member.displayName}</td>
+            <td>${member.email}</td>
+            <td>
+              ${member.role}
+              ${canChangeRole ? 
+                `<button class="btn btn-sm btn-outline-secondary ms-2 change-role-btn" 
+                        data-user-id="${member.userId}" 
+                        data-user-name="${member.displayName}">
+                  Change
+                </button>` : 
+                ''}
+            </td>
+          </tr>`;
+        });
+        
+        $("#roles-table-body").html(html);
+        
+        // Add event listener for change role buttons
+        $(".change-role-btn").on("click", function() {
+          const userId = $(this).data("user-id");
+          const userName = $(this).data("user-name");
+          
+          $("#roleChangeUserId").val(userId);
+          $("#roleChangeUserName").text(userName);
+          $("#roleSelect").val(""); // Clear previous selection
+          
+          // Show/hide options based on current user's role
+          if (currentUserRole !== "Owner") {
+            // Non-owners can't promote to Admin
+            $("#roleSelect option[value='Admin']").hide();
+          } else {
+            $("#roleSelect option[value='Admin']").show();
+          }
+          
+          $("#changeRoleModal").modal("show");
+        });
+      });
+    }).fail(function() {
+      $("#roles-table-body").html(
+        "<tr><td colspan='3' class='text-danger'>Failed to load members</td></tr>"
+      );
+    });
+  }
+  
+  function searchUsers() {
+    const searchTerm = $("#userSearchTerm").val().trim();
+    
+    if (!searchTerm) {
+      $("#searchStatus").text("Please enter a search term.");
+      return;
+    }
+    
+    $("#searchStatus").text("Searching...");
+    $("#user-search-results").hide();
+    
+    $.get(`/api/users/search?q=${encodeURIComponent(searchTerm)}`, function(data) {
+      $("#searchStatus").text(`Found ${data.length} user(s)`);
+      
+      if (data.length === 0) {
+        $("#user-search-results").hide();
+        return;
+      }
+      
+      let html = "";
+      data.forEach(user => {
+        html += `<tr class="user-row" data-user-id="${user.userId}" data-display-name="${user.displayName}" data-email="${user.email}">
+          <td>${user.displayName}</td>
+          <td>${user.email}</td>
+          <td>
+            <button class="btn btn-sm btn-primary select-user-btn">Select</button>
+          </td>
+        </tr>`;
+      });
+      
+      $("#userSearchResultsTable tbody").html(html);
+      $("#user-search-results").show();
+      
+      // Add click event to rows and select buttons
+      $(".user-row").on("click", function() {
+        selectUser(
+          $(this).data("user-id"),
+          $(this).data("display-name"),
+          $(this).data("email")
+        );
+      });
+      
+      $(".select-user-btn").on("click", function(e) {
+        e.stopPropagation();
+        const row = $(this).closest("tr");
+        selectUser(
+          row.data("user-id"),
+          row.data("display-name"),
+          row.data("email")
+        );
+      });
+    }).fail(function(err) {
+      console.error("Error searching users:", err);
+      $("#searchStatus").text("Error searching for users");
+      $("#user-search-results").hide();
+    });
+  }
+  
+  function selectUser(userId, displayName, email) {
+    $("#newUserId").val(userId);
+    $("#newUserDisplayName").val(displayName);
+    $("#newUserEmail").val(email);
+    $("#addMemberSubmit").prop("disabled", false);
+  }
+  
+  function addMemberDirectly() {
+    const userId = $("#newUserId").val();
+    const role = $("#newUserRole").val();
+    
+    if (!userId || !role) {
+      alert("Please select a user and assign a role.");
+      return;
+    }
+    
+    $.ajax({
+      url: `/api/public_workspaces/${workspaceId}/role`,
+      method: "POST",
+      contentType: "application/json",
+      data: JSON.stringify({
+        userId: userId,
+        role: role
+      }),
+      success: function() {
+        $("#addMemberModal").modal("hide");
+        loadMembers(); // Refresh the member list
+      },
+      error: function(err) {
+        console.error("Error adding member:", err);
+        alert("Failed to add member: " + (err.responseJSON?.error || "Unknown error"));
+      }
+    });
+  }
+  
+  function setRole(userId, role) {
+    if (role === "Remove") {
+      // Special case - we're removing the user completely
+      $.ajax({
+        url: `/api/public_workspaces/${workspaceId}/role`,
+        method: "POST",
+        contentType: "application/json",
+        data: JSON.stringify({
+          userId: userId,
+          role: "Remove"
+        }),
+        success: function() {
+          $("#changeRoleModal").modal("hide");
+          loadMembers(); // Refresh the member list
+        },
+        error: function(err) {
+          console.error("Error removing member:", err);
+          alert("Failed to remove member: " + (err.responseJSON?.error || "Unknown error"));
+        }
+      });
+    } else {
+      // Normal role change
+      $.ajax({
+        url: `/api/public_workspaces/${workspaceId}/role`,
+        method: "POST",
+        contentType: "application/json",
+        data: JSON.stringify({
+          userId: userId,
+          role: role
+        }),
+        success: function() {
+          $("#changeRoleModal").modal("hide");
+          loadMembers(); // Refresh the member list
+        },
+        error: function(err) {
+          console.error("Error changing role:", err);
+          alert("Failed to change role: " + (err.responseJSON?.error || "Unknown error"));
+        }
+      });
+    }
+  }
+  
+  function updateWorkspaceInfo() {
+    const name = $("#editWorkspaceName").val().trim();
+    const description = $("#editWorkspaceDescription").val().trim();
+    
+    if (!name) {
+      alert("Workspace name cannot be empty.");
+      return;
+    }
+    
+    $.ajax({
+      url: `/api/public_workspaces/${workspaceId}`,
+      method: "PUT",
+      contentType: "application/json",
+      data: JSON.stringify({
+        name: name,
+        description: description
+      }),
+      success: function() {
+        alert("Workspace information updated.");
+        loadWorkspaceInfo(); // Refresh the workspace info
+      },
+      error: function(err) {
+        console.error("Error updating workspace info:", err);
+        alert("Failed to update workspace information: " + (err.responseJSON?.error || "Unknown error"));
+      }
+    });
+  }
+</script>
+{% endblock %}

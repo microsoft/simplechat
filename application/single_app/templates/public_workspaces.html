@@ -1,0 +1,1367 @@
+<!-- templates/public_workspaces.html -->
+{% extends "base.html" %} {% block title %} Public Workspace - {{
+settings.app_title }} {% endblock %} {% block head %}
+<!-- <link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css"
+/>
+LOCAL VERSION BELOW 
+-->
+ <link
+  rel="stylesheet"
+  href="/static/css/simplemde.min.css"
+  />
+
+<style>
+  /* Copy relevant styles from workspace.html for consistency */
+  #public-documents-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  #public-documents-table th:nth-child(1), /* Expand */
+      #public-documents-table td:nth-child(1) {
+    width: 50px;
+    text-align: Left;
+  }
+  #public-documents-table th:nth-child(2), /* Filename */
+      #public-documents-table td:nth-child(2) {
+    min-width: 50px;
+    max-width: 150px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #public-documents-table th:nth-child(3), /* Status  */
+      #public-documents-table td:nth-child(3) {
+      width: 100px;
+  }
+  #public-documents-table th:nth-child(4), /* Actions  */
+      #public-documents-table td:nth-child(4) {
+    min-width: 80px;
+  }
+
+
+  /* Expandable document rows */
+  .expanding-row {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  .expanding-row td {
+    padding: 0; 
+  }
+  .expanding-container {
+    padding: 1.2rem;
+  }
+  .expansion-content {
+    max-height: 400px; 
+    overflow-y: auto;
+  }
+  /* Sizing for action dropdowns */
+  .action-dropdown {
+    min-width: 30px;
+    text-align: center;
+  }
+  /* Prompts Table */
+  #public-prompts-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  #public-prompts-table td,
+  #public-prompts-table th {
+    vertical-align: middle;
+  }
+
+  #public-prompts-table th:nth-child(1), /* Name */
+  #public-prompts-table td:nth-child(1) {
+    width: 30%;
+    max-width: 200px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  #public-prompts-table th:nth-child(2), /* Content Preview */
+  #public-prompts-table td:nth-child(2) {
+    width: 50%;
+    max-width: 400px;
+    overflow: hidden;
+    white-space: nowrap; 
+    text-overflow: ellipsis;
+  }
+
+  #public-prompts-table th:nth-child(3), /* Actions */
+  #public-prompts-table td:nth-child(3) {
+    width: 100px;
+    text-align: center;
+  }
+
+  .prompt-preview {
+    font-family: monospace;
+    font-size: 0.85rem;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    margin-top: 0.5rem;
+  }
+
+  .btn-sm-tight {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.75rem;
+  }
+  /* Editor / Preview toggle */
+  .editor-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  .prompt-textarea {
+    min-height: 150px;
+    font-family: monospace;
+  }
+</style>
+{% endblock %} {% block content %}
+
+  <div class="container-fluid py-3">
+  <!-- Top bar with breadcrumb, back button, active group display -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <a href="/public_workspace_directory" class="btn btn-sm btn-outline-secondary me-2">
+        <i class="bi bi-arrow-left"></i> Public Workspaces Directory
+      </a>
+    </div>
+    <div>
+      <h5 class="mb-0">
+        Active Public Workspace: 
+        <span id="active-public-workspace-name" style="display: none;"></span>
+        <a href="#" class="dropdown-toggle text-decoration-none" data-bs-toggle="dropdown" aria-expanded="false">
+          <em id="active-public-workspace-name-dropdown" class="text-muted">Select a Workspace</em>
+        </a>
+        <div class="dropdown-menu" id="publicWorkspaceDropdownMenu">
+          <input type="text" class="form-control mb-2 mx-2" placeholder="Search..." style="width: 90%;" id="publicWorkspaceSearchInput">
+          <div id="publicWorkspaceDropdownItems">
+            <div class="dropdown-item text-center">
+              <div class="spinner-border spinner-border-sm" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div> Loading...
+            </div>
+          </div>
+        </div>
+      </h5>
+    </div>
+    <div>
+      <a href="/my_public_workspaces" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-gear"></i> My Public Workspaces
+      </a>
+    </div>
+  </div>
+
+  <div class="alert alert-info" id="user-role-display" style="display: none">
+    Your role in <strong id="active-public-workspace-name-role"></strong>:
+    <span id="user-role" class="fw-bold"></span>
+  </div>
+
+  <!-- Nav Tabs -->
+  <ul class="nav nav-tabs" id="publicWorkspaceTab" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link active"
+        id="documents-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#documents-tab"
+        type="button"
+        role="tab"
+        aria-controls="documents-tab"
+        aria-selected="true"
+      >
+        Public Documents
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="prompts-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#prompts-tab"
+        type="button"
+        role="tab"
+        aria-controls="prompts-tab"
+        aria-selected="false"
+      >
+        Public Prompts
+      </button>
+    </li>
+  </ul>
+
+  <!-- Tab Panes -->
+  <div class="tab-content" id="publicWorkspaceTabContent">
+    <!-- ============= PUBLIC DOCUMENTS TAB ============= -->
+    <div
+      class="tab-pane fade show active"
+      id="documents-tab"
+      role="tabpanel"
+      aria-labelledby="documents-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div id="public-legacy-update-prompt-placeholder"></div>
+        <h5>Public Documents</h5>
+        <p class="text-muted small">
+          Documents uploaded here are visible to everyone in the organization. Allowed
+          extensions: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg,
+          png, bmp, tiff, tif, heif, md, json {% if enable_video_file_support in
+          [True, 'True', 'true'] %} , mp4, mov, avi, wmv, mkv, webm {% endif %}
+          {% if enable_audio_file_support in [True, 'True', 'true'] %} , mp3, wav, aac, flac, ogg {% endif %}
+        </p>
+
+        <div class="row mb-3">
+          <!-- Upload + Search + Actions Row -->
+          <div class="col-md-auto">
+            <div id="publicDocsUploadBtnContainer">
+              <div
+                id="publicDocsUploadDropzone"
+                class="btn btn-primary btn-sm"
+              >
+                <i class="bi bi-cloud-upload"></i>
+                <span>Upload Document</span>
+              </div>
+              <input
+                type="file"
+                id="publicDocsFileInput"
+                style="display: none"
+                multiple
+              />
+            </div>
+          </div>
+          <div class="col-md-auto ms-auto">
+            <div class="input-group">
+              <input
+                type="text"
+                class="form-control form-control-sm"
+                placeholder="Search documents"
+                id="public-docs-search"
+              />
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                type="button"
+                id="public-docs-search-btn"
+              >
+                <i class="bi bi-search"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <table class="table table-hover" id="public-documents-table">
+          <thead>
+            <tr>
+              <th>
+                <span><i class="bi bi-chevron-down"></i></span>
+              </th>
+              <th>Filename</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="public-documents-table-body">
+            <tr>
+              <td colspan="4" class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Pagination for documents table -->
+        <nav aria-label="Documents pagination">
+          <ul
+            class="pagination pagination-sm justify-content-center"
+            id="public-docs-pagination"
+          >
+            <li class="page-item disabled">
+              <a class="page-link" href="#" tabindex="-1" aria-disabled="true"
+                >Previous</a
+              >
+            </li>
+            <li class="page-item active">
+              <a class="page-link" href="#">1</a>
+            </li>
+            <li class="page-item disabled">
+              <a class="page-link" href="#">Next</a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+
+    <!-- ============= PUBLIC PROMPTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="prompts-tab"
+      role="tabpanel"
+      aria-labelledby="prompts-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <h5>Public Prompts</h5>
+        <p class="text-muted small">
+          Create and manage prompts shared with everyone in this public workspace.
+        </p>
+
+        <div class="row mb-3">
+          <div class="col-md-auto">
+            <button id="createPublicPromptBtn" class="btn btn-primary btn-sm">
+              <i class="bi bi-plus-circle"></i> New Prompt
+            </button>
+          </div>
+          <div class="col-md-auto ms-auto">
+            <div class="input-group">
+              <input
+                type="text"
+                class="form-control form-control-sm"
+                placeholder="Search prompts"
+                id="public-prompts-search"
+              />
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                type="button"
+                id="public-prompts-search-btn"
+              >
+                <i class="bi bi-search"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <table class="table table-hover" id="public-prompts-table">
+          <thead>
+            <tr>
+              <th>Prompt Name</th>
+              <th>Content Preview</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="public-prompts-table-body">
+            <tr>
+              <td colspan="3" class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Pagination for prompts table -->
+        <nav aria-label="Prompts pagination">
+          <ul
+            class="pagination pagination-sm justify-content-center"
+            id="public-prompts-pagination"
+          >
+            <li class="page-item disabled">
+              <a class="page-link" href="#" tabindex="-1" aria-disabled="true"
+                >Previous</a
+              >
+            </li>
+            <li class="page-item active">
+              <a class="page-link" href="#">1</a>
+            </li>
+            <li class="page-item disabled">
+              <a class="page-link" href="#">Next</a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+  </div>
+
+<!-- Create/Edit Prompt Modal -->
+<div class="modal fade" id="promptModal" tabindex="-1" aria-labelledby="promptModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="promptModalLabel">Create Prompt</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="promptForm">
+          <input type="hidden" id="promptId" value="">
+          <div class="mb-3">
+            <label for="promptName" class="form-label">Prompt Name</label>
+            <input type="text" class="form-control" id="promptName" placeholder="Enter a name for your prompt" required>
+          </div>
+          <div class="mb-3">
+            <label for="promptContent" class="form-label">Prompt Content</label>
+            <div class="editor-header">
+              <div>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button type="button" id="editorTab" class="btn btn-primary active">Editor</button>
+                  <button type="button" id="previewTab" class="btn btn-outline-primary">Preview</button>
+                </div>
+              </div>
+            </div>
+            <div id="promptEditorContainer">
+              <textarea class="form-control prompt-textarea" id="promptContent" rows="10" placeholder="Enter your prompt content"></textarea>
+            </div>
+            <div id="promptPreviewContainer" class="prompt-preview" style="display:none"></div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="savePromptBtn" class="btn btn-primary">Save Prompt</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Document Detail Modal -->
+<div class="modal fade" id="documentDetailModal" tabindex="-1" aria-labelledby="documentDetailModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="documentDetailModalLabel">Document Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="documentDetailContent">
+          <!-- Dynamic content will be loaded here -->
+          <div class="text-center p-5">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading document details...</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" id="saveDocDetailBtn" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Document Classification Modal -->
+<div class="modal fade" id="documentClassificationModal" tabindex="-1" aria-labelledby="documentClassificationModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="documentClassificationModalLabel">Set Document Classification</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <div class="alert alert-info">
+            <small>Select the classification that best represents the document's content.</small>
+          </div>
+          <select class="form-select" id="classificationSelect">
+            <option value="" selected>Select a classification...</option>
+          </select>
+        </div>
+        <div>
+          <p class="mb-1">Document: <strong id="classificationDocName"></strong></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="saveClassificationBtn" class="btn btn-primary">Save Classification</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/simplemde/simplemde.min.js"></script>
+
+<!-- Pass backend flags to JS -->
+<script>
+  window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
+    if (!Array.isArray(window.classification_categories)) {
+        window.classification_categories = [];
+    }
+    window.enable_document_classification = "{{ enable_document_classification | tojson }}";
+    window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
+    window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
+    window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
+</script>
+
+<!-- Main JS Logic for Public Workspace -->
+<script>
+  // --- Global State ---
+  let userRoleInActivePublicWorkspace = null;
+  let publicWorkspaces = [];
+  let activePublicWorkspaceId = null; // Crucial for public workspace context
+  let activePublicWorkspaceName = ""; // Store name for display
+
+  // Document specific state
+  let publicDocsCurrentPage = 1;
+  let publicDocsPageSize = 10;
+  let publicDocsSearchTerm = "";
+
+  // Prompt specific state
+  let publicPromptsCurrentPage = 1;
+  let publicPromptsPageSize = 10;
+  let publicPromptsSearchTerm = "";
+  let simpleMDE = null;
+  let editingPromptId = null;
+  let allPublicPrompts = [];
+
+  // DOM elements frequently used
+  const publicDocumentsTableBody = document.getElementById("public-documents-table-body");
+  const publicPromptsTableBody = document.getElementById("public-prompts-table-body");
+  const activePublicWorkspaceNameEl = document.getElementById("active-public-workspace-name");
+  const activePublicWorkspaceNameDropdownEl = document.getElementById("active-public-workspace-name-dropdown");
+  const activePublicWorkspaceNameRoleEl = document.getElementById("active-public-workspace-name-role");
+
+  // --- Initialize on document load ---
+  document.addEventListener("DOMContentLoaded", function () {
+    initializeWorkspace();
+    setupEventListeners();
+  });
+
+  // --- Core Functions ---
+
+  function initializeWorkspace() {
+    // Step 1: Get and render Public Workspaces in dropdown
+    fetchAndRenderPublicWorkspaces();
+
+    // Step 2: Check for workspace_id in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has("workspace_id")) {
+      const workspaceIdFromUrl = urlParams.get("workspace_id");
+      setActivePublicWorkspace(workspaceIdFromUrl);
+    }
+
+    // Step 3: Setup tab switching behavior
+    setupTabSwitching();
+  }
+
+  function setupEventListeners() {
+    // Public workspace dropdown search
+    const searchInput = document.getElementById("publicWorkspaceSearchInput");
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        const searchText = this.value.toLowerCase();
+        const dropdownItems = document.querySelectorAll(
+          "#publicWorkspaceDropdownMenu .workspace-dropdown-item"
+        );
+
+        dropdownItems.forEach(function (item) {
+          const name = item
+            .getAttribute("data-workspace-name")
+            .toLowerCase();
+          if (name.includes(searchText)) {
+            item.style.display = "block";
+          } else {
+            item.style.display = "none";
+          }
+        });
+      });
+
+      // Stop event propagation to prevent dropdown from closing when clicking on search input
+      searchInput.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+    }
+
+    // Public documents search
+    document.getElementById("public-docs-search-btn").addEventListener("click", function() {
+      publicDocsSearchTerm = document.getElementById("public-docs-search").value;
+      publicDocsCurrentPage = 1;
+      fetchPublicDocuments();
+    });
+
+    document.getElementById("public-docs-search").addEventListener("keypress", function(e) {
+      if (e.key === "Enter") {
+        publicDocsSearchTerm = this.value;
+        publicDocsCurrentPage = 1;
+        fetchPublicDocuments();
+      }
+    });
+
+    // Public prompts search
+    document.getElementById("public-prompts-search-btn").addEventListener("click", function() {
+      publicPromptsSearchTerm = document.getElementById("public-prompts-search").value;
+      publicPromptsCurrentPage = 1;
+      renderPublicPrompts();
+    });
+
+    document.getElementById("public-prompts-search").addEventListener("keypress", function(e) {
+      if (e.key === "Enter") {
+        publicPromptsSearchTerm = this.value;
+        publicPromptsCurrentPage = 1;
+        renderPublicPrompts();
+      }
+    });
+
+    // Document upload
+    const uploadBtn = document.getElementById("publicDocsUploadDropzone");
+    const fileInput = document.getElementById("publicDocsFileInput");
+
+    if (uploadBtn && fileInput) {
+      uploadBtn.addEventListener("click", function () {
+        fileInput.click();
+      });
+
+      fileInput.addEventListener("change", function () {
+        if (this.files.length > 0) {
+          uploadPublicDocuments(this.files);
+        }
+      });
+    }
+
+    // Prompt modal
+    document.getElementById("createPublicPromptBtn").addEventListener("click", function() {
+      openPromptModal();
+    });
+
+    document.getElementById("savePromptBtn").addEventListener("click", function() {
+      savePublicPrompt();
+    });
+
+    document.getElementById("editorTab").addEventListener("click", function() {
+      document.getElementById("promptEditorContainer").style.display = "block";
+      document.getElementById("promptPreviewContainer").style.display = "none";
+      this.classList.add("active");
+      this.classList.remove("btn-outline-primary");
+      this.classList.add("btn-primary");
+      document.getElementById("previewTab").classList.remove("active");
+      document.getElementById("previewTab").classList.remove("btn-primary");
+      document.getElementById("previewTab").classList.add("btn-outline-primary");
+      if (simpleMDE) simpleMDE.codemirror.refresh();
+    });
+
+    document.getElementById("previewTab").addEventListener("click", function() {
+      const content = simpleMDE ? simpleMDE.value() : document.getElementById("promptContent").value;
+      document.getElementById("promptPreviewContainer").innerHTML = content;
+      document.getElementById("promptEditorContainer").style.display = "none";
+      document.getElementById("promptPreviewContainer").style.display = "block";
+      this.classList.add("active");
+      this.classList.remove("btn-outline-primary");
+      this.classList.add("btn-primary");
+      document.getElementById("editorTab").classList.remove("active");
+      document.getElementById("editorTab").classList.remove("btn-primary");
+      document.getElementById("editorTab").classList.add("btn-outline-primary");
+    });
+  }
+
+  function setupTabSwitching() {
+    const tabs = document.querySelectorAll('#publicWorkspaceTab button[data-bs-toggle="tab"]');
+    
+    tabs.forEach((tab) => {
+      tab.addEventListener("shown.bs.tab", function (event) {
+        const targetId = event.target.getAttribute("data-bs-target");
+        
+        if (targetId === "#documents-tab") {
+          // Already loaded in loadActivePublicWorkspaceData
+        } else if (targetId === "#prompts-tab") {
+          fetchPublicPrompts();
+        }
+      });
+    });
+  }
+
+  function fetchAndRenderPublicWorkspaces() {
+    fetch("/api/public_workspaces", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        publicWorkspaces = data;
+        renderPublicWorkspaceDropdown();
+        checkActivePublicWorkspace();
+      })
+      .catch((error) => {
+        console.error("Error fetching public workspaces:", error);
+      });
+  }
+
+  function renderPublicWorkspaceDropdown() {
+    const dropdownEl = document.getElementById("publicWorkspaceDropdownItems");
+    
+    if (publicWorkspaces.length === 0) {
+      dropdownEl.innerHTML = `<div class="dropdown-item text-center text-muted">No public workspaces available</div>`;
+      return;
+    }
+
+    let html = "";
+    publicWorkspaces.forEach((workspace) => {
+      html += `
+        <a class="dropdown-item workspace-dropdown-item" 
+           href="#" 
+           data-workspace-id="${workspace.id}" 
+           data-workspace-name="${workspace.name}">
+          ${workspace.name}
+          <small class="d-block text-muted text-truncate" style="max-width: 240px;">${
+            workspace.description || ""
+          }</small>
+        </a>
+      `;
+    });
+
+    dropdownEl.innerHTML = html;
+
+    document.querySelectorAll(".workspace-dropdown-item").forEach((item) => {
+      item.addEventListener("click", function (e) {
+        e.preventDefault();
+        const workspaceId = this.getAttribute("data-workspace-id");
+        setActivePublicWorkspace(workspaceId);
+      });
+    });
+  }
+
+  function checkActivePublicWorkspace() {
+    let foundActive = false;
+    
+    fetch("/api/public_workspaces/my", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+      .then((response) => response.json())
+      .then((userWorkspaces) => {
+        if (userWorkspaces && userWorkspaces.length > 0) {
+          // Check if any workspace is marked as active
+          const active = userWorkspaces.find(w => w.isActive);
+          
+          if (active) {
+            activePublicWorkspaceId = active.id;
+            activePublicWorkspaceName = active.name;
+            userRoleInActivePublicWorkspace = active.userRole;
+            foundActive = true;
+            
+            // Update UI
+            if (activePublicWorkspaceNameEl) {
+              activePublicWorkspaceNameEl.textContent = activePublicWorkspaceName;
+              activePublicWorkspaceNameEl.style.display = "inline";
+              activePublicWorkspaceNameDropdownEl.style.display = "none";
+            }
+            if (activePublicWorkspaceNameRoleEl) {
+              activePublicWorkspaceNameRoleEl.textContent = activePublicWorkspaceName;
+            }
+            
+            // Load data for the active workspace
+            loadActivePublicWorkspaceData();
+          }
+        }
+
+        if (!foundActive) {
+          activePublicWorkspaceNameEl.style.display = "none";
+          activePublicWorkspaceNameDropdownEl.style.display = "inline";
+          document.getElementById("user-role-display").style.display = "none";
+          
+          if (publicDocumentsTableBody) {
+            publicDocumentsTableBody.innerHTML = 
+              '<tr><td colspan="4" class="text-center p-4 text-muted">Please select an active public workspace.</td></tr>';
+          }
+          if (publicPromptsTableBody) {
+            publicPromptsTableBody.innerHTML = 
+              '<tr><td colspan="3" class="text-center p-4 text-muted">Please select an active public workspace.</td></tr>';
+          }
+        }
+      })
+      .catch((error) => {
+        console.error("Error checking active public workspace:", error);
+      });
+  }
+
+  function setActivePublicWorkspace(workspaceId) {
+    fetch(`/api/public_workspaces/${workspaceId}/set_active`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Failed to set active public workspace");
+        }
+        return response.json();
+      })
+      .then(() => {
+        const selectedWorkspace = publicWorkspaces.find(w => w.id === workspaceId);
+        if (selectedWorkspace) {
+          activePublicWorkspaceId = workspaceId;
+          activePublicWorkspaceName = selectedWorkspace.name;
+          
+          activePublicWorkspaceNameEl.textContent = activePublicWorkspaceName;
+          activePublicWorkspaceNameEl.style.display = "inline";
+          activePublicWorkspaceNameDropdownEl.style.display = "none";
+          
+          // Fetch public workspace details to determine user's role
+          fetch(`/api/public_workspaces/${workspaceId}`, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          })
+            .then(response => response.json())
+            .then(workspace => {
+              // Get current user ID from sessionStorage (set on login)
+              const userId = sessionStorage.getItem("userId");
+              
+              // Determine role based on the returned workspace data
+              if (workspace.owner && workspace.owner.id === userId) {
+                userRoleInActivePublicWorkspace = "Owner";
+              } else if (workspace.admins && workspace.admins.includes(userId)) {
+                userRoleInActivePublicWorkspace = "Admin";
+              } else if (workspace.documentManagers && workspace.documentManagers.includes(userId)) {
+                userRoleInActivePublicWorkspace = "DocumentManager";
+              } else {
+                userRoleInActivePublicWorkspace = null;
+              }
+              
+              loadActivePublicWorkspaceData();
+            })
+            .catch(error => {
+              console.error("Error fetching public workspace details:", error);
+            });
+        }
+      })
+      .catch((error) => {
+        console.error("Error setting active public workspace:", error);
+        alert("Failed to set the public workspace as active. Please try again.");
+      });
+  }
+
+  function loadActivePublicWorkspaceData() {
+    console.log(`Loading data for active public workspace: ${activePublicWorkspaceId}`);
+    if (!activePublicWorkspaceId) {
+      console.warn("Cannot load data: No active public workspace ID set.");
+      return;
+    }
+    const activeTab = document.querySelector(
+      "#publicWorkspaceTab .nav-link.active"
+    );
+    const targetId = activeTab
+      ? activeTab.getAttribute("data-bs-target")
+      : "#documents-tab"; // Default to documents
+
+    if (targetId === "#documents-tab") {
+      fetchPublicDocuments();
+    } else if (targetId === "#prompts-tab") {
+      fetchPublicPrompts();
+    }
+    // Update UI elements dependent on role (applies to both tabs potentially)
+    updateRoleDisplay();
+    updatePublicPromptsRoleUI(); // This is specific to prompts tab UI elements
+  }
+
+  function updateRoleDisplay() {
+    const canManageDocs = ["Owner", "Admin", "DocumentManager"].includes(
+      userRoleInActivePublicWorkspace
+    );
+    const roleDisplay = document.getElementById("user-role-display");
+    const uploadBtn = document.getElementById("publicDocsUploadBtnContainer");
+    
+    if (roleDisplay && activePublicWorkspaceName) {
+      document.getElementById("active-public-workspace-name-role").textContent = 
+        activePublicWorkspaceName;
+      document.getElementById("user-role").textContent = 
+        userRoleInActivePublicWorkspace || "Viewer";
+      roleDisplay.style.display = "block";
+    } else if (roleDisplay) {
+      roleDisplay.style.display = "none";
+    }
+
+    if (uploadBtn) {
+      if (canManageDocs) {
+        uploadBtn.style.display = "block";
+      } else {
+        uploadBtn.style.display = "none";
+      }
+    }
+  }
+
+  function updatePublicPromptsRoleUI() {
+    const canManagePrompts = ["Owner", "Admin", "DocumentManager"].includes(
+      userRoleInActivePublicWorkspace
+    );
+    const createPromptBtn = document.getElementById("createPublicPromptBtn");
+    
+    if (createPromptBtn) {
+      createPromptBtn.style.display = canManagePrompts ? "inline-block" : "none";
+    }
+  }
+
+  // --- Documents Functions ---
+
+  function fetchPublicDocuments() {
+    if (!activePublicWorkspaceId) {
+      console.warn("Cannot fetch documents: No active public workspace selected");
+      return;
+    }
+
+    publicDocumentsTableBody.innerHTML = `
+      <tr>
+        <td colspan="4" class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </td>
+      </tr>
+    `;
+
+    let url = `/api/public_documents?page=${publicDocsCurrentPage}&page_size=${publicDocsPageSize}`;
+    if (publicDocsSearchTerm) {
+      url += `&q=${encodeURIComponent(publicDocsSearchTerm)}`;
+    }
+
+    fetch(url)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to fetch documents: ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        renderPublicDocuments(data.documents || []);
+      })
+      .catch(error => {
+        console.error("Error fetching public documents:", error);
+        publicDocumentsTableBody.innerHTML = `
+          <tr>
+            <td colspan="4" class="text-center text-danger">
+              Failed to load documents. Please try again later.
+            </td>
+          </tr>
+        `;
+      });
+  }
+
+  function renderPublicDocuments(documents) {
+    if (!documents || documents.length === 0) {
+      publicDocumentsTableBody.innerHTML = `
+        <tr>
+          <td colspan="4" class="text-center p-3">
+            ${publicDocsSearchTerm 
+              ? `No documents found matching "${publicDocsSearchTerm}".` 
+              : "No documents have been uploaded to this public workspace yet."}
+          </td>
+        </tr>
+      `;
+      document.getElementById("public-docs-pagination").style.display = "none";
+      return;
+    }
+
+    let html = "";
+    documents.forEach(doc => {
+      const status = doc.status || (doc.percentage_complete === 100 ? "Complete" : "Processing");
+      const statusClass = status === "Processing complete" || status === "Complete" 
+        ? "text-success" : "text-warning";
+      const canEdit = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActivePublicWorkspace);
+      
+      html += `
+        <tr data-document-id="${doc.id}" class="document-row">
+          <td class="text-center">
+            <a href="#" class="expand-row-btn text-decoration-none" data-document-id="${doc.id}">
+              <i class="bi bi-chevron-down"></i>
+            </a>
+          </td>
+          <td class="document-name" title="${doc.file_name}">
+            ${doc.file_name}
+          </td>
+          <td class="document-status">
+            <span class="${statusClass}">${status}</span>
+          </td>
+          <td>
+            <div class="btn-group">
+              ${canEdit ? `
+              <button class="btn btn-sm btn-outline-primary document-detail-btn" 
+                      data-document-id="${doc.id}" 
+                      title="Edit document details">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-sm btn-outline-danger document-delete-btn" 
+                      data-document-id="${doc.id}" 
+                      data-document-name="${doc.file_name}" 
+                      title="Delete document">
+                <i class="bi bi-trash"></i>
+              </button>
+              ` : `
+              <button class="btn btn-sm btn-outline-secondary document-detail-btn" 
+                      data-document-id="${doc.id}" 
+                      title="View document details">
+                <i class="bi bi-eye"></i>
+              </button>
+              `}
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+
+    publicDocumentsTableBody.innerHTML = html;
+    
+    // Add event listeners for the newly created buttons
+    setupDocumentEventListeners();
+    
+    // Update pagination if needed
+    updateDocumentPagination(documents.length, documents.total);
+  }
+
+  // Add more public document functions here (upload, delete, detail view)...
+
+  // --- Prompts Functions ---
+
+  function fetchPublicPrompts() {
+    if (!activePublicWorkspaceId) {
+      console.warn("Cannot fetch prompts: No active public workspace selected");
+      return;
+    }
+
+    publicPromptsTableBody.innerHTML = `
+      <tr>
+        <td colspan="3" class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </td>
+      </tr>
+    `;
+
+    fetch(`/api/public_prompts`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to fetch prompts: ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        allPublicPrompts = data || [];
+        renderPublicPrompts();
+      })
+      .catch(error => {
+        console.error("Error fetching public prompts:", error);
+        publicPromptsTableBody.innerHTML = `
+          <tr>
+            <td colspan="3" class="text-center text-danger">
+              Failed to load prompts. Please try again later.
+            </td>
+          </tr>
+        `;
+      });
+  }
+
+  function renderPublicPrompts() {
+    // Filter prompts by search term
+    let filtered = allPublicPrompts;
+    if (publicPromptsSearchTerm) {
+      const searchLower = publicPromptsSearchTerm.toLowerCase();
+      filtered = allPublicPrompts.filter(p => 
+        p.name.toLowerCase().includes(searchLower) ||
+        p.content.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    if (filtered.length === 0) {
+      publicPromptsTableBody.innerHTML = `
+        <tr>
+          <td colspan="3" class="text-center p-3">
+            ${publicPromptsSearchTerm 
+              ? `No prompts found matching "${publicPromptsSearchTerm}".` 
+              : "No prompts have been created in this public workspace yet."}
+          </td>
+        </tr>
+      `;
+      document.getElementById("public-prompts-pagination").style.display = "none";
+      return;
+    }
+
+    // Calculate pagination
+    const startIndex = (publicPromptsCurrentPage - 1) * publicPromptsPageSize;
+    const endIndex = Math.min(startIndex + publicPromptsPageSize, filtered.length);
+    const promptsToDisplay = filtered.slice(startIndex, endIndex);
+
+    let html = "";
+    promptsToDisplay.forEach(prompt => {
+      const canEdit = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActivePublicWorkspace);
+      const contentPreview = prompt.content.length > 100 
+        ? prompt.content.substring(0, 100) + "..." 
+        : prompt.content;
+        
+      html += `
+        <tr data-prompt-id="${prompt.id}">
+          <td title="${prompt.name}">${prompt.name}</td>
+          <td title="${prompt.content}">${contentPreview}</td>
+          <td>
+            <div class="btn-group">
+              <button class="btn btn-sm btn-outline-primary prompt-use-btn" 
+                      data-prompt-id="${prompt.id}" 
+                      data-bs-toggle="tooltip" 
+                      title="Use this prompt in chat">
+                <i class="bi bi-chat-square-text"></i>
+              </button>
+              ${canEdit ? `
+              <button class="btn btn-sm btn-outline-secondary prompt-edit-btn" 
+                      data-prompt-id="${prompt.id}" 
+                      data-bs-toggle="tooltip" 
+                      title="Edit prompt">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-sm btn-outline-danger prompt-delete-btn" 
+                      data-prompt-id="${prompt.id}" 
+                      data-prompt-name="${prompt.name}" 
+                      data-bs-toggle="tooltip" 
+                      title="Delete prompt">
+                <i class="bi bi-trash"></i>
+              </button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+
+    publicPromptsTableBody.innerHTML = html;
+    
+    // Initialize tooltips
+    const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltips.forEach(tooltip => new bootstrap.Tooltip(tooltip));
+    
+    // Add event listeners for prompt actions
+    setupPromptEventListeners();
+    
+    // Update pagination
+    updatePromptPagination(filtered.length);
+  }
+
+  function setupPromptEventListeners() {
+    // Use prompt in chat
+    document.querySelectorAll(".prompt-use-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const promptId = this.getAttribute("data-prompt-id");
+        usePromptInChat(promptId);
+      });
+    });
+
+    // Edit prompt
+    document.querySelectorAll(".prompt-edit-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const promptId = this.getAttribute("data-prompt-id");
+        editPrompt(promptId);
+      });
+    });
+
+    // Delete prompt
+    document.querySelectorAll(".prompt-delete-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const promptId = this.getAttribute("data-prompt-id");
+        const promptName = this.getAttribute("data-prompt-name");
+        deletePrompt(promptId, promptName);
+      });
+    });
+  }
+
+  function openPromptModal(prompt = null) {
+    // Reset form
+    document.getElementById("promptForm").reset();
+    document.getElementById("promptId").value = "";
+    
+    // Set up modal for create or edit
+    const modalTitle = document.getElementById("promptModalLabel");
+    if (prompt) {
+      modalTitle.textContent = "Edit Prompt";
+      document.getElementById("promptId").value = prompt.id;
+      document.getElementById("promptName").value = prompt.name;
+      editingPromptId = prompt.id;
+    } else {
+      modalTitle.textContent = "Create Prompt";
+      editingPromptId = null;
+    }
+    
+    // Initialize SimpleMDE if not already
+    if (simpleMDE) {
+      simpleMDE.toTextArea();
+      simpleMDE = null;
+    }
+    
+    simpleMDE = new SimpleMDE({
+      element: document.getElementById("promptContent"),
+      spellChecker: false,
+      status: false,
+      toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "link", "table", "|", "preview"],
+    });
+    
+    if (prompt) {
+      simpleMDE.value(prompt.content);
+    }
+    
+    // Show editor tab, hide preview tab
+    document.getElementById("promptEditorContainer").style.display = "block";
+    document.getElementById("promptPreviewContainer").style.display = "none";
+    document.getElementById("editorTab").classList.add("active");
+    document.getElementById("editorTab").classList.add("btn-primary");
+    document.getElementById("editorTab").classList.remove("btn-outline-primary");
+    document.getElementById("previewTab").classList.remove("active");
+    document.getElementById("previewTab").classList.remove("btn-primary");
+    document.getElementById("previewTab").classList.add("btn-outline-primary");
+    
+    // Show modal
+    const promptModal = new bootstrap.Modal(document.getElementById("promptModal"));
+    promptModal.show();
+  }
+
+  function savePublicPrompt() {
+    const promptId = document.getElementById("promptId").value;
+    const name = document.getElementById("promptName").value;
+    const content = simpleMDE ? simpleMDE.value() : document.getElementById("promptContent").value;
+    
+    if (!name || !content) {
+      alert("Please provide both a name and content for the prompt.");
+      return;
+    }
+    
+    const promptData = { name, content };
+    const isEdit = !!promptId;
+    const method = isEdit ? "PUT" : "POST";
+    const url = isEdit ? `/api/public_prompts/${promptId}` : "/api/public_prompts";
+    
+    fetch(url, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(promptData)
+    })
+      .then(response => {
+        if (!response.ok) throw new Error("Failed to save prompt.");
+        return response.json();
+      })
+      .then(data => {
+        // Close modal
+        bootstrap.Modal.getInstance(document.getElementById("promptModal")).hide();
+        
+        // Refresh prompts
+        fetchPublicPrompts();
+      })
+      .catch(error => {
+        console.error("Error saving prompt:", error);
+        alert("Failed to save prompt. Please try again.");
+      });
+  }
+
+  function editPrompt(promptId) {
+    const prompt = allPublicPrompts.find(p => p.id === promptId);
+    if (prompt) {
+      openPromptModal(prompt);
+    }
+  }
+
+  function deletePrompt(promptId, promptName) {
+    if (confirm(`Are you sure you want to delete the prompt "${promptName}"? This cannot be undone.`)) {
+      fetch(`/api/public_prompts/${promptId}`, { method: "DELETE" })
+        .then(response => {
+          if (!response.ok) throw new Error("Failed to delete prompt.");
+          return response.json();
+        })
+        .then(() => {
+          // Refresh prompts list
+          fetchPublicPrompts();
+        })
+        .catch(error => {
+          console.error("Error deleting prompt:", error);
+          alert("Failed to delete prompt. Please try again.");
+        });
+    }
+  }
+
+  function usePromptInChat(promptId) {
+    const prompt = allPublicPrompts.find(p => p.id === promptId);
+    if (prompt) {
+      // Check if we're already in the chat UI
+      if (window.location.pathname.includes("/chats")) {
+        // We're in chat already, use the content directly
+        if (typeof insertTextIntoChat === "function") {
+          insertTextIntoChat(prompt.content);
+        } else {
+          console.warn("Chat insertion function not available");
+          // Fall back to clipboard copy
+          copyToClipboard(prompt.content);
+        }
+      } else {
+        // We need to navigate to chat with this prompt
+        copyToClipboard(prompt.content);
+        alert("Prompt copied to clipboard. Redirecting to chat...");
+        window.location.href = "/chats";
+      }
+    }
+  }
+
+  function copyToClipboard(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+
+  // Pagination utilities
+  function updateDocumentPagination(count, total) {
+    // Placeholder for document pagination logic
+  }
+
+  function updatePromptPagination(totalItems) {
+    const totalPages = Math.ceil(totalItems / publicPromptsPageSize);
+    const paginationEl = document.getElementById("public-prompts-pagination");
+    
+    if (totalPages <= 1) {
+      paginationEl.style.display = "none";
+      return;
+    }
+    
+    paginationEl.style.display = "block";
+    const paginationUl = paginationEl.querySelector("ul");
+    paginationUl.innerHTML = "";
+    
+    // Previous button
+    const prevDisabled = publicPromptsCurrentPage === 1 ? "disabled" : "";
+    paginationUl.innerHTML += `
+      <li class="page-item ${prevDisabled}">
+        <a class="page-link prompt-page-link" href="#" data-page="${publicPromptsCurrentPage - 1}">Previous</a>
+      </li>
+    `;
+    
+    // Page numbers
+    const startPage = Math.max(1, publicPromptsCurrentPage - 2);
+    const endPage = Math.min(totalPages, startPage + 4);
+    
+    for (let i = startPage; i <= endPage; i++) {
+      const activeClass = i === publicPromptsCurrentPage ? "active" : "";
+      paginationUl.innerHTML += `
+        <li class="page-item ${activeClass}">
+          <a class="page-link prompt-page-link" href="#" data-page="${i}">${i}</a>
+        </li>
+      `;
+    }
+    
+    // Next button
+    const nextDisabled = publicPromptsCurrentPage >= totalPages ? "disabled" : "";
+    paginationUl.innerHTML += `
+      <li class="page-item ${nextDisabled}">
+        <a class="page-link prompt-page-link" href="#" data-page="${publicPromptsCurrentPage + 1}">Next</a>
+      </li>
+    `;
+    
+    // Add click event listeners to pagination links
+    document.querySelectorAll(".prompt-page-link").forEach(link => {
+      link.addEventListener("click", function(e) {
+        e.preventDefault();
+        if (this.parentElement.classList.contains("disabled")) return;
+        
+        publicPromptsCurrentPage = parseInt(this.getAttribute("data-page"));
+        renderPublicPrompts();
+      });
+    });
+  }
+
+  // Document actions and other document specific code to be added as needed...
+</script>
+{% endblock %}

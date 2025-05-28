@@ -216,6 +216,24 @@ cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_workspaces_container_name = "public_workspaces"
+cosmos_public_workspaces_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspaces_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_prompts_container_name = "public_prompts"
+cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_file_processing_container_name = "file_processing"
 cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_file_processing_container_name,
