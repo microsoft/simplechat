@@ -3,6 +3,7 @@
 import uuid
 import tempfile
 import os
+import math
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -28,7 +29,45 @@ def register_route_backend_public_documents(app):
         if not active_public_workspace_id:
             return jsonify({'error': 'No active public workspace selected'}), 400
 
-        return get_documents(user_id, active_public_workspace_id)
+        # Get query parameters for pagination and search
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 10))
+        search_term = request.args.get('q', '').strip()
+
+        # Build query for public documents
+        query = "SELECT * FROM c WHERE c.public_workspace_id = @workspace_id"
+        parameters = [{"name": "@workspace_id", "value": active_public_workspace_id}]
+
+        if search_term:
+            query += " AND CONTAINS(c.file_name, @search)"
+            parameters.append({"name": "@search", "value": search_term})
+
+        query += " ORDER BY c._ts DESC"
+
+        # Execute query
+        try:
+            all_documents = list(cosmos_public_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+
+            # Apply pagination
+            total_count = len(all_documents)
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            paginated_documents = all_documents[start_index:end_index]
+
+            return jsonify({
+                'documents': paginated_documents,
+                'page': page,
+                'page_size': page_size,
+                'total_count': total_count,
+                'total_pages': math.ceil(total_count / page_size) if page_size > 0 else 0
+            })
+
+        except Exception as e:
+            return jsonify({'error': f'Failed to fetch documents: {str(e)}'}), 500
 
 
     @app.route('/api/public_documents/<document_id>', methods=['GET'])

@@ -220,20 +220,12 @@ LOCAL VERSION BELOW
           <!-- Upload + Search + Actions Row -->
           <div class="col-md-auto">
             <div id="publicDocsUploadBtnContainer">
-              <div
-                id="publicDocsUploadDropzone"
-                class="btn btn-primary btn-sm"
-              >
-                <i class="bi bi-cloud-upload"></i>
-                <span>Upload Document</span>
-              </div>
-              <input
-                type="file"
-                id="publicDocsFileInput"
-                style="display: none"
-                multiple
-              />
-              <div id="publicDocsUploadStatus" class="text-muted small mt-1" style="display: none;"></div>
+              <!-- Document Upload (visibility controlled by JS based on role) -->
+              <input type="file" id="public-file-input" multiple />
+              <button id="public-upload-btn" class="btn btn-primary btn-sm">
+                Upload Document(s)
+              </button>
+              <span id="public-upload-status" class="ms-2 text-muted small"></span>
             </div>
           </div>
           <div class="col-md-auto ms-auto">
@@ -277,25 +269,24 @@ LOCAL VERSION BELOW
           </tbody>
         </table>
 
-        <!-- Pagination for documents table -->
-        <nav aria-label="Documents pagination">
-          <ul
-            class="pagination pagination-sm justify-content-center"
-            id="public-docs-pagination"
+        <!-- Documents pagination and page size controls -->
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex align-items-center">
+            <label for="public-docs-page-size" class="form-label me-2 mb-0 small">Show:</label>
+            <select id="public-docs-page-size" class="form-select form-select-sm" style="width: auto;">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div
+            id="public-docs-pagination-container"
+            class="d-flex gap-1 ms-auto"
           >
-            <li class="page-item disabled">
-              <a class="page-link" href="#" tabindex="-1" aria-disabled="true"
-                >Previous</a
-              >
-            </li>
-            <li class="page-item active">
-              <a class="page-link" href="#">1</a>
-            </li>
-            <li class="page-item disabled">
-              <a class="page-link" href="#">Next</a>
-            </li>
-          </ul>
-        </nav>
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
       </div>
     </div>
 
@@ -356,25 +347,24 @@ LOCAL VERSION BELOW
           </tbody>
         </table>
 
-        <!-- Pagination for prompts table -->
-        <nav aria-label="Prompts pagination">
-          <ul
-            class="pagination pagination-sm justify-content-center"
-            id="public-prompts-pagination"
+        <!-- Prompts pagination and page size controls -->
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex align-items-center">
+            <label for="public-prompts-page-size" class="form-label me-2 mb-0 small">Show:</label>
+            <select id="public-prompts-page-size" class="form-select form-select-sm" style="width: auto;">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div
+            id="public-prompts-pagination-container"
+            class="d-flex gap-1 ms-auto"
           >
-            <li class="page-item disabled">
-              <a class="page-link" href="#" tabindex="-1" aria-disabled="true"
-                >Previous</a
-              >
-            </li>
-            <li class="page-item active">
-              <a class="page-link" href="#">1</a>
-            </li>
-            <li class="page-item disabled">
-              <a class="page-link" href="#">Next</a>
-            </li>
-          </ul>
-        </nav>
+            <!-- Populated by JS -->
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -516,6 +506,11 @@ LOCAL VERSION BELOW
   const activePublicWorkspaceNameEl = document.getElementById("active-public-workspace-name");
   const activePublicWorkspaceNameDropdownEl = document.getElementById("active-public-workspace-name-dropdown");
   const activePublicWorkspaceNameRoleEl = document.getElementById("active-public-workspace-name-role");
+  
+  // Upload elements  
+  const publicFileInput = document.getElementById("public-file-input");
+  const publicUploadBtn = document.getElementById("public-upload-btn");
+  const publicUploadStatusSpan = document.getElementById("public-upload-status");
 
   // --- Initialize on document load ---
   document.addEventListener("DOMContentLoaded", function () {
@@ -599,18 +594,26 @@ LOCAL VERSION BELOW
     });
 
     // Document upload
-    const uploadBtn = document.getElementById("publicDocsUploadDropzone");
-    const fileInput = document.getElementById("publicDocsFileInput");
+    if (publicUploadBtn)
+      publicUploadBtn.addEventListener("click", onPublicUploadClick);
 
-    if (uploadBtn && fileInput) {
-      uploadBtn.addEventListener("click", function () {
-        fileInput.click();
+    // Documents page size change
+    const publicDocsPageSizeSelect = document.getElementById("public-docs-page-size");
+    if (publicDocsPageSizeSelect) {
+      publicDocsPageSizeSelect.addEventListener("change", function() {
+        publicDocsPageSize = parseInt(this.value);
+        publicDocsCurrentPage = 1;
+        fetchPublicDocuments();
       });
+    }
 
-      fileInput.addEventListener("change", function () {
-        if (this.files.length > 0) {
-          uploadPublicDocuments(this.files);
-        }
+    // Prompts page size change  
+    const publicPromptsPageSizeSelect = document.getElementById("public-prompts-page-size");
+    if (publicPromptsPageSizeSelect) {
+      publicPromptsPageSizeSelect.addEventListener("change", function() {
+        publicPromptsPageSize = parseInt(this.value);
+        publicPromptsCurrentPage = 1;
+        renderPublicPrompts();
       });
     }
 
@@ -860,7 +863,7 @@ LOCAL VERSION BELOW
       userRoleInActivePublicWorkspace
     );
     const roleDisplay = document.getElementById("user-role-display");
-    const uploadBtn = document.getElementById("publicDocsUploadBtnContainer");
+    const uploadContainer = document.getElementById("publicDocsUploadBtnContainer");
     
     if (roleDisplay && activePublicWorkspaceName) {
       document.getElementById("active-public-workspace-name-role").textContent = 
@@ -872,11 +875,11 @@ LOCAL VERSION BELOW
       roleDisplay.style.display = "none";
     }
 
-    if (uploadBtn) {
+    if (uploadContainer) {
       if (canManageDocs) {
-        uploadBtn.style.display = "block";
+        uploadContainer.style.display = "block";
       } else {
-        uploadBtn.style.display = "none";
+        uploadContainer.style.display = "none";
       }
     }
   }
@@ -948,7 +951,7 @@ LOCAL VERSION BELOW
           </td>
         </tr>
       `;
-      document.getElementById("public-docs-pagination").style.display = "none";
+      updateDocumentPagination(0, 0);
       return;
     }
 
@@ -1005,13 +1008,71 @@ LOCAL VERSION BELOW
     setupDocumentEventListeners();
     
     // Update pagination if needed
-    updateDocumentPagination(documents.length, documents.total);
+    updateDocumentPagination(documents.length, documents.total || documents.length);
   }
 
   // Add more public document functions here (upload, delete, detail view)...
+  
+  function setupDocumentEventListeners() {
+    // Expand/collapse rows
+    document.querySelectorAll(".expand-row-btn").forEach(btn => {
+      btn.addEventListener("click", function(e) {
+        e.preventDefault();
+        const documentId = this.getAttribute("data-document-id");
+        toggleDocumentRow(documentId);
+      });
+    });
+
+    // Document detail buttons
+    document.querySelectorAll(".document-detail-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const documentId = this.getAttribute("data-document-id");
+        openDocumentDetailModal(documentId);
+      });
+    });
+
+    // Document delete buttons
+    document.querySelectorAll(".document-delete-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const documentId = this.getAttribute("data-document-id");
+        const documentName = this.getAttribute("data-document-name");
+        deletePublicDocument(documentId, documentName);
+      });
+    });
+  }
+
+  function toggleDocumentRow(documentId) {
+    // Placeholder for expand/collapse functionality
+    console.log("Toggle document row:", documentId);
+  }
+
+  function openDocumentDetailModal(documentId) {
+    // Placeholder for document detail modal
+    console.log("Open document detail:", documentId);
+  }
+
+  function deletePublicDocument(documentId, documentName) {
+    if (confirm(`Are you sure you want to delete "${documentName}"? This cannot be undone.`)) {
+      fetch(`/api/public_documents/${documentId}`, { method: "DELETE" })
+        .then(response => {
+          if (!response.ok) throw new Error("Failed to delete document.");
+          return response.json();
+        })
+        .then(() => {
+          // Refresh documents list
+          fetchPublicDocuments();
+        })
+        .catch(error => {
+          console.error("Error deleting document:", error);
+          alert("Failed to delete document. Please try again.");
+        });
+    }
+  }
 
   // --- Upload Public Documents Function ---
-  async function uploadPublicDocuments(files) {
+  async function onPublicUploadClick() {
+    // Follows the same pattern as onGroupUploadClick from group_workspaces.html
+    const files = publicFileInput.files;
     if (!files || files.length === 0) {
       alert("Please select file(s) to upload.");
       return;
@@ -1022,15 +1083,9 @@ LOCAL VERSION BELOW
       return;
     }
 
-    const uploadBtn = document.getElementById("publicDocsUploadDropzone");
-    const uploadStatus = document.getElementById("publicDocsUploadStatus");
-    const fileInput = document.getElementById("publicDocsFileInput");
-
-    // Disable upload button and show status
-    uploadBtn.style.pointerEvents = "none";
-    uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
-    uploadStatus.style.display = "block";
-    uploadStatus.textContent = `Preparing ${files.length} file(s)...`;
+    publicUploadBtn.disabled = true;
+    publicUploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
+    publicUploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
 
     const formData = new FormData();
     const filesToUpload = [];
@@ -1038,23 +1093,23 @@ LOCAL VERSION BELOW
 
     for (const file of files) {
       filesProcessed++;
-      uploadStatus.textContent = `Preparing file: ${file.name} (${filesProcessed}/${files.length})...`;
+      publicUploadStatusSpan.textContent = `Preparing file: ${file.name} (${filesProcessed}/${files.length})...`;
       filesToUpload.push(file);
     }
 
     if (filesToUpload.length === 0) {
-      uploadStatus.textContent = "No valid files selected or processed.";
-      uploadBtn.style.pointerEvents = "auto";
-      uploadBtn.innerHTML = `<i class="bi bi-cloud-upload"></i><span>Upload Document</span>`;
-      fileInput.value = "";
+      publicUploadStatusSpan.textContent = "No valid files selected.";
+      publicUploadBtn.disabled = false;
+      publicUploadBtn.innerHTML = "Upload Document(s)";
+      publicFileInput.value = "";
       return;
     }
 
     filesToUpload.forEach((file) => formData.append("file", file, file.name));
 
     // Update status for upload
-    uploadStatus.textContent = `Uploading ${filesToUpload.length} file(s)...`;
-    uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Uploading...`;
+    publicUploadStatusSpan.textContent = `Uploading ${filesToUpload.length} file(s)...`;
+    publicUploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Uploading...`;
 
     try {
       const response = await fetch("/api/public_documents/upload", {
@@ -1081,30 +1136,25 @@ LOCAL VERSION BELOW
       // Update final status message
       let finalMessage = "";
       if (successCount === totalUploaded) {
-        finalMessage += `Uploaded ${successCount} file(s) for processing. `;
+        finalMessage = `Uploaded ${successCount} file(s) for processing.`;
       } else if (successCount < totalUploaded) {
-        finalMessage += `Server accepted ${successCount}/${totalUploaded} uploaded file(s). `;
+        finalMessage = `Server accepted ${successCount}/${totalUploaded} uploaded file(s).`;
       }
       if (data.errors && data.errors.length > 0) {
-        finalMessage += ` Server errors: ${data.errors.join(", ")}`;
+        finalMessage += ` Errors: ${data.errors.join(", ")}`;
       }
 
-      uploadStatus.textContent = finalMessage.trim() || "Upload processed.";
-      fileInput.value = ""; // Clear input
+      publicUploadStatusSpan.textContent = finalMessage.trim() || "Upload processed.";
+      publicFileInput.value = ""; // Clear input
       
     } catch (err) {
       const errorMsg = `Upload failed: ${err.message || "Unknown error"}`;
       alert(errorMsg);
-      uploadStatus.textContent = errorMsg;
+      publicUploadStatusSpan.textContent = errorMsg;
     } finally {
       // Reset button
-      uploadBtn.style.pointerEvents = "auto";
-      uploadBtn.innerHTML = `<i class="bi bi-cloud-upload"></i><span>Upload Document</span>`;
-      
-      // Hide status after a few seconds
-      setTimeout(() => {
-        uploadStatus.style.display = "none";
-      }, 5000);
+      publicUploadBtn.disabled = false;
+      publicUploadBtn.innerHTML = "Upload Document(s)";
     }
   }
 
@@ -1193,7 +1243,7 @@ LOCAL VERSION BELOW
           </td>
         </tr>
       `;
-      document.getElementById("public-prompts-pagination").style.display = "none";
+      updatePromptPagination(0);
       return;
     }
 
@@ -1426,62 +1476,124 @@ LOCAL VERSION BELOW
   }
 
   // Pagination utilities
-  function updateDocumentPagination(count, total) {
-    // Placeholder for document pagination logic
+  function updateDocumentPagination(documentsLength, totalCount) {
+    const paginationContainer = document.getElementById("public-docs-pagination-container");
+    if (!paginationContainer) return;
+    
+    paginationContainer.innerHTML = "";
+    const totalPages = Math.ceil(totalCount / publicDocsPageSize);
+    
+    if (totalPages <= 1) return;
+
+    const ul = document.createElement("ul");
+    ul.classList.add("pagination", "pagination-sm", "mb-0");
+
+    // Previous button
+    const prev = document.createElement("li");
+    prev.classList.add("page-item");
+    if (publicDocsCurrentPage <= 1) prev.classList.add("disabled");
+    prev.innerHTML = `<a class="page-link" href="#">«</a>`;
+    prev.querySelector("a").onclick = (e) => {
+      e.preventDefault();
+      if (publicDocsCurrentPage > 1) {
+        publicDocsCurrentPage--;
+        fetchPublicDocuments();
+      }
+    };
+    ul.append(prev);
+
+    // Page numbers
+    const startPage = Math.max(1, publicDocsCurrentPage - 2);
+    const endPage = Math.min(totalPages, publicDocsCurrentPage + 2);
+    
+    for (let i = startPage; i <= endPage; i++) {
+      const li = document.createElement("li");
+      li.classList.add("page-item");
+      if (i === publicDocsCurrentPage) li.classList.add("active");
+      li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+      li.querySelector("a").onclick = (e) => {
+        e.preventDefault();
+        publicDocsCurrentPage = i;
+        fetchPublicDocuments();
+      };
+      ul.append(li);
+    }
+
+    // Next button
+    const next = document.createElement("li");
+    next.classList.add("page-item");
+    if (publicDocsCurrentPage >= totalPages) next.classList.add("disabled");
+    next.innerHTML = `<a class="page-link" href="#">»</a>`;
+    next.querySelector("a").onclick = (e) => {
+      e.preventDefault();
+      if (publicDocsCurrentPage < totalPages) {
+        publicDocsCurrentPage++;
+        fetchPublicDocuments();
+      }
+    };
+    ul.append(next);
+
+    paginationContainer.appendChild(ul);
   }
 
   function updatePromptPagination(totalItems) {
+    const paginationContainer = document.getElementById("public-prompts-pagination-container");
+    if (!paginationContainer) return;
+    
+    paginationContainer.innerHTML = "";
     const totalPages = Math.ceil(totalItems / publicPromptsPageSize);
-    const paginationEl = document.getElementById("public-prompts-pagination");
     
-    if (totalPages <= 1) {
-      paginationEl.style.display = "none";
-      return;
-    }
-    
-    paginationEl.style.display = "block";
-    const paginationUl = paginationEl.querySelector("ul");
-    paginationUl.innerHTML = "";
-    
+    if (totalPages <= 1) return;
+
+    const ul = document.createElement("ul");
+    ul.classList.add("pagination", "pagination-sm", "mb-0");
+
     // Previous button
-    const prevDisabled = publicPromptsCurrentPage === 1 ? "disabled" : "";
-    paginationUl.innerHTML += `
-      <li class="page-item ${prevDisabled}">
-        <a class="page-link prompt-page-link" href="#" data-page="${publicPromptsCurrentPage - 1}">Previous</a>
-      </li>
-    `;
-    
+    const prev = document.createElement("li");
+    prev.classList.add("page-item");
+    if (publicPromptsCurrentPage <= 1) prev.classList.add("disabled");
+    prev.innerHTML = `<a class="page-link" href="#">«</a>`;
+    prev.querySelector("a").onclick = (e) => {
+      e.preventDefault();
+      if (publicPromptsCurrentPage > 1) {
+        publicPromptsCurrentPage--;
+        renderPublicPrompts();
+      }
+    };
+    ul.append(prev);
+
     // Page numbers
     const startPage = Math.max(1, publicPromptsCurrentPage - 2);
-    const endPage = Math.min(totalPages, startPage + 4);
+    const endPage = Math.min(totalPages, publicPromptsCurrentPage + 2);
     
     for (let i = startPage; i <= endPage; i++) {
-      const activeClass = i === publicPromptsCurrentPage ? "active" : "";
-      paginationUl.innerHTML += `
-        <li class="page-item ${activeClass}">
-          <a class="page-link prompt-page-link" href="#" data-page="${i}">${i}</a>
-        </li>
-      `;
-    }
-    
-    // Next button
-    const nextDisabled = publicPromptsCurrentPage >= totalPages ? "disabled" : "";
-    paginationUl.innerHTML += `
-      <li class="page-item ${nextDisabled}">
-        <a class="page-link prompt-page-link" href="#" data-page="${publicPromptsCurrentPage + 1}">Next</a>
-      </li>
-    `;
-    
-    // Add click event listeners to pagination links
-    document.querySelectorAll(".prompt-page-link").forEach(link => {
-      link.addEventListener("click", function(e) {
+      const li = document.createElement("li");
+      li.classList.add("page-item");
+      if (i === publicPromptsCurrentPage) li.classList.add("active");
+      li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+      li.querySelector("a").onclick = (e) => {
         e.preventDefault();
-        if (this.parentElement.classList.contains("disabled")) return;
-        
-        publicPromptsCurrentPage = parseInt(this.getAttribute("data-page"));
+        publicPromptsCurrentPage = i;
         renderPublicPrompts();
-      });
-    });
+      };
+      ul.append(li);
+    }
+
+    // Next button
+    const next = document.createElement("li");
+    next.classList.add("page-item");
+    if (publicPromptsCurrentPage >= totalPages) next.classList.add("disabled");
+    next.innerHTML = `<a class="page-link" href="#">»</a>`;
+    next.querySelector("a").onclick = (e) => {
+      e.preventDefault();
+      if (publicPromptsCurrentPage < totalPages) {
+        publicPromptsCurrentPage++;
+        renderPublicPrompts();
+      }
+    };
+    ul.append(next);
+
+    paginationContainer.appendChild(ul);
   }
 
   // Document actions and other document specific code to be added as needed...
