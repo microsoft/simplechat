@@ -233,6 +233,7 @@ LOCAL VERSION BELOW
                 style="display: none"
                 multiple
               />
+              <div id="publicDocsUploadStatus" class="text-muted small mt-1" style="display: none;"></div>
             </div>
           </div>
           <div class="col-md-auto ms-auto">
@@ -1008,6 +1009,127 @@ LOCAL VERSION BELOW
   }
 
   // Add more public document functions here (upload, delete, detail view)...
+
+  // --- Upload Public Documents Function ---
+  async function uploadPublicDocuments(files) {
+    if (!files || files.length === 0) {
+      alert("Please select file(s) to upload.");
+      return;
+    }
+
+    if (!activePublicWorkspaceId) {
+      alert("Please select a public workspace first.");
+      return;
+    }
+
+    const uploadBtn = document.getElementById("publicDocsUploadDropzone");
+    const uploadStatus = document.getElementById("publicDocsUploadStatus");
+    const fileInput = document.getElementById("publicDocsFileInput");
+
+    // Disable upload button and show status
+    uploadBtn.style.pointerEvents = "none";
+    uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
+    uploadStatus.style.display = "block";
+    uploadStatus.textContent = `Preparing ${files.length} file(s)...`;
+
+    const formData = new FormData();
+    const filesToUpload = [];
+    let filesProcessed = 0;
+
+    for (const file of files) {
+      filesProcessed++;
+      uploadStatus.textContent = `Preparing file: ${file.name} (${filesProcessed}/${files.length})...`;
+      filesToUpload.push(file);
+    }
+
+    if (filesToUpload.length === 0) {
+      uploadStatus.textContent = "No valid files selected or processed.";
+      uploadBtn.style.pointerEvents = "auto";
+      uploadBtn.innerHTML = `<i class="bi bi-cloud-upload"></i><span>Upload Document</span>`;
+      fileInput.value = "";
+      return;
+    }
+
+    filesToUpload.forEach((file) => formData.append("file", file, file.name));
+
+    // Update status for upload
+    uploadStatus.textContent = `Uploading ${filesToUpload.length} file(s)...`;
+    uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Uploading...`;
+
+    try {
+      const response = await fetch("/api/public_documents/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Server responded with status ${response.status}`);
+      }
+
+      const docIds = data.document_ids || [];
+      const successCount = docIds.length;
+      const totalUploaded = filesToUpload.length;
+
+      if (successCount > 0) {
+        // Refresh the documents list
+        fetchPublicDocuments();
+        // Poll new docs for status updates
+        docIds.forEach((docId) => pollPublicDocumentStatus(docId));
+      }
+
+      // Update final status message
+      let finalMessage = "";
+      if (successCount === totalUploaded) {
+        finalMessage += `Uploaded ${successCount} file(s) for processing. `;
+      } else if (successCount < totalUploaded) {
+        finalMessage += `Server accepted ${successCount}/${totalUploaded} uploaded file(s). `;
+      }
+      if (data.errors && data.errors.length > 0) {
+        finalMessage += ` Server errors: ${data.errors.join(", ")}`;
+      }
+
+      uploadStatus.textContent = finalMessage.trim() || "Upload processed.";
+      fileInput.value = ""; // Clear input
+      
+    } catch (err) {
+      const errorMsg = `Upload failed: ${err.message || "Unknown error"}`;
+      alert(errorMsg);
+      uploadStatus.textContent = errorMsg;
+    } finally {
+      // Reset button
+      uploadBtn.style.pointerEvents = "auto";
+      uploadBtn.innerHTML = `<i class="bi bi-cloud-upload"></i><span>Upload Document</span>`;
+      
+      // Hide status after a few seconds
+      setTimeout(() => {
+        uploadStatus.style.display = "none";
+      }, 5000);
+    }
+  }
+
+  // Helper function to poll document status (similar to group workspaces)
+  function pollPublicDocumentStatus(documentId) {
+    const pollInterval = setInterval(() => {
+      fetch(`/api/public_documents/${documentId}`)
+        .then(response => response.json())
+        .then(doc => {
+          if (doc.status === "Processing complete" || doc.percentage_complete === 100) {
+            clearInterval(pollInterval);
+            fetchPublicDocuments(); // Refresh the table
+          }
+        })
+        .catch(err => {
+          console.error("Error polling document status:", err);
+          clearInterval(pollInterval);
+        });
+    }, 2000); // Poll every 2 seconds
+    
+    // Stop polling after 5 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+    }, 300000);
+  }
 
   // --- Prompts Functions ---
 
