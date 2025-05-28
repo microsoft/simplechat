@@ -42,9 +42,10 @@ try {
 }
 // ----------------------------------
 
-// We'll store personalDocs/groupDocs in memory once loaded:
+// We'll store personalDocs/groupDocs/publicDocs in memory once loaded:
 let personalDocs = [];
 let groupDocs = [];
+let publicDocs = [];
 let activeGroupName = "";
 
 /* ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ export function populateDocumentSelectScope() {
   console.log("Populating document dropdown with scope:", docScopeSelect.value);
   console.log("Personal docs:", personalDocs.length);
   console.log("Group docs:", groupDocs.length);
+  console.log("Public docs:", publicDocs.length);
 
   const previousValue = docSelectEl.value; // Store previous selection if needed
   docSelectEl.innerHTML = ""; // Clear existing options
@@ -98,7 +100,12 @@ export function populateDocumentSelectScope() {
       label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
       classification: d.document_classification, // Store classification
     }));
-    finalDocs = pDocs.concat(gDocs);
+    const pubDocs = publicDocs.map((d) => ({
+      id: d.id,
+      label: `[Public] ${d.title || d.file_name}`,
+      classification: d.document_classification, // Store classification
+    }));
+    finalDocs = pDocs.concat(gDocs).concat(pubDocs);
   } else if (scopeVal === "personal") {
     finalDocs = personalDocs.map((d) => ({
       id: d.id,
@@ -109,6 +116,12 @@ export function populateDocumentSelectScope() {
     finalDocs = groupDocs.map((d) => ({
       id: d.id,
       label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
+      classification: d.document_classification,
+    }));
+  } else if (scopeVal === "public") {
+    finalDocs = publicDocs.map((d) => ({
+      id: d.id,
+      label: `[Public] ${d.title || d.file_name}`,
       classification: d.document_classification,
     }));
   }
@@ -205,6 +218,11 @@ export function getDocumentMetadata(docId) {
     // console.log(`Metadata found in groupDocs for ${docId}`);
     return groupMatch;
   }
+  // Then search public docs
+  const publicMatch = publicDocs.find(doc => doc.id === docId || doc.document_id === docId);
+  if (publicMatch) {
+    return publicMatch;
+  }
   // console.log(`Metadata NOT found for ${docId}`);
   return null; // Not found in either list
 }
@@ -250,6 +268,24 @@ export function loadGroupDocs() {
     });
 }
 
+export function loadPublicDocs() {
+  // Use a large page_size to load all documents at once, without pagination
+  return fetch("/api/public_documents?page_size=1000")
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.error) {
+        console.warn("Error fetching public docs:", data.error);
+        publicDocs = [];
+        return;
+      }
+      publicDocs = data.documents || [];
+      console.log(`Loaded ${publicDocs.length} public documents`);
+    })
+    .catch((err) => {
+      console.error("Error loading public docs:", err);
+      publicDocs = [];
+    });
+}
 
 export function loadAllDocs() {
   const hasDocControls = searchDocumentsBtn || docScopeSelect || docSelectEl;
@@ -329,9 +365,10 @@ export function loadAllDocs() {
     }
   }
 
-  return Promise.all([loadPersonalDocs(), loadGroupDocs()])
+  // Load public documents along with personal and group documents
+  return Promise.all([loadPersonalDocs(), loadGroupDocs(), loadPublicDocs()])
     .then(() => {
-      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length);
+      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length, "Public:", publicDocs.length);
       // After loading, populate the select and set initial classification state
       populateDocumentSelectScope();
       // handleDocumentSelectChange(); // Called within populateDocumentSelectScope now

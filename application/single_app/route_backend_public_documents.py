@@ -159,3 +159,51 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             print(f"Error retrieving public document details: {str(e)}")
             return jsonify({"error": f"Failed to retrieve document details: {str(e)}"}), 500
+
+
+    @app.route('/api/public_documents', methods=['GET'])
+    @login_required
+    def api_get_all_public_documents():
+        try:
+            # Get page parameters with defaults for pagination
+            page = request.args.get('page', 1, type=int)
+            page_size = request.args.get('page_size', 10, type=int)
+            
+            # Calculate offset based on page and page_size
+            offset = (page - 1) * page_size
+            
+            # Query to get all public documents across all workspaces
+            query = "SELECT * FROM c WHERE c.type = 'document_metadata' OFFSET @offset LIMIT @limit"
+            params = [{"name": "@offset", "value": offset}, {"name": "@limit", "value": page_size}]
+            
+            # Query to count total documents (for pagination metadata)
+            count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'document_metadata'"
+            
+            # Execute queries
+            documents = list(cosmos_public_documents_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+            
+            total_count = list(cosmos_public_documents_container.query_items(
+                query=count_query,
+                enable_cross_partition_query=True
+            ))[0]
+            
+            # Calculate total pages
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            return jsonify({
+                "documents": documents,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": total_pages
+                }
+            }), 200
+            
+        except Exception as e:
+            print(f"Error retrieving all public documents: {str(e)}")
+            return jsonify({"error": f"Failed to retrieve public documents: {str(e)}"}), 500
