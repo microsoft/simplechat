@@ -56,6 +56,19 @@ def to_datetime_filter(value):
 def format_datetime_filter(value):
     return value.strftime('%Y-%m-%d %H:%M')
 
+@app.template_filter('datetime')
+def datetime_filter(value):
+    """Format ISO datetime string to readable format."""
+    if not value:
+        return ''
+    try:
+        # Try to parse as ISO format with timezone
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M')
+    except ValueError:
+        # If parsing fails, return original
+        return value
+
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -74,8 +87,17 @@ def markdown_filter(text):
 
     return Markup(html)
 
-# Add the filter to the Jinja environment
+# Add a custom filter for pluralization
+def pluralize_filter(n):
+    """Return 's' when n is not 1, otherwise empty string."""
+    if n == 1:
+        return ''
+    else:
+        return 's'
+
+# Add the filters to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
+app.jinja_env.filters['pluralize'] = pluralize_filter
 
 # =================== Default Routes =====================
 @app.route('/')
