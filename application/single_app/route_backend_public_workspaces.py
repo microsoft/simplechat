@@ -228,3 +228,88 @@ def register_route_backend_public_workspaces(app):
         )
         
         return jsonify(workspace_doc), 200
+
+
+    @app.route('/api/public_workspaces/<workspace_id>/members', methods=['GET'])
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_get_public_workspace_members(workspace_id):
+        """
+        Retrieve members of a public workspace with their roles and details.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        workspace_doc = find_public_workspace_by_id(workspace_id)
+        if not workspace_doc:
+            return jsonify({'error': 'Public workspace not found'}), 404
+
+        # Check if user has access to view members (any role in the workspace)
+        user_role = get_user_role_in_public_workspace(workspace_doc, user_id)
+        if not user_role:
+            return jsonify({'error': 'You do not have access to this public workspace'}), 403
+
+        # Collect all user IDs and their roles
+        member_data = []
+        
+        # Add owner
+        owner = workspace_doc.get('owner', {})
+        if owner.get('id'):
+            member_data.append({
+                'userId': owner['id'],
+                'displayName': owner.get('displayName', ''),
+                'email': owner.get('email', ''),
+                'role': 'Owner'
+            })
+
+        # Add admins
+        for admin_id in workspace_doc.get('admins', []):
+            member_data.append({
+                'userId': admin_id,
+                'displayName': '',
+                'email': '',
+                'role': 'Admin'
+            })
+
+        # Add document managers
+        for manager_id in workspace_doc.get('documentManagers', []):
+            member_data.append({
+                'userId': manager_id,
+                'displayName': '',
+                'email': '',
+                'role': 'DocumentManager'
+            })
+
+        # Fetch user details from Microsoft Graph for users without details
+        token = get_valid_access_token()
+        if token:
+            if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "secret":
+                graph_base = "https://graph.microsoft.us/v1.0"
+            else:
+                graph_base = "https://graph.microsoft.com/v1.0"
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            for member in member_data:
+                if not member['displayName']:  # Skip owner as we already have details
+                    try:
+                        user_url = f"{graph_base}/users/{member['userId']}"
+                        response = requests.get(user_url, headers=headers)
+                        if response.status_code == 200:
+                            user_info = response.json()
+                            member['displayName'] = user_info.get('displayName', 'Unknown User')
+                            member['email'] = user_info.get('mail') or user_info.get('userPrincipalName') or 'N/A'
+                        else:
+                            member['displayName'] = 'Unknown User'
+                            member['email'] = 'N/A'
+                    except Exception as e:
+                        print(f"Error fetching user details for {member['userId']}: {e}")
+                        member['displayName'] = 'Unknown User'
+                        member['email'] = 'N/A'
+
+        return jsonify(member_data), 200

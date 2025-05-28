@@ -394,41 +394,7 @@
       </tr>
     `);
     
-    $.get(`/api/public_workspaces/${workspaceId}`, function(workspace) {
-      // Start with the owner
-      const members = [];
-      if (workspace.owner) {
-        members.push({
-          userId: workspace.owner.id,
-          displayName: workspace.owner.displayName,
-          email: workspace.owner.email,
-          role: "Owner"
-        });
-      }
-      
-      // Add admins
-      const admins = workspace.admins || [];
-      admins.forEach(adminId => {
-        // We'll need to look up user details - leaving placeholder for now
-        members.push({
-          userId: adminId,
-          displayName: "Loading...",
-          email: "Loading...",
-          role: "Admin"
-        });
-      });
-      
-      // Add document managers
-      const docManagers = workspace.documentManagers || [];
-      docManagers.forEach(managerId => {
-        members.push({
-          userId: managerId,
-          displayName: "Loading...",
-          email: "Loading...",
-          role: "DocumentManager"
-        });
-      });
-      
+    $.get(`/api/public_workspaces/${workspaceId}/members`, function(members) {
       if (members.length === 0) {
         $("#roles-table-body").html(`
           <tr>
@@ -437,69 +403,49 @@
         `);
         return;
       }
+
+      let html = "";
       
-      // Now fetch details for each user that's not the owner 
-      // (we already have owner details)
-      const promises = [];
-      members.forEach((member, index) => {
-        if (member.role !== "Owner") {
-          promises.push(
-            $.get(`/api/users/${member.userId}`).then(user => {
-              members[index].displayName = user.displayName || user.name || "N/A";
-              members[index].email = user.email || "N/A";
-            }).catch(() => {
-              members[index].displayName = "Unknown User";
-              members[index].email = "N/A";
-            })
-          );
-        }
+      members.forEach(member => {
+        const canChangeRole = (currentUserRole === "Owner" || 
+                           (currentUserRole === "Admin" && member.role !== "Owner" && member.role !== "Admin"));
+        
+        html += `<tr>
+          <td>${member.displayName}</td>
+          <td>${member.email}</td>
+          <td>
+            ${member.role}
+            ${canChangeRole ? 
+              `<button class="btn btn-sm btn-outline-secondary ms-2 change-role-btn" 
+                      data-user-id="${member.userId}" 
+                      data-user-name="${member.displayName}">
+                Change
+              </button>` : 
+              ''}
+          </td>
+        </tr>`;
       });
       
-      // Once all promises are resolved, populate the table
-      Promise.all(promises).then(() => {
-        let html = "";
+      $("#roles-table-body").html(html);
+      
+      // Add event listener for change role buttons
+      $(".change-role-btn").on("click", function() {
+        const userId = $(this).data("user-id");
+        const userName = $(this).data("user-name");
         
-        members.forEach(member => {
-          const canChangeRole = (currentUserRole === "Owner" || 
-                             (currentUserRole === "Admin" && member.role !== "Owner" && member.role !== "Admin"));
-          
-          html += `<tr>
-            <td>${member.displayName}</td>
-            <td>${member.email}</td>
-            <td>
-              ${member.role}
-              ${canChangeRole ? 
-                `<button class="btn btn-sm btn-outline-secondary ms-2 change-role-btn" 
-                        data-user-id="${member.userId}" 
-                        data-user-name="${member.displayName}">
-                  Change
-                </button>` : 
-                ''}
-            </td>
-          </tr>`;
-        });
+        $("#roleChangeUserId").val(userId);
+        $("#roleChangeUserName").text(userName);
+        $("#roleSelect").val(""); // Clear previous selection
         
-        $("#roles-table-body").html(html);
+        // Show/hide options based on current user's role
+        if (currentUserRole !== "Owner") {
+          // Non-owners can't promote to Admin
+          $("#roleSelect option[value='Admin']").hide();
+        } else {
+          $("#roleSelect option[value='Admin']").show();
+        }
         
-        // Add event listener for change role buttons
-        $(".change-role-btn").on("click", function() {
-          const userId = $(this).data("user-id");
-          const userName = $(this).data("user-name");
-          
-          $("#roleChangeUserId").val(userId);
-          $("#roleChangeUserName").text(userName);
-          $("#roleSelect").val(""); // Clear previous selection
-          
-          // Show/hide options based on current user's role
-          if (currentUserRole !== "Owner") {
-            // Non-owners can't promote to Admin
-            $("#roleSelect option[value='Admin']").hide();
-          } else {
-            $("#roleSelect option[value='Admin']").show();
-          }
-          
-          $("#changeRoleModal").modal("show");
-        });
+        $("#changeRoleModal").modal("show");
       });
     }).fail(function() {
       $("#roles-table-body").html(
