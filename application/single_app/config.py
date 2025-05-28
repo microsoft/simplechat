@@ -100,15 +100,27 @@ ALLOWED_EXTENSIONS = {
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
 
+# Add Support for Custom Azure Environments
+CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
+CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
+CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
+
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
-AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
-AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment
+AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
+
+if AZURE_ENVIRONMENT == "custom":
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+
 
 WORD_CHUNK_SIZE = 400
 
@@ -116,10 +128,17 @@ if AZURE_ENVIRONMENT == "usgovernment":
     resource_manager = "https://management.usgovcloudapi.net"
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+elif AZURE_ENVIRONMENT == "custom":
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    authority = CUSTOM_IDENTITY_URL_VALUE
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
 else:
     resource_manager = "https://management.azure.com"
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
 
 bing_search_endpoint = "https://api.bing.microsoft.com/"
 

@@ -107,7 +107,13 @@ def get_video_indexer_account_token(settings, video_id=None):
     3) Return the account-level accessToken
     """
     # 1) ARM token
-    arm_scope = "https://management.azure.com/.default"
+    if AZURE_ENVIRONMENT == "usgovernment":
+        arm_scope = "https://management.usgovcloudapi.net/.default"
+    elif AZURE_ENVIRONMENT == "custom":
+        arm_scope = f"{CUSTOM_RESOURCE_MANAGER_URL_VALUE}/.default"
+    else:
+        arm_scope = "https://management.azure.com/.default"
+    
     credential = DefaultAzureCredential()
     arm_token = credential.get_token(arm_scope).token
     print("[VIDEO] ARM token acquired", flush=True)
@@ -117,12 +123,29 @@ def get_video_indexer_account_token(settings, video_id=None):
     sub      = settings["video_indexer_subscription_id"]
     acct     = settings["video_indexer_account_name"]
     api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
-    url      = (
+    
+    if AZURE_ENVIRONMENT == "usgovernment":
+        url = (
+        f"https://management.usgovcloudapi.net/subscriptions/{sub}"
+        f"/resourceGroups/{rg}"
+        f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
+        f"/generateAccessToken?api-version={api_ver}"
+        )
+    elif AZURE_ENVIRONMENT == "custom":
+        url = (
+        f"{CUSTOM_RESOURCE_MANAGER_URL_VALUE}/subscriptions/{sub}"
+        f"/resourceGroups/{rg}"
+        f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
+        f"/generateAccessToken?api-version={api_ver}"
+        )
+    else:
+        url = (
         f"https://management.azure.com/subscriptions/{sub}"
         f"/resourceGroups/{rg}"
         f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
         f"/generateAccessToken?api-version={api_ver}"
-    )
+        )
+
     body = {
         "permissionType": "Contributor",
         "scope": "Account"
