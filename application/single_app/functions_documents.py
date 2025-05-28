@@ -1,5 +1,7 @@
 # functions_documents.py
 
+import time
+import traceback
 from config import *
 from functions_content import *
 from functions_settings import *
@@ -798,11 +800,50 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         #update_document(document_id=document_id, user_id=user_id, status=status)
 
         search_client = CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
-        # Upload as a single-document list
-        search_client.upload_documents(documents=[chunk_document])
+        
+        # Add retry logic for handling transient issues
+        max_retries = 3
+        retry_delay = 1  # Start with 1 second delay
+        
+        for retry in range(max_retries + 1):  # +1 for the initial attempt
+            try:
+                # Upload as a single-document list
+                search_client.upload_documents(documents=[chunk_document])
+                break  # Success, exit the retry loop
+            except Exception as upload_e:
+                # Check if this is a Forbidden error
+                if 'Forbidden' in str(upload_e) and retry < max_retries:
+                    print(f"Received Forbidden error on attempt {retry+1}/{max_retries+1}, retrying in {retry_delay} seconds...")
+                    # Add detailed diagnostic information
+                    print(f"Upload attempt details: index={search_client._index_name}, endpoint={search_client._endpoint}")
+                    
+                    # Log the error and retry
+                    add_file_task_to_file_processing_log(
+                        document_id=document_id,
+                        user_id=group_id if is_group else user_id,
+                        content=f"Retrying upload after Forbidden error: {str(upload_e)}"
+                    )
+                    
+                    # Wait before retrying with exponential backoff
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    # Either not a Forbidden error or we've exhausted retries
+                    if retry == max_retries:
+                        print(f"All {max_retries+1} upload attempts failed")
+                    raise upload_e
 
     except Exception as e:
-        print(f"Error uploading chunk document for document {document_id}: {e}")
+        error_msg = f"Error uploading chunk document for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}"
+        print(error_msg)
+        
+        # Add more detailed error information for debugging
+        if 'Forbidden' in str(e):
+            print(f"Authentication/authorization error with Azure AI Search. Please check:")
+            print(f"1. If using API key: Ensure the key has correct permissions")
+            print(f"2. If using managed identity: Ensure the identity has proper RBAC roles")
+            print(f"3. Check that the search service endpoint is correct")
+        
         raise
 
 def get_all_chunks(document_id, user_id, group_id=None):
