@@ -4,7 +4,7 @@ import { loadConversations } from "./chat-conversations.js";
 // Import handleDocumentSelectChange
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
-import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { loadUserPrompts, loadGroupPrompts, loadPublicPrompts, initializePromptInteractions } from "./chat-prompts.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -59,7 +59,8 @@ window.addEventListener('DOMContentLoaded', () => {
   Promise.all([
       loadAllDocs(),
       loadUserPrompts(),
-      loadGroupPrompts()
+      loadGroupPrompts(),
+      loadPublicPrompts()
   ])
   .then(() => {
       console.log("Initial data (Docs, Prompts) loaded successfully."); // Log success
