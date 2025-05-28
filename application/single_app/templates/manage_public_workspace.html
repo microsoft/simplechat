@@ -243,7 +243,26 @@
   let currentUserRole = null;
   let userId = null;
   
-  $(document).ready(function() {
+  // Wait for the DOM and jQuery to be loaded
+  document.addEventListener('DOMContentLoaded', function() {
+    // Ensure jQuery is loaded
+    if (typeof jQuery !== 'undefined') {
+      initializeManageWorkspace();
+    } else {
+      console.error("jQuery is not loaded. Waiting for it to load...");
+      // Try again after a brief delay
+      setTimeout(function() {
+        if (typeof jQuery !== 'undefined') {
+          initializeManageWorkspace();
+        } else {
+          console.error("jQuery failed to load");
+        }
+      }, 500);
+    }
+  });
+
+  function initializeManageWorkspace() {
+    const $ = jQuery;
     // Get user ID from session storage 
     userId = sessionStorage.getItem("userId");
     
@@ -307,9 +326,10 @@
       const newRole = $("#roleSelect").val();
       setRole(memberUserId, newRole);
     });
-  });
+  }
   
   function loadWorkspaceInfo(doneCallback) {
+    const $ = jQuery;
     $.get(`/api/public_workspaces/${workspaceId}`, function(workspace) {
       const ownerName = workspace.owner?.displayName || "N/A";
       const ownerEmail = workspace.owner?.email || "N/A";
@@ -356,6 +376,7 @@
   }
   
   function loadMembers(searchTerm, roleFilter) {
+    const $ = jQuery;
     $("#roles-table-body").html(`
       <tr class="table-loading-row">
         <td colspan="3">
@@ -482,6 +503,7 @@
   }
   
   function searchUsers() {
+    const $ = jQuery;
     const searchTerm = $("#userSearchTerm").val().trim();
     
     if (!searchTerm) {
@@ -547,6 +569,7 @@
   }
   
   function addMemberDirectly() {
+    const $ = jQuery;
     const userId = $("#newUserId").val();
     const role = $("#newUserRole").val();
     
@@ -575,6 +598,7 @@
   }
   
   function setRole(userId, role) {
+    const $ = jQuery;
     if (role === "Remove") {
       // Special case - we're removing the user completely
       $.ajax({
@@ -617,6 +641,7 @@
   }
   
   function updateWorkspaceInfo() {
+    const $ = jQuery;
     const name = $("#editWorkspaceName").val().trim();
     const description = $("#editWorkspaceDescription").val().trim();
     
