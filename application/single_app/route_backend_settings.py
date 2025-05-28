@@ -481,8 +481,7 @@ def _test_azure_doc_intelligence_connection(payload):
     """Attempt to connect to Azure Form Recognizer / Document Intelligence."""
     enable_apim = payload.get('enable_apim', False)
 
-    enable_apim = payload.get('enable_apim', False)
-
+    # Fixed duplicate line
     if enable_apim:
         apim_data = payload.get('apim', {})
         endpoint = apim_data.get('endpoint')
@@ -509,10 +508,19 @@ def _test_azure_doc_intelligence_connection(payload):
                 credential=AzureKeyCredential(key)
             )
     
-    poller = document_intelligence_client.begin_analyze_document_from_url(
-        model_id="prebuilt-read",
-        document_url="https://github.com/RetroBurnCloud/images/blob/5121c601bc61f9806f0bac7783c44352fd185998/Microsoft_Terms_of_Use.pdf"
-    )
+    # Use local test file instead of URL
+    test_file_path = os.path.join(current_app.root_path, 'static', 'test', 'doc_intelligence_test.pdf')
+    
+    # Check if file exists
+    if not os.path.exists(test_file_path):
+        return jsonify({'error': 'Test document not found'}), 500
+    
+    # Open file and use begin_analyze_document instead of begin_analyze_document_from_url
+    with open(test_file_path, "rb") as f:
+        poller = document_intelligence_client.begin_analyze_document(
+            model_id="prebuilt-read",
+            document=f
+        )
 
     max_wait_time = 600
     start_time = time.time()
