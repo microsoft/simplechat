@@ -153,7 +153,7 @@
     function fetchPublicWorkspaces() {
         Promise.all([
             fetch('/api/public_workspaces').then(response => response.json()),
-            fetch('/api/users/settings').then(response => response.json())
+            fetch('/api/user/settings').then(response => response.json())
         ])
         .then(([workspaces, settings]) => {
             allPublicWorkspaces = workspaces;
@@ -293,7 +293,7 @@
         }
         
         // Update user settings via API
-        fetch('/api/users/settings', {
+        fetch('/api/user/settings', {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json'
