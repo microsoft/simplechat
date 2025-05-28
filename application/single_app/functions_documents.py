@@ -2,6 +2,7 @@
 
 import time
 import traceback
+from azure.core.exceptions import HttpResponseError
 from config import *
 from functions_content import *
 from functions_settings import *
@@ -810,39 +811,61 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 # Upload as a single-document list
                 search_client.upload_documents(documents=[chunk_document])
                 break  # Success, exit the retry loop
-            except Exception as upload_e:
-                # Check if this is a Forbidden error
-                if 'Forbidden' in str(upload_e) and retry < max_retries:
-                    print(f"Received Forbidden error on attempt {retry+1}/{max_retries+1}, retrying in {retry_delay} seconds...")
+            except HttpResponseError as http_err:
+                # Get the HTTP status code
+                status_code = http_err.status_code if hasattr(http_err, 'status_code') else None
+                
+                # Check if this is a retryable error
+                retryable = (status_code in [403, 429, 503] and retry < max_retries)
+                
+                if retryable:
+                    error_type = {403: "Forbidden", 429: "Too Many Requests", 503: "Service Unavailable"}.get(status_code, "HTTP Error")
+                    print(f"Received {error_type} (status {status_code}) on attempt {retry+1}/{max_retries+1}, retrying in {retry_delay} seconds...")
+                    
                     # Add detailed diagnostic information
-                    print(f"Upload attempt details: index={search_client._index_name}, endpoint={search_client._endpoint}")
+                    settings = get_settings()
+                    print(f"Upload attempt details:")
+                    print(f"- Index: {search_client._index_name}")
+                    print(f"- Endpoint: {search_client._endpoint}")
+                    print(f"- Auth Type: {'APIM' if settings.get('enable_ai_search_apim') else 'Direct'}")
+                    print(f"- Using Managed Identity: {settings.get('azure_ai_search_authentication_type') == 'managed_identity'}")
                     
                     # Log the error and retry
                     add_file_task_to_file_processing_log(
                         document_id=document_id,
                         user_id=group_id if is_group else user_id,
-                        content=f"Retrying upload after Forbidden error: {str(upload_e)}"
+                        content=f"Retrying upload after {error_type} error: {str(http_err)}"
                     )
                     
                     # Wait before retrying with exponential backoff
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    # Either not a Forbidden error or we've exhausted retries
+                    # Either not a retryable error or we've exhausted retries
                     if retry == max_retries:
                         print(f"All {max_retries+1} upload attempts failed")
-                    raise upload_e
+                    raise http_err
+            except Exception as other_err:
+                # For non-HTTP errors, we don't retry
+                print(f"Non-HTTP error occurred during upload: {repr(other_err)}")
+                raise other_err
 
     except Exception as e:
         error_msg = f"Error uploading chunk document for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}"
         print(error_msg)
         
         # Add more detailed error information for debugging
-        if 'Forbidden' in str(e):
-            print(f"Authentication/authorization error with Azure AI Search. Please check:")
+        if isinstance(e, HttpResponseError) and hasattr(e, 'status_code') and e.status_code == 403:
+            settings = get_settings()
+            print(f"Authentication/authorization error with Azure AI Search (HTTP 403 Forbidden). Please check:")
             print(f"1. If using API key: Ensure the key has correct permissions")
             print(f"2. If using managed identity: Ensure the identity has proper RBAC roles")
             print(f"3. Check that the search service endpoint is correct")
+            print(f"4. Current auth configuration:")
+            print(f"   - APIM enabled: {settings.get('enable_ai_search_apim', False)}")
+            print(f"   - Auth type: {settings.get('azure_ai_search_authentication_type', 'key')}")
+        elif 'Forbidden' in str(e):
+            print(f"Authentication/authorization error with Azure AI Search. Please check your credentials and permissions.")
         
         raise
 
