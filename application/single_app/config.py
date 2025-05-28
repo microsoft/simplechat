@@ -269,9 +269,17 @@ def initialize_clients(settings):
     """
     with CLIENTS_LOCK:
         form_recognizer_endpoint = settings.get("azure_document_intelligence_endpoint")
+        # Ensure the endpoint has a protocol prefix
+        if form_recognizer_endpoint and not (form_recognizer_endpoint.startswith('http://') or form_recognizer_endpoint.startswith('https://')):
+            form_recognizer_endpoint = 'https://' + form_recognizer_endpoint
+            
         form_recognizer_key = settings.get("azure_document_intelligence_key")
         enable_document_intelligence_apim = settings.get("enable_document_intelligence_apim")
         azure_apim_document_intelligence_endpoint = settings.get("azure_apim_document_intelligence_endpoint")
+        # Ensure the APIM endpoint has a protocol prefix as well
+        if azure_apim_document_intelligence_endpoint and not (azure_apim_document_intelligence_endpoint.startswith('http://') or azure_apim_document_intelligence_endpoint.startswith('https://')):
+            azure_apim_document_intelligence_endpoint = 'https://' + azure_apim_document_intelligence_endpoint
+            
         azure_apim_document_intelligence_subscription_key = settings.get("azure_apim_document_intelligence_subscription_key")
 
         azure_ai_search_endpoint = settings.get("azure_ai_search_endpoint")
