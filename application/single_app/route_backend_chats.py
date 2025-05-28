@@ -146,7 +146,9 @@ def register_route_backend_chats(app):
         # ---------------------------------------------------------------------
         # 1) Load or create conversation
         # ---------------------------------------------------------------------
+        is_new_conversation = False
         if not conversation_id:
+            is_new_conversation = True
             conversation_id = str(uuid.uuid4())
             conversation_item = {
                 'id': conversation_id,
@@ -195,6 +197,20 @@ def register_route_backend_chats(app):
 
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
         cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+        
+        # If first message in conversation, optionally add default system prompt
+        # We can tell it's a new conversation from the flag we set earlier
+        if is_new_conversation and settings.get('default_system_prompt'):
+            system_message_id = f"{conversation_id}_system_{int(time.time())}_{random.randint(1000,9999)}"
+            system_message_doc = {
+                'id': system_message_id,
+                'conversation_id': conversation_id,
+                'role': 'system',
+                'content': settings.get('default_system_prompt'),
+                'timestamp': datetime.utcnow().isoformat(),
+                'model_deployment_name': None
+            }
+            cosmos_messages_container.upsert_item(system_message_doc)
 
         # ---------------------------------------------------------------------
         # 3) Check Content Safety (but DO NOT return 403).
