@@ -509,10 +509,17 @@ def _test_azure_doc_intelligence_connection(payload):
                 credential=AzureKeyCredential(key)
             )
     
-    poller = document_intelligence_client.begin_analyze_document_from_url(
-        model_id="prebuilt-read",
-        document_url="https://github.com/RetroBurnCloud/images/blob/5121c601bc61f9806f0bac7783c44352fd185998/Microsoft_Terms_of_Use.pdf"
-    )
+    # Use a local test document instead of external URL for offline environments
+    test_document_path = os.path.join(current_app.root_path, 'static', 'test_document.pdf')
+    
+    if not os.path.exists(test_document_path):
+        return jsonify({'error': 'Test document not found. Please ensure test_document.pdf exists in the static directory.'}), 500
+    
+    with open(test_document_path, "rb") as test_document:
+        poller = document_intelligence_client.begin_analyze_document(
+            model_id="prebuilt-read",
+            document=test_document
+        )
 
     max_wait_time = 600
     start_time = time.time()
