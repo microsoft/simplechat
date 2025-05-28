@@ -831,6 +831,12 @@ pre code {
   overflow-x: auto;
 }
 
+/* Dark mode styling for code blocks */
+[data-bs-theme="dark"] pre code {
+  background-color: #343a40;
+  color: #e9ecef;
+}
+
 /* Style blockquotes */
 blockquote {
   border-left: 4px solid #dee2e6;
