@@ -123,47 +123,66 @@
 
 <!-- JavaScript for the My Public Workspaces page -->
 <script>
+  // Wait for the DOM and jQuery to be loaded
+  document.addEventListener('DOMContentLoaded', function() {
+    // Ensure jQuery is loaded
+    if (typeof jQuery !== 'undefined') {
+      initializePublicWorkspaces();
+    } else {
+      console.error("jQuery is not loaded. Waiting for it to load...");
+      // Try again after a brief delay
+      setTimeout(function() {
+        if (typeof jQuery !== 'undefined') {
+          initializePublicWorkspaces();
+        } else {
+          console.error("jQuery failed to load");
+        }
+      }, 500);
+    }
+  });
+
   // Global state
   let publicWorkspaces = [];
   let currentPage = 1;
   const pageSize = 10;
   let filterText = '';
   
-  // Document ready handler
-  $(document).ready(function() {
-      loadMyPublicWorkspaces();
-      
-      // Search functionality
-      $('#searchPublicWorkspaceBtn').on('click', function() {
-          filterText = $('#searchPublicWorkspace').val().toLowerCase();
-          currentPage = 1;
-          displayWorkspaces();
-      });
-      
-      $('#searchPublicWorkspace').on('keypress', function(e) {
-          if (e.which === 13) {
-              filterText = $(this).val().toLowerCase();
-              currentPage = 1;
-              displayWorkspaces();
-          }
-      });
-      
-      // Create public workspace form submit
-      $('#createPublicWorkspaceSubmit').on('click', function() {
-          const name = $('#publicWorkspaceName').val();
-          const description = $('#publicWorkspaceDescription').val();
-          
-          if (!name) {
-              alert('Please enter a name for your public workspace');
-              return;
-          }
-          
-          createPublicWorkspace(name, description);
-      });
-  });
+  function initializePublicWorkspaces() {
+    const $ = jQuery;
+    loadMyPublicWorkspaces();
+    
+    // Search functionality
+    $('#searchPublicWorkspaceBtn').on('click', function() {
+        filterText = $('#searchPublicWorkspace').val().toLowerCase();
+        currentPage = 1;
+        displayWorkspaces();
+    });
+    
+    $('#searchPublicWorkspace').on('keypress', function(e) {
+        if (e.which === 13) {
+            filterText = $(this).val().toLowerCase();
+            currentPage = 1;
+            displayWorkspaces();
+        }
+    });
+    
+    // Create public workspace form submit
+    $('#createPublicWorkspaceSubmit').on('click', function() {
+        const name = $('#publicWorkspaceName').val();
+        const description = $('#publicWorkspaceDescription').val();
+        
+        if (!name) {
+            alert('Please enter a name for your public workspace');
+            return;
+        }
+        
+        createPublicWorkspace(name, description);
+    });
+  }
   
   // Fetch public workspaces where the user has a role
   function loadMyPublicWorkspaces() {
+      const $ = jQuery;
       $('#my-public-workspaces-table-body').html(`
           <tr class="table-loading-row">
               <td colspan="4">
@@ -189,6 +208,7 @@
   
   // Display workspaces with pagination and filtering
   function displayWorkspaces() {
+      const $ = jQuery;
       let filtered = publicWorkspaces;
       
       if (filterText) {
@@ -282,6 +302,7 @@
   
   // Update pagination controls
   function updatePagination(totalItems) {
+      const $ = jQuery;
       const totalPages = Math.ceil(totalItems / pageSize);
       
       if (totalPages <= 1) {
@@ -334,6 +355,7 @@
   
   // Set a workspace as active
   function setActiveWorkspace(workspaceId) {
+      const $ = jQuery;
       $.post(`/api/public_workspaces/${workspaceId}/set_active`)
           .done(function() {
               publicWorkspaces.forEach(w => w.isActive = w.id === workspaceId);
@@ -349,6 +371,7 @@
   
   // Create a new public workspace
   function createPublicWorkspace(name, description) {
+      const $ = jQuery;
       const data = { name, description };
       
       $.ajax({
