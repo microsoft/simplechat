@@ -1665,7 +1665,7 @@ def extract_document_metadata(document_id, user_id, group_id=None):
         if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
             token_provider = get_bearer_token_provider(
                 DefaultAzureCredential(), 
-                "https://cognitiveservices.azure.com/.default"
+                cognitive_services_scope
             )
             gpt_client = AzureOpenAI(
                 api_version=settings.get('azure_openai_gpt_api_version'),
