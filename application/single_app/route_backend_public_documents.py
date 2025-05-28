@@ -5,9 +5,10 @@ from functions_documents import *
 from functions_public_workspace import *
 from functions_authentication import *
 
-@app.route('/api/public_workspaces/<workspace_id>/documents', methods=['POST'])
-@login_required
-def api_upload_public_document(workspace_id):
+def register_route_backend_public_documents(app):
+    @app.route('/api/public_workspaces/<workspace_id>/documents', methods=['POST'])
+    @login_required
+    def api_upload_public_document(workspace_id):
     try:
         # Check if the workspace exists and the user has permission
         workspace_doc = find_public_workspace_by_id(workspace_id)
@@ -48,9 +49,9 @@ def api_upload_public_document(workspace_id):
         return jsonify({"error": f"Failed to upload document: {str(e)}"}), 500
 
 
-@app.route('/api/public_workspaces/<workspace_id>/documents', methods=['GET'])
-@login_required
-def api_get_public_documents(workspace_id):
+    @app.route('/api/public_workspaces/<workspace_id>/documents', methods=['GET'])
+    @login_required
+    def api_get_public_documents(workspace_id):
     try:
         # Check if the workspace exists
         workspace_doc = find_public_workspace_by_id(workspace_id)
@@ -75,9 +76,9 @@ def api_get_public_documents(workspace_id):
         return jsonify({"error": f"Failed to retrieve documents: {str(e)}"}), 500
 
 
-@app.route('/api/public_workspaces/<workspace_id>/documents/<document_id>', methods=['DELETE'])
-@login_required
-def api_delete_public_document(workspace_id, document_id):
+    @app.route('/api/public_workspaces/<workspace_id>/documents/<document_id>', methods=['DELETE'])
+    @login_required
+    def api_delete_public_document(workspace_id, document_id):
     try:
         # Check if the workspace exists
         workspace_doc = find_public_workspace_by_id(workspace_id)
@@ -129,9 +130,9 @@ def api_delete_public_document(workspace_id, document_id):
         return jsonify({"error": f"Failed to delete document: {str(e)}"}), 500
 
 
-@app.route('/api/public_workspaces/<workspace_id>/documents/<document_id>', methods=['GET'])
-@login_required
-def api_get_public_document_details(workspace_id, document_id):
+    @app.route('/api/public_workspaces/<workspace_id>/documents/<document_id>', methods=['GET'])
+    @login_required
+    def api_get_public_document_details(workspace_id, document_id):
     try:
         # Check if the workspace exists
         workspace_doc = find_public_workspace_by_id(workspace_id)

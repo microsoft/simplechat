@@ -5,76 +5,77 @@ from functions_authentication import *
 from functions_public_workspace import *
 
 
-@app.route('/public_workspaces', methods=['GET'])
-@login_required
-def public_workspaces_directory():
-    """Render the public workspaces directory page."""
-    try:
-        # Get all public workspaces
-        workspaces = get_all_public_workspaces()
-        
-        # Get the current user ID to determine roles
-        user_id = get_current_user_id()
-        
-        # For each workspace, determine if the user has any role
-        for workspace in workspaces:
-            workspace["userRole"] = get_user_role_in_public_workspace(workspace, user_id)
+def register_route_frontend_public_workspaces(app):
+    @app.route('/public_workspaces_directory', methods=['GET'])
+    @login_required
+    def public_workspaces_directory():
+        """Render the public workspaces directory page."""
+        try:
+            # Get all public workspaces
+            workspaces = get_all_public_workspaces()
             
-            # Count documents and prompts for this workspace
-            # Documents count
-            documents_query = "SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @workspace_id AND c.type = 'document_metadata'"
-            documents_params = [{"name": "@workspace_id", "value": workspace["id"]}]
-            documents_count = list(cosmos_public_documents_container.query_items(
-                query=documents_query,
-                parameters=documents_params,
-                enable_cross_partition_query=True
-            ))[0]
+            # Get the current user ID to determine roles
+            user_id = get_current_user_id()
             
-            # Prompts count
-            prompts_query = "SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @workspace_id AND c.type = 'public_prompt'"
-            prompts_params = [{"name": "@workspace_id", "value": workspace["id"]}]
-            prompts_count = list(cosmos_public_prompts_container.query_items(
-                query=prompts_query,
-                parameters=prompts_params,
-                enable_cross_partition_query=True
-            ))[0]
-            
-            workspace["documentsCount"] = documents_count
-            workspace["promptsCount"] = prompts_count
-            
-            # Get the owner, admins, and document managers
-            workspace["ownerInfo"] = workspace.get("owner", {})
-            
-            # Get admin info
-            admin_info = []
-            for admin_id in workspace.get("admins", []):
-                # In a real app, you'd look up each user's info from your user database
-                # For now, we'll just include the ID
-                admin_info.append({"id": admin_id})
-            workspace["adminInfo"] = admin_info
-            
-            # Get document manager info
-            doc_manager_info = []
-            for manager_id in workspace.get("documentManagers", []):
-                # In a real app, you'd look up each user's info from your user database
-                # For now, we'll just include the ID
-                doc_manager_info.append({"id": manager_id})
-            workspace["documentManagerInfo"] = doc_manager_info
-            
-        return render_template('public_workspaces_directory.html', 
-            workspaces=workspaces,
-            page_title="Public Workspaces"
-        )
-            
-    except Exception as e:
-        print(f"Error in public_workspaces_directory: {str(e)}")
-        flash(f"An error occurred: {str(e)}", "danger")
-        return redirect(url_for('index'))
+            # For each workspace, determine if the user has any role
+            for workspace in workspaces:
+                workspace["userRole"] = get_user_role_in_public_workspace(workspace, user_id)
+                
+                # Count documents and prompts for this workspace
+                # Documents count
+                documents_query = "SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @workspace_id AND c.type = 'document_metadata'"
+                documents_params = [{"name": "@workspace_id", "value": workspace["id"]}]
+                documents_count = list(cosmos_public_documents_container.query_items(
+                    query=documents_query,
+                    parameters=documents_params,
+                    enable_cross_partition_query=True
+                ))[0]
+                
+                # Prompts count
+                prompts_query = "SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @workspace_id AND c.type = 'public_prompt'"
+                prompts_params = [{"name": "@workspace_id", "value": workspace["id"]}]
+                prompts_count = list(cosmos_public_prompts_container.query_items(
+                    query=prompts_query,
+                    parameters=prompts_params,
+                    enable_cross_partition_query=True
+                ))[0]
+                
+                workspace["documentsCount"] = documents_count
+                workspace["promptsCount"] = prompts_count
+                
+                # Get the owner, admins, and document managers
+                workspace["ownerInfo"] = workspace.get("owner", {})
+                
+                # Get admin info
+                admin_info = []
+                for admin_id in workspace.get("admins", []):
+                    # In a real app, you'd look up each user's info from your user database
+                    # For now, we'll just include the ID
+                    admin_info.append({"id": admin_id})
+                workspace["adminInfo"] = admin_info
+                
+                # Get document manager info
+                doc_manager_info = []
+                for manager_id in workspace.get("documentManagers", []):
+                    # In a real app, you'd look up each user's info from your user database
+                    # For now, we'll just include the ID
+                    doc_manager_info.append({"id": manager_id})
+                workspace["documentManagerInfo"] = doc_manager_info
+                
+            return render_template('public_workspaces_directory.html', 
+                workspaces=workspaces,
+                page_title="Public Workspaces"
+            )
+                
+        except Exception as e:
+            print(f"Error in public_workspaces_directory: {str(e)}")
+            flash(f"An error occurred: {str(e)}", "danger")
+            return redirect(url_for('index'))
 
 
-@app.route('/public_workspaces/<workspace_id>', methods=['GET'])
-@login_required
-def public_workspace(workspace_id):
+    @app.route('/public_workspaces/<workspace_id>', methods=['GET'])
+    @login_required
+    def public_workspace(workspace_id):
     """Render a specific public workspace page."""
     try:
         # Get the workspace
@@ -127,9 +128,9 @@ def public_workspace(workspace_id):
         return redirect(url_for('public_workspaces_directory'))
 
 
-@app.route('/my_public_workspaces')
-@login_required
-def my_public_workspaces():
+    @app.route('/my_public_workspaces')
+    @login_required
+    def my_public_workspaces():
     """Show public workspaces where the current user has a management role."""
     try:
         current_user_id = get_current_user_id()
@@ -144,10 +145,10 @@ def my_public_workspaces():
         return redirect(url_for('index'))
 
 
-@app.route('/create_public_workspace', methods=['GET', 'POST'])
-@login_required
-@create_public_workspace_role_required
-def create_new_public_workspace():
+    @app.route('/create_public_workspace', methods=['GET', 'POST'])
+    @login_required
+    @create_public_workspace_role_required
+    def create_new_public_workspace():
     """Create a new public workspace."""
     if request.method == 'GET':
         return render_template('create_public_workspace.html', 
@@ -172,9 +173,9 @@ def create_new_public_workspace():
             return render_template('create_public_workspace.html')
 
 
-@app.route('/manage_public_workspace/<workspace_id>')
-@login_required
-def manage_public_workspace(workspace_id):
+    @app.route('/manage_public_workspace/<workspace_id>')
+    @login_required
+    def manage_public_workspace(workspace_id):
     """Manage content (documents and prompts) in a public workspace."""
     try:
         workspace = find_public_workspace_by_id(workspace_id)
@@ -226,9 +227,9 @@ def manage_public_workspace(workspace_id):
         return redirect(url_for('my_public_workspaces'))
 
 
-@app.route('/administrate_public_workspace/<workspace_id>', methods=['GET', 'POST'])
-@login_required
-def administrate_public_workspace(workspace_id):
+    @app.route('/administrate_public_workspace/<workspace_id>', methods=['GET', 'POST'])
+    @login_required
+    def administrate_public_workspace(workspace_id):
     """Administrate a public workspace (settings, members, etc.)."""
     try:
         workspace = find_public_workspace_by_id(workspace_id)
