@@ -520,7 +520,7 @@
     $("#searchStatus").text("Searching...");
     $("#user-search-results").hide();
     
-    $.get(`/api/users/search?q=${encodeURIComponent(searchTerm)}`, function(data) {
+    $.get(`/api/userSearch?query=${encodeURIComponent(searchTerm)}`, function(data) {
       $("#searchStatus").text(`Found ${data.length} user(s)`);
       
       if (data.length === 0) {
@@ -530,7 +530,7 @@
       
       let html = "";
       data.forEach(user => {
-        html += `<tr class="user-row" data-user-id="${user.userId}" data-display-name="${user.displayName}" data-email="${user.email}">
+        html += `<tr class="user-row" data-user-id="${user.id}" data-display-name="${user.displayName}" data-email="${user.email}">
           <td>${user.displayName}</td>
           <td>${user.email}</td>
           <td>
