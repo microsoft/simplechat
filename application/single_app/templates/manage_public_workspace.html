@@ -240,8 +240,8 @@
 
 <script>
   const workspaceId = "{{ workspace_id }}";
+  const userId = "{{ session['user'].get('oid') }}";
   let currentUserRole = null;
-  let userId = null;
   
   // Wait for the DOM and jQuery to be loaded
   document.addEventListener('DOMContentLoaded', function() {
@@ -263,8 +263,6 @@
 
   function initializeManageWorkspace() {
     const $ = jQuery;
-    // Get user ID from session storage 
-    userId = sessionStorage.getItem("userId");
     
     // Load workspace info first
     loadWorkspaceInfo(function() {
@@ -330,7 +328,11 @@
   
   function loadWorkspaceInfo(doneCallback) {
     const $ = jQuery;
+    console.log("Loading workspace info for workspace:", workspaceId, "user:", userId);
+    
     $.get(`/api/public_workspaces/${workspaceId}`, function(workspace) {
+      console.log("Workspace data received:", workspace);
+      
       const ownerName = workspace.owner?.displayName || "N/A";
       const ownerEmail = workspace.owner?.email || "N/A";
       
@@ -356,13 +358,17 @@
         currentUserRole = null;
       }
       
+      console.log("User role determined:", currentUserRole);
+      
       if (currentUserRole === "Owner") {
+        console.log("Showing edit form for owner");
         $("#editWorkspaceContainer").show();
         $("#editWorkspaceName").val(workspace.name);
         $("#editWorkspaceDescription").val(workspace.description);
       }
       
       if (currentUserRole === "Owner" || currentUserRole === "Admin") {
+        console.log("Showing add member button for owner/admin");
         $("#addMemberBtn").show();
       }
       
@@ -370,7 +376,7 @@
         doneCallback();
       }
     }).fail(function(err) {
-      console.error(err);
+      console.error("Failed to load workspace info:", err);
       alert("Failed to load workspace info.");
     });
   }
