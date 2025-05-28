@@ -772,6 +772,15 @@ a.citation-link:hover {
   text-decoration: none;
 }
 
+/* File links in dark mode - improved contrast on green background */
+[data-bs-theme="dark"] .file-message .message-bubble .file-link {
+  color: #ffffff; /* White for best contrast on dark green (4.53:1 ratio) */
+}
+
+[data-bs-theme="dark"] .file-message .message-bubble .file-link:hover {
+  color: #f0f8ff; /* Very light blue on hover */
+  text-decoration: none;
+}
 
 /* Reset margins for paragraphs */
 .message-text p {
