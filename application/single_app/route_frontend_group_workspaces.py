@@ -23,24 +23,31 @@ def register_route_frontend_group_workspaces(app):
             print("User not authenticated.")
             return redirect(url_for('login'))
         
-        query = """
-            SELECT VALUE COUNT(1) 
-            FROM c 
-            WHERE c.group_id = @group_id 
-                AND NOT IS_DEFINED(c.percentage_complete)
-        """
-        parameters = [
-            {"name": "@group_id", "value": active_group_id}
-        ]
-        
-        legacy_docs_from_cosmos = list(
-            cosmos_group_documents_container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            )
-        )
-        legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
+        # Only query legacy documents if there's a valid active group ID
+        legacy_count = 0
+        if active_group_id:
+            try:
+                query = """
+                    SELECT VALUE COUNT(1) 
+                    FROM c 
+                    WHERE c.group_id = @group_id 
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                parameters = [
+                    {"name": "@group_id", "value": active_group_id}
+                ]
+                
+                legacy_docs_from_cosmos = list(
+                    cosmos_group_documents_container.query_items(
+                        query=query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    )
+                )
+                legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
+            except Exception as e:
+                print(f"Error querying legacy documents: {str(e)}")
+                legacy_count = 0
 
         return render_template(
             'group_workspaces.html', 
