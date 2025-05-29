@@ -280,7 +280,8 @@ def generate_embedding(
             api_key=settings.get('azure_apim_embedding_subscription_key'))
     else:
         if (settings.get('azure_openai_embedding_authentication_type') == 'managed_identity'):
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+            
             embedding_client = AzureOpenAI(
                 api_version=settings.get('azure_openai_embedding_api_version'),
                 azure_endpoint=settings.get('azure_openai_embedding_endpoint'),

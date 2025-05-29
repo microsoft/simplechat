@@ -1,7 +1,7 @@
 <!-- templates/base.html -->
  
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="light" id="htmlRoot">
 
 <head>
   <meta charset="UTF-8" />
@@ -9,22 +9,48 @@
   <title>{% block title %}{{ app_settings.app_title }}{% endblock %}</title>
 
   <!-- Bootstrap CSS -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" />
+  <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" />
+  LOCAL VERSION BELOW
+  -->
+  <link rel="stylesheet" href="/static/css/bootstrap.min.css" />
+  
   <!-- Bootstrap Icons -->
+   <!--
   <link
     rel="stylesheet"
     href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
   />
+  LOCAL VERSION BELOW
+  -->
+  <link rel="stylesheet" href="/static/css/bootstrap-icons.css" />
+
+
   <!-- Your custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
   <!-- DataTables CSS -->
-  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
+  <!-- <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
+  LOCAL VERSION BELOW
+  -->
+  <link rel="stylesheet" href="/static/css/jquery.dataTables.min.css" />
 
   <style>
     body {
+      /* Default: navbar height only */
       padding-top: 56px;
       overflow-x: hidden;
       height: 100%;
+    }
+    /* Add this: if banner is present, increase padding-top */
+    #classification-banner + nav.navbar.fixed-top {
+      top: 40px; /* Height of the banner */
+    }
+    #classification-banner {
+      height: 40px;
+      line-height: 40px;
+    }
+    /* Adjust body padding if banner is present */
+    body.has-classification-banner {
+      padding-top: 96px; /* 56px navbar + 40px banner */
     }
 
     .main-content {
@@ -106,12 +132,46 @@
     }
   </style>
 
+  <!-- Dark mode early initialization to prevent flash -->
+  <script>
+    (function() {
+      // Check localStorage first for fast theme loading to prevent flash
+      var savedTheme = localStorage.getItem('simplechat-theme');
+      
+      if (savedTheme) {
+        // Apply saved theme immediately to html element before page renders
+        document.documentElement.setAttribute('data-bs-theme', savedTheme);
+      }
+    })();
+  </script>
+  
   {% block head %}{% endblock %}
 </head>
 
-<body class="d-flex flex-column min-vh-100">
+<body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
+  {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
+    <div id="classification-banner"
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }};
+                color: #fff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                font-weight: bold;
+                padding: 0;
+                height: 40px;
+                font-size: 1.1em;
+                letter-spacing: 0.5px;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                z-index: 1051;">
+      {{ app_settings.classification_banner_text }}
+    </div>
+  {% endif %}
   <!-- Navigation Bar -->
-  <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
+  <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top" style="{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}top: 40px;{% endif %}">
     <div class="container-fluid">
       {% if app_settings.show_logo %}
         {% if app_settings.custom_logo_base64 %}
@@ -209,6 +269,20 @@
   
           {% if session.get('user') and session['user'].get('roles')
              and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+            <!-- Dark Mode Toggle -->
+            <li class="nav-item">
+              <a class="nav-link dark-mode-toggle" id="darkModeToggle" role="button">
+                <span class="d-flex align-items-center">
+                  <i class="bi bi-sun-fill me-1" id="lightModeIcon"></i>
+                  <span id="lightModeText">Light</span>
+                </span>
+                <span class="d-flex align-items-center d-none">
+                  <i class="bi bi-moon-fill me-1" id="darkModeIcon"></i>
+                  <span id="darkModeText">Dark</span>
+                </span>
+              </a>
+            </li>
+            
             <!-- My Account Dropdown -->
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown"
@@ -245,7 +319,7 @@
                 {% endif %}
               </ul>
             </li>
-  
+
             <li class="nav-item">
               <a class="nav-link" href="{{ url_for('logout') }}">
                 Logout
@@ -268,22 +342,57 @@
   <div class="container main-content" id="main-content">
     {% block content %}{% endblock %}
   </div>
-  <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
+  <!-- <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
+  LOCAL VERSION BELOW
+  -->
+  <script src="/static/js/chat/split.min.js"></script>
   <!-- jQuery must be loaded before any scripts that depend on it -->
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+  <!-- <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    LOCAL VERSION BELOW
+    -->
+  <script src="/static/js/chat/jquery.min.js"></script>
 
   <!-- Then Bootstrap JS (Bootstrap 5 doesn't require jQuery, 
          but it's okay to load it afterwards) -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script> 
+   LOCAL VERSION BELOW
+    -->
+  <script src="/static/js/chat/bootstrap.bundle.min.js"></script>
+
 
   <!-- Then DataTables (depends on jQuery) -->
-  <script src="https://cdn.datatables.net/1.13.1/js/jquery.dataTables.min.js"></script>
-  <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
+  <!-- <script src="https://cdn.datatables.net/1.13.1/js/jquery.dataTables.min.js"></script>
+   LOCAL VERSION BELOW
+   -->
+  <script src="/static/js/chat/jquery.dataTables.min.js"></script>
 
+
+  <!-- <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
+  LOCAL VERSION BELOW
+  -->
+  <script src="/static/js/chat/dataTables.responsive.min.js"></script>
+  
   <!-- Then any other libraries -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.6/purify.min.js"></script>
+  <!-- <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  LOCAL VERSION BELOW 
+  -->
+  <script src="/static/js/chat/marked.min.js"></script>
 
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.6/purify.min.js"></script> 
+  LOCAL VERSION BELOW 
+  -->
+  <script src="/static/js/chat/purify.min.js"></script>
+
+
+  <!-- App settings for JS -->
+  <script>
+    const appSettings = {{ app_settings|tojson|safe }};
+  </script>
+  
+  <!-- Dark mode script -->
+  <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
+  
   {% block scripts %}{% endblock %}
 </body>
 

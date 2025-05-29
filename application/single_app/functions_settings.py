@@ -12,6 +12,7 @@ def get_settings():
         'show_logo': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'enable_dark_mode_default': False,
 
         # GPT Settings
         'enable_gpt_apim': False,

@@ -19,3 +19,104 @@ h1 {
 main {
     padding: 20px;
 }
+
+/* Dark mode styles */
+[data-bs-theme="dark"] {
+    --bs-body-bg: #212529;
+    --bs-body-color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .navbar-light {
+    background-color: #343a40 !important;
+}
+
+[data-bs-theme="dark"] .navbar-light .navbar-brand,
+[data-bs-theme="dark"] .navbar-light .nav-link {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .card {
+    background-color: #343a40;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .text-muted {
+    color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] .modal-body::-webkit-scrollbar-track {
+    background: #343a40;
+}
+
+[data-bs-theme="dark"] .modal-content {
+    background-color: #212529;
+    color: #e9ecef;
+}
+
+/* Fix for workspace file metadata in dark mode */
+[data-bs-theme="dark"] .bg-light {
+    background-color: #343a40 !important;
+    color: #e9ecef !important;
+}
+
+/* Fix for group dropdown in dark mode */
+[data-bs-theme="dark"] #group-dropdown .group-search-container {
+    background-color: #343a40 !important;
+    border-bottom: 1px solid #495057 !important;
+}
+
+[data-bs-theme="dark"] #group-dropdown .dropdown-item:hover {
+    background-color: #495057 !important;
+    color: #e9ecef !important;
+}
+
+[data-bs-theme="dark"] #group-dropdown .dropdown-menu {
+    background-color: #343a40 !important;
+    color: #e9ecef !important;
+    border-color: #495057 !important;
+}
+
+/* Fix for table headers in document classification in dark mode */
+[data-bs-theme="dark"] .table-light,
+[data-bs-theme="dark"] thead.table-light,
+[data-bs-theme="dark"] .table-light>th,
+[data-bs-theme="dark"] .table-light>td {
+    background-color: #343a40 !important;
+    color: #e9ecef !important;
+    border-color: #495057 !important;
+}
+
+/* Fix for conversation options button in dark mode */
+[data-bs-theme="dark"] .btn-light {
+    background-color: #343a40 !important;
+    color: #e9ecef !important;
+    border-color: #495057 !important;
+}
+
+[data-bs-theme="dark"] .btn-light:hover {
+    background-color: #495057 !important;
+    border-color: #6c757d !important;
+}
+
+/* Dark mode toggle styles */
+.dark-mode-toggle {
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+
+.dark-mode-toggle:hover {
+    opacity: 0.8;
+}
+
+/* Ensure nav-link containing dark mode toggle is aligned with other nav links */
+.nav-item .nav-link.dark-mode-toggle {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding-top: 0;
+    padding-bottom: 0;
+}

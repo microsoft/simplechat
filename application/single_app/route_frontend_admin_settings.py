@@ -48,6 +48,14 @@ def register_route_frontend_admin_settings(app):
         # --- End Refined Default Checks ---
 
 
+        # --- Add defaults for classification banner ---
+        if 'classification_banner_enabled' not in settings:
+            settings['classification_banner_enabled'] = False
+        if 'classification_banner_text' not in settings:
+            settings['classification_banner_text'] = ''
+        if 'classification_banner_color' not in settings:
+            settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
             gpt_deployments = []
@@ -64,13 +72,58 @@ def register_route_frontend_admin_settings(app):
                  print(f"Error retrieving GPT deployments: {e}")
             # ... similar try/except for embedding and image models ...
 
-
-            # !!! REMOVE THIS LINE FROM GET HANDLER !!!
-            # update_settings(settings) # <--- Remove this
+            # Check for application updates
+            current_version = app.config['VERSION']
+            update_available = False
+            latest_version = None
+            download_url = "https://github.com/microsoft/simplechat/releases"
+            
+            # Only check for updates every 24 hours at most
+            last_check_time = settings.get('last_update_check_time')
+            check_needed = last_check_time is None or (
+                datetime.now(timezone.utc) - 
+                datetime.fromisoformat(last_check_time)
+            ).total_seconds() > 86400  # 24 hours in seconds
+            
+            if check_needed:
+                try:
+                    # Fetch latest release from GitHub
+                    response = requests.get(
+                        "https://github.com/microsoft/simplechat/releases", 
+                        timeout=3
+                    )
+                    if response.status_code == 200:
+                        # Extract the latest version
+                        latest_version = extract_latest_version_from_html(response.text)
+                        
+                        # Store the results in settings for persistence
+                        new_settings = {
+                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
+                            'latest_version_available': latest_version
+                        }
+                        
+                        # Compare with current version
+                        if latest_version and compare_versions(latest_version, current_version) == 1:
+                            new_settings['update_available'] = True
+                        else:
+                            new_settings['update_available'] = False
+                        
+                        # Update settings to persist these values
+                        update_settings(new_settings)
+                        settings.update(new_settings)
+                except Exception as e:
+                    print(f"Error checking for updates: {e}")
+            
+            # Get the persisted values for template rendering
+            update_available = settings.get('update_available', False)
+            latest_version = settings.get('latest_version_available')
 
             return render_template(
                 'admin_settings.html',
-                settings=settings
+                settings=settings,
+                update_available=update_available,
+                latest_version=latest_version,
+                download_url=download_url
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -125,7 +178,12 @@ def register_route_frontend_admin_settings(app):
 
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
-            # ... (fetch enhanced citation fields) ...
+            office_docs_storage_account_url = form_data.get('office_docs_storage_account_url', '').strip()
+            
+            # Validate that if enhanced citations are enabled, a connection string is provided
+            if enable_enhanced_citations and not office_docs_storage_account_url:
+                flash("Enhanced Citations cannot be enabled without providing a connection string. Feature has been disabled.", "danger")
+                enable_enhanced_citations = False
 
             # Model JSON Parsing (Your existing logic is fine)
             gpt_model_json = form_data.get('gpt_model_json', '')
@@ -151,6 +209,11 @@ def register_route_frontend_admin_settings(app):
                 flash('Error parsing Image Gen model data. Changes may not be saved.', 'warning')
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
+            # --- Extract banner fields from form_data ---
+            classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
+            classification_banner_text = form_data.get('classification_banner_text', '').strip()
+            classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # General
@@ -159,6 +222,7 @@ def register_route_frontend_admin_settings(app):
                 'custom_logo_base64': settings.get('custom_logo_base64', ''),
                 'logo_version': settings.get('logo_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
+                'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -229,9 +293,9 @@ def register_route_frontend_admin_settings(app):
 
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,
-                'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on',
+                'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
-                'office_docs_storage_account_url': form_data.get('office_docs_storage_account_url', '').strip(),
+                'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
                 'office_docs_key': form_data.get('office_docs_key', '').strip(),
                 'video_files_storage_account_url': form_data.get('video_files_storage_account_url', '').strip(),
@@ -302,6 +366,11 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
+
+                # --- Banner fields ---
+                'classification_banner_enabled': classification_banner_enabled,
+                'classification_banner_text': classification_banner_text,
+                'classification_banner_color': classification_banner_color,
             }
             
             logo_file = request.files.get('logo_file')

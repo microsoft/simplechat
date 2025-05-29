@@ -1,6 +1,10 @@
 // chat-utils.js
-export function toBoolean(str) {
-  return String(str).toLowerCase() === "true";
+export function toBoolean(value) {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0 || !value) return false;
+  
+  const strValue = String(value).toLowerCase().trim();
+  return strValue === "true" || strValue === "1" || strValue === "yes" || strValue === "y";
 }
 
 export function isColorLight(hexColor) {

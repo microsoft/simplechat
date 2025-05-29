@@ -12,12 +12,16 @@ let imageAll      = window.imageAll || [];
 let classificationCategories = window.classificationCategories || [];
 let enableDocumentClassification = window.enableDocumentClassification || false;
 
+// Track whether form has been modified since last save
+let formModified = false;
+
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
 const classificationTbody = document.getElementById('classification-categories-tbody');
 const addClassificationBtn = document.getElementById('add-classification-btn');
 const classificationJsonInput = document.getElementById('document_classification_categories_json');
 const adminForm = document.getElementById('admin-settings-form');
+const saveButton = adminForm ? adminForm.querySelector('button[type="submit"]') : null;
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
@@ -32,6 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
     updateImageHiddenInput();
 
     setupToggles(); // This function will be extended below
+    
+    // Initialize tooltips
+    initializeTooltips();
 
     setupTestButtons();
 
@@ -47,6 +54,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
+    
+    // --- Setup form change tracking ---
+    setupFormChangeTracking();
+    
+    // --- Setup Settings Walkthrough (after all other components are ready) ---
+    setTimeout(() => {
+        setupSettingsWalkthrough();
+    }, 100);
+    
+    // --- Add form submission validation ---
+    if (adminForm) {
+        adminForm.addEventListener('submit', function(e) {
+            try {
+                // Ensure classification categories is valid JSON before submission
+                if (classificationJsonInput) {
+                    const jsonString = updateClassificationJsonInput();
+                    console.log("Classification categories before submission:", jsonString);
+                    
+                    // Verify JSON is valid by parsing it
+                    try {
+                        JSON.parse(jsonString);
+                    } catch (jsonErr) {
+                        console.error("Invalid JSON for classification categories:", jsonErr);
+                        // Set to empty array if invalid
+                        classificationJsonInput.value = "[]";
+                    }
+                }
+            } catch (err) {
+                console.error("Error in form submission validation:", err);
+                // Allow form to submit even if there's an error to avoid blocking users
+            }
+        });
+    }
 });
 
 function activateTabFromHash() {
@@ -189,6 +229,7 @@ window.selectGptModel = (deploymentName, modelName) => {
   
     updateGptHiddenInput();  // rewrite the JSON payload
     renderGPTModels();       // refresh the button states
+    markFormAsModified();    // mark form as modified
   };
 
 function updateGptHiddenInput() {
@@ -226,6 +267,7 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     embeddingSelected = [{ deploymentName, modelName }];
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
+    markFormAsModified();    // mark form as modified
     //alert(`Selected embedding model: ${deploymentName}`);
 };
 
@@ -265,6 +307,7 @@ window.selectImageModel = (deploymentName, modelName) => {
     document.getElementById('image_gen_model').value = deploymentName;
     renderImageModels();
     updateImageHiddenInput();
+    markFormAsModified();    // mark form as modified
     // alert(`Selected image model: ${deploymentName}`);
 };
 
@@ -413,6 +456,7 @@ function handleAddClassification() {
     if (newLabelInput) {
         newLabelInput.focus();
     }
+    markFormAsModified(); // Mark form as modified when adding a new category
     // Do NOT update the main `classificationCategories` array or JSON input yet.
 }
 
@@ -505,6 +549,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
         row.removeAttribute('data-is-new');
         // Re-render the whole table to get correct indices and state
         renderClassificationCategories();
+        markFormAsModified(); // Mark form as modified
     } else {
         // Update existing item in the array
         const index = parseInt(indexAttr, 10);
@@ -533,6 +578,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
             if (saveBtn) saveBtn.style.display = 'none';
 
             updateClassificationJsonInput(); // Update hidden input
+            markFormAsModified(); // Mark form as modified
         } else {
             console.error("Invalid index for saving classification:", indexAttr);
             // Fallback to re-render if something went wrong
@@ -560,11 +606,13 @@ function handleDeleteClassification(row, indexAttr, isNew) {
                 classificationCategories.splice(index, 1); // Remove from array
                 // Re-render the table to update indices and UI
                 renderClassificationCategories();
+                markFormAsModified(); // Mark form as modified
             } else {
                 console.error("Invalid index for deleting classification:", indexAttr);
                 // Fallback: remove row from DOM and update JSON
                 row.remove();
                 updateClassificationJsonInput();
+                markFormAsModified(); // Mark form as modified
             }
         }
     }
@@ -588,6 +636,7 @@ function handleClassificationColorChange(event) {
              if (swatch) {
                 swatch.style.backgroundColor = newColor;
             }
+            markFormAsModified(); // Mark form as modified when color changes
         }
     }
 }
@@ -598,14 +647,29 @@ function handleClassificationColorChange(event) {
 function updateClassificationJsonInput() {
     if (classificationJsonInput) {
         try {
-             // Ensure we only stringify valid categories (though save/delete should keep the array clean)
-             const validCategories = classificationCategories.filter(cat => cat && typeof cat.label === 'string' && typeof cat.color === 'string');
-             classificationJsonInput.value = JSON.stringify(validCategories);
+            // First make sure classificationCategories is an array
+            if (!Array.isArray(classificationCategories)) {
+                classificationCategories = [];
+            }
+            
+            // Ensure we only stringify valid categories with required properties
+            const validCategories = classificationCategories.filter(cat => 
+                cat && 
+                typeof cat === 'object' &&
+                typeof cat.label === 'string' && 
+                typeof cat.color === 'string'
+            );
+            
+            const jsonString = JSON.stringify(validCategories);
+            classificationJsonInput.value = jsonString;
+            return jsonString;
         } catch (e) {
-             console.error("Error stringifying classification categories:", e);
-             classificationJsonInput.value = "[]"; // Set to empty array on error
+            console.error("Error stringifying classification categories:", e);
+            classificationJsonInput.value = "[]"; // Set to empty array on error
+            return "[]";
         }
     }
+    return "[]";
 }
 
 function setupToggles() {
@@ -615,6 +679,16 @@ function setupToggles() {
         enableGptApim.addEventListener('change', function () {
             document.getElementById('non_apim_gpt_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_gpt_settings').style.display = this.checked ? 'block' : 'none';
+            
+            // Toggle visibility of APIM model note and fetch step in the walkthrough
+            const apimModelNote = document.getElementById('apim-model-note');
+            const fetchModelsStep = document.getElementById('fetch-models-step');
+            if (apimModelNote && fetchModelsStep) {
+                apimModelNote.style.display = this.checked ? 'block' : 'none';
+                fetchModelsStep.style.display = this.checked ? 'none' : 'block';
+            }
+            
+            markFormAsModified();
         });
     }
 
@@ -623,6 +697,7 @@ function setupToggles() {
         enableEmbeddingApim.addEventListener('change', function () {
             document.getElementById('non_apim_embedding_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_embedding_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -630,6 +705,7 @@ function setupToggles() {
     if (enableImageGen) {
         enableImageGen.addEventListener('change', function () {
             document.getElementById('image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -638,6 +714,7 @@ function setupToggles() {
         enableImageGenApim.addEventListener('change', function () {
             document.getElementById('non_apim_image_gen_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -657,6 +734,7 @@ function setupToggles() {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
         enableEnhancedCitation.addEventListener('change', function(){
             toggleEnhancedCitation(this.checked);
+            markFormAsModified();
         });
     }
 
@@ -665,6 +743,7 @@ function setupToggles() {
         enableContentSafetyCheckbox.addEventListener('change', function() {
             const safetySettings = document.getElementById('content_safety_settings');
             safetySettings.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -673,6 +752,7 @@ function setupToggles() {
         enableContentSafetyApim.addEventListener('change', function() {
             document.getElementById('non_apim_content_safety_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_content_safety_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -680,6 +760,7 @@ function setupToggles() {
     if (enableWebSearch) {
         enableWebSearch.addEventListener('change', function () {
             document.getElementById('web_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -688,6 +769,7 @@ function setupToggles() {
         enableWebSearchApim.addEventListener('change', function () {
             document.getElementById('non_apim_web_search_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_web_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -696,6 +778,7 @@ function setupToggles() {
         enableAiSearchApim.addEventListener('change', function () {
             document.getElementById('non_apim_ai_search_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_ai_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -704,6 +787,7 @@ function setupToggles() {
         enableDocumentIntelligenceApim.addEventListener('change', function () {
             document.getElementById('non_apim_document_intelligence_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_document_intelligence_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -712,6 +796,7 @@ function setupToggles() {
         gptAuthType.addEventListener('change', function () {
             document.getElementById('gpt_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -720,6 +805,7 @@ function setupToggles() {
         embeddingAuthType.addEventListener('change', function () {
             document.getElementById('embedding_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -728,6 +814,7 @@ function setupToggles() {
         imgAuthType.addEventListener('change', function () {
             document.getElementById('image_gen_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -736,6 +823,7 @@ function setupToggles() {
         contentSafetyAuthType.addEventListener('change', function () {
             document.getElementById('content_safety_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -744,6 +832,7 @@ function setupToggles() {
         aiSearchAuthType.addEventListener('change', function () {
             document.getElementById('azure_ai_search_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -752,6 +841,7 @@ function setupToggles() {
         docIntelAuthType.addEventListener('change', function () {
             document.getElementById('azure_document_intelligence_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -760,6 +850,7 @@ function setupToggles() {
         officeAuthType.addEventListener('change', function(){
             document.getElementById('office_docs_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -768,6 +859,7 @@ function setupToggles() {
         videoAuthType.addEventListener('change', function(){
             document.getElementById('video_files_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -776,6 +868,7 @@ function setupToggles() {
         audioAuthType.addEventListener('change', function(){
             document.getElementById('audio_files_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 
@@ -800,6 +893,7 @@ function setupToggles() {
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
         });
     }
 }
@@ -1212,6 +1306,7 @@ if (videoSupportToggle && videoIndexerDiv) {
   // on change
   videoSupportToggle.addEventListener('change', () => {
     videoIndexerDiv.style.display = videoSupportToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1223,6 +1318,7 @@ if (audioSupportToggle && audioServiceDiv) {
   audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
   audioSupportToggle.addEventListener('change', () => {
     audioServiceDiv.style.display = audioSupportToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1266,6 +1362,7 @@ if (extractToggle) {
   extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
   extractToggle.addEventListener('change', () => {
     extractModelDiv.style.display = extractToggle.checked ? 'block' : 'none';
+    markFormAsModified();
   });
 }
 
@@ -1355,3 +1452,1054 @@ togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
 togglePassword('toggle_speech_service_key', 'speech_service_key');
 togglePassword('toggle_redis_key', 'redis_key');
 togglePassword('toggle_azure_apim_redis_subscription_key', 'azure_apim_redis_subscription_key');
+
+/**
+ * Checks if this is a first-time setup based on critical settings
+ * @returns {boolean} True if this appears to be a first-time setup
+ */
+function isFirstTimeSetup() {
+    // Check for critical settings that would indicate a first-time setup
+    
+    // 1. No GPT models selected
+    if (!gptSelected || gptSelected.length === 0) {
+        return true;
+    }
+    
+    // 2. No embedding models selected but workspaces enabled
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    
+    if ((workspaceEnabled || groupsEnabled) && 
+        (!embeddingSelected || embeddingSelected.length === 0)) {
+        return true;
+    }
+    
+    // 3. Check if GPT endpoint is empty
+    const useGptApim = document.getElementById('enable_gpt_apim')?.checked || false;
+    
+    if (!useGptApim) {
+        const gptEndpoint = document.getElementById('azure_openai_gpt_endpoint')?.value;
+        if (!gptEndpoint) {
+            return true;
+        }
+    } else {
+        const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint')?.value;
+        if (!apimEndpoint) {
+            return true;
+        }
+    }
+    
+    // Not first time setup
+    return false;
+}
+
+/**
+ * Setup the walkthrough for first-time configuration
+ */
+function setupSettingsWalkthrough() {
+    console.log("Setting up walkthrough...");
+    
+    // Setup the walkthrough buttons first thing
+    setupWalkthroughButtons();
+    
+    // Check if this is a first-time setup
+    if (isFirstTimeSetup()) {
+        // Auto-show the walkthrough for first-time setup
+        setTimeout(() => {
+            showWalkthrough();
+        }, 500); // Small delay to ensure DOM is ready
+    }
+    
+    // Setup the manual walkthrough button
+    const walkthroughBtn = document.getElementById('launch-walkthrough-btn');
+    if (walkthroughBtn) {
+        // Remove any existing listeners to prevent duplicates
+        const newWalkthroughBtn = walkthroughBtn.cloneNode(true);
+        if (walkthroughBtn.parentNode) {
+            walkthroughBtn.parentNode.replaceChild(newWalkthroughBtn, walkthroughBtn);
+        }
+        
+        // Add new event listener
+        newWalkthroughBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("Walkthrough button clicked");
+            showWalkthrough();
+        });
+    } else {
+        console.error("Walkthrough button not found in the DOM");
+    }
+    
+    // Setup the close button
+    const closeBtn = document.getElementById('close-walkthrough-btn');
+    if (closeBtn) {
+        const newCloseBtn = closeBtn.cloneNode(true);
+        if (closeBtn.parentNode) {
+            closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+        }
+        newCloseBtn.addEventListener('click', hideWalkthrough);
+    }
+}
+
+/**
+ * Shows the walkthrough container and resets to the first step
+ */
+function showWalkthrough() {
+    try {
+        console.log("Showing walkthrough");
+        const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+        if (!walkthroughContainer) {
+            console.error("Walkthrough container not found!");
+            return;
+        }
+        
+        // Make sure walkthrough button events are working
+        setupWalkthroughButtons();
+        
+        // Show the container
+        walkthroughContainer.style.display = 'block';
+        
+        // Sync walkthrough toggles with actual form toggles
+        syncWalkthroughToggles();
+        
+        // Check if GPT APIM is enabled and update the model note visibility
+        const enableGptApim = document.getElementById('enable_gpt_apim');
+        if (enableGptApim) {
+            const apimModelNote = document.getElementById('apim-model-note');
+            const fetchModelsStep = document.getElementById('fetch-models-step');
+            if (apimModelNote && fetchModelsStep) {
+                apimModelNote.style.display = enableGptApim.checked ? 'block' : 'none';
+                fetchModelsStep.style.display = enableGptApim.checked ? 'none' : 'block';
+            }
+        }
+        
+        // Reset to first step when launched
+        setTimeout(() => {
+            try {
+                navigateToWalkthroughStep(1);
+            } catch (err) {
+                console.error("Error navigating to first walkthrough step:", err);
+            }
+        }, 100);
+        
+        // Setup field change listeners for automatic validation
+        setupWalkthroughFieldListeners();
+    } catch (err) {
+        console.error("Error showing walkthrough:", err);
+    }
+}
+
+/**
+ * Make sure walkthrough navigation buttons are properly set up
+ */
+function setupWalkthroughButtons() {
+    const nextButton = document.getElementById('walkthrough-next-btn');
+    if (nextButton) {
+        nextButton.onclick = function() {
+            const currentStep = getCurrentWalkthroughStep();
+            console.log("Next button clicked, current step:", currentStep);
+            validateAndMoveToNextStep(currentStep);
+        };
+    }
+    
+    const prevButton = document.getElementById('walkthrough-prev-btn');
+    if (prevButton) {
+        prevButton.onclick = navigatePreviousStep;
+    }
+    
+    const finishButton = document.getElementById('walkthrough-finish-btn');
+    if (finishButton) {
+        finishButton.onclick = finishSetupAndSave;
+    }
+}
+
+/**
+ * Synchronizes toggle states between the walkthrough and the main form
+ */
+function syncWalkthroughToggles() {
+    const syncToggles = [
+        // Content safety toggle removed from walkthrough
+    ];
+    
+    syncToggles.forEach(pair => {
+        const walkthroughToggle = document.getElementById(pair.walkthrough);
+        const formToggle = document.getElementById(pair.form);
+        if (walkthroughToggle && formToggle) {
+            // Set walkthrough toggle to match form toggle
+            walkthroughToggle.checked = formToggle.checked;
+        }
+    });
+}
+
+/**
+ * Hides the walkthrough container
+ */
+function hideWalkthrough() {
+    const walkthroughContainer = document.getElementById('settings-walkthrough-container');
+    if (walkthroughContainer) {
+        walkthroughContainer.style.display = 'none';
+    }
+}
+
+/**
+ * Navigate to the specified step in the walkthrough
+ * @param {number} stepNumber - The step number to navigate to
+ */
+function navigateToWalkthroughStep(stepNumber) {
+    // Get all steps and total count
+    const steps = document.querySelectorAll('.walkthrough-step');
+    const totalSteps = steps.length;
+    
+    // Validate step number
+    if (stepNumber < 1) stepNumber = 1;
+    if (stepNumber > totalSteps) stepNumber = totalSteps;
+    
+    // Check if we should skip this step (based on workspace and feature enablement)
+    const shouldSkipStep = shouldSkipWalkthroughStep(stepNumber);
+    if (shouldSkipStep && stepNumber < totalSteps && stepNumber > 1) {
+        // Recursively navigate to next applicable step
+        if (stepNumber > getCurrentWalkthroughStep()) {
+            // Moving forward - go to next applicable step
+            navigateToWalkthroughStep(findNextApplicableStep(stepNumber));
+            return;
+        } else {
+            // Moving backward - go to previous applicable step
+            navigateToWalkthroughStep(findPreviousApplicableStep(stepNumber));
+            return;
+        }
+    }
+    
+    // Hide all steps
+    steps.forEach(step => {
+        step.style.display = 'none';
+    });
+    
+    // Show the requested step
+    const stepElement = document.getElementById(`walkthrough-step-${stepNumber}`);
+    if (stepElement) {
+        stepElement.style.display = 'block';
+    }
+    
+    // Update the progress indicator - calculate visible steps
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    const stepPosition = availableSteps.indexOf(stepNumber) + 1;
+    const totalAvailableSteps = availableSteps.length;
+    
+    const progressBar = document.getElementById('walkthrough-progress');
+    if (progressBar) {
+        progressBar.style.width = `${(stepPosition / totalAvailableSteps) * 100}%`;
+        progressBar.setAttribute('aria-valuenow', stepPosition);
+    }
+    
+    // Handle special tab navigation based on step
+    handleTabNavigation(stepNumber);
+    
+    // Update prev/next buttons
+    const prevBtn = document.getElementById('walkthrough-prev-btn');
+    const nextBtn = document.getElementById('walkthrough-next-btn');
+    const finishBtn = document.getElementById('walkthrough-finish-btn');
+    
+    if (prevBtn) prevBtn.style.display = stepNumber === 1 ? 'none' : 'inline-block';
+    
+    if (nextBtn && finishBtn) {
+        nextBtn.style.display = stepNumber === totalSteps ? 'none' : 'inline-block';
+        finishBtn.style.display = stepNumber === totalSteps ? 'inline-block' : 'none';
+    }
+    
+    // Update completion status for this step
+    updateStepCompletionStatus(stepNumber);
+    
+    // Dispatch a custom event to notify that the step has changed
+    const event = new CustomEvent('walkthroughStepChanged', { 
+        detail: { step: stepNumber, totalSteps: totalSteps } 
+    });
+    document.getElementById('settings-walkthrough-container')?.dispatchEvent(event);
+}
+
+/**
+ * Get the current step displayed in the walkthrough
+ * @returns {number} Current step number or 1 if none found
+ */
+function getCurrentWalkthroughStep() {
+    const currentStepElem = document.querySelector('.walkthrough-step:not([style*=\'display: none\'])');
+    if (currentStepElem) {
+        return parseInt(currentStepElem.id?.split('-')[2]) || 1;
+    }
+    return 1;
+}
+
+/**
+ * Calculate which walkthrough steps should be available based on current settings
+ * @returns {number[]} Array of step numbers that should be available
+ */
+function calculateAvailableWalkthroughSteps() {
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+    const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+    
+    const availableSteps = [1, 2, 3, 4]; // Base steps always available
+    
+    // Include workspace-dependent steps if workspaces enabled
+    if (workspacesEnabled) {
+        availableSteps.push(5, 6, 7); // Embedding, AI Search, Doc Intelligence
+        
+        if (videoEnabled) {
+            availableSteps.push(8); // Video support
+        }
+        
+        if (audioEnabled) {
+            availableSteps.push(9); // Audio support
+        }
+    }
+    
+    // Optional steps always available
+    availableSteps.push(10, 11, 12); // Safety, Feedback, Enhanced Citations
+    
+    return availableSteps.sort((a, b) => a - b); // Ensure steps are in order
+}
+
+/**
+ * Determine if we should skip a particular walkthrough step
+ * @param {number} stepNumber - The step to check
+ * @returns {boolean} True if the step should be skipped, false otherwise
+ */
+function shouldSkipWalkthroughStep(stepNumber) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    return !availableSteps.includes(stepNumber);
+}
+
+/**
+ * Find the next applicable step after a given step
+ * @param {number} currentStep - Current step number
+ * @returns {number} Next applicable step number or 12 (last step) if none found
+ */
+function findNextApplicableStep(currentStep) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    
+    // Find the first available step after the current one
+    for (let i = 0; i < availableSteps.length; i++) {
+        if (availableSteps[i] > currentStep) {
+            return availableSteps[i];
+        }
+    }
+    
+    return 12; // Default to last step if no next step found
+}
+
+/**
+ * Find the previous applicable step before a given step
+ * @param {number} currentStep - Current step number
+ * @returns {number} Previous applicable step number or 1 (first step) if none found
+ */
+function findPreviousApplicableStep(currentStep) {
+    const availableSteps = calculateAvailableWalkthroughSteps();
+    
+    // Find the first available step before the current one (in reverse)
+    for (let i = availableSteps.length - 1; i >= 0; i--) {
+        if (availableSteps[i] < currentStep) {
+            return availableSteps[i];
+        }
+    }
+    
+    return 1; // Default to first step if no previous step found
+}
+
+/**
+ * Navigate to the appropriate tab based on the walkthrough step
+ * @param {number} stepNumber - The current step number
+ */
+function handleTabNavigation(stepNumber) {
+    // Map steps to tabs that need to be activated
+    const stepToTab = {
+        1: 'general-tab',     // App title and logo (General tab)
+        2: 'gpt-tab',         // GPT settings
+        3: 'gpt-tab',         // GPT model selection
+        4: 'workspaces-tab',  // Workspace and groups settings
+        5: 'embeddings-tab',  // Embedding settings
+        6: 'search-extract-tab', // AI Search settings
+        7: 'search-extract-tab', // Document Intelligence settings
+        8: 'workspaces-tab',  // Video support
+        9: 'workspaces-tab',  // Audio support
+        10: 'safety-tab',     // Content safety
+        11: 'other-tab',      // User feedback and archiving
+        12: 'citation-tab'    // Enhanced Citations and Image Generation
+    };
+    
+    // Activate the appropriate tab
+    const tabId = stepToTab[stepNumber];
+    if (tabId) {
+        const tab = document.getElementById(tabId);
+        if (tab) {
+            // Use bootstrap Tab to show the tab
+            const bootstrapTab = new bootstrap.Tab(tab);
+            bootstrapTab.show();
+            
+            // Scroll to the relevant section after a small delay to allow tab to switch
+            setTimeout(() => {
+                // For tabs that need to jump to specific sections
+                scrollToRelevantSection(stepNumber, tabId);
+            }, 300);
+        }
+    }
+}
+
+/**
+ * Scroll to relevant section within a tab based on the step
+ * @param {number} stepNumber - The current step number
+ * @param {string} tabId - The ID of the tab that was activated
+ */
+function scrollToRelevantSection(stepNumber, tabId) {
+    // Define which sections to scroll to for each step
+    let targetElement = null;
+    
+    switch (stepNumber) {
+        case 4: // Workspaces toggle section
+            targetElement = document.getElementById('enable_user_workspace')?.closest('.card');
+            break;
+        case 8: // Video file support
+            targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
+            break;
+        case 9: // Audio file support
+            targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
+            break;
+        default:
+            // For other steps, no specific scrolling
+            break;
+    }
+    
+    // If we found a target element, scroll to it
+    if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+/**
+ * Check if a step is complete by validating its required fields
+ * @param {number} stepNumber - The step number to validate
+ * @returns {boolean} True if the step is complete, false otherwise
+ */
+function isStepComplete(stepNumber) {
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    switch (stepNumber) {
+        case 1: // App title and logo - always complete (optional)
+            return true;
+            
+        case 2: // GPT settings
+            // Check if GPT endpoint is configured when required
+            if (!document.getElementById('enable_gpt_apim').checked) {
+                const endpoint = document.getElementById('azure_openai_gpt_endpoint').value;
+                const authType = document.getElementById('azure_openai_gpt_authentication_type').value;
+                const key = document.getElementById('azure_openai_gpt_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_gpt_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_gpt_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
+            }
+            return true;
+            
+        case 3: // GPT model selection
+            if (!document.getElementById('enable_gpt_apim').checked) {
+                // For direct Azure OpenAI, check if models are selected
+                return gptSelected && gptSelected.length > 0;
+            } else {
+                // For APIM, check if deployment field is filled
+                const apimDeployment = document.getElementById('azure_apim_gpt_deployment')?.value;
+                return apimDeployment && apimDeployment.trim() !== '';
+            }
+            
+        case 4: // Workspace and groups settings - always complete (optional)
+            return true;
+            
+        case 5: // Embedding settings (if workspace or groups enabled)
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_embedding_apim').checked) {
+                const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
+                const authType = document.getElementById('azure_openai_embedding_authentication_type').value;
+                const key = document.getElementById('azure_openai_embedding_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_embedding_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_embedding_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
+            }
+            
+            // Also check if embedding models are selected or APIM deployment is specified
+            if (!document.getElementById('enable_embedding_apim').checked) {
+                // For direct Azure OpenAI, check models
+                if (embeddingSelected.length === 0) return false;
+            } else {
+                // For APIM, check deployment field
+                const apimDeployment = document.getElementById('azure_apim_embedding_deployment')?.value;
+                if (!apimDeployment || apimDeployment.trim() === '') return false;
+            }
+            
+            return true;
+            
+        case 6: // AI Search settings
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_ai_search_apim').checked) {
+                const endpoint = document.getElementById('azure_ai_search_endpoint').value;
+                const authType = document.getElementById('azure_ai_search_authentication_type').value;
+                const key = document.getElementById('azure_ai_search_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_ai_search_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_ai_search_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
+            }
+            return true;
+            
+        case 7: // Document Intelligence settings
+            if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            
+            if (!document.getElementById('enable_document_intelligence_apim').checked) {
+                const endpoint = document.getElementById('azure_document_intelligence_endpoint').value;
+                const authType = document.getElementById('azure_document_intelligence_authentication_type').value;
+                const key = document.getElementById('azure_document_intelligence_key').value;
+                
+                if (!endpoint) return false;
+                if (authType === 'key' && !key) return false;
+            } else {
+                const apimEndpoint = document.getElementById('azure_apim_document_intelligence_endpoint').value;
+                const apimKey = document.getElementById('azure_apim_document_intelligence_subscription_key').value;
+                
+                if (!apimEndpoint) return false;
+                if (!apimKey) return false;
+            }
+            return true;
+            
+        case 8: // Video support
+            const videoEnabled = document.getElementById('enable_video_file_support').checked || false;
+            
+            // If workspaces not enabled or video not enabled, it's always complete
+            if (!workspacesEnabled || !videoEnabled) return true;
+            
+            // Otherwise check settings
+            const videoLocation = document.getElementById('video_indexer_location')?.value;
+            const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
+            const videoApiKey = document.getElementById('video_indexer_api_key')?.value;
+            
+            return videoLocation && videoAccountId && videoApiKey;
+            
+        case 9: // Audio support
+            const audioEnabled = document.getElementById('enable_audio_file_support').checked || false;
+            
+            // If workspaces not enabled or audio not enabled, it's always complete
+            if (!workspacesEnabled || !audioEnabled) return true;
+            
+            // Otherwise check settings
+            const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
+            const speechKey = document.getElementById('speech_service_key')?.value;
+            
+            return speechEndpoint && speechKey;
+            
+        case 10: // Content safety - always complete (optional)
+        case 11: // User feedback and archiving - always complete (optional)
+        case 12: // Enhanced Citations and Image Generation - always complete (optional)
+            return true;
+            
+        default:
+            return true; // Default to true for any unknown steps
+    }
+}
+
+/**
+ * Update UI to show completion status for a step
+ * @param {number} stepNumber - The step number to update
+ */
+function updateStepCompletionStatus(stepNumber) {
+    const isComplete = isStepComplete(stepNumber);
+    const stepElement = document.getElementById(`walkthrough-step-${stepNumber}`);
+    if (!stepElement) return;
+    
+    // Find badge elements in this step
+    const badges = stepElement.querySelectorAll('.badge.bg-danger');
+    const optionalBadges = stepElement.querySelectorAll('.badge.bg-secondary');
+    const requirementAlert = stepElement.querySelector('.alert-danger');
+    const optionalAlert = stepElement.querySelector('.alert-info');
+    
+    // Update next button state
+    const nextButton = document.getElementById('walkthrough-next-btn');
+    if (nextButton) {
+        if (isComplete) {
+            nextButton.classList.remove('btn-secondary');
+            nextButton.classList.add('btn-primary');
+            nextButton.disabled = false;
+        } else {
+            nextButton.classList.remove('btn-primary');
+            nextButton.classList.add('btn-secondary');
+            nextButton.disabled = true;
+        }
+    }
+    
+    // Check if optional features are enabled/configured for this step
+    const optionalFeaturesEnabled = checkOptionalFeaturesEnabled(stepNumber);
+    
+    // Update required badges and alerts if step is complete
+    if (isComplete) {
+        // Update badge status for required items
+        badges.forEach(badge => {
+            badge.classList.remove('bg-danger');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update or hide the requirement alert
+        if (requirementAlert) {
+/**
+ * Setup field change listeners for real-time validation during walkthrough
+ */
+function setupWalkthroughFieldListeners() {
+    // Define field groups by step number
+    const fieldGroups = {
+        2: [ // GPT settings
+            {selector: '#azure_openai_gpt_endpoint', event: 'input'},
+            {selector: '#azure_openai_gpt_key', event: 'input'},
+            {selector: '#azure_openai_gpt_authentication_type', event: 'change'},
+            {selector: '#azure_apim_gpt_endpoint', event: 'input'},
+            {selector: '#azure_apim_gpt_subscription_key', event: 'input'},
+            {selector: '#azure_apim_gpt_deployment', event: 'input'},
+            {selector: '#enable_gpt_apim', event: 'change'}
+        ],
+        3: [ // GPT Models
+            {selector: '#fetch_gpt_models_btn', event: 'click', delay: 1000}
+        ],
+        4: [ // Workspace toggles
+            {selector: '#enable_user_workspace', event: 'change'},
+            {selector: '#enable_group_workspaces', event: 'change'}
+        ],
+        5: [ // Embedding settings
+            {selector: '#azure_openai_embedding_endpoint', event: 'input'},
+            {selector: '#azure_openai_embedding_key', event: 'input'},
+            {selector: '#azure_openai_embedding_authentication_type', event: 'change'},
+            {selector: '#azure_apim_embedding_endpoint', event: 'input'},
+            {selector: '#azure_apim_embedding_subscription_key', event: 'input'},
+            {selector: '#enable_embedding_apim', event: 'change'},
+            {selector: '#fetch_embedding_models_btn', event: 'click', delay: 1000}
+        ],
+        6: [ // AI Search settings
+            {selector: '#azure_ai_search_endpoint', event: 'input'},
+            {selector: '#azure_ai_search_key', event: 'input'},
+            {selector: '#azure_ai_search_authentication_type', event: 'change'},
+            {selector: '#azure_apim_ai_search_endpoint', event: 'input'},
+            {selector: '#azure_apim_ai_search_subscription_key', event: 'input'},
+            {selector: '#enable_ai_search_apim', event: 'change'}
+        ],
+        7: [ // Document Intelligence settings
+            {selector: '#azure_document_intelligence_endpoint', event: 'input'},
+            {selector: '#azure_document_intelligence_key', event: 'input'},
+            {selector: '#azure_document_intelligence_authentication_type', event: 'change'},
+            {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
+            {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
+            {selector: '#enable_document_intelligence_apim', event: 'change'}
+        ],
+        8: [ // Video settings
+            {selector: '#enable_video_file_support', event: 'change'},
+            {selector: '#video_indexer_location', event: 'input'},
+            {selector: '#video_indexer_account_id', event: 'input'},
+            {selector: '#video_indexer_api_key', event: 'input'}
+        ],
+        9: [ // Audio settings
+            {selector: '#enable_audio_file_support', event: 'change'},
+            {selector: '#speech_service_endpoint', event: 'input'},
+            {selector: '#speech_service_key', event: 'input'}
+        ]
+    };
+    
+    // Add listeners to each group of fields
+    for (const [stepNumber, fields] of Object.entries(fieldGroups)) {
+        const step = parseInt(stepNumber, 10);
+        fields.forEach(field => {
+            const element = document.querySelector(field.selector);
+            if (element) {
+                // Create the handler function, using any delay specified
+                const handler = () => {
+                    if (field.delay) {
+                        setTimeout(() => updateStepCompletionStatus(step), field.delay);
+                    } else {
+                        updateStepCompletionStatus(step);
+                    }
+                };
+                
+                // Remove any existing listeners (to prevent duplicates)
+                element.removeEventListener(field.event, handler);
+                
+                // Add the new listener
+                element.addEventListener(field.event, handler);
+            }
+        });
+    }
+    
+    // Special case for model selection buttons which are dynamically created
+    // We'll use event delegation for these
+    document.addEventListener('click', event => {
+        if (event.target.matches('button') && event.target.onclick && 
+            event.target.onclick.toString().includes('selectGptModel')) {
+            setTimeout(() => updateStepCompletionStatus(3), 100);
+        } else if (event.target.matches('button') && event.target.onclick && 
+            event.target.onclick.toString().includes('selectEmbeddingModel')) {
+            setTimeout(() => updateStepCompletionStatus(5), 100);
+        }
+    });
+}
+            requirementAlert.classList.remove('alert-danger');
+            requirementAlert.classList.add('alert-success');
+            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
+        }
+    } else {
+        // Ensure badges show required status
+        badges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-danger');
+            badge.textContent = 'Required';
+        });
+        
+        // Reset requirement alert if needed
+        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
+            requirementAlert.classList.remove('alert-success');
+            requirementAlert.classList.add('alert-danger');
+            
+            // Reset alert text based on step number
+            switch (stepNumber) {
+                case 2:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
+                    break;
+                case 3:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
+                    break;
+                case 5:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
+                    break;
+                case 6:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
+                    break;
+                case 7:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
+                    break;
+                case 8:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
+                    break;
+                case 9:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
+                    break;
+            }
+        }
+    }
+    
+    // Update optional features status if they're enabled/configured
+    if (optionalFeaturesEnabled) {
+        // Update optional badges to show as complete
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-secondary');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update optional alert if present
+        if (optionalAlert) {
+            optionalAlert.classList.remove('alert-info');
+            optionalAlert.classList.add('alert-success');
+            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
+        }
+    } else {
+        // Keep optional badges as is
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-secondary');
+            badge.textContent = 'Optional';
+        });
+        
+        // Reset optional alert if it was changed
+        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
+            optionalAlert.classList.remove('alert-success');
+            optionalAlert.classList.add('alert-info');
+            
+            // Reset optional alert text based on step number
+            switch (stepNumber) {
+                case 1:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
+                    break;
+                case 4:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
+                    break;
+                case 10:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
+                    break;
+                case 11:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
+                    break;
+                case 12:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
+                    break;
+                default:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
+        }
+    }
+}
+
+/**
+ * Initialize Bootstrap tooltips for any elements with data-bs-toggle="tooltip"
+ */
+function initializeTooltips() {
+    // Find all tooltip elements
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    
+    // Initialize Bootstrap tooltips
+    if (tooltipTriggerList.length > 0) {
+        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+    }
+}
+
+/**
+ * Check if optional features are enabled and configured for a specific step
+ * @param {number} stepNumber - The step to check
+ * @returns {boolean} True if optional features are enabled/configured
+ */
+function checkOptionalFeaturesEnabled(stepNumber) {
+    switch (stepNumber) {
+        case 1: // App title and logo
+            // Check if title or logo is configured
+            const appTitle = document.getElementById('app_title')?.value;
+            const logoFile = document.getElementById('app_logo_file')?.files?.length > 0;
+            const currentLogo = document.getElementById('current_logo_img');
+            return appTitle || logoFile || (currentLogo && currentLogo.src && !currentLogo.src.includes('default_logo.png'));
+        
+        case 4: // Workspaces
+            // Check if workspaces are enabled
+            const userWorkspace = document.getElementById('enable_user_workspace')?.checked;
+            const groupWorkspace = document.getElementById('enable_group_workspaces')?.checked;
+            return userWorkspace || groupWorkspace;
+            
+        case 10: // Content Safety
+            // Check if content safety is enabled and configured
+            const safetyEnabled = document.getElementById('enable_content_safety')?.checked;
+            if (!safetyEnabled) return false;
+            
+            // Check configuration based on APIM or direct
+            const safetyApim = document.getElementById('enable_content_safety_apim')?.checked;
+            if (safetyApim) {
+                const apimEndpoint = document.getElementById('azure_apim_content_safety_endpoint')?.value;
+                const apimKey = document.getElementById('azure_apim_content_safety_subscription_key')?.value;
+                return apimEndpoint && apimKey;
+            } else {
+                const endpoint = document.getElementById('content_safety_endpoint')?.value;
+                const key = document.getElementById('content_safety_key')?.value;
+                return endpoint && key;
+            }
+        
+        case 11: // User feedback and archiving
+            // Check if feedback is enabled
+            const feedbackEnabled = document.getElementById('enable_user_feedback')?.checked;
+            const archivingEnabled = document.getElementById('enable_conversation_archiving')?.checked;
+            return feedbackEnabled || archivingEnabled;
+            
+        case 12: // Enhanced citations and image generation
+            // Check if enhanced citations or image generation is enabled
+            const citationsEnabled = document.getElementById('enable_enhanced_citations')?.checked;
+            const imageGenEnabled = document.getElementById('enable_image_generation')?.checked;
+            
+            // For image generation, check if it's properly configured when enabled
+            if (imageGenEnabled) {
+                const imageApim = document.getElementById('enable_image_gen_apim')?.checked;
+                if (imageApim) {
+                    const apimEndpoint = document.getElementById('azure_apim_image_gen_endpoint')?.value;
+                    const apimKey = document.getElementById('azure_apim_image_gen_subscription_key')?.value;
+                    return citationsEnabled || (apimEndpoint && apimKey);
+                } else {
+                    const endpoint = document.getElementById('azure_openai_image_gen_endpoint')?.value;
+                    const key = document.getElementById('azure_openai_image_gen_key')?.value;
+                    return citationsEnabled || (endpoint && key);
+                }
+            }
+            
+            return citationsEnabled;
+            
+        default:
+            // For steps not specifically handled (like required steps), return false
+            return false;
+    }
+}
+function validateAndMoveToNextStep(currentStep) {
+    // Synchronize walkthrough toggles with form before validation
+    syncWalkthroughToggles();
+    
+    // Initialize tooltips for APIM help
+    initializeTooltips();
+    
+    // Check if the current step is complete
+    const complete = isStepComplete(currentStep);
+    
+    // If step is complete, we can proceed
+    if (complete) {
+        // Find next applicable step that should be shown
+        const nextStep = findNextApplicableStep(currentStep);
+        if (nextStep > 0) {
+            navigateToWalkthroughStep(nextStep);
+        } else {
+            // If no more applicable steps, we're at the end
+            navigateToWalkthroughStep(12); // Go to final step
+        }
+    } else {
+        // Highlight missing fields with validation (handled by updateStepCompletionStatus)
+        updateStepCompletionStatus(currentStep);
+        
+        // Show alert for what's missing (this is now handled through the UI indicators)
+        // No need for individual alerts as the button is disabled and visual cues are present
+    }
+}
+
+/**
+ * Navigate to the previous step in the walkthrough
+ */
+function navigatePreviousStep() {
+    // Get the current step
+    const currentStep = getCurrentWalkthroughStep();
+    
+    // Find the previous applicable step
+    const prevStep = findPreviousApplicableStep(currentStep);
+    
+    // Navigate to the previous step if one is found
+    if (prevStep > 0) {
+        navigateToWalkthroughStep(prevStep);
+    } else {
+        // If no previous step found, go to first step
+        navigateToWalkthroughStep(1);
+    }
+}
+
+/**
+ * Find the next applicable step based on enabled features
+ * @param {number} currentStep - The current step number
+ * @returns {number} The next applicable step number or -1 if none found
+ */
+function findNextApplicableStep(currentStep) {
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
+    
+    // Start checking from the next step
+    let nextStep = currentStep + 1;
+    
+    // Maximum step to avoid infinite loop
+    const maxSteps = 12;
+    
+    while (nextStep <= maxSteps) {
+        // Check if this step is applicable based on conditions
+        switch (nextStep) {
+            case 5: // Embedding settings
+            case 6: // AI Search settings 
+            case 7: // Document Intelligence settings
+                if (!workspacesEnabled) {
+                    // Skip these steps if workspaces not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 8: // Video support
+                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+                if (!workspacesEnabled || !videoEnabled) {
+                    // Skip this step if workspaces not enabled or video not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 9: // Audio support
+                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+                if (!workspacesEnabled || !audioEnabled) {
+                    // Skip this step if workspaces not enabled or audio not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            default:
+                // All other steps are always applicable
+                return nextStep;
+        }
+    }
+    
+    // If we've gone past all steps, return -1
+    return -1;
+}
+
+/**
+ * Sets up event listeners to track form changes
+ */
+function setupFormChangeTracking() {
+    if (!adminForm || !saveButton) return;
+    
+    // Initialize button state
+    updateSaveButtonState();
+    
+    // Add event listeners to all form inputs, selects, and textareas
+    const formElements = adminForm.querySelectorAll('input, select, textarea');
+    formElements.forEach(element => {
+        // For checkboxes and radios, listen for change event
+        if (element.type === 'checkbox' || element.type === 'radio') {
+            element.addEventListener('change', markFormAsModified);
+        } 
+        // For other inputs, listen for input event
+        else {
+            element.addEventListener('input', markFormAsModified);
+        }
+    });
+    
+    // Reset form state when form is submitted
+    adminForm.addEventListener('submit', () => {
+        formModified = false;
+        updateSaveButtonState();
+    });
+}
+
+/**
+ * Mark the form as modified and update the save button
+ */
+function markFormAsModified() {
+    formModified = true;
+    updateSaveButtonState();
+}
+
+/**
+ * Update the save button appearance based on form state
+ */
+function updateSaveButtonState() {
+    if (!saveButton) return;
+    
+    if (formModified) {
+        // Enable button, make it blue, and update text
+        saveButton.disabled = false;
+        saveButton.classList.remove('btn-secondary');
+        saveButton.classList.add('btn-primary');
+        saveButton.textContent = 'Save Pending';
+    } else {
+        // Disable button, make it grey, and reset text
+        saveButton.disabled = true;
+        saveButton.classList.remove('btn-primary');
+        saveButton.classList.add('btn-secondary');
+        saveButton.textContent = 'Save Settings';
+    }
+}

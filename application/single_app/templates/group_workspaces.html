@@ -1,10 +1,17 @@
 <!-- templates/group_workspaces.html -->
 {% extends "base.html" %} {% block title %} Group Workspace - {{
 app_settings.app_title }} {% endblock %} {% block head %}
-<link
+<!-- <link
   rel="stylesheet"
   href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css"
 />
+ LOCAL VERSION BELOW 
+ -->
+ <link
+  rel="stylesheet"
+  href="/static/css/simplemde.min.css"
+  />
+
 <style>
   /* Copy relevant styles from workspace.html for consistency */
   #group-documents-table {
@@ -73,6 +80,37 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
+  
+  /* Group dropdown custom styles */
+  #group-dropdown .dropdown-item {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+  #group-dropdown .dropdown-item:hover {
+    background-color: #f8f9fa;
+  }
+  #group-dropdown .dropdown-item.active {
+    background-color: #0d6efd;
+    color: white;
+  }
+  #group-dropdown .dropdown-menu {
+    padding: 0.5rem 0;
+  }
+  #group-dropdown .group-search-container {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: #fff;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 0.5rem;
+  }
+  #group-dropdown .dropdown-items-container {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  #group-dropdown-button {
+    text-align: left;
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="container">
@@ -83,7 +121,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
     <div class="col-sm-6">
-      <select class="form-select" id="group-select"></select>
+      <!-- Custom searchable dropdown -->
+      <div class="dropdown" id="group-dropdown">
+        <button class="form-select d-flex justify-content-between align-items-center" 
+                type="button" 
+                id="group-dropdown-button" 
+                data-bs-toggle="dropdown" 
+                aria-expanded="false">
+          <span class="selected-group-text">Select a group...</span>
+          <i class="bi bi-chevron-down"></i>
+        </button>
+        <div class="dropdown-menu w-100" id="group-dropdown-menu">
+          <div class="px-2 group-search-container d-none">
+            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search groups..." id="group-search-input">
+          </div>
+          <div class="dropdown-items-container" id="group-dropdown-items" style="max-height: 300px; overflow-y: auto;">
+            <!-- Groups will be populated here -->
+          </div>
+        </div>
+        <!-- Hidden select element for compatibility -->
+        <select class="d-none" id="group-select"></select>
+      </div>
     </div>
     <div class="col-sm-6">
       <!-- Adjusted column size -->
@@ -639,7 +697,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 {% endblock %} {% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
-<script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
+<!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
+ LOCAL VERSION BELOW -->
+<script src="/static/js/simplemde/simplemde.min.js"></script>
+
 <!-- Pass backend flags to JS -->
 <script>
   window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
@@ -878,11 +939,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
     console.log("Fetching user groups...");
     // Add loading state to group selector?
     const sel = document.getElementById("group-select");
-    sel.innerHTML = "<option>Loading groups...</option>";
-    sel.disabled = true;
+    const dropdownButton = document.getElementById("group-dropdown-button");
+    const dropdownItems = document.getElementById("group-dropdown-items");
+    const searchContainer = document.querySelector(".group-search-container");
+
+    // Show loading state
+    dropdownButton.disabled = true;
+    dropdownButton.querySelector(".selected-group-text").textContent = "Loading groups...";
+    dropdownItems.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm" role="status"></div> Loading...</div>';
     document.getElementById("btn-change-group").disabled = true;
 
-    return fetch("/api/groups") // Assuming this endpoint returns the structure { groups: [], ... }
+    // Set a large page_size to get all groups at once
+    return fetch("/api/groups?page_size=1000") // Request up to 1000 groups to avoid pagination
       .then((r) => {
         if (!r.ok) {
           // Handle HTTP errors (like 401, 500)
@@ -898,28 +966,49 @@ app_settings.app_title }} {% endblock %} {% block head %}
         return r.json();
       })
       .then((data) => {
-        // *** FIX IS HERE ***
         // Assign the array from data.groups, or default to empty array
         userGroups = data.groups || [];
-        // *** END FIX ***
 
-        sel.innerHTML = ""; // Clear loading message
+        // Clear loading message
+        sel.innerHTML = ""; 
+        dropdownItems.innerHTML = "";
+        
         const activeGroupNameEl = document.getElementById("active-group-name");
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
         );
 
         let foundActive = false;
+        
+        // Show/hide search based on number of groups
+        if (userGroups.length > 10) {
+          searchContainer.classList.remove("d-none");
+        } else {
+          searchContainer.classList.add("d-none");
+        }
+
         if (userGroups.length === 0) {
+          dropdownItems.innerHTML = '<div class="dropdown-item disabled">No groups found</div>';
           sel.innerHTML = "<option>No groups found</option>";
         } else {
           userGroups.forEach((g) => {
-            // Now userGroups is guaranteed to be an array
+            // Create option for hidden select (compatibility)
             const opt = document.createElement("option");
             opt.value = g.id;
             opt.text = g.name;
+            
+            // Create dropdown item for custom dropdown
+            const dropdownItem = document.createElement("button");
+            dropdownItem.type = "button";
+            dropdownItem.classList.add("dropdown-item");
+            dropdownItem.setAttribute("data-group-id", g.id);
+            dropdownItem.textContent = g.name;
+            dropdownItems.appendChild(dropdownItem);
+
             if (g.isActive) {
               opt.selected = true;
+              dropdownItem.classList.add("active");
+              dropdownButton.querySelector(".selected-group-text").textContent = g.name;
               activeGroupId = g.id;
               userRoleInActiveGroup = g.userRole;
               activeGroupName = g.name;
@@ -927,6 +1016,53 @@ app_settings.app_title }} {% endblock %} {% block head %}
             }
             sel.appendChild(opt);
           });
+
+          // Add click event listeners to dropdown items
+          document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(item => {
+            item.addEventListener("click", function() {
+              const groupId = this.getAttribute("data-group-id");
+              const groupName = this.textContent;
+              
+              // Update hidden select
+              sel.value = groupId;
+              
+              // Update dropdown button text
+              dropdownButton.querySelector(".selected-group-text").textContent = groupName;
+              
+              // Update active state
+              document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(i => {
+                i.classList.remove("active");
+              });
+              this.classList.add("active");
+              
+              // Close dropdown
+              const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownButton);
+              if (dropdownInstance) {
+                dropdownInstance.hide();
+              }
+            });
+          });
+
+          // Initialize search functionality
+          const searchInput = document.getElementById("group-search-input");
+          if (searchInput) {
+            searchInput.addEventListener("input", function() {
+              const searchTerm = this.value.toLowerCase().trim();
+              document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(item => {
+                const groupName = item.textContent.toLowerCase();
+                if (groupName.includes(searchTerm)) {
+                  item.style.display = "";
+                } else {
+                  item.style.display = "none";
+                }
+              });
+            });
+
+            // Stop event propagation to prevent dropdown from closing when clicking on search input
+            searchInput.addEventListener("click", function(e) {
+              e.stopPropagation();
+            });
+          }
         }
 
         if (foundActive) {
@@ -966,10 +1102,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             (err.error || err.message || "Unknown error")
         );
         sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
+        dropdownButton.querySelector(".selected-group-text").textContent = "Error loading groups";
+        dropdownItems.innerHTML = '<div class="dropdown-item disabled">Error loading groups</div>';
       })
       .finally(() => {
         // Re-enable controls after fetch completes
         sel.disabled = false;
+        dropdownButton.disabled = false;
         document.getElementById("btn-change-group").disabled = false;
       });
   }

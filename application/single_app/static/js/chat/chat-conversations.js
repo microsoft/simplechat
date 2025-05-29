@@ -2,7 +2,7 @@
 
 import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
-import { isColorLight } from "./chat-utils.js"; // Assuming you move isColorLight here
+import { isColorLight, toBoolean } from "./chat-utils.js"; // Import toBoolean helper
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const conversationsList = document.getElementById("conversations-list");
@@ -325,11 +325,25 @@ export function selectConversation(conversationId) {
   // Update Header Classifications
   if (currentConversationClassificationsEl) {
     currentConversationClassificationsEl.innerHTML = ""; // Clear previous
-    if (window.enable_document_classification) {
+    
+    // Use the toBoolean helper for consistent checking
+    const isFeatureEnabled = toBoolean(window.enable_document_classification);
+    
+    // Debug line to help troubleshoot
+    console.log("Classification feature enabled:", isFeatureEnabled, 
+                "Raw value:", window.enable_document_classification,
+                "Type:", typeof window.enable_document_classification);
+                            
+    if (isFeatureEnabled) {
       try {
-        const classificationLabels = JSON.parse(convoItem.dataset.classifications || '[]');
+        const classifications = convoItem.dataset.classifications || '[]';
+        console.log("Raw classifications:", classifications);
+        const classificationLabels = JSON.parse(classifications);
+        console.log("Parsed classification labels:", classificationLabels);
+        
         if (Array.isArray(classificationLabels) && classificationLabels.length > 0) {
            const allCategories = window.classification_categories || [];
+           console.log("Available categories:", allCategories);
 
            classificationLabels.forEach(label => {
             const category = allCategories.find(cat => cat.label === label);

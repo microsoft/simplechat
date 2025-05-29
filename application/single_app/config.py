@@ -85,7 +85,9 @@ executor = Executor()
 executor.init_app(app)
 
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
-app.config['VERSION'] = '0.213..032'
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['VERSION'] = '0.215.001'
+Session(app)
 
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
@@ -98,15 +100,27 @@ ALLOWED_EXTENSIONS = {
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
 
+# Add Support for Custom Azure Environments
+CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
+CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
+CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
+
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
-AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
-AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment
+AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
+
+if AZURE_ENVIRONMENT == "custom":
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+
 
 WORD_CHUNK_SIZE = 400
 
@@ -114,19 +128,22 @@ if AZURE_ENVIRONMENT == "usgovernment":
     resource_manager = "https://management.usgovcloudapi.net"
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+elif AZURE_ENVIRONMENT == "custom":
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    authority = CUSTOM_IDENTITY_URL_VALUE
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
 else:
     resource_manager = "https://management.azure.com"
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
 
 bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
-storage_account_user_video_files_container_name = "user-video-files"
-storage_account_group_video_files_container_name = "group-video-files"
-storage_account_user_audio_files_container_name = "user-audio-files"
-storage_account_group_audio_files_container_name = "group-audio-files"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -385,10 +402,32 @@ def initialize_clients(settings):
 
         try:
             if enable_enhanced_citations:
-                CLIENTS["storage_account_office_docs_client"] = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
+                blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
+                CLIENTS["storage_account_office_docs_client"] = blob_service_client
+                
+                # Create containers if they don't exist
+                # This addresses the issue where the application assumes containers exist
+                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                    try:
+                        container_client = blob_service_client.get_container_client(container_name)
+                        if not container_client.exists():
+                            print(f"Container '{container_name}' does not exist. Creating...")
+                            container_client.create_container()
+                            print(f"Container '{container_name}' created successfully.")
+                        else:
+                            print(f"Container '{container_name}' already exists.")
+                    except Exception as container_error:
+                        print(f"Error creating container {container_name}: {str(container_error)}")
+                
+                # Handle video and audio support when enabled
                 # if enable_video_file_support:
-                #     CLIENTS["storage_account_video_files_client"] = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
+                #     video_client = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
+                #     CLIENTS["storage_account_video_files_client"] = video_client
+                #     # Create video containers if needed
+                #
                 # if enable_audio_file_support:
-                #     CLIENTS["storage_account_audio_files_client"] = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
+                #     audio_client = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
+                #     CLIENTS["storage_account_audio_files_client"] = audio_client
+                #     # Create audio containers if needed
         except Exception as e:
             print(f"Failed to initialize Blob Storage clients: {e}")

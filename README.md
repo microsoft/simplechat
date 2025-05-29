@@ -16,7 +16,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ##### Screenshot of the Chat UI
 
-![Chat](./images/chat.png)
+![Chat w/ Dark Mode Enabled](./images/chat.png)
 
 ## Features
 
@@ -213,75 +213,55 @@ Enables detailed logging for the entire file ingestion and processing pipeline, 
 
 Below is a summary of recent additions, reflecting the state as of version `v0.212.91`.
 
-### (v0.212.91)
+Here's a structured changelog entry for version `v0.213.001` following your previous format:
+
+### **(v0.214.001)**
 
 #### New Features
 
-1.  **Audio & Video Processing**
-    *   Integrated Azure Speech Service for audio transcription during ingestion.
-    *   Integrated Azure Video Indexer for video transcription and OCR.
-    *   Added Admin Settings UI for Video Indexer (endpoint, key, locale) and Speech Service (endpoint, key, locale).
-    *   Audio transcripts split into ~400-word chunks; Video content uses timestamp-based chunking.
-2.  **Multi-Model Support**
-    *   Users can select from multiple configured Azure OpenAI GPT deployments at runtime via the chat interface.
-    *   Admin Settings dynamically populate the available model list based on configured endpoints (Direct or APIM).
-3.  **Advanced Chunking Logic**
-    *   **PDF & PPTX**: Page-based chunks via Document Intelligence layout analysis.
-    *   **DOC/DOCX**: ~400-word semantic chunks via Document Intelligence.
-    *   **Images** (`jpg`/`jpeg`/`png`/`bmp`/`tiff`/`tif`/`heif`): Single chunk containing OCR text from Document Intelligence.
-    *   **Plain Text** (`.txt`): ~400-word chunks.
-    *   **HTML**: Hierarchical splitting based on H1–H5 tags, preserving table structure, aiming for 600–1200-word chunks.
-    *   **Markdown** (`.md`): Header-based splitting (H1-H6), preserving table and code-block integrity, aiming for 600–1200-word chunks.
-    *   **JSON**: Recursive splitting using `RecursiveJsonSplitter` (`convert_lists=True`, `max_chunk_size=600`).
-    *   **Tabular** (`CSV`/`XLSX`/`XLS`): Row-based chunks (up to ~800 characters per chunk, including header context), treating sheets as separate logical documents, formulas stripped.
-4.  **Group Workspace Consolidation**
-    *   Unified backend logic for group document handling into `functions_documents.js`.
-    *   Removed redundant code previously in `functions_group_documents.js`.
-5.  **Bulk File Uploads**
-    *   Users can now upload **up to 10 files** simultaneously in a single operation. Ingestion and processing occur in parallel.
-6.  **GPT-Driven Metadata Extraction**
-    *   Admins can select a specific GPT model via Admin Settings to power automatic metadata extraction (keywords, summary, inferred author/date).
-    *   Newly uploaded documents are processed by the chosen model.
-7.  **Advanced Document Classification**
-    *   Admins can define multiple classification fields, each with custom **color-coded labels**.
-    *   Classification metadata is stored per document and used for filtering and display.
-8.  **Contextual Classification Propagation**
-    *   When a document with classification tags is used as a source in RAG, its tags are automatically displayed within the chat context, providing visibility into the nature of the referenced information.
-9.  **Chat UI Enhancements**
-    *   Conversation history menu is now **left-docked** for persistent navigation.
-    *   Conversation titles are **editable inline** directly in the left pane (changes sync with the main chat view).
-    *   Streamlined **new chat** creation: automatically starts when user types a message, selects a prompt, or uploads a file if no chat is active.
-    *   User-defined **custom prompts** are surfaced more clearly within the message input area.
-10.  **Semantic Reranking & Extractive Answers**
-     * Switched to semantic queries (`query_type="semantic"`) on both user and group indexes. 
-     * Enabled extractive highlights (`query_caption="extractive"`) to surface the most relevant snippet in each hit.  
-     * Enabled extractive answers (`query_answer="extractive"`) so the engine returns a concise, context-rich response directly from the index.  
-     * Automatically falls back to full-text search (`query_type="full"`, `search_mode="all"`) whenever no literal match is found, ensuring precise retrieval of references or other exact phrases.
+*   **Dark Mode Support**
+    *   Added full dark mode theming with support for:
+        *   Chat interface (left and right panes)
+        *   File metadata panels
+        *   Dropdowns, headers, buttons, and classification tables
+    *   User preferences persist across sessions.
+    *   Dark mode toggle in navbar with text labels and styling fixes (no flash during navigation).
+*   **Admin Management Enhancements**
+    *   **First-Time Configuration Wizard**: Introduced a guided setup wizard on the Admin Settings page. This wizard simplifies the initial configuration process for application basics (title, logo), GPT API settings, workspace settings, additional services (Embedding, AI Search, Document Intelligence), and optional features. (Ref: `README.md`, `admin_settings.js`, `admin_settings.html`)
+    *   Admin Settings UI updated to show application version check status, comparing against the latest GitHub release. (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`)
+    *   Added `logout_hint` parameter to resolve multi-identity logout errors.
+    *   Updated favicon and admin settings layout for improved clarity and usability.
+*   **UI Banner & Visual Updates**
+    *   **Enhanced Document Dropdown (Chat Interface)**: The document selection dropdown in the chat interface has been significantly improved:
+        *   Increased width and scrollability for better handling of numerous documents.
+        *   Client-side search/filter functionality added to quickly find documents.
+        *   Improved visual feedback, including a "no matches found" message. (Ref: `chats.css`, `chat-documents.js`, `chats.html`)
+    *   New top-of-page banner added (configurable).
+    *   Local CSS/JS used across admin, group, and user workspaces for consistency and performance.
+    *   Updated `base.html` and `workspace.html` to reflect visual improvements.
+*   **Application Setup & Configuration**
+    *   **Automatic Storage Container Creation**: The application now attempts to automatically create the `user-documents` and `group-documents` Azure Storage containers during initialization if they are not found, provided "Enhanced Citations" are enabled and a valid storage connection string is configured. Manual creation as per documentation is still the recommended primary approach. (Ref: `config.py`)
+    *   Updated documentation for Azure Storage Account setup, including guidance for the new First-Time Configuration Wizard. (Ref: `README.md`)
+*   **Security Improvements**
+    *   Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
+    *   Enhanced security for loading AI Search index schema JSON files by implementing path validation and using `secure_filename` in backend settings. (Ref: `route_backend_settings.py`)
+*   **Build & Deployment**
+    *   Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
+    *   Updated Dockerfile to use Python 3.12.
+*   **Version Enforcement**
+    *   GitHub workflow `enforce-dev-to-main.yml` added to prevent pull requests to `main` unless from `development`.
 
 #### Bug Fixes
 
-1. **Azure AI Search Index Migration**
-      - Implemented automatic schema updates: on every Admin page load, the application checks for and adds any **missing fields** (e.g., `author`, `chunk_keywords`, `document_classification`, `page_number`, `start_time`, `video_ocr_chunk_text`, etc.) to both user and group indexes using the Azure AI Search SDK.
-      - Corrected SDK usage (using `SearchIndexClient.create_or_update_index`) to update index schema without requiring a full index rebuild.
-2. **User & Group Management**
-   *   Resolved a **401 error** occurring when searching for users to add to a group by implementing `SerializableTokenCache` in MSAL tied to the Flask session, ensuring proper token acquisition and refresh (`acquire_token_by_authorization_code`, `_save_cache`, `acquire_token_silent`).
-   *   Restored missing **metadata extraction** and **classification** initiation buttons within the Group Workspace UI.
-   *   Updated role descriptions in Admin settings for clarity and published an OpenAPI specification (`/api/`).  
-3. **Conversation Flow & UI**
-   *   Ensured a new conversation is **auto-created** upon first user interaction (typing, prompt selection, file upload) if none is active.
-   *   Enabled **custom logo persistence** across application restarts by storing the logo as Base64 in Cosmos DB (constraints: max 100px height, ≤ 500 KB).
-   *   Fixed CSS to prevent uploaded file previews from **overflowing** the chat input area.
-   *   Ensured conversation title changes in the left pane sync automatically **without** requiring a manual refresh.
-   *   Corrected JavaScript errors related to `loadConversations()` in `chat-input-actions.js`.
-   *   Fixed feedback button behavior and ensured selecting a prompt correctly sends the full prompt content.
-   *   Included original `search_query` & `user_message` in Azure AI Search request telemetry for better logging.
-   *   Ensured existing documents correctly display processing status (`percent_complete`) instead of appearing “Not Available”.
-   *   Added support for **Unicode characters** (e.g., Japanese) in text file chunking logic.
-4. **Miscellaneous Fixes**
-   *   Fixed JavaScript error `loadConversations is not defined` occurring during file uploads.
-   *   Ensured classification labels are not displayed in the documents list or title area if the feature is disabled.
-   *   Selecting a prompt or uploading a file now reliably creates a new conversation if one doesn't exist.
-   *   Corrected an error related to "new categories" by seeding missing nested settings configurations with defaults on application startup.
+*   **A. Document Processing**
+    *   **Document Deletion**: Resolved an issue where documents were not properly deleted from Azure Blob Storage. Now, when a document is deleted from the application, its corresponding blob is also removed from the `user-documents` or `group-documents` container if enhanced citations are enabled. (Ref: `functions_documents.py`)
+    *   **Configuration Validation (Enhanced Citations)**: Added validation in Admin Settings to ensure that if "Enhanced Citations" is enabled, the "Office Docs Storage Account Connection String" is also provided. If the connection string is missing, Enhanced Citations will be automatically disabled, and a warning message will be displayed to the admin, preventing silent failures. (Ref: `route_frontend_admin_settings.py`)
+*   **C. UI & Usability**
+    *   **Local Assets for SimpleMDE**: The SimpleMDE Markdown editor assets (JS/CSS) are now served locally from `/static/js/simplemde/` and `/static/css/simplemde.min.css` instead of a CDN. This improves page load times, reduces external dependencies, and allows for use in offline or air-gapped environments. (Ref: `simplemde.min.js`, `simplemde.min.css` additions, template updates in `group_workspaces.html`, `workspace.html`)
+    *   General CSS cleanups across admin and workspace UIs.
+*   **D. General Stability**
+    *   Merged contributions from multiple devs including UI fixes, backend updates, and config changes.
+    *   Removed unused video/audio container declarations for a leaner frontend.
 
 ## Release Notes
 
@@ -476,6 +456,8 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   **Enable hierarchical namespace** (Azure Data Lake Storage Gen2) is recommended for better organization if storing large volumes.
     *   Review Networking, Data protection, Encryption settings.
     *   Note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
+    *   After deployment, note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
+    *   Navigate to **Data Storage** > **Containers** > **+ Container**. Add two new containers - `user-documents` and `group-documents
 12. **Deploy Azure Cache for Redis (Optional)**:
     *   Create an **Azure Cache for Redis service**.
     *   **Cache SKU**: Standard.
@@ -486,7 +468,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   **Authentication**: 
     *    - If using keys, turn on Access Keys and note the primary key
     *    - If using managed identities, enable Entra Authentication and select the app service managed identity 
-    *   NOTE: The Redis service can take 15-30 minutes to fully deploy
+    *   NOTE: The Redis service can take 15-30 minutes to fully deploy`
 
 ### Application-Specific Configuration Steps
 
@@ -649,7 +631,7 @@ Core configuration values are managed via environment variables, typically set i
     # SECRET_KEY should be a long, random, secret string (e.g., 32+ chars) used for Flask session signing. Generate one securely.
     SECRET_KEY="Generate-A-Strong-Random-Secret-Key-Here!"
     # AZURE_ENVIRONMENT: Set based on your cloud environment
-    # Options: "public", "usgovernment"
+    # Options: "public", "usgovernment", "custom"
     AZURE_ENVIRONMENT="public"
     ```
     
@@ -668,7 +650,17 @@ Core configuration values are managed via environment variables, typically set i
     *   To verify or synchronize settings from Azure back to a local `.env` file:
     *   Press `Ctrl+Shift+P`, type `Azure App Service: Download Remote Settings`, select your App Service, and choose where to save the file (e.g., overwrite your local `.env`). This is useful to capture settings automatically added by Azure (like `APPLICATIONINSIGHTS_CONNECTION_STRING` or `WEBSITE_AUTH_AAD_ALLOWED_TENANTS`).
 
-    ![Download remote settings command](./images/download_remote_settings.png) 
+    ![Download remote settings command](./images/download_remote_settings.png)
+
+5.  **First-Time Configuration Wizard**:
+    *   When you first access the admin settings page, a configuration wizard will guide you through the required and optional settings.
+    *   The wizard will help you configure:
+        *   **Application basics**: Title and logo customization
+        *   **GPT API settings**: Configure Azure OpenAI endpoints and models
+        *   **Workspace settings**: Enable personal and group workspaces
+        *   **Additional services**: Configure embedding, AI Search, Document Intelligence, and other required services
+        *   **Optional features**: Content safety, user feedback, conversation archiving, and other optional features
+    *   Required settings are clearly marked, ensuring that you configure all necessary components for your deployment scenario.
 
 #### Alternate Method: Update App Settings via JSON (Advanced)
 
@@ -701,7 +693,7 @@ You can directly edit Application Settings in the Azure portal using the "Advanc
     { "name": "CLIENT_ID", "value": "<your-app-registration-client-id>", "slotSetting": false },
     { "name": "TENANT_ID", "value": "<your-azure-ad-tenant-id>", "slotSetting": false },
     { "name": "SECRET_KEY", "value": "<your-flask-secret-key>", "slotSetting": false },
-    { "name": "AZURE_ENVIRONMENT", "value": "public", "slotSetting": false }, // or "usgovernment"
+    { "name": "AZURE_ENVIRONMENT", "value": "public", "slotSetting": false }, // or "usgovernment", or "custom"
     { "name": "BING_SEARCH_ENDPOINT", "value": "https://api.bing.microsoft.com/", "slotSetting": false },
 
     // --- Build & Runtime Settings ---

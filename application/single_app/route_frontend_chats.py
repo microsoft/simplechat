@@ -204,6 +204,12 @@ def register_route_frontend_chats(app):
                 f"/{container_client.container_name}/{blob_name}?{sas_token}"
             )
 
+        if AZURE_ENVIRONMENT == "custom":
+            signed_url = (
+                f"https://{blob_service_client.account_name}.{CUSTOM_BLOB_STORAGE_URL_VALUE}"
+                f"/{container_client.container_name}/{blob_name}?{sas_token}"
+            )
+
         # 4) Download the PDF from Azure to a temp file (or you can use in-memory BytesIO)
         random_uuid = str(uuid.uuid4())
         temp_pdf_path = f"temp_file_{random_uuid}.pdf"
@@ -347,7 +353,8 @@ def register_route_frontend_chats(app):
             endpoint_suffix = "blob.core.windows.net"
             if AZURE_ENVIRONMENT == "usgovernment":
                  endpoint_suffix = "blob.core.usgovcloudapi.net"
-            # Add other environments if needed (e.g., China)
+            if AZURE_ENVIRONMENT == "custom":
+                endpoint_suffix = CUSTOM_BLOB_STORAGE_URL_VALUE
 
             signed_url = (
                 f"https://{storage_account_name}.{endpoint_suffix}"
