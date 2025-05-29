@@ -289,7 +289,7 @@ def register_route_backend_public_documents(app):
             if not file.filename:
                 upload_errors.append(f"Skipped a file with no name.")
                 continue
-            
+
             original_filename = file.filename
             safe_suffix_filename = secure_filename(original_filename)
             file_ext = os.path.splitext(safe_suffix_filename)[1].lower()
@@ -303,49 +303,67 @@ def register_route_backend_public_documents(app):
                 continue
 
             parent_document_id = str(uuid.uuid4())
+            temp_file_path = None
 
             try:
-                # Save file temporarily
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
-                file.save(temp_file.name)
-                temp_file.close()
-                
-                # Process the document upload using existing functions_documents.py logic
-                if file_ext in ['.pdf', '.txt', '.md', '.html', '.docx', '.xlsx', '.xls', '.csv', '.pptx', '.json']:
-                    # Text-based documents
-                    process_document_upload_background.delay(
-                        document_id=parent_document_id,
-                        user_id=user_id,
-                        temp_file_path=temp_file.name,
-                        original_filename=original_filename,
-                        group_id=active_public_workspace_id
-                    )
-                else:
-                    # Media files (images, videos, audio)
-                    process_document_upload_background.delay( 
-                        document_id=parent_document_id,
-                        user_id=user_id,
-                        temp_file_path=temp_file.name,
-                        original_filename=original_filename,
-                        group_id=active_public_workspace_id
-                    )
-                
-                processed_docs.append({
-                    'document_id': parent_document_id,
-                    'filename': original_filename
-                })
-                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+                    file.save(tmp_file.name)
+                    temp_file_path = tmp_file.name
             except Exception as e:
                 upload_errors.append(f"Failed to save temporary file for {original_filename}: {e}")
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
                 continue
 
-        # Return response similar to group documents upload
+            try:
+                create_public_document(
+                    file_name=original_filename,
+                    public_workspace_id=active_public_workspace_id,
+                    user_id=user_id,
+                    document_id=parent_document_id,
+                    num_file_chunks=0,
+                    status="Queued for processing"
+                )
+
+                update_public_document(
+                    document_id=parent_document_id,
+                    user_id=user_id,
+                    public_workspace_id=active_public_workspace_id,
+                    percentage_complete=0
+                )
+
+                future = executor.submit(
+                    process_document_upload_background,
+                    document_id=parent_document_id,
+                    group_id=active_public_workspace_id,
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
+                    original_filename=original_filename
+                )
+                executor.submit_stored(
+                    parent_document_id, 
+                    process_document_upload_background, 
+                    document_id=parent_document_id, 
+                    group_id=active_public_workspace_id, 
+                    user_id=user_id, 
+                    temp_file_path=temp_file_path, 
+                    original_filename=original_filename
+                )
+
+                processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
+
+            except Exception as e:
+                upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+
         response_status = 200 if processed_docs and not upload_errors else 207
         if not processed_docs and upload_errors:
             response_status = 400
 
         return jsonify({
-            'message': f'Processed {len(processed_docs)} document(s) for upload',
+            'message': f'Processed {len(processed_docs)} file(s). Check status periodically.',
             'document_ids': [doc['document_id'] for doc in processed_docs],
+            'processed_filenames': [doc['filename'] for doc in processed_docs],
             'errors': upload_errors
         }), response_status

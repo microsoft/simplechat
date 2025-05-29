@@ -146,3 +146,189 @@ def is_user_manager_in_public_workspace(workspace_doc, user_id):
         return True
         
     return False
+
+
+def create_public_document(file_name, user_id, document_id, num_file_chunks, status, public_workspace_id):
+    """
+    Create a document record in the public documents container.
+    Similar to create_document but for public workspaces.
+    """
+    from datetime import datetime, timezone
+    from functions_logging import add_file_task_to_file_processing_log
+    
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Check for existing documents with same name in this public workspace
+    query = """
+        SELECT * 
+        FROM c
+        WHERE c.file_name = @file_name 
+            AND c.public_workspace_id = @public_workspace_id
+    """
+    parameters = [
+        {"name": "@file_name", "value": file_name},
+        {"name": "@public_workspace_id", "value": public_workspace_id}
+    ]
+
+    try:
+        existing_document = list(
+            cosmos_public_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            )
+        )
+        version = existing_document[0]['version'] + 1 if existing_document else 1
+        
+        document_metadata = {
+            "id": document_id,
+            "file_name": file_name,
+            "num_chunks": 0,
+            "number_of_pages": 0,
+            "current_file_chunk": 0,
+            "num_file_chunks": num_file_chunks,
+            "upload_date": current_time,
+            "last_updated": current_time,
+            "version": version,
+            "status": status,
+            "percentage_complete": 0,
+            "document_classification": "Pending",
+            "type": "document_metadata",
+            "public_workspace_id": public_workspace_id
+        }
+
+        cosmos_public_documents_container.upsert_item(document_metadata)
+
+        add_file_task_to_file_processing_log(
+            document_id,
+            user_id,
+            f"Public document {file_name} created in workspace {public_workspace_id}."
+        )
+
+    except Exception as e:
+        print(f"Error creating public document: {e}")
+        raise
+
+
+def update_public_document(**kwargs):
+    """
+    Update a document record in the public documents container.
+    Similar to update_document but for public workspaces.
+    """
+    from datetime import datetime, timezone
+    from functions_logging import add_file_task_to_file_processing_log
+    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    import json
+    
+    document_id = kwargs.get('document_id')
+    user_id = kwargs.get('user_id')
+    public_workspace_id = kwargs.get('public_workspace_id')
+    num_chunks_increment = kwargs.pop('num_chunks_increment', 0)
+
+    if not document_id or not user_id or not public_workspace_id:
+        print("Error: document_id, user_id and public_workspace_id are required for update_public_document")
+        raise ValueError("document_id, user_id and public_workspace_id are required")
+
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    query = """
+        SELECT * 
+        FROM c
+        WHERE c.id = @document_id 
+            AND c.public_workspace_id = @public_workspace_id
+    """
+    parameters = [
+        {"name": "@document_id", "value": document_id},
+        {"name": "@public_workspace_id", "value": public_workspace_id}
+    ]
+    
+    add_file_task_to_file_processing_log(
+        document_id=document_id, 
+        user_id=user_id, 
+        content=f"Query is {query}, parameters are {parameters}."
+    )
+
+    try:
+        existing_documents = list(
+            cosmos_public_documents_container.query_items(
+                query=query, 
+                parameters=parameters, 
+                enable_cross_partition_query=True
+            )
+        )
+
+        status = kwargs.get('status', '')
+
+        if status:
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=user_id,
+                content=f"Status: {status}"
+            )
+
+        if not existing_documents:
+            log_msg = f"Public document {document_id} not found for workspace {public_workspace_id} during update."
+            print(log_msg)
+            add_file_task_to_file_processing_log(
+                document_id=document_id, 
+                user_id=user_id, 
+                content=log_msg
+            )
+            raise CosmosResourceNotFoundError(
+                message=f"Public document {document_id} not found",
+                status=404
+            )
+
+        existing_document = existing_documents[0]
+        original_percentage = existing_document.get('percentage_complete', 0)
+
+        # Apply updates from kwargs
+        update_occurred = False
+
+        if num_chunks_increment > 0:
+            current_num_chunks = existing_document.get('num_chunks', 0)
+            existing_document['num_chunks'] = current_num_chunks + num_chunks_increment
+            update_occurred = True
+            add_file_task_to_file_processing_log(
+                document_id=document_id, 
+                user_id=user_id,  
+                content=f"Incrementing num_chunks by {num_chunks_increment} to {existing_document['num_chunks']}"
+            )
+
+        for key, value in kwargs.items():
+            if value is not None and existing_document.get(key) != value:
+                if key == 'num_chunks' and num_chunks_increment > 0:
+                    continue
+                existing_document[key] = value
+                update_occurred = True
+
+        # Handle timestamps and percentage if update occurred
+        if update_occurred:
+            existing_document['last_updated'] = current_time
+
+            # Handle percentage completion based on status
+            status_lower = existing_document.get('status', '')
+            if isinstance(status_lower, str):
+                status_lower = status_lower.lower()
+            elif isinstance(status_lower, bytes):
+                status_lower = status_lower.decode('utf-8').lower()
+            elif isinstance(status_lower, dict):
+                status_lower = json.dumps(status_lower).lower()
+
+            if "processing complete" in status_lower:
+                existing_document['percentage_complete'] = 100
+            elif "error" in status_lower or "failed" in status_lower:
+                existing_document['percentage_complete'] = 0
+
+            # Update the document in Cosmos
+            cosmos_public_documents_container.upsert_item(existing_document)
+
+            add_file_task_to_file_processing_log(
+                document_id=document_id, 
+                user_id=user_id,
+                content=f"Public document updated successfully."
+            )
+
+    except Exception as e:
+        print(f"Error updating public document: {e}")
+        raise
