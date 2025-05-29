@@ -55,8 +55,21 @@ def register_route_backend_public_workspaces(app):
         user_id = info["userId"]
 
         # pagination
-        page = max(int(request.args.get("page", 1)), 1)
-        page_size = max(int(request.args.get("page_size", 10)), 1)
+        # safe parsing of page / page_size
+        try:
+            page = int(request.args.get("page", 1))
+            if page < 1:
+                page = 1
+        except (ValueError, TypeError):
+            page = 1
+
+        try:
+            page_size = int(request.args.get("page_size", 10))
+            if page_size < 1:
+                page_size = 10
+        except (ValueError, TypeError):
+            page_size = 10
+            
         offset = (page - 1) * page_size
 
         search_term = request.args.get("search", "").strip()
