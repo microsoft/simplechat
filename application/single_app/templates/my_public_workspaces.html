@@ -65,18 +65,59 @@
 </div>
 
 <!-- Create Public Workspace Modal -->
-<div class="modal fade" id="createPublicWorkspaceModal" tabindex="-1">
+<div class="modal fade" id="createPublicWorkspaceModal" tabindex="-1" aria-labelledby="createPublicWorkspaceModalLabel" aria-hidden="true">
   <div class="modal-dialog">
     <form id="createPublicWorkspaceForm">
-      <!-- similar to createGroupModal, but IDs renamed  -->
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="createPublicWorkspaceModalLabel">Create a New Public Workspace</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="publicWorkspaceName" class="form-label">Workspace Name</label>
+            <input type="text" class="form-control" id="publicWorkspaceName" required />
+          </div>
+          <div class="mb-3">
+            <label for="publicWorkspaceDescription" class="form-label">Description</label>
+            <textarea class="form-control" id="publicWorkspaceDescription"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" id="createPublicWorkspaceSubmitBtn" class="btn btn-primary">Create</button>
+        </div>
+      </div>
     </form>
   </div>
 </div>
 
 <!-- Find Public Workspace Modal -->
-<div class="modal fade" id="findPublicWorkspaceModal" tabindex="-1">
+<div class="modal fade" id="findPublicWorkspaceModal" tabindex="-1" aria-labelledby="findPublicWorkspaceModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg">
-    <!-- similar to findGroupModal -->
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="findPublicWorkspaceModalLabel">Find a Public Workspace</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group mb-2">
+          <input type="text" class="form-control" id="globalWorkspaceSearchInput" placeholder="Search all public workspaces..."/>
+          <button class="btn btn-outline-secondary" type="button" id="globalWorkspaceSearchBtn">Search</button>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover" id="globalWorkspaceResultsTable">
+            <thead><tr><th>Name</th><th>Description</th><th>Actions</th></tr></thead>
+            <tbody>
+                <tr><td colspan="3" class="text-center text-muted">Enter a name and click Search.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

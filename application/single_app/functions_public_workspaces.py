@@ -20,7 +20,7 @@ def create_public_workspace(name: str, description: str) -> dict:
         "name": name,
         "description": description,
         "owner": {
-            "id": user_info["userId"],
+            "userId": user_info["userId"],
             "email": user_info["email"],
             "displayName": user_info["displayName"]
         },
@@ -53,7 +53,7 @@ def get_user_public_workspaces(user_id: str) -> list:
     """
     query = """
         SELECT * FROM c
-        WHERE c.owner.id = @uid
+        WHERE c.owner.userId = @uid
            OR ARRAY_CONTAINS(c.admins, @uid)
            OR EXISTS (
                SELECT VALUE dm
@@ -75,7 +75,7 @@ def search_public_workspaces(search_query: str, user_id: str) -> list:
     """
     base_query = """
         SELECT * FROM c
-        WHERE (c.owner.id = @uid
+        WHERE (c.owner.userId = @uid
             OR ARRAY_CONTAINS(c.admins, @uid)
             OR EXISTS (
                 SELECT VALUE dm
@@ -112,7 +112,7 @@ def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
     """
     if not ws_doc:
         return None
-    if ws_doc.get("owner", {}).get("id") == user_id:
+    if ws_doc.get("owner", {}).get("userId") == user_id:
         return "Owner"
     if user_id in ws_doc.get("admins", []):
         return "Admin"

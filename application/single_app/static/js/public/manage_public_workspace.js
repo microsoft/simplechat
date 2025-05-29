@@ -160,7 +160,7 @@ function loadWorkspaceInfo(callback) {
       `);
 
       // Determine role
-      if (userId === owner.id) {
+      if (userId === owner.userId) {
         currentUserRole = "Owner";
       } else if (admins.includes(userId)) {
         currentUserRole = "Admin";
