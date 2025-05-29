@@ -521,15 +521,19 @@ LOCAL VERSION BELOW
   // --- Core Functions ---
 
   function initializeWorkspace() {
-    // Step 1: Get and render Public Workspaces in dropdown
-    fetchAndRenderPublicWorkspaces();
-
-    // Step 2: Check for workspace_id in URL
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has("workspace_id")) {
-      const workspaceIdFromUrl = urlParams.get("workspace_id");
-      setActivePublicWorkspace(workspaceIdFromUrl);
-    }
+    // Step 1: Get and render Public Workspaces in dropdown, then handle URL params
+    fetchAndRenderPublicWorkspaces()
+      .then(() => {
+        // Step 2: Check for workspace_id in URL after workspaces are loaded
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has("workspace_id")) {
+          const workspaceIdFromUrl = urlParams.get("workspace_id");
+          setActivePublicWorkspace(workspaceIdFromUrl);
+        }
+      })
+      .catch((error) => {
+        console.error("Error during workspace initialization:", error);
+      });
 
     // Step 3: Setup tab switching behavior
     setupTabSwitching();
@@ -669,7 +673,7 @@ LOCAL VERSION BELOW
   }
 
   function fetchAndRenderPublicWorkspaces() {
-    fetch("/api/public_workspaces", {
+    return fetch("/api/public_workspaces", {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -683,6 +687,7 @@ LOCAL VERSION BELOW
       })
       .catch((error) => {
         console.error("Error fetching public workspaces:", error);
+        throw error; // Re-throw to allow caller to handle
       });
   }
 

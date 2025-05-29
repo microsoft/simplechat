@@ -355,7 +355,7 @@ def register_route_backend_public_documents(app):
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
 
             except Exception as e:
-                upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
+                upload_errors.append(f"Failed to queue processing for {original_filename}: {str(e)}")
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
