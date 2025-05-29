@@ -16,6 +16,18 @@ def register_route_frontend_public_workspaces(app):
         settings = get_settings()
         public_settings = sanitize_settings_for_user(settings)
         user_settings = get_user_settings(user_id)
+        
+        # Check if workspace_id is provided in URL query parameter
+        workspace_id_param = request.args.get('workspace_id')
+        if workspace_id_param:
+            # Validate the workspace exists and user has access
+            workspace_doc = find_public_workspace_by_id(workspace_id_param)
+            if workspace_doc:
+                # Set this as the active workspace for the user
+                update_active_public_workspace_for_user(workspace_id_param)
+                # Update user_settings to reflect the new active workspace
+                user_settings = get_user_settings(user_id)
+        
         active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid")
         enable_document_classification = settings.get('enable_document_classification', False)
         enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
@@ -29,7 +41,7 @@ def register_route_frontend_public_workspaces(app):
         query = """
             SELECT VALUE COUNT(1) 
             FROM c 
-            WHERE c.group_id = @public_workspace_id 
+            WHERE c.public_workspace_id = @public_workspace_id 
                 AND NOT IS_DEFINED(c.percentage_complete)
         """
         parameters = [
