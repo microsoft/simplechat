@@ -55,7 +55,8 @@ def before_first_request():
             if redis_auth_type == 'managed_identity':
                 print("Redis enabled using Managed Identity")
                 credential = DefaultAzureCredential()
-                token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid")  # Replace * as needed
+                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
+                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
                 app.config['SESSION_REDIS'] = Redis(
                     host=redis_url,
                     port=6380,
