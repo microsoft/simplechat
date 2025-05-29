@@ -746,6 +746,10 @@ LOCAL VERSION BELOW
             userRoleInActivePublicWorkspace = active.userRole;
             foundActive = true;
             
+            // Debug logging for role detection
+            console.log("DEBUG: Active workspace found:", active);
+            console.log("DEBUG: User role in active workspace:", userRoleInActivePublicWorkspace);
+            
             // Update UI
             if (activePublicWorkspaceNameEl) {
               activePublicWorkspaceNameEl.textContent = activePublicWorkspaceName;
@@ -973,6 +977,9 @@ LOCAL VERSION BELOW
       const statusClass = status === "Processing complete" || status === "Complete" 
         ? "text-success" : "text-warning";
       const canEdit = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActivePublicWorkspace);
+      
+      // Debug logging for button visibility
+      console.log(`DEBUG: Document ${doc.file_name} - canEdit: ${canEdit}, userRole: ${userRoleInActivePublicWorkspace}`);
       
       html += `
         <tr data-document-id="${doc.id}" class="document-row">

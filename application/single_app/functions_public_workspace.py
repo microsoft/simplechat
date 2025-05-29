@@ -97,13 +97,30 @@ def get_user_role_in_public_workspace(workspace_doc, user_id):
     if not workspace_doc:
         return None
 
-    if workspace_doc.get("owner", {}).get("id") == user_id:
+    # Debug logging to understand role detection issues
+    owner_id = workspace_doc.get("owner", {}).get("id")
+    admins = workspace_doc.get("admins", [])
+    doc_managers = workspace_doc.get("documentManagers", [])
+    
+    print(f"DEBUG: Role check for user {user_id} (type: {type(user_id)})")
+    print(f"DEBUG: Owner ID: {owner_id} (type: {type(owner_id)})")
+    print(f"DEBUG: Admins: {admins}")
+    print(f"DEBUG: Document Managers: {doc_managers}")
+    print(f"DEBUG: Owner comparison: {user_id} == {owner_id} -> {user_id == owner_id}")
+    print(f"DEBUG: Admin check: {user_id} in {admins} -> {user_id in admins}")
+    print(f"DEBUG: DocManager check: {user_id} in {doc_managers} -> {user_id in doc_managers}")
+
+    if owner_id == user_id:
+        print(f"DEBUG: User {user_id} is Owner")
         return "Owner"
-    elif user_id in workspace_doc.get("admins", []):
+    elif user_id in admins:
+        print(f"DEBUG: User {user_id} is Admin")
         return "Admin"
-    elif user_id in workspace_doc.get("documentManagers", []):
+    elif user_id in doc_managers:
+        print(f"DEBUG: User {user_id} is DocumentManager")
         return "DocumentManager"
 
+    print(f"DEBUG: User {user_id} has no role (returning None)")
     return None
 
 
