@@ -756,15 +756,29 @@ LOCAL VERSION BELOW
               activePublicWorkspaceNameRoleEl.textContent = activePublicWorkspaceName;
             }
             
+            // Update role display immediately
+            updateRoleDisplay();
+            
             // Load data for the active workspace
             loadActivePublicWorkspaceData();
           }
         }
 
         if (!foundActive) {
+          // Reset role and UI when no active workspace
+          userRoleInActivePublicWorkspace = null;
+          activePublicWorkspaceId = null;
+          activePublicWorkspaceName = "";
+          
           activePublicWorkspaceNameEl.style.display = "none";
           activePublicWorkspaceNameDropdownEl.style.display = "inline";
           document.getElementById("user-role-display").style.display = "none";
+          
+          // Hide upload button when no active workspace
+          const uploadContainer = document.getElementById("publicDocsUploadBtnContainer");
+          if (uploadContainer) {
+            uploadContainer.style.display = "none";
+          }
           
           if (publicDocumentsTableBody) {
             publicDocumentsTableBody.innerHTML = 
@@ -795,44 +809,34 @@ LOCAL VERSION BELOW
         return response.json();
       })
       .then(() => {
-        const selectedWorkspace = publicWorkspaces.find(w => w.id === workspaceId);
-        if (selectedWorkspace) {
-          activePublicWorkspaceId = workspaceId;
-          activePublicWorkspaceName = selectedWorkspace.name;
-          
-          activePublicWorkspaceNameEl.textContent = activePublicWorkspaceName;
-          activePublicWorkspaceNameEl.style.display = "inline";
-          activePublicWorkspaceNameDropdownEl.style.display = "none";
-          
-          // Fetch public workspace details to determine user's role
-          fetch(`/api/public_workspaces/${workspaceId}`, {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-            },
-          })
-            .then(response => response.json())
-            .then(workspace => {
-              // Get current user ID from sessionStorage (set on login)
-              const userId = sessionStorage.getItem("userId");
+        // After setting active, refresh the user's workspace list to get the updated role info
+        fetch("/api/public_workspaces/my", {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        })
+          .then((response) => response.json())
+          .then((userWorkspaces) => {
+            const activeWorkspace = userWorkspaces.find(w => w.id === workspaceId);
+            if (activeWorkspace) {
+              activePublicWorkspaceId = workspaceId;
+              activePublicWorkspaceName = activeWorkspace.name;
+              userRoleInActivePublicWorkspace = activeWorkspace.userRole;
               
-              // Determine role based on the returned workspace data
-              if (workspace.owner && workspace.owner.id === userId) {
-                userRoleInActivePublicWorkspace = "Owner";
-              } else if (workspace.admins && workspace.admins.includes(userId)) {
-                userRoleInActivePublicWorkspace = "Admin";
-              } else if (workspace.documentManagers && workspace.documentManagers.includes(userId)) {
-                userRoleInActivePublicWorkspace = "DocumentManager";
-              } else {
-                userRoleInActivePublicWorkspace = null;
-              }
+              activePublicWorkspaceNameEl.textContent = activePublicWorkspaceName;
+              activePublicWorkspaceNameEl.style.display = "inline";
+              activePublicWorkspaceNameDropdownEl.style.display = "none";
+              
+              // Update role display immediately after setting
+              updateRoleDisplay();
               
               loadActivePublicWorkspaceData();
-            })
-            .catch(error => {
-              console.error("Error fetching public workspace details:", error);
-            });
-        }
+            }
+          })
+          .catch(error => {
+            console.error("Error fetching updated workspace list:", error);
+          });
       })
       .catch((error) => {
         console.error("Error setting active public workspace:", error);
@@ -858,9 +862,8 @@ LOCAL VERSION BELOW
     } else if (targetId === "#prompts-tab") {
       fetchPublicPrompts();
     }
-    // Update UI elements dependent on role (applies to both tabs potentially)
-    updateRoleDisplay();
-    updatePublicPromptsRoleUI(); // This is specific to prompts tab UI elements
+    // Update role-dependent UI elements for prompts tab
+    updatePublicPromptsRoleUI();
   }
 
   function updateRoleDisplay() {
