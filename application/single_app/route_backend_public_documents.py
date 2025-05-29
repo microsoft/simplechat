@@ -335,19 +335,19 @@ def register_route_backend_public_documents(app):
                 future = executor.submit(
                     process_document_upload_background,
                     document_id=parent_document_id,
-                    group_id=active_public_workspace_id,
                     user_id=user_id,
                     temp_file_path=temp_file_path,
-                    original_filename=original_filename
+                    original_filename=original_filename,
+                    public_workspace_id=active_public_workspace_id
                 )
                 executor.submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
-                    group_id=active_public_workspace_id, 
                     user_id=user_id, 
                     temp_file_path=temp_file_path, 
-                    original_filename=original_filename
+                    original_filename=original_filename,
+                    public_workspace_id=active_public_workspace_id
                 )
 
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})

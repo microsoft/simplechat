@@ -2807,13 +2807,14 @@ def process_audio_document(
 
 
 
-def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None):
+def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
     Integrates enhanced citations (blob upload) for all supported types.
     """
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
     settings = get_settings()
     enable_enhanced_citations = settings.get('enable_enhanced_citations', False) # Default to False if missing
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False) # Used by DI flow
@@ -2831,10 +2832,15 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             **kwargs  # includes any dynamic update fields
         }
 
-        if is_group:
+        if is_public_workspace:
+            from functions_public_workspace import update_public_document
+            args["public_workspace_id"] = public_workspace_id
+            update_public_document(**args)
+        elif is_group:
             args["group_id"] = group_id
-
-        update_document(**args)
+            update_document(**args)
+        else:
+            update_document(**args)
 
 
     total_chunks_saved = 0
