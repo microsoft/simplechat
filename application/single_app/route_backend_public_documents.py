@@ -89,7 +89,33 @@ def register_route_backend_public_documents(app):
         if not active_public_workspace_id:
             return jsonify({'error': 'No active public workspace selected'}), 400
 
-        return get_document(user_id, document_id, active_public_workspace_id)
+        # Query the public documents container directly
+        query = """
+            SELECT TOP 1 * 
+            FROM c
+            WHERE c.id = @document_id 
+                AND c.public_workspace_id = @public_workspace_id
+            ORDER BY c.version DESC
+        """
+        parameters = [
+            {"name": "@document_id", "value": document_id},
+            {"name": "@public_workspace_id", "value": active_public_workspace_id}
+        ]
+        
+        try:
+            documents = list(cosmos_public_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            if not documents:
+                return jsonify({'error': 'Document not found'}), 404
+                
+            return jsonify(documents[0]), 200
+            
+        except Exception as e:
+            return jsonify({'error': f'Failed to fetch document: {str(e)}'}), 500
 
 
     @app.route('/api/public_documents/<document_id>/chunks', methods=['GET'])

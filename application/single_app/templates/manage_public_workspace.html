@@ -348,6 +348,13 @@
       const admins = workspace.admins || [];
       const docManagers = workspace.documentManagers || [];
       
+      console.log("Role comparison debug:");
+      console.log("- Current userId:", userId, typeof userId);
+      console.log("- Workspace owner ID:", workspace.owner?.id, typeof workspace.owner?.id);
+      console.log("- Admins array:", admins);
+      console.log("- Document managers array:", docManagers);
+      console.log("- Comparison result:", userId === workspace.owner?.id);
+      
       if (userId === workspace.owner?.id) {
         currentUserRole = "Owner";
       } else if (admins.includes(userId)) {
