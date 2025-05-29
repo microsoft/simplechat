@@ -24,6 +24,8 @@ const adminForm = document.getElementById('admin-settings-form');
 const saveButton = adminForm ? adminForm.querySelector('button[type="submit"]') : null;
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
+const enablePublicWorkspacesToggle = document.getElementById('enable_public_workspaces');
+const createPublicWorkspacePermissionSettingDiv = document.getElementById('create_public_workspace_permission_setting');
 
 document.addEventListener('DOMContentLoaded', () => {
     // --- Existing Setup ---
@@ -867,6 +869,16 @@ function setupToggles() {
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
+    if (enablePublicWorkspacesToggle && createPublicWorkspacePermissionSettingDiv) {
+        // Initial state
+        createPublicWorkspacePermissionSettingDiv.style.display = enablePublicWorkspacesToggle.checked ? 'block' : 'none';
+        // Listener for changes
+        enablePublicWorkspacesToggle.addEventListener('change', function() {
+            createPublicWorkspacePermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
             markFormAsModified();
         });
     }

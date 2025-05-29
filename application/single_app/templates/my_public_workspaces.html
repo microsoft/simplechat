@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}My Public Workspaces – {{ app_settings.app_title }}{% endblock %}
+{% block head %}
+  <!-- copy your my_groups.css but adjust IDs as needed -->
+{% endblock %}
+{% block content %}
+<div class="container">
+  <h2>My Public Workspaces</h2>
+  <p class="text-muted">
+    View and manage the public workspaces you’re authorized to create.
+  </p>
+  <hr/>
+
+  <div class="row mb-3 gy-2">
+    <div class="col-auto">
+      <button class="btn btn-success btn-sm"
+              data-bs-toggle="modal"
+              data-bs-target="#createPublicWorkspaceModal">
+        <i class="bi bi-plus-circle-fill me-1"></i>
+        Create New Public Workspace
+      </button>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-info btn-sm"
+              data-bs-toggle="modal"
+              data-bs-target="#findPublicWorkspaceModal">
+        <i class="bi bi-search me-1"></i>
+        Find Public Workspace
+      </button>
+    </div>
+    <div class="col-md">
+      <div class="input-group input-group-sm">
+        <input id="searchQueryInput" class="form-control" type="search"
+               placeholder="Search by name or description…">
+        <button id="searchBtn" class="btn btn-primary">Search</button>
+        <button id="clearSearchBtn" class="btn btn-outline-secondary">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table id="my-public-workspaces-table"
+           class="table table-striped table-hover align-middle">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Your Role</th>
+          <th>Active</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="table-loading-row">
+          <td colspan="4" class="text-center p-4 text-muted">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            Loading…
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- pagination & page-size controls… -->
+  
+</div>
+
+<!-- Create Public Workspace Modal -->
+<div class="modal fade" id="createPublicWorkspaceModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form id="createPublicWorkspaceForm">
+      <!-- similar to createGroupModal, but IDs renamed  -->
+    </form>
+  </div>
+</div>
+
+<!-- Find Public Workspace Modal -->
+<div class="modal fade" id="findPublicWorkspaceModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <!-- similar to findGroupModal -->
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="{{ url_for('static', filename='js/public/my_public_workspaces.js') }}"></script>
+{% endblock %}

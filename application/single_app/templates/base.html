@@ -303,6 +303,13 @@
                   </a>
                 </li>
                 {% endif %}
+                {% if app_settings.enable_public_workspaces %}
+                <li>
+                  <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">
+                    My Public Workspaces
+                  </a>
+                </li>
+                {% endif %}
                 {% if app_settings.enable_user_feedback %}
                 <li>
                   <a class="dropdown-item" href="{{ url_for('my_feedback') }}">
