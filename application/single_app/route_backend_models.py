@@ -26,7 +26,7 @@ def register_route_backend_models(app):
         if not subscription_id or not resource_group or not account_name:
             return jsonify({"error": "Azure GPT Model subscription/RG/endpoint not configured"}), 400
 
-        if AZURE_ENVIRONMENT == "usgovernment":
+        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
 
@@ -85,7 +85,7 @@ def register_route_backend_models(app):
         if not subscription_id or not resource_group or not account_name:
             return jsonify({"error": "Azure Embedding Model subscription/RG/endpoint not configured"}), 400
 
-        if AZURE_ENVIRONMENT == "usgovernment":
+        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
 
@@ -141,7 +141,7 @@ def register_route_backend_models(app):
         if not subscription_id or not resource_group or not account_name:
             return jsonify({"error": "Azure Image Model subscription/RG/endpoint not configured"}), 400
 
-        if AZURE_ENVIRONMENT == "usgovernment":
+        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
 

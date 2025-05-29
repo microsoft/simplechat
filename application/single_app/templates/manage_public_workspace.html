@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Manage Public Workspace – {{ app_settings.app_title }}{% endblock %}
+{% block content %}
+<div class="container">
+  <h2>Manage Public Workspace</h2>
+  <div id="workspaceInfoContainer" class="mb-3"></div>
+
+  <!-- Owner actions -->
+  <div id="ownerActionsContainer" style="display:none">
+    <button id="deleteWorkspaceBtn" class="btn btn-danger btn-sm">Delete Workspace</button>
+    <!-- transfer ownership… -->
+  </div>
+
+  <!-- Edit workspace (Owner only) -->
+  <div id="editWorkspaceContainer" class="mb-3" style="display:none">
+    <form id="editWorkspaceForm">
+      <!-- name / description fields -->
+    </form>
+  </div>
+
+  <!-- Role-based sections -->
+  <h5>Membership</h5>
+  <div class="row mb-2">
+    <div class="col-auto">
+      <input id="memberSearchInput" class="form-control form-control-sm"
+             placeholder="Search members…">
+    </div>
+    <div class="col-auto">
+      <select id="memberRoleFilter" class="form-select form-select-sm">
+        <option value="">All Roles</option>
+        <option value="Owner">Owner</option>
+        <option value="Admin">Admin</option>
+        <option value="DocumentManager">Document Manager</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <button id="memberSearchBtn" class="btn btn-sm btn-secondary">Search</button>
+    </div>
+  </div>
+  <table id="membersTable" class="table table-sm">
+    <thead><tr><th>Name</th><th>Role</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <button id="addMemberBtn" class="btn btn-success btn-sm mb-3" style="display:none">
+    Add Member
+  </button>
+
+  <!-- Pending requests (Owner/Admin) -->
+  <div id="pendingRequestsSection" style="display:none">
+    <h5>Pending Requests</h5>
+    <table id="pendingRequestsTable" class="table table-sm">
+      <thead><tr><th>Name</th><th>Email</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- add / change role / transfer / delete modals… -->
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const workspaceId = "{{ workspace_id }}";
+    const userId = "{{ session['user'].get('oid') }}";
+  </script>
+  <script src="{{ url_for('static', filename='js/public/manage_public_workspace.js') }}"></script>
+{% endblock %}

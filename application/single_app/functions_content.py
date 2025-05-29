@@ -126,9 +126,9 @@ def extract_content_with_azure_di(file_path):
 def extract_table_file(file_path, file_ext):
     try:
         if file_ext == '.csv':
-            df = pd.read_csv(file_path)
+            df = pandas.read_csv(file_path)
         elif file_ext in ['.xls', '.xlsx']:
-            df = pd.read_excel(file_path)
+            df = pandas.read_excel(file_path)
         else:
             raise ValueError("Unsupported file extension for table extraction.")
         
@@ -280,7 +280,8 @@ def generate_embedding(
             api_key=settings.get('azure_apim_embedding_subscription_key'))
     else:
         if (settings.get('azure_openai_embedding_authentication_type') == 'managed_identity'):
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
+            
             embedding_client = AzureOpenAI(
                 api_version=settings.get('azure_openai_embedding_api_version'),
                 azure_endpoint=settings.get('azure_openai_embedding_endpoint'),

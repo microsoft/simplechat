@@ -205,7 +205,7 @@ def _test_gpt_connection(payload):
         gpt_model = selected_model.get('deploymentName')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
             
             gpt_client = AzureOpenAI(
                 api_version=api_version,
@@ -258,7 +258,7 @@ def _test_embedding_connection(payload):
         embedding_model = selected_model.get('deploymentName')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
             
             embedding_client = AzureOpenAI(
                 api_version=api_version,
@@ -311,7 +311,7 @@ def _test_image_gen_connection(payload):
         image_gen_model = selected_model.get('deploymentName')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
             
             image_gen_client = AzureOpenAI(
                 api_version=api_version,
@@ -509,10 +509,13 @@ def _test_azure_doc_intelligence_connection(payload):
                 credential=AzureKeyCredential(key)
             )
     
-    poller = document_intelligence_client.begin_analyze_document_from_url(
-        model_id="prebuilt-read",
-        document_url="https://github.com/RetroBurnCloud/images/blob/5121c601bc61f9806f0bac7783c44352fd185998/Microsoft_Terms_of_Use.pdf"
-    )
+    # Use local test file instead of URL for better offline testing
+    test_file_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
+    with open(test_file_path, 'rb') as f:
+        poller = document_intelligence_client.begin_analyze_document(
+            model_id="prebuilt-read",
+            document=f
+        )
 
     max_wait_time = 600
     start_time = time.time()

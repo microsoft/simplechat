@@ -1665,7 +1665,7 @@ def extract_document_metadata(document_id, user_id, group_id=None):
         if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
             token_provider = get_bearer_token_provider(
                 DefaultAzureCredential(), 
-                "https://cognitiveservices.azure.com/.default"
+                cognitive_services_scope
             )
             gpt_client = AzureOpenAI(
                 api_version=settings.get('azure_openai_gpt_api_version'),
@@ -2284,7 +2284,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     rows_as_strings = []
     for _, row in df.iterrows():
         # Convert row to string, handling potential NaNs and types
-        row_string = ",".join(map(lambda x: str(x) if pd.notna(x) else "", row.tolist())) + "\n"
+        row_string = ",".join(map(lambda x: str(x) if pandas.notna(x) else "", row.tolist())) + "\n"
         rows_as_strings.append(row_string)
 
     # Chunk rows based on character count
@@ -2370,7 +2370,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         if file_ext == '.csv':
             # Process CSV
              # Read CSV, attempt to infer header, keep data as string initially
-            df = pd.read_csv(
+            df = pandas.read_csv(
                 temp_file_path, 
                 keep_default_na=False, 
                 dtype=str
@@ -2390,7 +2390,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
         elif file_ext in ('.xlsx', '.xls'):
             # Process Excel (potentially multiple sheets)
-            excel_file = pd.ExcelFile(
+            excel_file = pandas.ExcelFile(
                 temp_file_path, 
                 engine='openpyxl' if file_ext == '.xlsx' else 'xlrd'
             )
@@ -2425,7 +2425,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             total_chunks_saved = accumulated_total_chunks # Total across all sheets
 
 
-    except pd.errors.EmptyDataError:
+    except pandas.errors.EmptyDataError:
         print(f"Warning: Tabular file or sheet is empty: {original_filename}")
         update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
     except Exception as e:
