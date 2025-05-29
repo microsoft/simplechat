@@ -9,6 +9,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspace import *
 from functions_documents import *
+from werkzeug.utils import secure_filename
 
 def register_route_backend_public_documents(app):
     @app.route('/api/public_documents', methods=['GET'])
@@ -258,34 +259,50 @@ def register_route_backend_public_documents(app):
         Upload one or more documents to the currently active public workspace.
         Mirrors logic from api_upload_group_document but scoped to public workspace context.
         """
+        print(f"[DEBUG] Public document upload started")
+        
         user_id = get_current_user_id()
+        print(f"[DEBUG] User ID: {user_id}")
         if not user_id:
+            print("[DEBUG] User not authenticated")
             return jsonify({'error': 'User not authenticated'}), 401
 
         user_settings = get_user_settings(user_id)
         active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid")
+        print(f"[DEBUG] Active public workspace ID: {active_public_workspace_id}")
         if not active_public_workspace_id:
+            print("[DEBUG] No active public workspace selected")
             return jsonify({'error': 'No active public workspace selected'}), 400
 
         workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+        print(f"[DEBUG] Workspace doc found: {workspace_doc is not None}")
         if not workspace_doc:
+            print("[DEBUG] Active public workspace not found")
             return jsonify({'error': 'Active public workspace not found'}), 404
 
         role = get_user_role_in_public_workspace(workspace_doc, user_id)
+        print(f"[DEBUG] User role: {role}")
         if role not in ["Owner", "Admin", "DocumentManager"]:
+            print(f"[DEBUG] Insufficient permissions, role: {role}")
             return jsonify({'error': 'You do not have permission to upload documents'}), 403
 
+        print(f"[DEBUG] Request files: {request.files}")
         if 'file' not in request.files:
+            print("[DEBUG] No file part in request")
             return jsonify({'error': 'No file part in the request'}), 400
 
         files = request.files.getlist('file')
+        print(f"[DEBUG] Files received: {len(files) if files else 0}")
         if not files or all(not f.filename for f in files):
+            print("[DEBUG] No files selected or no filenames")
             return jsonify({'error': 'No file selected or files have no name'}), 400
 
         processed_docs = []
         upload_errors = []
 
-        for file in files:
+        print(f"[DEBUG] Starting to process {len(files)} files")
+        for i, file in enumerate(files):
+            print(f"[DEBUG] Processing file {i+1}/{len(files)}: {file.filename}")
             if not file.filename:
                 upload_errors.append(f"Skipped a file with no name.")
                 continue
@@ -293,6 +310,7 @@ def register_route_backend_public_documents(app):
             original_filename = file.filename
             safe_suffix_filename = secure_filename(original_filename)
             file_ext = os.path.splitext(safe_suffix_filename)[1].lower()
+            print(f"[DEBUG] File extension: {file_ext}")
 
             if not allowed_file(original_filename):
                 upload_errors.append(f"File type not allowed for: {original_filename}")
@@ -304,18 +322,22 @@ def register_route_backend_public_documents(app):
 
             parent_document_id = str(uuid.uuid4())
             temp_file_path = None
+            print(f"[DEBUG] Generated document ID: {parent_document_id}")
 
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
                     file.save(tmp_file.name)
                     temp_file_path = tmp_file.name
+                print(f"[DEBUG] Saved temp file: {temp_file_path}")
             except Exception as e:
+                print(f"[DEBUG] Error saving temp file: {e}")
                 upload_errors.append(f"Failed to save temporary file for {original_filename}: {e}")
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
                 continue
 
             try:
+                print(f"[DEBUG] Creating public document record")
                 create_public_document(
                     file_name=original_filename,
                     public_workspace_id=active_public_workspace_id,
@@ -324,21 +346,25 @@ def register_route_backend_public_documents(app):
                     num_file_chunks=0,
                     status="Queued for processing"
                 )
+                print(f"[DEBUG] Public document record created successfully")
 
+                print(f"[DEBUG] Updating public document")
                 update_public_document(
                     document_id=parent_document_id,
                     user_id=user_id,
                     public_workspace_id=active_public_workspace_id,
                     percentage_complete=0
                 )
+                print(f"[DEBUG] Public document updated successfully")
 
+                print(f"[DEBUG] Submitting background processing task")
                 future = executor.submit(
                     process_document_upload_background,
                     document_id=parent_document_id,
                     user_id=user_id,
                     temp_file_path=temp_file_path,
                     original_filename=original_filename,
-                    group_id=active_public_workspace_id,
+                    group_id=None,
                     public_workspace_id=active_public_workspace_id
                 )
                 executor.submit_stored(
@@ -348,13 +374,15 @@ def register_route_backend_public_documents(app):
                     user_id=user_id, 
                     temp_file_path=temp_file_path, 
                     original_filename=original_filename,
-                    group_id=active_public_workspace_id,
+                    group_id=None,
                     public_workspace_id=active_public_workspace_id
                 )
+                print(f"[DEBUG] Background task submitted successfully")
 
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
 
             except Exception as e:
+                print(f"[DEBUG] Error processing file {original_filename}: {e}")
                 upload_errors.append(f"Failed to queue processing for {original_filename}: {str(e)}")
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
@@ -363,6 +391,8 @@ def register_route_backend_public_documents(app):
         if not processed_docs and upload_errors:
             response_status = 400
 
+        print(f"[DEBUG] Upload completed. Processed: {len(processed_docs)}, Errors: {len(upload_errors)}, Status: {response_status}")
+        
         return jsonify({
             'message': f'Processed {len(processed_docs)} file(s). Check status periodically.',
             'document_ids': [doc['document_id'] for doc in processed_docs],
