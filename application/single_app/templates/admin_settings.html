@@ -1068,6 +1068,42 @@
                     </div>
                     
                 </div>
+                
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable Public Workspaces</h5>
+                    <p class="text-muted">
+                        Turn this on to enable public workspaces that are visible to everyone in the organization.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                    </div>
+
+                    <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
+                        <hr> 
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_public_workspace"
+                                name="require_member_of_create_public_workspace"
+                                {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
+                                Require Membership to Create Public Workspaces
+                            </label>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only users who are members of the 'CreatePublicWorkspaces' role (defined in your App registration) can create public workspaces. If disabled, any authenticated user can create public workspaces (provided 'Enable Public Workspaces' is active).
+                        </p>
+                    </div>
+                    
+                </div>
 
                 <div class="card mb-3 p-3">
                     

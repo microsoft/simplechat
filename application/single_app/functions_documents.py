@@ -2284,7 +2284,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     rows_as_strings = []
     for _, row in df.iterrows():
         # Convert row to string, handling potential NaNs and types
-        row_string = ",".join(map(lambda x: str(x) if pd.notna(x) else "", row.tolist())) + "\n"
+        row_string = ",".join(map(lambda x: str(x) if pandas.notna(x) else "", row.tolist())) + "\n"
         rows_as_strings.append(row_string)
 
     # Chunk rows based on character count
@@ -2370,7 +2370,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         if file_ext == '.csv':
             # Process CSV
              # Read CSV, attempt to infer header, keep data as string initially
-            df = pd.read_csv(
+            df = pandas.read_csv(
                 temp_file_path, 
                 keep_default_na=False, 
                 dtype=str
@@ -2390,7 +2390,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
         elif file_ext in ('.xlsx', '.xls'):
             # Process Excel (potentially multiple sheets)
-            excel_file = pd.ExcelFile(
+            excel_file = pandas.ExcelFile(
                 temp_file_path, 
                 engine='openpyxl' if file_ext == '.xlsx' else 'xlrd'
             )
@@ -2425,7 +2425,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             total_chunks_saved = accumulated_total_chunks # Total across all sheets
 
 
-    except pd.errors.EmptyDataError:
+    except pandas.errors.EmptyDataError:
         print(f"Warning: Tabular file or sheet is empty: {original_filename}")
         update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
     except Exception as e:
@@ -2807,13 +2807,14 @@ def process_audio_document(
 
 
 
-def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None):
+def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
     Integrates enhanced citations (blob upload) for all supported types.
     """
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
     settings = get_settings()
     enable_enhanced_citations = settings.get('enable_enhanced_citations', False) # Default to False if missing
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False) # Used by DI flow
@@ -2831,10 +2832,15 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             **kwargs  # includes any dynamic update fields
         }
 
-        if is_group:
+        if is_public_workspace:
+            from functions_public_workspace import update_public_document
+            args["public_workspace_id"] = public_workspace_id
+            update_public_document(**args)
+        elif is_group:
             args["group_id"] = group_id
-
-        update_document(**args)
+            update_document(**args)
+        else:
+            update_document(**args)
 
 
     total_chunks_saved = 0

@@ -28,6 +28,17 @@ export function loadGroupPrompts() {
     .catch(err => console.error("Error loading group prompts:", err));
 }
 
+export function loadPublicPrompts() {
+  return fetch("/api/public_prompts")
+    .then(r => r.json())
+    .then(data => {
+      if (data.prompts) {
+        publicPrompts = data.prompts;
+      }
+    })
+    .catch(err => console.error("Error loading public prompts:", err));
+}
+
 export function populatePromptSelect() {
   if (!promptSelect) return;
 
@@ -38,7 +49,8 @@ export function populatePromptSelect() {
   promptSelect.appendChild(defaultOpt);
 
   const combined = [...userPrompts.map(p => ({...p, scope: "User"})),
-                    ...groupPrompts.map(p => ({...p, scope: "Group"}))];
+                   ...groupPrompts.map(p => ({...p, scope: "Group"})),
+                   ...publicPrompts.map(p => ({...p, scope: "Public"}))];
   
   // combined.sort((a, b) => a.name.localeCompare(b.name)); 
 

@@ -5,7 +5,7 @@ import requests
 import uuid
 import tempfile
 import json
-import pandas as pd
+import pandas
 import time
 import threading
 import random
@@ -86,7 +86,7 @@ executor.init_app(app)
 
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.214.001'
+app.config['VERSION'] = '0.214.001-fix.233-2.008'
 Session(app)
 
 CLIENTS = {}
@@ -213,6 +213,24 @@ cosmos_user_prompts_container = cosmos_database.create_container_if_not_exists(
 cosmos_group_prompts_container_name = "group_prompts"
 cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_workspaces_container_name = "public_workspaces"
+cosmos_public_workspaces_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspaces_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_prompts_container_name = "public_prompts"
+cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_prompts_container_name,
     partition_key=PartitionKey(path="/id")
 )
 

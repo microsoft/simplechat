@@ -18,6 +18,7 @@ from route_frontend_groups import *
 from route_frontend_group_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_public_workspaces import *
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -31,6 +32,9 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_public_workspaces import *
+from route_backend_public_documents import *
+from route_backend_public_prompts import *
 
 # =================== Helper Functions ===================
 @app.before_first_request
@@ -127,6 +131,9 @@ register_route_frontend_groups(app)
 # ------------------- Group Documents Routes -------------
 register_route_frontend_group_workspaces(app)
 
+# ------------------- Public Workspaces Routes -----------
+register_route_frontend_public_workspaces(app)
+
 # ------------------- Safety Routes ----------------------
 register_route_frontend_safety(app)
 
@@ -169,6 +176,15 @@ register_route_backend_prompts(app)
 
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
+
+# ------------------- API Public Workspaces Routes -------
+register_route_backend_public_workspaces(app)
+
+# ------------------- API Public Documents Routes --------
+register_route_backend_public_documents(app)
+
+# ------------------- API Public Prompts Routes ----------
+register_route_backend_public_prompts(app)
 
 if __name__ == '__main__':
     settings = get_settings()

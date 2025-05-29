@@ -6,6 +6,7 @@ let groupDocs = [];
 let activeGroupName = "";
 let userPrompts = [];
 let groupPrompts = [];
+let publicPrompts = [];
 let currentlyEditingId = null;
 
 function scrollChatToBottom() {
