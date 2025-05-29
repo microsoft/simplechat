@@ -338,6 +338,7 @@ def register_route_backend_public_documents(app):
                     user_id=user_id,
                     temp_file_path=temp_file_path,
                     original_filename=original_filename,
+                    group_id=active_public_workspace_id,
                     public_workspace_id=active_public_workspace_id
                 )
                 executor.submit_stored(
@@ -347,6 +348,7 @@ def register_route_backend_public_documents(app):
                     user_id=user_id, 
                     temp_file_path=temp_file_path, 
                     original_filename=original_filename,
+                    group_id=active_public_workspace_id,
                     public_workspace_id=active_public_workspace_id
                 )
 
