@@ -222,7 +222,7 @@ LOCAL VERSION BELOW
             <div id="publicDocsUploadBtnContainer">
               <!-- Document Upload (visibility controlled by JS based on role) -->
               <input type="file" id="public-file-input" multiple />
-              <button id="public-upload-btn" class="btn btn-primary btn-sm">
+              <button id="public-upload-btn" class="btn btn-primary btn-sm" disabled>
                 Upload Document(s)
               </button>
               <span id="public-upload-status" class="ms-2 text-muted small"></span>
@@ -883,6 +883,10 @@ LOCAL VERSION BELOW
     if (uploadContainer) {
       if (canManageDocs) {
         uploadContainer.style.display = "block";
+        // Enable upload button since workspace and role are properly set
+        if (publicUploadBtn) {
+          publicUploadBtn.disabled = false;
+        }
       } else {
         uploadContainer.style.display = "none";
       }
@@ -1085,6 +1089,12 @@ LOCAL VERSION BELOW
 
     if (!activePublicWorkspaceId) {
       alert("Please select a public workspace first.");
+      return;
+    }
+
+    // Additional check to ensure the workspace is properly set in the backend
+    if (!userRoleInActivePublicWorkspace || !["Owner", "Admin", "DocumentManager"].includes(userRoleInActivePublicWorkspace)) {
+      alert("You do not have permission to upload documents to this workspace.");
       return;
     }
 
