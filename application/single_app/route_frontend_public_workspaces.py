@@ -111,6 +111,7 @@ def register_route_frontend_public_workspaces(app):
         return render_template(
             'manage_public_workspace.html',
             workspace_id=workspace_id,
+            user_id=user_id,
             settings=public_settings
         )
 
