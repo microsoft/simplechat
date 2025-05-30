@@ -120,7 +120,7 @@ def register_route_backend_chats(app):
                     raise ValueError("No GPT model selected or configured.")
 
                 if auth_type == 'managed_identity':
-                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
                     gpt_client = AzureOpenAI(
                         api_version=api_version,
                         azure_endpoint=endpoint,
@@ -501,7 +501,7 @@ def register_route_backend_chats(app):
                 )
             else:
                 if (settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity'):
-                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
                     image_gen_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_image_gen_api_version'),
                         azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),

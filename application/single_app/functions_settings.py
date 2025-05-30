@@ -71,7 +71,7 @@ def get_settings():
         'enable_group_workspaces': True,
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
-        'require_member_of_create_public_workspace': False,
+        'require_member_of_create_public_workspace': True,
 
         # Multimedia
         'enable_video_file_support': False,

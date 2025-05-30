@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %} Public Workspaces - {{ app_settings.app_title }} {% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/css/simplemde.min.css" />
+<style>
+  /* Adapted styles for Public Workspace */
+  #public-documents-table { table-layout: fixed; width: 100%; }
+  #public-documents-table th:nth-child(1), #public-documents-table td:nth-child(1) { width: 50px; text-align: left; }
+  #public-documents-table th:nth-child(2), #public-documents-table td:nth-child(2) { min-width:50px; max-width:150px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #public-documents-table th:nth-child(3), #public-documents-table td:nth-child(3) { min-width:50px; max-width:200px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #public-documents-table th:nth-child(4), #public-documents-table td:nth-child(4) { width:200px; }
+  .classification-badge { display:inline-block; padding:0.3em 0.6em; font-size:0.85em; font-weight:600; line-height:1; color:#fff; text-align:center; white-space:nowrap; vertical-align:baseline; border-radius:0.375rem; }
+  .classification-badge.text-dark { color:#212529!important; }
+  #public-documents-table td { vertical-align: middle; }
+  .table-loading-row td { text-align:center; padding:1.5rem; color:#6c757d; }
+  /* Dropdown styles */
+  #public-dropdown .dropdown-item { padding:0.5rem 1rem; cursor:pointer; }
+  #public-dropdown .dropdown-item:hover { background-color:#f8f9fa; }
+  #public-dropdown .dropdown-item.active { background-color:#0d6efd; color:#fff; }
+  #public-dropdown .dropdown-menu { padding:0.5rem 0; }
+  #public-dropdown .public-search-container { position:sticky; top:0; z-index:1; background:#fff; border-bottom:1px solid #dee2e6; padding-bottom:0.5rem; }
+  #public-dropdown .dropdown-items-container { max-height:300px; overflow-y:auto; }
+  #public-dropdown-button { text-align:left; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="container">
+  <h2>Public Workspace</h2>
+  <h3 id="active-public-name" style="display:none"></h3>
+
+  <div class="row mb-3">
+    <div class="col-sm-6">
+      <div class="dropdown" id="public-dropdown">
+        <button class="form-select d-flex justify-content-between align-items-center" id="public-dropdown-button" data-bs-toggle="dropdown">
+          <span class="selected-public-text">Select a workspace...</span>
+          <i class="bi bi-chevron-down"></i>
+        </button>
+        <div class="dropdown-menu w-100" id="public-dropdown-menu">
+          <div class="px-2 public-search-container d-none">
+            <input type="text" class="form-control form-control-sm mb-2" placeholder="Search workspaces..." id="public-search-input" />
+          </div>
+          <div class="dropdown-items-container" id="public-dropdown-items"></div>
+        </div>
+        <select class="d-none" id="public-select"></select>
+      </div>
+    </div>
+    <div class="col-sm-6">
+      <button class="btn btn-primary" id="btn-change-public">Change Active Workspace</button>
+      <button class="btn btn-secondary" id="btn-my-publics">My Public Workspaces</button>
+    </div>
+  </div>
+
+  <div class="alert alert-info" id="user-public-role-display" style="display:none">
+    Your role in <strong id="active-public-name-role"></strong>: <span id="user-public-role" class="fw-bold"></span>
+  </div>
+
+  <ul class="nav nav-tabs" id="publicWorkspaceTab" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="public-docs-tab-btn" data-bs-toggle="tab" data-bs-target="#public-docs-tab" type="button" role="tab">Public Documents</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" type="button" role="tab">Public Prompts</button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="publicWorkspaceTabContent">
+    <!-- Documents Tab -->
+    <div class="tab-pane fade show active" id="public-docs-tab" role="tabpanel">
+      <div class="card p-3 my-3">
+        <h5>Public Documents</h5>
+        <p class="text-muted small">Allowed extensions: txt, pdf, docx, ...</p>
+        <div class="mb-3" id="upload-public-section" style="display:none">
+          <input type="file" id="public-file-input" multiple />
+          <button id="public-upload-btn" class="btn btn-primary">Upload Document(s)</button>
+          <span id="public-upload-status" class="ms-2 text-muted small"></span>
+        </div>
+        <hr id="public-upload-hr" style="display:none" />
+
+        <div class="row mb-3 filter-controls-row">
+          <div class="col-md-6">
+            <input type="search" id="public-docs-search-input" class="form-control form-control-sm" placeholder="Search file name/title..." />
+          </div>
+          <div class="col-md-6 text-end">
+            <button id="public-docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
+            <button id="public-docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+          </div>
+        </div>
+
+        <table class="table table-striped" id="public-documents-table">
+          <thead>
+            <tr><th></th><th>File Name</th><th>Title</th><th>Actions</th></tr>
+          </thead>
+          <tbody><tr class="table-loading-row"><td colspan="4"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public documents...</td></tr></tbody>
+        </table>
+
+        <div class="d-flex align-items-center gap-3 mb-3 mt-3">
+          <div>
+            <label class="visually-hidden">Items per page:</label>
+            <select id="public-docs-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select>
+            <span class="ms-1 small text-muted">items per page</span>
+          </div>
+          <div id="public-docs-pagination-container" class="d-flex gap-1 ms-auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompts Tab -->
+    <div class="tab-pane fade" id="public-prompts-tab" role="tabpanel">
+      <div class="card p-3 my-3">
+        <h5>Public Prompts</h5>
+        <div id="public-prompts-role-warning" class="alert alert-warning" style="display:none">You do not have permission to manage public prompts.</div>
+        <div class="mb-3" id="create-public-prompt-section" style="display:none"><button id="create-public-prompt-btn" class="btn btn-success">New Prompt</button></div>
+        <hr />
+        <div class="row mb-3 filter-controls-row">
+          <div class="col-md-6"><input type="search" id="public-prompts-search-input" class="form-control form-control-sm" placeholder="Search prompt name..." /></div>
+          <div class="col-md-6 text-end"><button id="public-prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button><button id="public-prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button></div>
+        </div>
+        <table class="table table-striped" id="public-prompts-table"><thead><tr><th>Prompt Name</th><th>Actions</th></tr></thead><tbody><tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public prompts...</td></tr></tbody></table>
+        <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Prompt Modal -->
+<div class="modal fade" id="publicPromptModal" tabindex="-1"><div class="modal-dialog modal-xl"><form id="public-prompt-form"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="publicPromptModalLabel">Create Public Prompt</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="public-prompt-id" /><div class="mb-3"><label for="public-prompt-name" class="form-label">Prompt Name</label><input type="text" class="form-control" id="public-prompt-name" required /></div><div class="mb-3"><label for="public-prompt-content" class="form-label">Prompt Content</label><textarea class="form-control" id="public-prompt-content" rows="10"></textarea></div></div><div class="modal-footer"><button id="public-prompt-save-btn" type="submit" class="btn btn-primary">Save Prompt</button></div></div></form></div></div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/public/public_workspace.js"></script>
+{% endblock %}

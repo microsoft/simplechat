@@ -618,7 +618,7 @@ Core configuration values are managed via environment variables, typically set i
     # SECRET_KEY should be a long, random, secret string (e.g., 32+ chars) used for Flask session signing. Generate one securely.
     SECRET_KEY="Generate-A-Strong-Random-Secret-Key-Here!"
     # AZURE_ENVIRONMENT: Set based on your cloud environment
-    # Options: "public", "usgovernment"
+    # Options: "public", "usgovernment", "custom"
     AZURE_ENVIRONMENT="public"
     ```
     
@@ -680,7 +680,7 @@ You can directly edit Application Settings in the Azure portal using the "Advanc
     { "name": "CLIENT_ID", "value": "<your-app-registration-client-id>", "slotSetting": false },
     { "name": "TENANT_ID", "value": "<your-azure-ad-tenant-id>", "slotSetting": false },
     { "name": "SECRET_KEY", "value": "<your-flask-secret-key>", "slotSetting": false },
-    { "name": "AZURE_ENVIRONMENT", "value": "public", "slotSetting": false }, // or "usgovernment"
+    { "name": "AZURE_ENVIRONMENT", "value": "public", "slotSetting": false }, // or "usgovernment", or "custom"
     { "name": "BING_SEARCH_ENDPOINT", "value": "https://api.bing.microsoft.com/", "slotSetting": false },
 
     // --- Build & Runtime Settings ---
