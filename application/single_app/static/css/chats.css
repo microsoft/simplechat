@@ -351,7 +351,8 @@ body.layout-split .gutter {
   color: #ffffff; /* Bright text for better contrast */
 }
 
-.citations-container {
+.citations-container,
+.action-details-container {
   /* background-color: #f0f0f0; Slightly different bg if needed */
   padding: 10px 0 5px 0; /* Padding top/bottom, no horizontal needed */
   margin-top: 10px; /* Space above the border-top */
@@ -359,7 +360,8 @@ body.layout-split .gutter {
   /* max-height and overflow-y are removed - let it expand */
 }
 
-.citation-button {
+.citation-button,
+.action-detail {
   font-size: 0.8rem; /* Smaller text */
   padding: 0.2rem 0.5rem; /* Adjust padding */
   white-space: normal; /* Allow text wrapping within button */
@@ -368,9 +370,22 @@ body.layout-split .gutter {
   /* display: inline-flex; */ /* Ensures icon and text align nicely */
   /* align-items: center; */
   max-width: 100%; /* Prevent button from becoming excessively wide */
+  display: inline-block;
+  margin: 0.25rem 0.25rem 0.25rem 0;
+  background-color: #f1f1f1;
+  border-radius: 0.25rem;
+  border: 1px solid #e0e0e0;
+  word-break: break-word;
 }
 
-.citation-button i {
+[data-bs-theme="dark"] .action-detail {
+  background-color: #343a40;
+  border-color: #495057;
+  color: #e9ecef;
+}
+
+.citation-button i,
+.action-detail i {
   font-size: 0.9em; /* Icon size relative to button text */
   vertical-align: text-top; /* Align icon better with first line of text */
   margin-right: 4px !important; /* Ensure consistent spacing */
@@ -378,18 +393,21 @@ body.layout-split .gutter {
 
 
 
-.citations-container a:hover {
+.citations-container a:hover,
+.action-details-container .action-detail:hover {
   text-decoration: underline;
   background-color: #e9ecef; /* Slight hover background */
 }
 
 .citations-container .hybrid-citation-link i,
-.citations-container .web-citation-link i {
+.citations-container .web-citation-link i,
+.action-details-container .action-detail i {
   color: #a1a3a5; /* Muted icon color */
   font-size: 0.9em; /* Slightly smaller icon */
 }
 
-.citation-toggle-btn {
+.citation-toggle-btn,
+.action-toggle-btn {
   /* Remove border, background, and extra padding */
   background: none;
   border: none;
@@ -407,7 +425,8 @@ body.layout-split .gutter {
 }
 
 
-.citation-toggle-btn:hover {
+.citation-toggle-btn:hover,
+.action-toggle-btn:hover {
   color: #0d6efd;
   background-color: #e9ecef; /* Light hover */
   border-color: #adb5bd;
