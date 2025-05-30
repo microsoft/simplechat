@@ -24,6 +24,121 @@ const promptSelectionContainer = document.getElementById(
 const chatbox = document.getElementById("chatbox");
 const modelSelect = document.getElementById("model-select");
 
+// Function to collect all active action pane details
+function collectActionDetails() {
+  const actionDetails = [];
+
+  // 1. Check workspace selection
+  const searchDocumentsBtn = document.getElementById("search-documents-btn");
+  if (searchDocumentsBtn && searchDocumentsBtn.classList.contains("active")) {
+    // Get scope
+    const docScopeSelect = document.getElementById("doc-scope-select");
+    const scope = docScopeSelect ? docScopeSelect.value : "all";
+    
+    // Get selected document
+    const docSelectEl = document.getElementById("document-select");
+    let documentInfo = {
+      type: "workspace",
+      icon: "file-earmark-text",
+      scope: scope
+    };
+    
+    if (docSelectEl && docSelectEl.selectedIndex > 0) {
+      const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
+      documentInfo.document = selectedOption.textContent;
+      documentInfo.documentId = docSelectEl.value;
+    } else {
+      documentInfo.document = "All Documents";
+      documentInfo.documentId = "";
+    }
+    
+    // Get classification if any
+    const classificationInput = document.getElementById("classification-select");
+    if (classificationInput && classificationInput.value && classificationInput.value !== "N/A") {
+      documentInfo.classification = classificationInput.value;
+    }
+    
+    actionDetails.push(documentInfo);
+  }
+  
+  // 2. Check image generation
+  const imageGenBtn = document.getElementById("image-generate-btn");
+  if (imageGenBtn && imageGenBtn.classList.contains("active")) {
+    actionDetails.push({
+      type: "image",
+      icon: "image",
+      detail: "Image generation"
+    });
+  }
+  
+  // 3. Check web search
+  const webSearchBtn = document.getElementById("search-web-btn");
+  if (webSearchBtn && webSearchBtn.classList.contains("active")) {
+    actionDetails.push({
+      type: "web",
+      icon: "globe",
+      detail: "Web search"
+    });
+  }
+  
+  // 4. Check prompt selection
+  if (
+    promptSelectionContainer &&
+    promptSelectionContainer.style.display !== "none" &&
+    promptSelect &&
+    promptSelect.selectedIndex > 0
+  ) {
+    const selectedOpt = promptSelect.options[promptSelect.selectedIndex];
+    actionDetails.push({
+      type: "prompt",
+      icon: "lightbulb",
+      name: selectedOpt.textContent,
+      content: selectedOpt.dataset.promptContent || ""
+    });
+  }
+  
+  return actionDetails.length > 0 ? actionDetails : null;
+}
+
+// Function to create HTML for action details
+function createActionDetailsHtml(actionDetails = [], messageId) {
+  if (!actionDetails || actionDetails.length === 0) return "";
+  
+  let actionDetailsHtml = "";
+  
+  actionDetails.forEach(detail => {
+    const iconClass = `bi-${detail.icon}`;
+    let displayText = "";
+    
+    switch (detail.type) {
+      case "workspace":
+        displayText = `Workspace: ${detail.scope === "all" ? "All" : detail.scope === "personal" ? "Personal" : "Group"} - ${detail.document}`;
+        if (detail.classification) {
+          displayText += ` (Classification: ${detail.classification})`;
+        }
+        break;
+      case "image":
+        displayText = "Image generation";
+        break;
+      case "web":
+        displayText = "Web search";
+        break;
+      case "prompt":
+        displayText = `Prompt: ${detail.name}`;
+        break;
+      default:
+        displayText = detail.detail || "Unknown action";
+    }
+    
+    actionDetailsHtml += `
+      <span class="action-detail">
+        <i class="bi ${iconClass} me-1"></i>${escapeHtml(displayText)}
+      </span>`;
+  });
+  
+  return `<div class="action-details-container" data-message-id="${escapeHtml(messageId)}">${actionDetailsHtml}</div>`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -133,7 +248,8 @@ export function appendMessage(
   messageId = null,
   augmented = false,
   hybridCitations = [],
-  webCitations = []
+  webCitations = [],
+  actionDetails = []
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -146,6 +262,9 @@ export function appendMessage(
   let messageClass = ""; // <<< ENSURE THIS IS DECLARED HERE
   let senderLabel = "";
   let messageContentHtml = "";
+  
+  // Initialize actionDetails as empty array if not provided
+  actionDetails = actionDetails || [];
   // let postContentHtml = ""; // Not needed for the general structure anymore
 
   // --- Handle AI message separately ---
@@ -318,6 +437,60 @@ export function appendMessage(
       messageContentHtml = DOMPurify.sanitize(
         marked.parse(escapeHtml(messageContent))
       );
+      
+      // Handle action details for user messages
+      let actionToggleHtml = "";
+      let actionDetailsContainerHtml = "";
+      
+      if (actionDetails && actionDetails.length > 0) {
+        const actionDetailsId = `action-details-${messageId || Date.now()}`;
+        actionToggleHtml = `
+          <div class="action-toggle-container">
+            <button class="action-toggle-btn" title="Show options" aria-expanded="false" aria-controls="${actionDetailsId}">
+              <i class="bi bi-gear"></i>
+            </button>
+          </div>`;
+        actionDetailsContainerHtml = `
+          <div class="action-details-container mt-2 pt-2 border-top" id="${actionDetailsId}" style="display: none;">
+            ${createActionDetailsHtml(actionDetails, messageId)}
+          </div>`;
+      }
+
+      // Set innerHTML with action details components
+      messageDiv.innerHTML = `
+        <div class="message-content ${sender === "You" || sender === "File" ? "flex-row-reverse" : ""}">
+          ${avatarImg ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">` : ""}
+          <div class="message-bubble">
+            <div class="message-sender">${senderLabel}</div>
+            <div class="message-text">${messageContentHtml}</div>
+            ${actionDetailsContainerHtml}
+            ${actionToggleHtml ? `<div class="message-footer d-flex justify-content-between align-items-center">${actionToggleHtml}</div>` : ""}
+          </div>
+        </div>`;
+
+      // Add action toggle functionality if needed
+      if (actionToggleHtml) {
+        const toggleBtn = messageDiv.querySelector(".action-toggle-btn");
+        if (toggleBtn) {
+          toggleBtn.addEventListener("click", () => {
+            const targetId = toggleBtn.getAttribute("aria-controls");
+            const detailsContainer = messageDiv.querySelector(`#${targetId}`);
+            if (!detailsContainer) return;
+            
+            const isExpanded = detailsContainer.style.display !== "none";
+            detailsContainer.style.display = isExpanded ? "none" : "block";
+            toggleBtn.setAttribute("aria-expanded", !isExpanded);
+            toggleBtn.title = isExpanded ? "Show options" : "Hide options";
+            toggleBtn.innerHTML = isExpanded
+              ? '<i class="bi bi-gear"></i>'
+              : '<i class="bi bi-chevron-up"></i>';
+            
+            if (!isExpanded) {
+              scrollChatToBottom();
+            }
+          });
+        }
+      }
     } else if (sender === "File") {
       messageClass = "file-message";
       senderLabel = "File Added";
@@ -438,7 +611,11 @@ export function sendMessage() {
 export function actuallySendMessage(finalMessageToSend) {
   // const chatbox = document.getElementById("chatbox"); // Defined above
   // const userInput = document.getElementById("user-input"); // Defined above
-  appendMessage("You", finalMessageToSend); // Append user message first
+  
+  // Collect action details before appending message
+  const actionDetails = collectActionDetails();
+  
+  appendMessage("You", finalMessageToSend, null, null, false, [], [], actionDetails); // Append user message first with action details
   userInput.value = "";
   userInput.style.height = "";
   showLoadingIndicatorInChatbox();
