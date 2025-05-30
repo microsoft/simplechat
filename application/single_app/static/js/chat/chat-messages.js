@@ -136,7 +136,7 @@ function createActionDetailsHtml(actionDetails = [], messageId) {
       </span>`;
   });
   
-  return `<div class="action-details-container" data-message-id="${escapeHtml(messageId)}">${actionDetailsHtml}</div>`;
+  return actionDetailsHtml;
 }
 
 function createCitationsHtml(
@@ -206,7 +206,7 @@ export function loadMessages(conversationId) {
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
         console.log(`[loadMessages Loop] Role: ${msg.role}`);
         if (msg.role === "user") {
-          appendMessage("You", msg.content);
+          appendMessage("You", msg.content, null, msg.id, false, [], [], msg.action_details || []);
         } else if (msg.role === "assistant") {
           console.log(`  [loadMessages Loop] Full Assistant msg object:`, JSON.stringify(msg)); // Stringify to see exact keys
           console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}`);
@@ -452,7 +452,7 @@ export function appendMessage(
           </div>`;
         actionDetailsContainerHtml = `
           <div class="action-details-container mt-2 pt-2 border-top" id="${actionDetailsId}" style="display: none;">
-            ${createActionDetailsHtml(actionDetails, messageId)}
+            ${createActionDetailsHtml(actionDetails, messageId).replace('action-details-container', '')}
           </div>`;
       }
 
@@ -464,7 +464,7 @@ export function appendMessage(
             <div class="message-sender">${senderLabel}</div>
             <div class="message-text">${messageContentHtml}</div>
             ${actionDetailsContainerHtml}
-            ${actionToggleHtml ? `<div class="message-footer d-flex justify-content-between align-items-center">${actionToggleHtml}</div>` : ""}
+            ${actionToggleHtml ? `<div class="message-footer d-flex justify-content-end align-items-center">${actionToggleHtml}</div>` : ""}
           </div>
         </div>`;
 
@@ -671,7 +671,8 @@ export function actuallySendMessage(finalMessageToSend) {
       image_generation: imageGenEnabled,
       doc_scope: docScopeSelect ? docScopeSelect.value : "all",
       active_group_id: window.activeGroupId,
-      model_deployment: modelDeployment
+      model_deployment: modelDeployment,
+      action_details: actionDetails || [] // Include action details in the request
     }),
   })
     .then((response) => {
