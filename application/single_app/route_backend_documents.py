@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
+import os
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -137,8 +138,13 @@ def register_route_backend_documents(app):
             parent_document_id = str(uuid.uuid4())
             temp_file_path = None # Initialize
             try:
+                # The user can configure the app service to use azure storage for temp files,
+                # Check if the 'sc-temp-files' folder exists, and if so, use it.
+                # Otherwise, use the default system temp directory.
+                sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else ""
+
                 # Use NamedTemporaryFile for automatic cleanup, generate safe suffix
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=sc_temp_files_dir) as tmp_file:
                     file.save(tmp_file.name)
                     temp_file_path = tmp_file.name
             except Exception as e:
