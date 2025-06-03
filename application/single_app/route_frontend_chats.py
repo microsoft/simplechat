@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
+from functions_appinsights import log_event
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
@@ -21,7 +22,7 @@ def register_route_frontend_chats(app):
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         active_group_id = user_settings["settings"].get("activeGroupOid", "")
         categories_list = public_settings.get("document_classification_categories","")
-        
+
         if not user_id:
             return redirect(url_for('login'))
         return render_template(
@@ -32,7 +33,7 @@ def register_route_frontend_chats(app):
             enable_enhanced_citations=enable_enhanced_citations, 
             enable_document_classification=enable_document_classification, 
             document_classification_categories=categories_list, 
-            enable_extract_meta_data=enable_extract_meta_data
+            enable_extract_meta_data=enable_extract_meta_data,
         )
     
     @app.route('/upload', methods=['POST'])

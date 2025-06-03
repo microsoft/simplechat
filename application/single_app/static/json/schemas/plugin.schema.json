@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/Plugin",
+  "definitions": {
+    "Plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "Alphanumeric, underscore, and dash only"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["key", "managedIdentity"],
+              "description": "Auth type must be 'key' or 'managedIdentity'"
+            },
+            "key": {
+              "type": "string"
+            },
+            "managedIdentity": {
+              "type": "string"
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary metadata",
+          "additionalProperties": true
+        },
+        "additionalFields": {
+          "type": "object",
+          "description": "Arbitrary additional fields",
+          "additionalProperties": true
+        }
+      },
+      "required": ["name", "type", "description", "endpoint", "auth", "metadata", "additionalFields"],
+      "title": "Plugin"
+    }
+  }
+}

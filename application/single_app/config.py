@@ -1,5 +1,5 @@
 # config.py
-
+import logging
 import os
 import requests
 import uuid
@@ -78,14 +78,13 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
+
 app = Flask(__name__)
 
 app.config['EXECUTOR_TYPE'] = 'thread'
 app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
-
-app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['VERSION'] = '0.215.015'
 Session(app)
@@ -243,6 +242,38 @@ cosmos_file_processing_container_name = "file_processing"
 cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_file_processing_container_name,
     partition_key=PartitionKey(path="/document_id")
+)
+
+
+# Group Chat containers fulfilling the same roles as messages and conversations
+# but for group chats. These are separate from the user chat containers.
+cosmos_file_processing_container_name = "group_messages"
+cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_file_processing_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_file_processing_container_name = "group_conversations"
+cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_file_processing_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+# agent_facts document schema:
+# {
+#   "id": "<uuid>",
+#   "agent_id": "<agent_id>",
+#   "scope_type": "user" | "group",
+#   "scope_id": "<user_id or group_id>",
+#   "conversation_id": "<conversation_id>",
+#   "value": "<fact_value>",
+#   "created_at": "<timestamp>",
+#   "updated_at": "<timestamp>"
+# }
+cosmos_agent_facts_container_name = "agent_facts"
+cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_agent_facts_container_name,
+    partition_key=PartitionKey(path="/scope_id")
 )
 
 def ensure_custom_logo_file_exists(app, settings):

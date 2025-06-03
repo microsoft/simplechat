@@ -224,6 +224,13 @@
                 Chat
               </a>
             </li>
+            <!-- Future Group Chat Feature
+            <li class="nav-item">
+              <a class="nav-link" href="">
+                Active Group Chat
+              </a>
+            </li>
+            -->
             <!-- REMOVED Admin Dropdown from here -->
           {% endif %}
         </ul>
@@ -342,6 +349,9 @@
   <div class="container main-content" id="main-content">
     {% block content %}{% endblock %}
   </div>
+
+  <!-- Toast container for error/info messages -->
+  <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
   <!-- <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
   LOCAL VERSION BELOW
   -->

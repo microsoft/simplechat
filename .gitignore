@@ -29,3 +29,8 @@ priv-*
 
 # temporary files
 flask_session
+
+# node modules
+/node_modules
+/package-lock.json
+/package.json

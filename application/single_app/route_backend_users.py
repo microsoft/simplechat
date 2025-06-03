@@ -151,6 +151,3 @@ def register_route_backend_users(app):
         except Exception as e:
             print(f"Error retrieving settings for user {user_id}: {e}")
             return jsonify({"error": "Failed to retrieve user settings"}), 500
-
-
-

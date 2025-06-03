@@ -2,7 +2,7 @@
 
 import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
-import { isColorLight, toBoolean } from "./chat-utils.js"; // Import toBoolean helper
+import { isColorLight, toBoolean } from "./chat-utils.js";
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const conversationsList = document.getElementById("conversations-list");
@@ -444,7 +444,10 @@ export async function createNewConversation(callback) {
   try {
     const response = await fetch("/api/create_conversation", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "same-origin",
     });
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));

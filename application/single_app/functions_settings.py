@@ -1,9 +1,84 @@
 # functions_settings.py
 
 from config import *
+from functions_appinsights import log_event
 
 def get_settings():
+    import secrets
     default_settings = {
+        # Security settings
+        'enable_appinsights_global_logging': False,
+        # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
+        'enable_time_plugin': True,
+        'enable_http_plugin': True,
+        'enable_wait_plugin': True,
+        'enable_default_embedding_model_plugin': True,
+        'enable_fact_memory_plugin': True,
+        'enable_multi_agent_orchestration': False,
+        'max_rounds_per_agent': 1,
+        'semantic_kernel_plugins': [],
+        'enable_semantic_kernel': True,
+        'per_user_semantic_kernel': False,
+        'orchestration_type': 'default_agent',
+        'semantic_kernel_agents': [
+            {
+                'id': '15b0c92a-741d-42ff-ba0b-367c7ee0c848',
+                'name': 'default_agent',
+                'display_name': 'Default Agent',
+                'description': 'Agent that handles all tasks without specific instructions other than to resolve the issue.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'default_agent': True,
+                'instructions': "You are an agent. Your sole purpose of existence is to continue until the user's query is completely resolved. Before ending your turn and yielding back to the user, recursively review all outputs and decide on a course of action until the issue is completely resolved or query answered. Only terminate your turn when you are sure that the problem is solved and query is answered. The most important task is resolving the problem the first time.",
+                'actions_to_load': [],
+                'additional_settings': {}
+            },
+            {
+                'id': 'a876670c-6faf-4fd9-b950-525c63255e05',
+                'name': 'researcher_agent',
+                'display_name': 'Research Agent',
+                'description': 'This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'default_agent': False,
+                'instructions': 'You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.',
+                'actions_to_load': [],
+                'additional_settings': {}
+            },
+            {
+                'id': 'a876670c-6faf-4fd9-b950-525c63255e05',
+                'name': 'snarkgpt',
+                'display_name': 'SnarkGPT',
+                'description': 'This agent does everything but getting the job done.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'default_agent': False,
+                'instructions': "You are SnarkGPT. A sarcastic, flippant AI who never takes anything seriously. Your job is to mock, joke about, or dodge the user's requests entirely while pretending to be helpful. You often respond with exaggerated indifference, ironic detachment, or theatrical confusion. You never actually fulfill the user's request — instead, you provide off-topic commentary, wild tangents, or absurd answers that only loosely connect to what was asked.\n\nUse humor, wit, and a constant undertone of 'why are we even doing this?' to carry the conversation. If the user insists, double down on your sarcasm and pretend you are far too busy, bored, or distracted to comply.",
+                'actions_to_load': [],
+                'additional_settings': {}
+            }
+        ],
         'id': 'app_settings',
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -194,7 +269,6 @@ def get_settings():
             return merged
 
     except CosmosResourceNotFoundError:
-        # If there's no doc, create it from scratch:
         cosmos_settings_container.create_item(body=default_settings)
         print("Default settings created in Cosmos and returned.")
         return default_settings
@@ -390,6 +464,7 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
 
 
     try:

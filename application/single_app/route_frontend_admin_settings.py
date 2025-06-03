@@ -47,6 +47,77 @@ def register_route_frontend_admin_settings(app):
             ]
         # --- End Refined Default Checks ---
 
+        if 'enable_appinsights_global_logging' not in settings:
+            settings['enable_appinsights_global_logging'] = False
+
+        # --- Add default for semantic_kernel ---
+        if 'per_user_semantic_kernel' not in settings:
+            settings['per_user_semantic_kernel'] = False
+        if 'enable_semantic_kernel' not in settings:
+            settings['enable_semantic_kernel'] = False
+        if 'enable_time_plugin' not in settings:
+            settings['enable_time_plugin'] = False
+        if 'enable_http_plugin' not in settings:
+            settings['enable_http_plugin'] = False
+        if 'enable_wait_plugin' not in settings:
+            settings['enable_wait_plugin'] = False
+        if 'enable_fact_memory_plugin' not in settings:
+            settings['enable_fact_memory_plugin'] = False
+        if 'enable_default_embedding_model_plugin' not in settings:
+            settings['enable_default_embedding_model_plugin'] = False
+        if 'enable_multi_agent_orchestration' not in settings:
+            settings['enable_multi_agent_orchestration'] = False
+        if 'max_rounds_per_agent' not in settings:
+            settings['max_rounds_per_agent'] = 1
+        if 'orchestration_type' not in settings:
+            settings['orchestration_type'] = 'default_agent'
+        if 'semantic_kernel_plugins' not in settings:
+            settings['semantic_kernel_plugins'] = []
+        if 'semantic_kernel_agents' not in settings:
+            settings['semantic_kernel_agents'] = [
+                {
+                    "id": "15b0c92a-741d-42ff-ba0b-367c7ee0c848",
+                    "name": "default_agent",
+                    "display_name": "Default Agent",
+                    "description": "Agent that handles all tasks without specific instructions other than to resolve the issue.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "default_agent": True,
+                    "instructions": "You are an agent. Your sole purpose of existence is to continue until the user's query is completely resolved. Before ending your turn and yielding back to the user, recursively review all outputs and decide on a course of action until the issue is completely resolved or query answered. Only terminate your turn when you are sure that the problem is solved and query is answered. The most important task is resolving the problem the first time.",
+                    "actions_to_load": [],
+                    "additional_settings": {}
+                },
+                {
+                    "id": "a876670c-6faf-4fd9-b950-525c63255e05",
+                    "name": "researcher_agent",
+                    "display_name": "Research Agent",
+                    "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "default_agent": False,
+                    "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
+                    "actions_to_load": [],
+                    "additional_settings": {}
+                },
+                {
+                    "id": "a876670c-6faf-4fd9-b950-525c63255e05",
+                    "name": "snarkgpt",
+                    "display_name": "SnarkGPT",
+                    "description": "This agent does everything but getting the job done.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "default_agent": False,
+                    "instructions": "You are SnarkGPT. A sarcastic, flippant AI who never takes anything seriously. Your job is to mock, joke about, or dodge the user's requests entirely while pretending to be helpful. You often respond with exaggerated indifference, ironic detachment, or theatrical confusion. You never actually fulfill the user's request — instead, you provide off-topic commentary, wild tangents, or absurd answers that only loosely connect to what was asked.\n\nUse humor, wit, and a constant undertone of 'why are we even doing this?' to carry the conversation. If the user insists, double down on your sarcasm and pretend you are far too busy, bored, or distracted to comply.",
+                    "actions_to_load": [],
+                    "additional_settings": {}
+                }
+            ]
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -214,8 +285,13 @@ def register_route_frontend_admin_settings(app):
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
 
+            # --- Application Insights Logging Toggle ---
+            enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
+                # Logging
+                'enable_appinsights_global_logging': enable_appinsights_global_logging,
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',
@@ -223,6 +299,8 @@ def register_route_frontend_admin_settings(app):
                 'logo_version': settings.get('logo_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
+                'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
+                'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -456,8 +534,12 @@ def register_route_frontend_admin_settings(app):
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo base64 or the original one
+
             if update_settings(new_settings):
                 flash("Admin settings updated successfully.", "success")
+                # Reconfigure Application Insights logging immediately if the setting changed
+                from functions_appinsights import setup_appinsights_logging
+                setup_appinsights_logging(get_settings())
                 # Ensure static file is created/updated *after* successful DB save
                 # Pass the *just saved* data (or fetch fresh) to ensure consistency
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
@@ -465,7 +547,6 @@ def register_route_frontend_admin_settings(app):
                     ensure_custom_logo_file_exists(app, updated_settings_for_file)
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo file.")
-
             else:
                 flash("Failed to update admin settings.", "danger")
 

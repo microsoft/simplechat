@@ -402,7 +402,6 @@
         </div>
         
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
-            
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
                     type="button" role="tab" aria-controls="general" aria-selected="true">
@@ -457,6 +456,24 @@
                     Search and Extract
                 </button>
             </li>
+            <!-- Agents Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
+                    Agents
+                </button>
+            </li>
+            <!-- Plugins Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="plugins-tab" data-bs-toggle="tab" data-bs-target="#plugins" type="button" role="tab" aria-controls="plugins" aria-selected="false">
+                    Plugins
+                </button>
+            </li>
+            <!-- Logging Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
+                    Logging
+                </button>
+            </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="other-tab" data-bs-toggle="tab" data-bs-target="#other" type="button"
                     role="tab" aria-controls="other" aria-selected="false">
@@ -464,15 +481,147 @@
                 </button>
             </li>
         </ul>
-
-        
         <div class="tab-content mt-3" id="adminSettingsTabContent">
+            <!-- Plugins Tab Content -->
+            <div class="tab-pane fade" id="plugins" role="tabpanel" aria-labelledby="plugins-tab">
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and plugins require a restart of the web app to take effect.
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Plugins are not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Semantic Kernel Plugins</h4>
+                            <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Plugin</button>
+                        </div>
+                        <!-- Core Plugin Toggles -->
+                        <div class="mb-3" id="core-plugin-toggles">
+                            <div class="form-check form-switch d-inline-block me-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Plugin</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block me-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Plugin</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block me-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Plugin</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Plugin</label>
+                            </div>
+                            <div class="form-check form-switch d-inline-block ms-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Plugin</label>
+                            </div>
+                        </div>
+                        <table class="table table-bordered" id="plugins-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="plugins-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </div>
 
+
+            <!-- Agents Tab Content -->
+            <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and plugins require a restart of the web app to take effect.
+                </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
+                    </div>
+                    <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Agents UI is not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-per-user-sk" name="per_user_semantic_kernel" {% if settings.per_user_semantic_kernel %}checked{% endif %} {% if not settings.enable_semantic_kernel %}disabled{% endif %}>
+                            <label class="form-check-label ms-2" for="toggle-per-user-sk">Per-User Semantic Kernel (user-specific agents/plugins and disables global configuration)</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
+                        </div>
+                        <!-- Orchestration Settings Card -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Agent Orchestration Settings</h4>
+                        </div>
+                        <div class="card p-3 mb-3">
+                            <p class="text-muted mb-1">Configure how the chat system orchestrates agents (single or multi-agent group chat).</p>
+                            <div class="mb-3">
+                                <label for="orchestration_type" class="form-label">Orchestration Type</label>
+                                <select class="form-select" id="orchestration_type" name="orchestration_type"></select>
+                            </div>
+                            <div class="mb-3" id="max_rounds_per_agent_group" style="display:none;">
+                                <label for="max_rounds_per_agent" class="form-label">Max Rounds Per Agent (Group Chat)</label>
+                                <input type="number" class="form-control" id="max_rounds_per_agent" name="max_rounds_per_agent" min="1" value="1">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="save-orchestration-settings-btn">Save Orchestration Settings</button>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Semantic Kernel Agents</h4>
+                            <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                        </div>
+                        <div class="mb-3 d-flex align-items-center">
+                            <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator (Default Agent):</label>
+                            <select id="default-agent-select" class="form-select w-auto" style="min-width:200px;"></select>
+                            <span id="default-agent-select-msg" class="ms-2 text-muted small"></span>
+                        </div>
+                        <table class="table table-bordered" id="agents-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Display Name</th>
+                                    <th>Description</th>
+                                    <th>Orchestrator</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agents-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </div>
+
+
+            <!-- Logging Tab Content -->
+            <div class="tab-pane fade" id="logging" role="tabpanel" aria-labelledby="logging-tab">
+                <div class="mb-3">
+                    <h4>Application Insights Logging</h4>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_appinsights_global_logging" name="enable_appinsights_global_logging" {% if settings.enable_appinsights_global_logging %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_appinsights_global_logging">
+                            Enable Application Insights Global Logging
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable global logging to Application Insights for all agents and orchestration events."></i>
+                    </div>
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <strong>Note:</strong> Changing this setting requires an application restart to take effect.
+                    </div>
+                </div>
+            </div>
             
             <div class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab">
                 
                  <p class="text-muted">
-                    Configure general application settings, including the application’s title, logo, and landing page text.
+                    Configure general application settings, including the application's title, logo, and landing page text.
                 </p>
                 <div class="card p-3 mb-3">
                     <div class="mb-3">
@@ -2094,6 +2243,8 @@
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
                             rows="5">{{ settings.default_system_prompt }}</textarea>
                     </div>
+
+
                 </div>
 
                 <div class="card mb-3 p-3">
@@ -2119,6 +2270,13 @@
             </div>
         </div> 
     </form>
+    <div>
+        <!-- Plugin Modal (moved outside form) -->
+        {% include '_plugin_modal.html' %}
+
+        <!-- Agent Modal (moved outside form) -->
+        {% include '_agent_modal.html' %}
+    </div>
 </div>
 {% endblock %}
 <script>
@@ -2234,7 +2392,9 @@
     window.enableDocumentClassification = "{{ enable_document_classification }}";
 
 </script>
-<script src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
 
 <!-- Script to update the walkthrough steps based on form changes -->
 <script>

@@ -25,6 +25,16 @@ jobs:
         login-server: ${{ secrets.ACR_LOGIN_SERVER }}
         
     - uses: actions/checkout@v3
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Install Ajv
+      run: npm install ajv@^8.0.0 ajv-cli@^5.0.0
+    - name: Install Ajv
+      run: npm install ajv@^8.0.0 ajv-formats
+    - name: Generate standalone JSON schema validators
+      run: node scripts/generate-validators.mjs
     - name: Build the Docker image
       run:         
         docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;

@@ -1,0 +1,62 @@
+<!-- Dynamic Plugin Modal -->
+<div class="modal fade" id="plugin-modal" tabindex="-1" aria-labelledby="plugin-modal-title" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="plugin-modal-title">Add Plugin</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="plugin-name" class="form-label">Name</label>
+          <input type="text" class="form-control" id="plugin-name" required pattern="^[^\s]+$" name="plugin_name"/>
+        </div>
+        <div class="mb-3">
+          <label for="plugin-type" class="form-label">Type</label>
+          <select class="form-select" id="plugin-type" name="plugin_type" required>
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="plugin-description" class="form-label">Description</label>
+          <input type="text" class="form-control" id="plugin-description" />
+        </div>
+        <div class="mb-3">
+          <label for="plugin-endpoint" class="form-label">Endpoint</label>
+          <input type="text" class="form-control" id="plugin-endpoint" placeholder="https://" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Auth</label>
+          <div class="input-group mb-2">
+            <span class="input-group-text">Type</span>
+            <select class="form-select" id="plugin-auth-type">
+              <option value="key">Key</option>
+              <option value="identity">Identity</option>
+            </select>
+          </div>
+          <div class="input-group mb-2" id="auth-key-group">
+            <span class="input-group-text">Key</span>
+            <input type="text" class="form-control" id="plugin-auth-key" />
+          </div>
+          <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
+            <span class="input-group-text">Managed Identity</span>
+            <input type="text" class="form-control" id="plugin-auth-managed-identity" />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
+          <textarea class="form-control" id="plugin-metadata" rows="2" placeholder="{}"></textarea>
+        </div>
+        <div class="mb-3">
+          <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
+          <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
+        </div>
+        <div id="plugin-modal-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="save-plugin-btn">Save Plugin</button>
+      </div>
+    </div>
+  </div>
+</div>

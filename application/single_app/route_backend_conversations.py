@@ -161,6 +161,7 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            # TODO: Delete any facts that were stored with this conversation.
         except Exception as e:
             return jsonify({
                 "error": str(e)

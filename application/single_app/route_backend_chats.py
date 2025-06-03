@@ -1,10 +1,31 @@
 # route_backend_chats.py
-
+from semantic_kernel import Kernel
+from semantic_kernel.agents.runtime import InProcessRuntime
+from semantic_kernel.contents.chat_history import ChatHistory
+from semantic_kernel.contents.chat_message_content import ChatMessageContent
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
+from semantic_kernel_fact_memory_store import FactMemoryStore
+from semantic_kernel_loader import initialize_semantic_kernel
+import builtins
+import asyncio, types
+import json
 from config import *
+from flask import g
 from functions_authentication import *
 from functions_search import *
 from functions_bing_search import *
 from functions_settings import *
+from functions_agents import get_agent_id_by_name
+from functions_chat import *
+from flask import current_app
+
+
+def get_kernel():
+    return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
+
+def get_kernel_agents():
+    return getattr(g, 'kernel_agents', None) or getattr(builtins, 'kernel_agents', None)
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
@@ -18,6 +39,7 @@ def register_route_backend_chats(app):
             return jsonify({
                 'error': 'User not authenticated'
             }), 401
+        
 
         # Extract from request
         user_message = data.get('message', '')
@@ -29,7 +51,12 @@ def register_route_backend_chats(app):
         document_scope = data.get('doc_scope')
         active_group_id = data.get('active_group_id')
         frontend_gpt_model = data.get('model_deployment')
+        chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
         
+        # Validate chat_type
+        if chat_type not in ('user', 'group'):
+            chat_type = 'user'
+
         search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
         hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
         system_messages_for_augmentation = [] # Collect system messages from search/bing
@@ -144,7 +171,7 @@ def register_route_backend_chats(app):
              return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
 
         # ---------------------------------------------------------------------
-        # 1) Load or create conversation
+# region        # 1) Load or create conversation
         # ---------------------------------------------------------------------
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
@@ -175,7 +202,7 @@ def register_route_backend_chats(app):
                 return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
 
         # ---------------------------------------------------------------------
-        # 2) Append the user message to conversation immediately
+# region        # 2) Append the user message to conversation immediately
         # ---------------------------------------------------------------------
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
         user_message_doc = {
@@ -184,7 +211,8 @@ def register_route_backend_chats(app):
             'role': 'user',
             'content': user_message,
             'timestamp': datetime.utcnow().isoformat(),
-            'model_deployment_name': None # Model not used for user message
+            'model_deployment_name': None,  # Model not used for user message
+            'metadata': {}, 
         }
         cosmos_messages_container.upsert_item(user_message_doc)
 
@@ -197,7 +225,7 @@ def register_route_backend_chats(app):
         cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
 
         # ---------------------------------------------------------------------
-        # 3) Check Content Safety (but DO NOT return 403).
+# region        # 3) Check Content Safety (but DO NOT return 403).
         #    If blocked, add a "safety" role message & skip GPT.
         # ---------------------------------------------------------------------
         blocked = False
@@ -246,7 +274,8 @@ def register_route_backend_chats(app):
                         'triggered_categories': triggered_categories,
                         'blocklist_matches': blocklist_matches,
                         'timestamp': datetime.utcnow().isoformat(),
-                        'reason': "; ".join(block_reasons)
+                        'reason': "; ".join(block_reasons),
+                        'metadata': {}
                     }
                     cosmos_safety_container.upsert_item(safety_item)
 
@@ -276,7 +305,8 @@ def register_route_backend_chats(app):
                         'role': 'safety',
                         'content': blocked_msg_content.strip(),
                         'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': None
+                        'model_deployment_name': None,
+                        'metadata': {},  # No metadata needed for safety messages
                     }
                     cosmos_messages_container.upsert_item(safety_doc)
 
@@ -301,7 +331,7 @@ def register_route_backend_chats(app):
                 print(f"[Content Safety] Unexpected error: {ex}")
 
         # ---------------------------------------------------------------------
-        # 4) Augmentation (Search, Bing, etc.) - Run *before* final history prep
+# region        # 4) Augmentation (Search, Bing, etc.) - Run *before* final history prep
         # ---------------------------------------------------------------------
         
         # Hybrid Search
@@ -345,13 +375,15 @@ def register_route_backend_chats(app):
 
             # Perform the search
             try:
+                # For search, pass group context only if chat_type is 'group'
                 search_args = {
                     "query": search_query,
                     "user_id": user_id,
                     "top_n": 12,
                     "doc_scope": document_scope,
-                    "active_group_id": active_group_id
                 }
+                if chat_type == 'group' and active_group_id:
+                    search_args["active_group_id"] = active_group_id
                 if selected_document_id:
                     search_args["document_id"] = selected_document_id
 
@@ -540,7 +572,8 @@ def register_route_backend_chats(app):
                     'prompt': user_message,
                     'created_at': datetime.utcnow().isoformat(),
                     'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': image_gen_model
+                    'model_deployment_name': image_gen_model,
+                    'metadata': {}
                 }
                 cosmos_messages_container.upsert_item(image_doc)
 
@@ -561,7 +594,7 @@ def register_route_backend_chats(app):
                 }), 500
 
         # ---------------------------------------------------------------------
-        # 5) Prepare FINAL conversation history for GPT (including summarization)
+# region        # 5) Prepare FINAL conversation history for GPT (including summarization)
         # ---------------------------------------------------------------------
         conversation_history_for_api = []
         summary_of_older = ""
@@ -646,7 +679,8 @@ def register_route_backend_chats(app):
                     'search_query': search_query, # Include the search query used for this augmentation
                     'user_message': user_message, # Include the original user message for context
                     'model_deployment_name': None, # As per your original structure
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'metadata': {}
                 }
                 cosmos_messages_container.upsert_item(system_doc)
                 conversation_history_for_api.append(aug_msg) # Add to API context
@@ -696,57 +730,426 @@ def register_route_backend_chats(app):
                  if not user_msg_found: # Still not found? Append the original input as fallback
                      conversation_history_for_api.append({"role": "user", "content": user_message})
 
-
         except Exception as e:
             print(f"Error preparing conversation history: {e}")
             return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
 
         # ---------------------------------------------------------------------
-        # 6) Final GPT Call
+# region         # 6) Final GPT Call
         # ---------------------------------------------------------------------
+        # --- DRY Fallback Chain Helper ---
+        def try_fallback_chain(steps):
+            """
+            steps: list of dicts with keys:
+                'name': str, 'func': callable, 'on_success': callable, 'on_error': callable
+            Returns: (ai_message, final_model_used, chat_mode, kernel_fallback_notice)
+            """
+            for step in steps:
+                try:
+                    result = step['func']()
+                    return step['on_success'](result)
+                except Exception as e:
+                    log_event(
+                        f"[Fallback Failure] Fallback step {step['name']} failed: {e}",
+                        extra={
+                            "step_name": step['name'],
+                            "error": str(e)
+                        }
+                    )
+                    if 'on_error' in step and step['on_error']:
+                        step['on_error'](e)
+                    continue
+            # If all fail, return default error
+            return ("Sorry, I encountered an error.", gpt_model, None, None)
+
+        # --- Inject facts as a system message at the top of conversation_history_for_api ---
+        def get_facts_for_context(scope_id, scope_type, conversation_id: str = None, agent_id: str = None):
+            settings = get_settings()
+            agents = settings.get('semantic_kernel_agents', [])
+            default_agent = next((a for a in agents if a.get('default_agent')), None)
+            agent_dict = default_agent or (agents[0] if agents else None)
+            agent_id = agent_dict.get('id') if agent_dict else None
+            if not scope_id or not scope_type:
+                return ""
+            fact_store = FactMemoryStore()
+            kwargs = dict(
+                scope_type=scope_type,
+                scope_id=scope_id,
+            )
+            if agent_id:
+                kwargs['agent_id'] = agent_id
+            if conversation_id:
+                kwargs['conversation_id'] = conversation_id
+            facts = fact_store.get_facts(**kwargs)
+            if not facts:
+                return ""
+            fact_lines = []
+            for fact in facts:
+                value = fact.get('value', '')
+                if value:
+                    fact_lines.append(f"- {value}")
+            fact_lines.append(f"- agent_id: {agent_id}")
+            fact_lines.append(f"- scope_type: {scope_type}")
+            fact_lines.append(f"- scope_id: {scope_id}")
+            fact_lines.append(f"- conversation_id: {conversation_id}")
+            return "\n".join(fact_lines)
+
+        async def run_sk_call(callable_obj, *args, **kwargs):
+            log_event(
+                f"Running Semantic Kernel callable: {callable_obj.__name__}",
+                extra={
+                    "callable_name": callable_obj.__name__,
+                    "args": args,
+                    "kwargs": kwargs
+                }
+            )
+            runtime = kwargs.get("runtime", None)
+            started_runtime = False
+            try:
+                if runtime is not None and getattr(runtime, "_run_context", None) is None:
+                    runtime.start()
+                    started_runtime = True
+                    log_event(
+                        f"Started runtime for callable: {callable_obj.__name__}",
+                        extra={"runtime": runtime}
+                    )
+                result = callable_obj(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    log_event(
+                        f"Callable {callable_obj.__name__} returned a coroutine, awaiting.",
+                        extra={"callable_name": callable_obj.__name__}
+                    )
+                    result = await result
+                if hasattr(result, "get") and asyncio.iscoroutinefunction(result.get):
+                    try:
+                        log_event(
+                            f"Callable {callable_obj.__name__} returned an orchestration result, awaiting result.get().",
+                            extra={"callable_name": callable_obj.__name__}
+                        )
+                        return await result.get()
+                    except Exception as e:
+                        log_event(
+                            f"Error awaiting orchestration result.get()", 
+                            extra={"error": str(e)},
+                            level=logging.ERROR,
+                            exceptionTraceback=True
+                        )
+                        return "Sorry, the orchestration failed."
+                elif isinstance(result, types.AsyncGeneratorType):
+                    log_event(
+                        f"Callable {callable_obj.__name__} returned an async generator, iterating.",
+                        extra={"callable_name": callable_obj.__name__}
+                    )
+                    async for r in result:
+                        return r
+                else:
+                    return result
+            except asyncio.CancelledError:
+                log_event(
+                    f"Callable {callable_obj.__name__} was cancelled.",
+                    extra={"callable_name": callable_obj.__name__},
+                    level=logging.WARNING,
+                    exceptionTraceback=True
+                )
+                raise
+            finally:
+                if runtime is not None and started_runtime:
+                    log_event(
+                        f"Stopping runtime for callable: {callable_obj.__name__}",
+                        extra={"runtime": runtime}
+                    )
+                    await runtime.stop_when_idle()
+
         ai_message = "Sorry, I encountered an error." # Default error message
         final_model_used = gpt_model # Track model used for the response
-
-        if not conversation_history_for_api:
-             return jsonify({'error': 'Cannot generate response: No conversation history available.'}), 500
-        if conversation_history_for_api[-1].get('role') != 'user':
-             print(f"Error: Last message role is not user: {conversation_history_for_api[-1].get('role')}")
-             return jsonify({'error': 'Internal error: Conversation history improperly formed.'}), 500
-
-        try:
-            print(f"--- Sending to GPT ({final_model_used}) ---")
-            # print(json.dumps(conversation_history_for_api, indent=2)) # DEBUG: Log the exact history sent
-            print(f"Total messages in API call: {len(conversation_history_for_api)}")
-            # Calculate rough token estimate if needed for debugging
-
-            response = gpt_client.chat.completions.create(
-                model=final_model_used,
-                messages=conversation_history_for_api,
-                # Add other parameters like temperature, max_tokens if needed
-            )
-            ai_message = response.choices[0].message.content
-
-            # Optional: Log token usage
-            # print(f"Completion Tokens: {response.usage.completion_tokens}")
-            # print(f"Prompt Tokens: {response.usage.prompt_tokens}")
-            # print(f"Total Tokens: {response.usage.total_tokens}")
-
-        except Exception as e:
-            print(f"Error during final GPT completion: {str(e)}")
-            # Keep the default error message 'ai_message'
-            # Optionally, set a more specific error message based on exception type
-            if "context length" in str(e).lower():
-                 ai_message = "Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message."
+        kernel_fallback_notice = None
+        chat_mode = None
+        scope_id=active_group_id if chat_type == 'group' else user_id
+        scope_type='group' if chat_type == 'group' else 'user'
+        conversation_id=conversation_id
+        enable_multi_agent_orchestration = False
+        fallback_steps = []
+        default_agent_name = None
+        selected_agent = None
+        settings_agents = []
+        user_settings = get_user_settings(user_id).get('settings', {})
+        per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+        enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+        redis_client = None
+        # --- Semantic Kernel state management (per-user mode) ---
+        if enable_semantic_kernel and per_user_semantic_kernel:
+            redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
+            #g.kernel, g.kernel_agents = load_user_kernel(user_id, redis_client)
+            #if g.kernel is None:
+            #    initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
+            initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
+        elif enable_semantic_kernel:
+            # Global mode: set g.kernel/g.kernel_agents from builtins
+            g.kernel = getattr(builtins, 'kernel', None)
+            g.kernel_agents = getattr(builtins, 'kernel_agents', None)
+        if per_user_semantic_kernel:
+            settings_agents = user_settings.get('agents', [])
+            print(f"[SKChat] Per-user Semantic Kernel enabled. Using user-specific settings.")
+        else: 
+            enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
+            settings_agents = settings.get('semantic_kernel_agents', [])
+        kernel = get_kernel()
+        all_agents = get_kernel_agents()
+        
+        if enable_semantic_kernel:
+            if all_agents:
+                agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
+                agent_debug_info = []
+                for agent in agent_iter:
+                    agent_debug_info.append({
+                        "name": getattr(agent, 'name', None),
+                        "default_agent": getattr(agent, 'default_agent', None),
+                        "repr": repr(agent)
+                    })
+                    if getattr(agent, 'default_agent', False):
+                        selected_agent = agent
+                        log_event(f"[SKChat] selected_agent found by default_agent=True")
+                        break
+                # log_event(f"[SKChat] Agent selection debug info: {agent_debug_info}")
             else:
-                 ai_message = f"Sorry, I encountered an error generating the response. Details: {str(e)}"
-            # Return 500 but include the error message for the user
-            # Save the error message as the assistant response? Or just return error?
-            # Let's save the error as the response for now.
-            pass # Fallthrough to save the error message
+                log_event(f"[SKChat] all_agents is empty or None!", level=logging.WARNING)
+            if selected_agent is None:
+                log_event(f"[SKChat][ERROR] No selected_agent found! all_agents: {all_agents}", level=logging.ERROR)
+            log_event(f"[SKChat] selected_agent: {str(getattr(selected_agent, 'name', None))}")
+            agent_id = getattr(selected_agent, 'id', None)
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "scope_type": scope_type,
+                "message_count": len(conversation_history_for_api),
+                "agent": bool(selected_agent is not None),
+                "selected_agent_id": agent_id or None,
+                "kernel": bool(kernel is not None),
+            }
+
+            # Use the orchestrator agent as the default agent
+            
+
+            # Add additional metadata here to scope the facts to be returned
+            # Allows for additional per agent and per conversation scoping.
+            facts = get_facts_for_context(
+                scope_id=scope_id,
+                scope_type=scope_type,
+            )
+            if facts:
+                conversation_history_for_api.insert(0, {
+                    "role": "system",
+                    "content": f"<Fact Memory>\n{facts}\n</Fact Memory>"
+                })
+            conversation_history_for_api.insert(0, {
+                "role": "system",
+                "content": f"""<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"""
+            })
+
+            agent_message_history = [
+                ChatMessageContent(
+                    role=msg["role"],
+                    content=msg["content"],
+                    metadata=msg.get("metadata", {})
+                )
+                for msg in conversation_history_for_api
+            ]
+            # --- Fallback Chain Steps ---
+            if enable_multi_agent_orchestration and all_agents and "orchestrator" in all_agents and not per_user_semantic_kernel:
+                def invoke_orchestrator():
+                    orchestrator = all_agents["orchestrator"]
+                    runtime = InProcessRuntime()
+                    return asyncio.run(run_sk_call(
+                        orchestrator.invoke,
+                        task=agent_message_history,
+                        runtime=runtime,
+                    ))
+                def orchestrator_success(result):
+                    msg = str(result)
+                    notice = None
+                    return (msg, "multi-agent-chat", "multi-agent-chat", notice)
+                def orchestrator_error(e):
+                    print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                    log_event(
+                        f"Error during Semantic Kernel Agent invocation: {str(e)}",
+                        extra=extra,
+                        level=logging.ERROR,
+                        exceptionTraceback=True
+                    )
+                fallback_steps.append({
+                    'name': 'orchestrator',
+                    'func': invoke_orchestrator,
+                    'on_success': orchestrator_success,
+                    'on_error': orchestrator_error
+                })
+
+            if selected_agent:
+                def invoke_selected_agent():
+                    return asyncio.run(run_sk_call(
+                        selected_agent.invoke,
+                        agent_message_history,
+                    ))
+                def agent_success(result):
+                    msg = str(result)
+                    notice = None
+                    agent_used = getattr(selected_agent, 'name', 'agent')
+                    if enable_multi_agent_orchestration and not per_user_semantic_kernel:
+                        # If the agent response indicates fallback mode
+                        notice = (
+                            "[SK Fallback]: The AI assistant is running in single agent fallback mode. "
+                            "Some advanced features may not be available. "
+                            "Please contact your administrator to configure Semantic Kernel for richer responses."
+                        )
+                    return (msg, agent_used, "agent", notice)
+                def agent_error(e):
+                    print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                    log_event(
+                        f"Error during Semantic Kernel Agent invocation: {str(e)}",
+                        extra=extra,
+                        level=logging.ERROR,
+                        exceptionTraceback=True
+                    )
+                fallback_steps.append({
+                    'name': 'agent',
+                    'func': invoke_selected_agent,
+                    'on_success': agent_success,
+                    'on_error': agent_error
+                })
+
+            if kernel:
+                def invoke_kernel():
+                    chat_history = "\n".join([
+                        f"{msg['role']}: {msg['content']}" for msg in conversation_history_for_api
+                    ])
+                    chat_func = None
+                    if hasattr(kernel, 'plugins'):
+                        for plugin in kernel.plugins.values():
+                            if hasattr(plugin, 'functions') and 'chat' in plugin.functions:
+                                chat_func = plugin.functions['chat']
+                                break
+                    if chat_func:
+                        return asyncio.run(run_sk_call(kernel.invoke, chat_func, input=chat_history))
+                    else:
+                        log_event(
+                            "No dedicated chat action/plugin found. Trying kernel-native chatcompletion via service lookup.",
+                            extra=extra, 
+                            level=logging.WARNING
+                        )
+                        chat_service = kernel.get_service(type=ChatCompletionClientBase)
+                        if chat_service is not None:
+                            chat_hist = ChatHistory()
+                            for msg in conversation_history_for_api:
+                                chat_hist.add_message({"role": msg["role"], "content": msg["content"]})
+                            settings_obj = PromptExecutionSettings()
+                            async def run_chatcompletion():
+                                return await chat_service.get_chat_message_contents(chat_hist, settings_obj)
+                            chat_result = asyncio.run(run_chatcompletion())
+                            if chat_result and hasattr(chat_result[0], 'content'):
+                                return chat_result[0].content
+                            else:
+                                return str(chat_result)
+                        else:
+                            log_event("No chat completion service found in kernel. Falling back to GPT.", extra=extra, level=logging.WARNING)
+                            raise Exception("No chat completion service found in kernel.")
+                def kernel_success(result):
+                    msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
+                    return (str(result), "kernel", "kernel", msg)
+                def kernel_error(e):
+                    print(f"Error during kernel invocation: {str(e)}")
+                    log_event(
+                        f"Error during kernel invocation: {str(e)}",
+                        extra=extra,
+                        level=logging.ERROR,
+                        exceptionTraceback=True
+                    )
+                fallback_steps.append({
+                    'name': 'kernel',
+                    'func': invoke_kernel,
+                    'on_success': kernel_success,
+                    'on_error': kernel_error
+                })
+
+        def invoke_gpt_fallback():
+            if not conversation_history_for_api:
+                raise Exception('Cannot generate response: No conversation history available.')
+            if conversation_history_for_api[-1].get('role') != 'user':
+                raise Exception('Internal error: Conversation history improperly formed.')
+            print(f"--- Sending to GPT ({gpt_model}) ---")
+            print(f"Total messages in API call: {len(conversation_history_for_api)}")
+            response = gpt_client.chat.completions.create(
+                model=gpt_model,
+                messages=conversation_history_for_api,
+            )
+            msg = response.choices[0].message.content
+            notice = None
+            if enable_semantic_kernel:
+                msg = f"[GPT Fallback. Advanced features not available.] {msg}"
+                notice = (
+                    "[SK Fallback]: The AI assistant is running in GPT only mode. "
+                    "No advanced features are available. "
+                    "Please contact your administrator to resolve Semantic Kernel integration."
+                )
+            log_event(
+                "[Tokens] GPT completion response received",
+                extra={
+                    "model": gpt_model,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                    "user_id": get_current_user_id(),
+                    "active_group_id": active_group_id,
+                    "doc_scope": document_scope
+                },
+                level=logging.INFO
+            )
+            return (msg, gpt_model, None, notice)
+        def gpt_success(result):
+            return result
+        def gpt_error(e):
+            print(f"Error during final GPT completion: {str(e)}")
+            if "context length" in str(e).lower():
+                return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None)
+            else:
+                return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None)
+        fallback_steps.append({
+            'name': 'gpt',
+            'func': invoke_gpt_fallback,
+            'on_success': gpt_success,
+            'on_error': gpt_error
+        })
+
+        ai_message, final_model_used, chat_mode, kernel_fallback_notice = try_fallback_chain(fallback_steps)
+        if kernel:
+            try:
+                for service in getattr(kernel, "services", {}).values():
+                    # Each service is likely an AzureChatCompletion or similar
+                    prompt_tokens = getattr(service, "prompt_tokens", None)
+                    completion_tokens = getattr(service, "completion_tokens", None)
+                    total_tokens = getattr(service, "total_tokens", None)
+                    print(f"Service {getattr(service, 'service_id', None)} prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}")
+                    log_event(
+                        "[Tokens] Service token usage",
+                        extra={
+                            "service_id": getattr(service, "service_id", None),
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens,
+                            "user_id": get_current_user_id(),
+                            "active_group_id": active_group_id,
+                            "doc_scope": document_scope
+                        },
+                        level=logging.INFO
+                    )
+            except Exception as e:
+                log_event(
+                    f"[Tokens] Error logging service token usage for user '{get_current_user_id()}': {e}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True
+                )
 
 
         # ---------------------------------------------------------------------
-        # 7) Save GPT response (or error message)
+# region        # 7) Save GPT response (or error message)
         # ---------------------------------------------------------------------
         assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
         assistant_doc = {
@@ -760,7 +1163,8 @@ def register_route_backend_chats(app):
             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
             'web_search_citations': bing_citations_list, # <--- SIMPLIFIED: Directly use the list
             'user_message': user_message,
-            'model_deployment_name': final_model_used
+            'model_deployment_name': final_model_used,
+            'metadata': {} # Used by SK
         }
         cosmos_messages_container.upsert_item(assistant_doc)
 
@@ -770,8 +1174,11 @@ def register_route_backend_chats(app):
         cosmos_conversations_container.upsert_item(conversation_item)
 
         # ---------------------------------------------------------------------
-        # 8) Return final success (even if AI generated an error message)
+# region        # 8) Return final success (even if AI generated an error message)
         # ---------------------------------------------------------------------
+        # Persist per-user kernel state if needed
+        if enable_semantic_kernel and per_user_semantic_kernel:
+            save_user_kernel(user_id, g.kernel, g.kernel_agents, redis_client)
         return jsonify({
             'reply': ai_message, # Send the AI's response (or the error message) back
             'conversation_id': conversation_id,
@@ -782,5 +1189,6 @@ def register_route_backend_chats(app):
             'blocked': False, # Explicitly false if we got this far
             'augmented': bool(system_messages_for_augmentation),
             'hybrid_citations': hybrid_citations_list,
-            'web_search_citations': bing_citations_list
+            'web_search_citations': bing_citations_list,
+            'kernel_fallback_notice': kernel_fallback_notice
         }), 200

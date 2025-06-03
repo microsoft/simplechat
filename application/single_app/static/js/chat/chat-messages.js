@@ -1,5 +1,4 @@
 // chat-messages.js
-
 import { parseCitations } from "./chat-citations.js";
 import { renderFeedbackIcons } from "./chat-feedback.js";
 import {
@@ -436,9 +435,8 @@ export function sendMessage() {
 }
 
 export function actuallySendMessage(finalMessageToSend) {
-  // const chatbox = document.getElementById("chatbox"); // Defined above
-  // const userInput = document.getElementById("user-input"); // Defined above
-  appendMessage("You", finalMessageToSend); // Append user message first
+  // Append user message first
+  appendMessage("You", finalMessageToSend);
   userInput.value = "";
   userInput.style.height = "";
   showLoadingIndicatorInChatbox();
@@ -453,16 +451,15 @@ export function actuallySendMessage(finalMessageToSend) {
   }
 
   let selectedDocumentId = null;
-  let classificationsToSend = null; // Variable to hold classification value
+  let classificationsToSend = null;
   const docSel = document.getElementById("document-select");
-  const classificationInput = document.getElementById("classification-select"); // Get the input
+  const classificationInput = document.getElementById("classification-select");
 
   if (hybridSearchEnabled && docSel && classificationInput) {
     const selectedDocOption = docSel.options[docSel.selectedIndex];
     if (selectedDocOption && selectedDocOption.value !== "") {
       selectedDocumentId = selectedDocOption.value;
-      classificationsToSend =
-        classificationInput.value === "N/A" ? null : classificationInput.value;
+      classificationsToSend = classificationInput.value === "N/A" ? null : classificationInput.value;
     } else {
       selectedDocumentId = null;
       classificationsToSend = classificationInput.value || null;
@@ -481,9 +478,24 @@ export function actuallySendMessage(finalMessageToSend) {
     imageGenEnabled = true;
   }
 
+  // --- Robust chat_type/group_id logic ---
+  // Assume: window.activeChatTabType = 'user' | 'group', window.activeGroupId = group id if group tab
+  // If you add a group chat tab, set window.activeChatTabType and window.activeGroupId accordingly when switching tabs
+  let chat_type = 'user';
+  let group_id = null;
+  if (window.activeChatTabType === 'group' && window.activeGroupId) {
+    chat_type = 'group';
+    group_id = window.activeGroupId;
+  }
+
+  // Fallback: if group_id is null/empty, use window.activeGroupId
+  const finalGroupId = group_id || window.activeGroupId || null;
   fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "same-origin",
     body: JSON.stringify({
       message: finalMessageToSend,
       conversation_id: currentConversationId,
@@ -493,7 +505,8 @@ export function actuallySendMessage(finalMessageToSend) {
       bing_search: bingSearchEnabled,
       image_generation: imageGenEnabled,
       doc_scope: docScopeSelect ? docScopeSelect.value : "all",
-      active_group_id: window.activeGroupId,
+      chat_type: chat_type,
+      active_group_id: finalGroupId, // for backward compatibility
       model_deployment: modelDeployment
     }),
   })
@@ -542,6 +555,10 @@ export function actuallySendMessage(finalMessageToSend) {
           data.hybrid_citations, // Pass hybrid citations
           data.web_search_citations // Pass web citations
         );
+      }
+      // Show kernel fallback notice if present
+      if (data.kernel_fallback_notice) {
+        showToast(data.kernel_fallback_notice, 'warning');
       }
       if (data.image_url) {
         // Assuming image messages don't have citations in this flow

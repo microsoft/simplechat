@@ -1,0 +1,346 @@
+# route_backend_agents.py
+
+import re
+import uuid
+import logging
+import builtins
+from flask import Blueprint, jsonify, request
+from semantic_kernel_loader import get_agent_orchestration_types
+from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings
+from functions_authentication import *
+from functions_appinsights import log_event
+from json_schema_validation import validate_agent
+
+bpa = Blueprint('admin_agents', __name__)
+
+# === USER AGENTS ENDPOINTS ===
+@bpa.route('/api/user/agents', methods=['GET'])
+@login_required
+def get_user_agents():
+    user_id = get_current_user_id()
+    user_settings = get_user_settings(user_id)
+    agents = user_settings.get('settings', {}).get('agents', [])
+    return jsonify(agents)
+
+@bpa.route('/api/user/agents', methods=['POST'])
+@login_required
+def set_user_agents():
+    user_id = get_current_user_id()
+    agents = request.json if isinstance(request.json, list) else []
+    # Validate all agents with JSON schema
+    for agent in agents:
+        validation_error = validate_agent(agent)
+        if validation_error:
+            return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
+    # Enforce only one default agent
+    default_count = sum(1 for a in agents if a.get('default_agent'))
+    if default_count != 1 and len(agents) > 0:
+        return jsonify({'error': 'There must be exactly one default agent.'}), 400
+    user_settings = get_user_settings(user_id)
+    settings_to_update = user_settings.get('settings', {})
+    settings_to_update['agents'] = agents
+    update_user_settings(user_id, settings_to_update)
+    log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(agents)})
+    return jsonify({'success': True})
+
+# Add a DELETE endpoint for user agents (if not present)
+@bpa.route('/api/user/agents/<agent_name>', methods=['DELETE'])
+@login_required
+def delete_user_agent(agent_name):
+    user_id = get_current_user_id()
+    user_settings = get_user_settings(user_id)
+    agents = user_settings.get('settings', {}).get('agents', [])
+    agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
+    if not agent_to_delete:
+        return jsonify({'error': 'Agent not found.'}), 404
+    if agent_to_delete.get('default_agent'):
+        return jsonify({'error': 'Cannot delete your default agent. Please set another agent as default first.'}), 400
+    new_agents = [a for a in agents if a['name'] != agent_name]
+    # Enforce at least one default agent remains if any agents left
+    default_count = sum(1 for a in new_agents if a.get('default_agent'))
+    if len(new_agents) > 0 and default_count != 1:
+        # If the deleted agent was default, this should never happen due to above check
+        return jsonify({'error': 'There must be exactly one default agent.'}), 400
+    settings_to_update = user_settings.get('settings', {})
+    settings_to_update['agents'] = new_agents
+    update_user_settings(user_id, settings_to_update)
+    log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
+    return jsonify({'success': True})
+
+# User endpoint to set default agent (mirrors admin, but for user agents)
+@bpa.route('/api/user/agents/set-default', methods=['POST'])
+@login_required
+def set_user_default_agent():
+    user_id = get_current_user_id()
+    data = request.json
+    agent_name = data.get('name')
+    if not agent_name:
+        return jsonify({'error': 'Agent name is required.'}), 400
+    user_settings = get_user_settings(user_id)
+    agents = user_settings.get('settings', {}).get('agents', [])
+    found = False
+    for agent in agents:
+        if agent['name'] == agent_name:
+            agent['default_agent'] = True
+            found = True
+        else:
+            agent['default_agent'] = False
+    if not found:
+        return jsonify({'error': 'Agent not found.'}), 404
+    # Enforce exactly one default agent
+    default_count = sum(1 for a in agents if a.get('default_agent'))
+    if default_count != 1:
+        return jsonify({'error': 'There must be exactly one default agent.'}), 400
+    settings_to_update = user_settings.get('settings', {})
+    settings_to_update['agents'] = agents
+    update_user_settings(user_id, settings_to_update)
+    log_event("User default agent set", extra={"user_id": user_id, "agent_name": agent_name})
+    return jsonify({'success': True})
+
+# === ADMIN AGENTS ENDPOINTS ===
+
+@bpa.route('/api/admin/agents/set-default', methods=['POST'])
+@login_required
+@admin_required
+def set_default_agent():
+    try:
+        data = request.json
+        agent_name = data.get('name')
+        if not agent_name:
+            return jsonify({'error': 'Agent name is required.'}), 400
+
+        settings = get_settings()
+        agents = settings.get('semantic_kernel_agents', [])
+        found = False
+        for agent in agents:
+            if agent['name'] == agent_name:
+                agent['default_agent'] = True
+                found = True
+            else:
+                agent['default_agent'] = False
+        if not found:
+            return jsonify({'error': 'Agent not found.'}), 404
+
+        # Enforce exactly one default agent
+        default_count = sum(1 for a in agents if a.get('default_agent'))
+        if default_count != 1:
+            return jsonify({'error': 'There must be exactly one default agent.'}), 400
+
+        settings['semantic_kernel_agents'] = agents
+        update_settings(settings)
+        log_event("Default agent set", extra={"action": "set-default", "agent_name": agent_name, "user": str(get_current_user_id())})
+        # --- HOT RELOAD TRIGGER ---
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True})
+    except Exception as e:
+        log_event(f"Error setting default agent: {e}", level=logging.ERROR)
+        return jsonify({'error': 'Failed to set default agent.'}), 500
+
+
+@bpa.route('/api/admin/agents', methods=['GET'])
+@login_required
+@admin_required
+def list_agents():
+    try:
+        settings = get_settings()
+        agents = settings.get('semantic_kernel_agents', [])
+        log_event("List agents", extra={"action": "list", "user": str(get_current_user_id())})
+        return jsonify(agents)
+    except Exception as e:
+        log_event(f"Error listing agents: {e}", level=logging.ERROR)
+        return jsonify({'error': 'Failed to list agents.'}), 500
+
+@bpa.route('/api/admin/agents', methods=['POST'])
+@login_required
+@admin_required
+def add_agent():
+    try:
+        settings = get_settings()
+        agents = settings.get('semantic_kernel_agents', [])
+        new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
+        validation_error = validate_agent(new_agent)
+        if validation_error:
+            log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": new_agent, "error": validation_error})
+            return jsonify({'error': validation_error}), 400
+        # Prevent duplicate names (case-insensitive)
+        if any(a['name'].lower() == new_agent['name'].lower() for a in agents):
+            log_event("Add agent failed: duplicate name", level=logging.WARNING, extra={"action": "add", "agent": new_agent})
+            return jsonify({'error': 'Agent with this name already exists.'}), 400
+        # Assign a new GUID as id unless this is the default agent (which should have a static GUID)
+        if not new_agent.get('default_agent', False):
+            new_agent['id'] = str(uuid.uuid4())
+        else:
+            # If default_agent, ensure the static GUID is present (do not overwrite if already set)
+            if not new_agent.get('id'):
+                new_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
+        agents.append(new_agent)
+        # Enforce exactly one default agent
+        default_count = sum(1 for a in agents if a.get('default_agent'))
+        if default_count != 1:
+            return jsonify({'error': 'There must be exactly one default agent.'}), 400
+        settings['semantic_kernel_agents'] = agents
+        update_settings(settings)
+        log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in new_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
+        # --- HOT RELOAD TRIGGER ---
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True})
+    except Exception as e:
+        log_event(f"Error adding agent: {e}", level=logging.ERROR)
+        return jsonify({'error': 'Failed to add agent.'}), 500
+
+# Add a generic agent settings update route for simple values
+@bpa.route('/api/admin/agents/settings/<setting_name>', methods=['POST'])
+@login_required
+@admin_required
+def update_agent_setting(setting_name):
+    """
+    Update a simple setting in the global settings.
+    Supports dot notation for object properties (e.g., foo.bar).
+    Only supports simple values (str, int, bool, float, None).
+    """
+    try:
+        data = request.json
+        if 'value' not in data:
+            return jsonify({'error': 'Missing value in request.'}), 400
+        value = data['value']
+        settings = get_settings()
+        keys = setting_name.split('.')
+        target = settings
+        for k in keys[:-1]:
+            if k not in target or not isinstance(target[k], dict):
+                return jsonify({'error': f'Cannot set nested property: {setting_name}'}), 400
+            target = target[k]
+        key = keys[-1]
+        # Only allow simple types
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            target[key] = value
+        else:
+            return jsonify({'error': 'Only simple values (str, int, float, bool, None) are allowed.'}), 400
+        update_settings(settings)
+        log_event("Agent setting updated", 
+            extra={
+                "setting": setting_name,
+                "value": value,
+                "user": str(get_current_user_id())
+            }
+        )
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True})
+    except Exception as e:
+        log_event(f"Error updating agent setting: {e}",
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        return jsonify({'error': 'Failed to update agent setting.'}), 500
+
+@bpa.route('/api/admin/agents/<agent_name>', methods=['PUT'])
+@login_required
+@admin_required
+def edit_agent(agent_name):
+    try:
+        settings = get_settings()
+        agents = settings.get('semantic_kernel_agents', [])
+        updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
+        validation_error = validate_agent(updated_agent)
+        if validation_error:
+            log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})
+            return jsonify({'error': validation_error}), 400
+        for i, a in enumerate(agents):
+            if a['name'] == agent_name:
+                # Preserve the existing id
+                updated_agent['id'] = a.get('id')
+                agents[i] = updated_agent
+                # Enforce exactly one default agent
+                default_count = sum(1 for a in agents if a.get('default_agent'))
+                if default_count != 1:
+                    return jsonify({'error': 'There must be exactly one default agent.'}), 400
+                settings['semantic_kernel_agents'] = agents
+                update_settings(settings)
+                log_event(
+                    f"Agent {agent_name} edited",
+                    extra={
+                        "action": "edit", 
+                        "agent": {k: v for k, v in updated_agent.items() if k != 'id'},
+                        "user": str(get_current_user_id()),
+                    }
+                )
+                return jsonify({'success': True})
+        log_event("Edit agent failed: not found", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name})
+        # --- HOT RELOAD TRIGGER ---
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'error': 'Agent not found.'}), 404
+    except Exception as e:
+        log_event(f"Error editing agent: {e}", level=logging.ERROR, exceptionTraceback=True)
+        return jsonify({'error': 'Failed to edit agent.'}), 500
+
+@bpa.route('/api/admin/agents/<agent_name>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_agent(agent_name):
+    try:
+        settings = get_settings()
+        agents = settings.get('semantic_kernel_agents', [])
+        new_agents = [a for a in agents if a['name'] != agent_name]
+        if len(new_agents) == len(agents):
+            log_event("Delete agent failed: not found", level=logging.WARNING, extra={"action": "delete", "agent_name": agent_name})
+            return jsonify({'error': 'Agent not found.'}), 404
+        settings['semantic_kernel_agents'] = new_agents
+        update_settings(settings)
+        log_event("Agent deleted", extra={"action": "delete", "agent_name": agent_name, "user": str(get_current_user_id())})
+        # --- HOT RELOAD TRIGGER ---
+        setattr(builtins, "kernel_reload_needed", True)
+        return jsonify({'success': True})
+    except Exception as e:
+        log_event(f"Error deleting agent: {e}", level=logging.ERROR,exceptionTraceback=True)
+        return jsonify({'error': 'Failed to delete agent.'}), 500
+
+@bpa.route('/api/orchestration_types', methods=['GET'])
+@login_required
+@admin_required
+def orchestration_types():
+    """Return the available orchestration types (full metadata)."""
+    return jsonify(get_agent_orchestration_types())
+
+@bpa.route('/api/orchestration_settings', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def orchestration_settings():
+    if request.method == 'GET':
+        settings = get_settings()
+        return jsonify({
+            "orchestration_type": settings.get("orchestration_type"),
+            "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration"),
+            "max_rounds_per_agent": settings.get("max_rounds_per_agent"),
+        })
+    else:
+        try:
+            data = request.json
+            types = get_agent_orchestration_types()
+            # Validate input
+            orchestration_type = data.get("orchestration_type")
+            enable_multi = None
+            max_rounds = data.get("max_rounds_per_agent")
+            matched_type = next((t for t in types if t.get("value") == orchestration_type), None)
+            if matched_type['agent_mode'] == 'multi':
+                enable_multi = True
+            else:
+                enable_multi = False
+            if orchestration_type == "group_chat":
+                if not isinstance(max_rounds, int) or max_rounds <= 0:
+                    return jsonify({"error": "max_rounds_per_agent must be an integer > 0 for group_chat."}), 400
+            
+            # Save settings
+            settings = get_settings()
+            settings["orchestration_type"] = orchestration_type
+            settings["enable_multi_agent_orchestration"] = enable_multi
+            if orchestration_type == "group_chat":
+                settings["max_rounds_per_agent"] = max_rounds
+            else:
+                settings["max_rounds_per_agent"] = 1
+            update_settings(settings)
+            # --- HOT RELOAD TRIGGER ---
+            setattr(builtins, "kernel_reload_needed", True)
+            return jsonify({'success': True})
+        except Exception as e:
+            log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
+            return jsonify({'error': 'Failed to update orchestration settings.'}), 500
