@@ -17,6 +17,8 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get remove -y libaom* || true
+
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
