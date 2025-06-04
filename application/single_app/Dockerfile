@@ -1,23 +1,31 @@
-# Use the official Ubuntu Python image from the Docker Hub
-FROM cgr.dev/chainguard/python:latest-dev
+# Builder stage: install dependencies in a virtualenv
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
-COPY application/single_app/requirements.txt .
+# Create a Python virtual environment
+RUN python -m venv /app/venv
 
+# Copy requirements and install them into the virtualenv
+COPY application/single_app/requirements.txt .
+ENV PATH="/app/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Production stage: copy only the venv and app code
 FROM cgr.dev/chainguard/python:latest
 
-# Set the working directory in the container
 WORKDIR /app
-# Copy the rest of the application code into the container
-COPY application/single_app .
 
-# Expose the port the app runs on
+# Set environment so Python output is logged directly
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
+
+# Copy application code
+COPY application/single_app ./
+
+# Copy the virtualenv from the builder stage
+COPY --from=builder /app/venv /app/venv
+
 EXPOSE 5000
 
-# Define the command to run the application
 ENTRYPOINT [ "python", "/app/app.py" ]
