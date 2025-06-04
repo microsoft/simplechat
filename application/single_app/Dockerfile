@@ -26,6 +26,12 @@ COPY application/single_app ./
 # Copy the virtualenv from the builder stage
 COPY --from=builder /app/venv /app/venv
 
+# Ensure the images directory exists and is writable
+RUN mkdir -p /app/static/images && \
+    chown -R 1000:1000 /app/static/images
+
+USER 1000:1000
+
 EXPOSE 5000
 
 ENTRYPOINT [ "python", "/app/app.py" ]
