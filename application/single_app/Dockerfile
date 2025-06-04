@@ -7,18 +7,6 @@ WORKDIR /app
 # Copy the requirements file into the container
 COPY application/single_app/requirements.txt .
 
-RUN apt-get update && \
-    apt-get install -y \
-        build-essential \
-        python3-dev \
-        libffi-dev \
-        libssl-dev \
-    && apt-get upgrade -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get remove -y libaom* || true
-
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
