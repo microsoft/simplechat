@@ -1,5 +1,5 @@
 # Use the official Ubuntu Python image from the Docker Hub
-FROM python:3.12-slim
+FROM cgr.dev/chainguard/python:3.12
 
 # Set the working directory in the container
 WORKDIR /app
