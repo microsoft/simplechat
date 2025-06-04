@@ -11,27 +11,22 @@ COPY application/single_app/requirements.txt .
 ENV PATH="/app/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Production stage: copy only the venv and app code
 FROM cgr.dev/chainguard/python:latest
 
 WORKDIR /app
 
-# Set environment so Python output is logged directly
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/venv/bin:$PATH"
 
-# Copy application code
-COPY application/single_app ./
+# Copy application code and set ownership
+COPY --chown=nonroot:nonroot application/single_app ./
 
 # Copy the virtualenv from the builder stage
-COPY --from=builder /app/venv /app/venv
+COPY --from=builder --chown=nonroot:nonroot /app/venv /app/venv
 
-# Ensure the images directory exists and is writable
-RUN mkdir -p /app/static/images && \
-    chown -R 1000:1000 /app/static/images
-
-USER 1000:1000
-
+# Ensure images directory exists (created by COPY above)
 EXPOSE 5000
+
+USER nonroot:nonroot
 
 ENTRYPOINT [ "python", "/app/app.py" ]
