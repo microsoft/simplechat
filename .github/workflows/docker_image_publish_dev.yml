@@ -1,10 +1,10 @@
 
-name: SimpleChat Docker Image Publish (Development)
+name: SimpleChat Docker Image Publish (dev-chainguard)
 
 on:
   push:
     branches:
-    - Development
+    - dev-chainguard
   workflow_dispatch:
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build the Docker image
       run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat:latest;
+        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;

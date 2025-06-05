@@ -1,27 +1,32 @@
-# Use the official Python image from the Docker Hub
-FROM python:3.12-slim
+# Builder stage: install dependencies in a virtualenv
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
+# Create a Python virtual environment
+RUN python -m venv /app/venv
+
+# Copy requirements and install them into the virtualenv
 COPY application/single_app/requirements.txt .
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    python3-dev \
-    libffi-dev \
-    libssl-dev \
-    && apt-get clean
-
-RUN pip install --upgrade pip setuptools wheel
+ENV PATH="/app/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-COPY application/single_app .
+FROM cgr.dev/chainguard/python:latest
 
-# Expose the port the app runs on
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
+
+# Copy application code and set ownership
+COPY --chown=nonroot:nonroot application/single_app ./
+
+# Copy the virtualenv from the builder stage
+COPY --from=builder --chown=nonroot:nonroot /app/venv /app/venv
+
+# Expose port
 EXPOSE 5000
 
-# Define the command to run the application
-CMD ["flask", "run", "--host=0.0.0.0"]
+USER nonroot:nonroot
+
+ENTRYPOINT [ "python", "/app/app.py" ]
