@@ -24,7 +24,7 @@ COPY --chown=nonroot:nonroot application/single_app ./
 # Copy the virtualenv from the builder stage
 COPY --from=builder --chown=nonroot:nonroot /app/venv /app/venv
 
-# Ensure images directory exists (created by COPY above)
+# Expose port
 EXPOSE 5000
 
 USER nonroot:nonroot
