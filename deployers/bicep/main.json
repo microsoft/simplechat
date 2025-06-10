@@ -1,0 +1,727 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.35.1.17967",
+      "templateHash": "5767581723379454643"
+    }
+  },
+  "parameters": {
+    "azurePlatform": {
+      "type": "string",
+      "defaultValue": "AzureUSGovernment",
+      "allowedValues": [
+        "AzureCloud",
+        "AzureUSGovernment"
+      ],
+      "metadata": {
+        "description": "Specifies the Azure environment platform."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": {
+        "description": "Tenant ID where the resources are deployed and for App Registration."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "minLength": 1,
+      "maxLength": 90,
+      "metadata": {
+        "description": "Primary Azure region for deployments."
+      }
+    },
+    "resourceOwnerId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 24,
+      "metadata": {
+        "description": "A persons name for tagging resources. e.g. John Doe or johndoe@domain.com"
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "sbx",
+      "allowedValues": [
+        "sbx",
+        "dev",
+        "tst",
+        "uat",
+        "prd"
+      ],
+      "minLength": 3,
+      "maxLength": 3,
+      "metadata": {
+        "description": "Environment identifier (e.g. sbx, dev, tst, uat, prd)."
+      }
+    },
+    "baseName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8,
+      "metadata": {
+        "description": "A short base name (1-8 alphanumeric characters) for your organization or project (e.g., contoso1, projectx2). Used to construct resource names."
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 50,
+      "metadata": {
+        "description": "Name of the existing Azure Container Registry (ACR). e.g. contosoacr1"
+      }
+    },
+    "acrResourceGroupName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 90,
+      "metadata": {
+        "description": "Name of the existing Resource Group housing Azure Container Registry (ACR)."
+      }
+    },
+    "imageName": {
+      "type": "string",
+      "metadata": {
+        "description": "Full image name and tag from ACR (e.g., simple-chat:2025-05-15_7)."
+      }
+    },
+    "useExistingOpenAiInstance": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Flag to determine if an existing Azure OpenAI instance should be used."
+      }
+    },
+    "existingAzureOpenAiResourceName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true."
+      }
+    },
+    "existingAzureOpenAiResourceGroupName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Resource group name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true."
+      }
+    },
+    "appRegistrationClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "Client ID (Application ID) of the pre-created Entra App Registration."
+      }
+    },
+    "appRegistrationClientSecret": {
+      "type": "securestring",
+      "metadata": {
+        "description": "A client secret from the pre-created Entra App Registration."
+      }
+    },
+    "appRegistrationSpObjectId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the Service Principal for the App Registration (used for RBAC, e.g., to OpenAI). Obtain via \"az ad sp show --id <appRegistrationClientId> --query id -o tsv\""
+      }
+    },
+    "appServicePlanSku": {
+      "type": "string",
+      "defaultValue": "P1V3",
+      "metadata": {
+        "description": "SKU for the App Service Plan."
+      }
+    },
+    "storageSku": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_GRS",
+        "Standard_ZRS",
+        "Premium_LRS"
+      ],
+      "metadata": {
+        "description": "SKU for the Storage Account."
+      }
+    },
+    "keyVaultSku": {
+      "type": "string",
+      "defaultValue": "standard",
+      "metadata": {
+        "description": "SKU for the Key Vault."
+      }
+    },
+    "logAnalyticsSku": {
+      "type": "string",
+      "defaultValue": "PerGB2018",
+      "metadata": {
+        "description": "SKU for the Log Analytics Workspace."
+      }
+    },
+    "cognitiveServicesSku": {
+      "type": "string",
+      "defaultValue": "S0",
+      "metadata": {
+        "description": "SKU for Azure Cognitive Services (OpenAI, Document Intelligence)."
+      }
+    },
+    "searchSku": {
+      "type": "string",
+      "defaultValue": "basic",
+      "metadata": {
+        "description": "SKU for Azure AI Search service."
+      }
+    },
+    "createdDateTime": {
+      "type": "string",
+      "defaultValue": "[utcNow('yyyy-MM-dd HH:mm:ss')]",
+      "metadata": {
+        "description": "The UTC date and time when the deployment was started."
+      }
+    }
+  },
+  "variables": {
+    "tags": {
+      "Environment": "[parameters('environment')]",
+      "Owner": "[parameters('resourceOwnerId')]",
+      "CreatedDateTime": "[parameters('createdDateTime')]",
+      "Project": "SimpleChat"
+    },
+    "clientSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET",
+    "openIdIssuerUrl": "[format('https://login.microsoftonline{0}/{1}/v2.0', if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.us', '.com'), parameters('tenantId'))]",
+    "docIntelEndpointSuffix": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.cognitiveservices.azure.us', '.cognitiveservices.azure.com')]",
+    "azureSearchEndpointSuffix": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.search.azure.us', '.search.windows.net')]",
+    "resourceNamePrefix": "[toLower(format('{0}-{1}', parameters('baseName'), parameters('environment')))]",
+    "uniqueStringForGlobals": "[uniqueString(resourceGroup().id, parameters('baseName'), parameters('environment'))]",
+    "logAnalyticsName": "[format('{0}-la', variables('resourceNamePrefix'))]",
+    "appInsightsName": "[format('{0}-ai', variables('resourceNamePrefix'))]",
+    "keyVaultName": "[format('kv{0}', variables('uniqueStringForGlobals'))]",
+    "storageAccountName": "[toLower(format('{0}{1}sa{2}', replace(parameters('baseName'), '-', ''), parameters('environment'), substring(variables('uniqueStringForGlobals'), 0, 5)))]",
+    "managedIdentityName": "[format('{0}-id', variables('resourceNamePrefix'))]",
+    "appServicePlanName": "[format('{0}-asp', variables('resourceNamePrefix'))]",
+    "appServiceName": "[format('{0}-app-{1}', variables('resourceNamePrefix'), variables('uniqueStringForGlobals'))]",
+    "cosmosDbName": "[format('{0}-cosmos-{1}', variables('resourceNamePrefix'), variables('uniqueStringForGlobals'))]",
+    "openAIName": "[if(parameters('useExistingOpenAiInstance'), parameters('existingAzureOpenAiResourceName'), format('{0}-oai', variables('resourceNamePrefix')))]",
+    "docIntelName": "[format('{0}-docintel', variables('resourceNamePrefix'))]",
+    "searchServiceName": "[format('{0}-search-{1}', variables('resourceNamePrefix'), variables('uniqueStringForGlobals'))]",
+    "acrLoginServer": "[format('{0}{1}', parameters('acrName'), if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.azurecr.us', '.azurecr.io'))]",
+    "appServiceDefaultHostName": "[format('{0}{1}', variables('appServiceName'), if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.azurewebsites.us', '.azurewebsites.net'))]",
+    "cosmosDbEndpointSuffix": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.documents.azure.us', '.documents.azure.com')]",
+    "openAIEndpointSuffix": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), '.openai.azure.us', '.openai.azure.com')]",
+    "azureEndpointNameForAppSetting": "[if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), 'usgovernment', 'azurecloud')]",
+    "appServiceRedirectUri1": "[format('https://{0}/.auth/login/aad/callback', variables('appServiceDefaultHostName'))]",
+    "appServiceRedirectUri2": "[format('https://{0}/getAToken', variables('appServiceDefaultHostName'))]",
+    "appServiceLogoutUrl": "[format('https://{0}/logout', variables('appServiceDefaultHostName'))]",
+    "dockerRegistryUrl": "[format('{0}{1}', variables('acrLoginServer'), if(equals(parameters('azurePlatform'), 'AzureUSGovernment'), format('/{0}', parameters('imageName')), format(':{0}', parameters('imageName'))))]",
+    "roles": {
+      "keyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
+      "keyVaultSecretsOfficer": "b86a8fe4-44ce-4948-aee5-eccb2c1ادrole9",
+      "cognitiveServicesUser": "a97b65f3-24c7-4388-baec-2e87135dc908",
+      "cognitiveServicesContributor": "25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68",
+      "cognitiveServicesOpenAIUser": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+      "cognitiveServicesOpenAIContributor": "a001fd3d-188f-4b5d-821b-7da978bf7442",
+      "contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+      "storageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+      "acrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('logAnalyticsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "name": "[parameters('logAnalyticsSku')]"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]",
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "family": "A",
+          "name": "[parameters('keyVaultSku')]"
+        },
+        "tenantId": "[parameters('tenantId')]",
+        "enableRbacAuthorization": true,
+        "networkAcls": {
+          "defaultAction": "Allow",
+          "bypass": "AzureServices"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "[parameters('storageSku')]"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "accessTier": "Hot",
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true,
+        "networkAcls": {
+          "bypass": "AzureServices",
+          "defaultAction": "Deny"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[variables('managedIdentityName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2022-09-01",
+      "name": "[variables('appServicePlanName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "[parameters('appServicePlanSku')]",
+        "tier": "[split(parameters('appServicePlanSku'), 'V')[0]]"
+      },
+      "kind": "linux",
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2022-09-01",
+      "name": "[variables('appServiceName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "app,linux,container",
+      "identity": {
+        "type": "SystemAssigned, UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')))]": {}
+        }
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "linuxFxVersion": "[format('DOCKER|{0}', variables('dockerRegistryUrl'))]",
+          "alwaysOn": "[and(and(not(equals(reference(resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName')), '2022-09-01', 'full').sku.tier, 'Free')), not(equals(reference(resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName')), '2022-09-01', 'full').sku.tier, 'Shared'))), not(equals(reference(resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName')), '2022-09-01', 'full').sku.tier, 'Basic')))]",
+          "ftpsState": "FtpsOnly",
+          "minTlsVersion": "1.2",
+          "acrUseManagedIdentityCreds": true,
+          "acrUserManagedIdentityID": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').clientId]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2024-04-01",
+      "name": "[format('{0}/{1}', variables('appServiceName'), 'appsettings')]",
+      "properties": {
+        "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]",
+        "AZURE_ENDPOINT": "[variables('azureEndpointNameForAppSetting')]",
+        "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
+        "AZURE_COSMOS_AUTHENTICATION_TYPE": "key",
+        "AZURE_COSMOS_ENDPOINT": "[format('https://{0}{1}', variables('cosmosDbName'), variables('cosmosDbEndpointSuffix'))]",
+        "AZURE_COSMOS_KEY": "[listKeys(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbName')), '2023-11-15').primaryMasterKey]",
+        "TENANT_ID": "[parameters('tenantId')]",
+        "CLIENT_ID": "[parameters('appRegistrationClientId')]",
+        "SECRET_KEY": "[parameters('appRegistrationClientSecret')]",
+        "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET": "[parameters('appRegistrationClientSecret')]",
+        "WEBSITE_AUTH_AAD_ALLOWED_TENANTS": "[parameters('tenantId')]",
+        "DOCKER_REGISTRY_SERVER_URL": "[format('https://{0}', variables('acrLoginServer'))]",
+        "DOCKER_REGISTRY_SERVER_PASSWORD": "",
+        "DOCKER_REGISTRY_SERVER_USERNAME": "",
+        "AZURE_OPENAI_ENDPOINT": "[if(parameters('useExistingOpenAiInstance'), format('https://{0}{1}', parameters('existingAzureOpenAiResourceName'), variables('openAIEndpointSuffix')), format('https://{0}{1}', variables('openAIName'), variables('openAIEndpointSuffix')))]",
+        "AZURE_DOCUMENTINTELLIGENCE_ENDPOINT": "[format('https://{0}{1}/', variables('docIntelName'), variables('docIntelEndpointSuffix'))]",
+        "AZURE_SEARCH_SERVICE_ENDPOINT": "[format('https://{0}{1}/', variables('searchServiceName'), variables('azureSearchEndpointSuffix'))]",
+        "AZURE_KEY_VAULT_ENDPOINT": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[resourceId('Microsoft.Web/sites', variables('appServiceName'))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2024-04-01",
+      "name": "[format('{0}/{1}', variables('appServiceName'), 'authsettingsV2')]",
+      "properties": {
+        "globalValidation": {
+          "requireAuthentication": true,
+          "unauthenticatedClientAction": "RedirectToLoginPage",
+          "redirectToProvider": "AzureActiveDirectory"
+        },
+        "httpSettings": {
+          "forwardProxy": {
+            "convention": "Standard"
+          }
+        },
+        "identityProviders": {
+          "azureActiveDirectory": {
+            "enabled": true,
+            "registration": {
+              "clientId": "[parameters('appRegistrationClientId')]",
+              "clientSecretSettingName": "[variables('clientSecretSettingName')]",
+              "openIdIssuer": "[variables('openIdIssuerUrl')]"
+            },
+            "login": {
+              "disableWWWAuthenticate": false
+            },
+            "validation": {
+              "allowedAudiences": [
+                "[format('api://{0}', parameters('appRegistrationClientId'))]"
+              ]
+            }
+          }
+        },
+        "login": {
+          "tokenStore": {
+            "enabled": true
+          }
+        },
+        "platform": {
+          "enabled": true,
+          "runtimeVersion": "~1"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appServiceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2023-11-15",
+      "name": "[variables('cosmosDbName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "consistencyPolicy": {
+          "defaultConsistencyLevel": "Session"
+        },
+        "databaseAccountOfferType": "Standard",
+        "locations": [
+          {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0
+          }
+        ],
+        "enableMultipleWriteLocations": false,
+        "enableBurstCapacity": true
+      }
+    },
+    {
+      "condition": "[not(parameters('useExistingOpenAiInstance'))]",
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('openAIName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "OpenAI",
+      "sku": {
+        "name": "[parameters('cognitiveServicesSku')]"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('openAIName')]",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('docIntelName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "FormRecognizer",
+      "sku": {
+        "name": "[parameters('cognitiveServicesSku')]"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('docIntelName')]",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Search/searchServices",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('searchServiceName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "[parameters('searchSku')]"
+      },
+      "properties": {
+        "replicaCount": "[if(or(equals(parameters('searchSku'), 'free'), equals(parameters('searchSku'), 'basic')), 1, 1)]",
+        "partitionCount": "[if(or(equals(parameters('searchSku'), 'free'), equals(parameters('searchSku'), 'basic')), 1, 1)]",
+        "publicNetworkAccess": "enabled",
+        "hostingMode": "default"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.KeyVault/vaults/{0}', variables('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), variables('roles').keyVaultSecretsUser)]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').keyVaultSecretsUser)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), if(parameters('useExistingOpenAiInstance'), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('existingAzureOpenAiResourceGroupName')), 'Microsoft.CognitiveServices/accounts', parameters('existingAzureOpenAiResourceName')), resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))), variables('roles').cognitiveServicesOpenAIUser)]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').cognitiveServicesOpenAIUser)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), if(parameters('useExistingOpenAiInstance'), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('existingAzureOpenAiResourceGroupName')), 'Microsoft.CognitiveServices/accounts', parameters('existingAzureOpenAiResourceName')), resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))), variables('roles').cognitiveServicesOpenAIContributor)]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').cognitiveServicesOpenAIContributor)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', variables('cosmosDbName'))]",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbName')), variables('roles').contributor)]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').contributor)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('roles').storageBlobDataContributor)]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').storageBlobDataContributor)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceId('Microsoft.Web/sites', variables('appServiceName')), 'smi-openai-user', if(parameters('useExistingOpenAiInstance'), parameters('existingAzureOpenAiResourceName'), resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))))]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').cognitiveServicesOpenAIUser)]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('appServiceName')), '2022-09-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appServiceName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Web/sites', variables('appServiceName')), 'smi-storage', resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')))]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').storageBlobDataContributor)]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('appServiceName')), '2022-09-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appServiceName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[not(empty(parameters('appRegistrationSpObjectId')))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(parameters('appRegistrationSpObjectId'), 'appreg-sp-openai-user', if(parameters('useExistingOpenAiInstance'), parameters('existingAzureOpenAiResourceName'), resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))))]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').cognitiveServicesOpenAIUser)]",
+        "principalId": "[parameters('appRegistrationSpObjectId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))]"
+      ]
+    },
+    {
+      "condition": "[not(empty(parameters('appRegistrationSpObjectId')))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(parameters('appRegistrationSpObjectId'), 'appreg-sp-openai-contrib', if(parameters('useExistingOpenAiInstance'), parameters('existingAzureOpenAiResourceName'), resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))))]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roles').cognitiveServicesOpenAIContributor)]",
+        "principalId": "[parameters('appRegistrationSpObjectId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAIName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "tenantId": {
+      "type": "string",
+      "value": "[parameters('tenantId')]"
+    },
+    "existingAzureOpenAiResourceName": {
+      "type": "string",
+      "value": "[parameters('existingAzureOpenAiResourceName')]"
+    },
+    "existingAzureOpenAiResourceGroupName": {
+      "type": "string",
+      "value": "[parameters('existingAzureOpenAiResourceGroupName')]"
+    },
+    "cognitiveServicesSku": {
+      "type": "string",
+      "value": "[parameters('cognitiveServicesSku')]"
+    },
+    "acrResourceGroupName": {
+      "type": "string",
+      "value": "[parameters('acrResourceGroupName')]"
+    },
+    "appServiceName": {
+      "type": "string",
+      "value": "[variables('appServiceName')]"
+    },
+    "appServiceHostName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('appServiceName')), '2022-09-01').defaultHostName]"
+    },
+    "appServicePrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('appServiceName')), '2022-09-01', 'full').identity.principalId]"
+    },
+    "userAssignedIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[variables('keyVaultName')]"
+    },
+    "keyVaultUri": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    },
+    "cosmosDbName": {
+      "type": "string",
+      "value": "[variables('cosmosDbName')]"
+    },
+    "cosmosDbEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbName')), '2023-11-15').documentEndpoint]"
+    },
+    "appRegistrationRedirectUri1": {
+      "type": "string",
+      "metadata": {
+        "description": "Redirect URI 1 for manual App Registration configuration."
+      },
+      "value": "[variables('appServiceRedirectUri1')]"
+    },
+    "appRegistrationRedirectUri2": {
+      "type": "string",
+      "metadata": {
+        "description": "Redirect URI 2 for manual App Registration configuration."
+      },
+      "value": "[variables('appServiceRedirectUri2')]"
+    },
+    "appRegistrationLogoutUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Logout URL for manual App Registration configuration."
+      },
+      "value": "[variables('appServiceLogoutUrl')]"
+    },
+    "azureOpenAiEndpoint": {
+      "type": "string",
+      "value": "[if(parameters('useExistingOpenAiInstance'), format('https://{0}{1}', parameters('existingAzureOpenAiResourceName'), variables('openAIEndpointSuffix')), format('https://{0}{1}', variables('openAIName'), variables('openAIEndpointSuffix')))]"
+    },
+    "documentIntelligenceEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('docIntelName')), '2023-05-01').endpoint]"
+    },
+    "searchServiceEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.search.windows.net/', variables('searchServiceName'))]"
+    }
+  }
+}
