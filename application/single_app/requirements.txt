@@ -1,5 +1,5 @@
 # requirements.txt
-
+opencensus-ext-azure=1.1.15
 Flask==2.2.5
 gunicorn
 Werkzeug==3.0.6
