@@ -1772,21 +1772,60 @@ function shouldSkipWalkthroughStep(stepNumber) {
 }
 
 /**
- * Find the next applicable step after a given step
- * @param {number} currentStep - Current step number
- * @returns {number} Next applicable step number or 12 (last step) if none found
+ * Find the next applicable step based on enabled features
+ * @param {number} currentStep - The current step number
+ * @returns {number} The next applicable step number or -1 if none found
  */
 function findNextApplicableStep(currentStep) {
-    const availableSteps = calculateAvailableWalkthroughSteps();
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
-    // Find the first available step after the current one
-    for (let i = 0; i < availableSteps.length; i++) {
-        if (availableSteps[i] > currentStep) {
-            return availableSteps[i];
+    // Start checking from the next step
+    let nextStep = currentStep + 1;
+    
+    // Maximum step to avoid infinite loop
+    const maxSteps = 12;
+    
+    while (nextStep <= maxSteps) {
+        // Check if this step is applicable based on conditions
+        switch (nextStep) {
+            case 5: // Embedding settings
+            case 6: // AI Search settings 
+            case 7: // Document Intelligence settings
+                if (!workspacesEnabled) {
+                    // Skip these steps if workspaces not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 8: // Video support
+                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+                if (!workspacesEnabled || !videoEnabled) {
+                    // Skip this step if workspaces not enabled or video not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 9: // Audio support
+                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+                if (!workspacesEnabled || !audioEnabled) {
+                    // Skip this step if workspaces not enabled or audio not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            default:
+                // All other steps are always applicable
+                return nextStep;
         }
     }
     
-    return 12; // Default to last step if no next step found
+    // If we've gone past all steps, return -1
+    return -1;
 }
 
 /**
@@ -2388,63 +2427,6 @@ function navigatePreviousStep() {
         // If no previous step found, go to first step
         navigateToWalkthroughStep(1);
     }
-}
-
-/**
- * Find the next applicable step based on enabled features
- * @param {number} currentStep - The current step number
- * @returns {number} The next applicable step number or -1 if none found
- */
-function findNextApplicableStep(currentStep) {
-    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
-    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
-    const workspacesEnabled = workspaceEnabled || groupsEnabled;
-    
-    // Start checking from the next step
-    let nextStep = currentStep + 1;
-    
-    // Maximum step to avoid infinite loop
-    const maxSteps = 12;
-    
-    while (nextStep <= maxSteps) {
-        // Check if this step is applicable based on conditions
-        switch (nextStep) {
-            case 5: // Embedding settings
-            case 6: // AI Search settings 
-            case 7: // Document Intelligence settings
-                if (!workspacesEnabled) {
-                    // Skip these steps if workspaces not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 8: // Video support
-                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
-                if (!workspacesEnabled || !videoEnabled) {
-                    // Skip this step if workspaces not enabled or video not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 9: // Audio support
-                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
-                if (!workspacesEnabled || !audioEnabled) {
-                    // Skip this step if workspaces not enabled or audio not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            default:
-                // All other steps are always applicable
-                return nextStep;
-        }
-    }
-    
-    // If we've gone past all steps, return -1
-    return -1;
 }
 
 /**
