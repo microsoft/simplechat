@@ -1772,21 +1772,60 @@ function shouldSkipWalkthroughStep(stepNumber) {
 }
 
 /**
- * Find the next applicable step after a given step
- * @param {number} currentStep - Current step number
- * @returns {number} Next applicable step number or 12 (last step) if none found
+ * Find the next applicable step based on enabled features
+ * @param {number} currentStep - The current step number
+ * @returns {number} The next applicable step number or -1 if none found
  */
 function findNextApplicableStep(currentStep) {
-    const availableSteps = calculateAvailableWalkthroughSteps();
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
-    // Find the first available step after the current one
-    for (let i = 0; i < availableSteps.length; i++) {
-        if (availableSteps[i] > currentStep) {
-            return availableSteps[i];
+    // Start checking from the next step
+    let nextStep = currentStep + 1;
+    
+    // Maximum step to avoid infinite loop
+    const maxSteps = 12;
+    
+    while (nextStep <= maxSteps) {
+        // Check if this step is applicable based on conditions
+        switch (nextStep) {
+            case 5: // Embedding settings
+            case 6: // AI Search settings 
+            case 7: // Document Intelligence settings
+                if (!workspacesEnabled) {
+                    // Skip these steps if workspaces not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 8: // Video support
+                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+                if (!workspacesEnabled || !videoEnabled) {
+                    // Skip this step if workspaces not enabled or video not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 9: // Audio support
+                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+                if (!workspacesEnabled || !audioEnabled) {
+                    // Skip this step if workspaces not enabled or audio not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            default:
+                // All other steps are always applicable
+                return nextStep;
         }
     }
     
-    return 12; // Default to last step if no next step found
+    // If we've gone past all steps, return -1
+    return -1;
 }
 
 /**
@@ -2067,6 +2106,102 @@ function updateStepCompletionStatus(stepNumber) {
         
         // Update or hide the requirement alert
         if (requirementAlert) {
+            requirementAlert.classList.remove('alert-danger');
+            requirementAlert.classList.add('alert-success');
+            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
+        }
+    } else {
+        // Ensure badges show required status
+        badges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-danger');
+            badge.textContent = 'Required';
+        });
+        
+        // Reset requirement alert if needed
+        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
+            requirementAlert.classList.remove('alert-success');
+            requirementAlert.classList.add('alert-danger');
+            
+            // Reset alert text based on step number
+            switch (stepNumber) {
+                case 2:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
+                    break;
+                case 3:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
+                    break;
+                case 5:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
+                    break;
+                case 6:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
+                    break;
+                case 7:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
+                    break;
+                case 8:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
+                    break;
+                case 9:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
+                    break;
+            }
+        }
+    }
+    
+    // Update optional features status if they're enabled/configured
+    if (optionalFeaturesEnabled) {
+        // Update optional badges to show as complete
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-secondary');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update optional alert if present
+        if (optionalAlert) {
+            optionalAlert.classList.remove('alert-info');
+            optionalAlert.classList.add('alert-success');
+            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
+        }
+    } else {
+        // Keep optional badges as is
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-secondary');
+            badge.textContent = 'Optional';
+        });
+        
+        // Reset optional alert if it was changed
+        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
+            optionalAlert.classList.remove('alert-success');
+            optionalAlert.classList.add('alert-info');
+            
+            // Reset optional alert text based on step number
+            switch (stepNumber) {
+                case 1:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
+                    break;
+                case 4:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
+                    break;
+                case 10:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
+                    break;
+                case 11:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
+                    break;
+                case 12:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
+                    break;
+                default:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
+        }
+    }
+}
+
 /**
  * Setup field change listeners for real-time validation during walkthrough
  */
@@ -2162,101 +2297,6 @@ function setupWalkthroughFieldListeners() {
             setTimeout(() => updateStepCompletionStatus(5), 100);
         }
     });
-}
-            requirementAlert.classList.remove('alert-danger');
-            requirementAlert.classList.add('alert-success');
-            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
-        }
-    } else {
-        // Ensure badges show required status
-        badges.forEach(badge => {
-            badge.classList.remove('bg-success');
-            badge.classList.add('bg-danger');
-            badge.textContent = 'Required';
-        });
-        
-        // Reset requirement alert if needed
-        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
-            requirementAlert.classList.remove('alert-success');
-            requirementAlert.classList.add('alert-danger');
-            
-            // Reset alert text based on step number
-            switch (stepNumber) {
-                case 2:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
-                    break;
-                case 3:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
-                    break;
-                case 5:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
-                    break;
-                case 6:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
-                    break;
-                case 7:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
-                    break;
-                case 8:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
-                    break;
-                case 9:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
-                    break;
-            }
-        }
-    }
-    
-    // Update optional features status if they're enabled/configured
-    if (optionalFeaturesEnabled) {
-        // Update optional badges to show as complete
-        optionalBadges.forEach(badge => {
-            badge.classList.remove('bg-secondary');
-            badge.classList.add('bg-success');
-            badge.textContent = 'Complete';
-        });
-        
-        // Update optional alert if present
-        if (optionalAlert) {
-            optionalAlert.classList.remove('alert-info');
-            optionalAlert.classList.add('alert-success');
-            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
-        }
-    } else {
-        // Keep optional badges as is
-        optionalBadges.forEach(badge => {
-            badge.classList.remove('bg-success');
-            badge.classList.add('bg-secondary');
-            badge.textContent = 'Optional';
-        });
-        
-        // Reset optional alert if it was changed
-        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
-            optionalAlert.classList.remove('alert-success');
-            optionalAlert.classList.add('alert-info');
-            
-            // Reset optional alert text based on step number
-            switch (stepNumber) {
-                case 1:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
-                    break;
-                case 4:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
-                    break;
-                case 10:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
-                    break;
-                case 11:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
-                    break;
-                case 12:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
-                    break;
-                default:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
-            }
-        }
-    }
 }
 
 /**
@@ -2387,63 +2427,6 @@ function navigatePreviousStep() {
         // If no previous step found, go to first step
         navigateToWalkthroughStep(1);
     }
-}
-
-/**
- * Find the next applicable step based on enabled features
- * @param {number} currentStep - The current step number
- * @returns {number} The next applicable step number or -1 if none found
- */
-function findNextApplicableStep(currentStep) {
-    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
-    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
-    const workspacesEnabled = workspaceEnabled || groupsEnabled;
-    
-    // Start checking from the next step
-    let nextStep = currentStep + 1;
-    
-    // Maximum step to avoid infinite loop
-    const maxSteps = 12;
-    
-    while (nextStep <= maxSteps) {
-        // Check if this step is applicable based on conditions
-        switch (nextStep) {
-            case 5: // Embedding settings
-            case 6: // AI Search settings 
-            case 7: // Document Intelligence settings
-                if (!workspacesEnabled) {
-                    // Skip these steps if workspaces not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 8: // Video support
-                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
-                if (!workspacesEnabled || !videoEnabled) {
-                    // Skip this step if workspaces not enabled or video not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 9: // Audio support
-                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
-                if (!workspacesEnabled || !audioEnabled) {
-                    // Skip this step if workspaces not enabled or audio not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            default:
-                // All other steps are always applicable
-                return nextStep;
-        }
-    }
-    
-    // If we've gone past all steps, return -1
-    return -1;
 }
 
 /**
