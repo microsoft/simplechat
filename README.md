@@ -375,7 +375,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 | **Cosmos DB (NoSQL)**        | Autoscale provisioned throughput (Start ~1000 RU/s), Single-Region Write | Stores metadata, conversations, settings. Autoscale helps manage costs, but monitor RU consumption and adjust max RU for production loads. |
 | **Video Indexer**            | Standard Tier (Optional)                                     | Required only if Video Extraction feature is enabled. Pay-as-you-go per input content minute (All Insights). |
 | **Speech Service**           | Standard S0 (Optional)                                       | Required only if Audio Extraction feature is enabled. Pay-as-you-go per audio hour (Standard fast transcription). |
-| **Storage Account**          | General Purpose V2, LRS, Hot Tier (Optional)                 | Required only if Enhanced Citations feature is enabled. Stores processed files. Hierarchical Namespace (ADLS Gen2) recommended. |
+| **Storage Account**          | General Purpose V2, LRS, Hot Tier (Optional)                 | Required if Enhanced Citations feature is enabled. Stores processed files. Hierarchical Namespace (ADLS Gen2) recommended. - OR - Required if you want to use Azure Storage for temporaty file storage which is recommend for scalability and better performance |
 | **Azure Cache for Redis**    | Standard Tier, C0 cache size (Optional)                      | Required only if need the performance and scalability a Redis Cache for session data |
 
 > **Note**: Pricing is subject to change and varies significantly based on usage, region, specific configurations (e.g., network security, backup policies), and selected tiers. Always use the official Azure Pricing Calculator and monitor your Azure costs closely.
@@ -469,6 +469,32 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *    - If using keys, turn on Access Keys and note the primary key
     *    - If using managed identities, enable Entra Authentication and select the app service managed identity 
     *   NOTE: The Redis service can take 15-30 minutes to fully deploy`
+13. **Use Azure Storage for temporary data data (Optional)**:
+    *   Create an **Azure Storage Account** if you previously created Enhanced Citations you can use it.  Otherwise look at step 11 for recommendations on settings.
+    *   **Enable Storage Account Key Access**
+        - Goto the storage account
+        - Click on Configuration (in the Settings section)
+        - Click on Enable Key Access and click Save
+    *   **Create a FileShare**:
+        - Cick on File Shares in the Data Storage section
+        - Click Add File Share
+        - Give it a name (write it down for use later)
+        - Click Next: Backup
+        - Turn off enable backup, unless you are using this share for other files
+        - Click Review and Create, then Create
+    *   **Create the Share in your App Service**: 
+         - Return to your App Service
+         - Click on Configuration (the in Settings Section) 
+         - Click on Path Mappings
+         - Click on Add New Azure Storage Mount
+           - Give it a name
+           - Use Basic for Configuration Options
+           - Select your storage account
+           - Select Azure Files for Storage Type
+           - Select SMB for Protocal
+           - Select the FileShare your created for the Storage Container
+           - Set the mount path **/sc-temp-files**  - Important to use this name
+           - Click OK and then click Save
 
 ### Application-Specific Configuration Steps
 
@@ -1250,7 +1276,7 @@ Services like Azure OpenAI, Document Intelligence, Content Safety, Speech Servic
       - [**File Processing Logs**](#file-processing-logs)
   - [Roadmap](#roadmap)
   - [Latest Features](#latest-features)
-    - [(v0.212.91)](#v021291)
+    - [**(v0.214.001)**](#v0214001)
       - [New Features](#new-features)
       - [Bug Fixes](#bug-fixes)
   - [Release Notes](#release-notes)
