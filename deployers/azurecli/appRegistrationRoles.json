@@ -1,0 +1,42 @@
+[
+  {
+    "allowedMemberTypes": ["User"],
+    "description": "Allows access to view user feedback admin page.",
+    "displayName": "Feedback Admin",
+    "id": "12e32860-88a8-421e-8a6f-faf08e3efe2e",
+    "isEnabled": true,
+    "value": "FeedbackAdmin"
+  },
+  {
+    "allowedMemberTypes": ["User"],
+    "description": "Allows access to view content safety violations.",
+    "displayName": "Safety Violation Admin",
+    "id": "877166d4-eaa3-4fa6-8d79-e2f325f0e331",
+    "isEnabled": true,
+    "value": "SafetyViolationAdmin"
+  },
+  {
+    "allowedMemberTypes": ["User"],
+    "description": "Allows user to create new groups (if enabled).",
+    "displayName": "Create Group",
+    "id": "3a614cbb-7f8b-47e1-8e55-5b3c4f71a1c8",
+    "isEnabled": true,
+    "value": "CreateGroups"
+  },
+  {
+    "allowedMemberTypes": ["User"],
+    "description": "Standard user access to chat features.",
+    "displayName": "Users",
+    "id": "633746c6-3d03-480f-b273-58ece728be52",
+    "isEnabled": true,
+    "value": "User"
+  },
+  {
+    "allowedMemberTypes": ["User"],
+    "description": "Allows access to Admin Settings page.",
+    "displayName": "Admins",
+    "id": "e9b4823f-d17a-44f1-9d71-0f2c0ee45656",
+    "isEnabled": true,
+    "value": "Admin"
+  }
+]

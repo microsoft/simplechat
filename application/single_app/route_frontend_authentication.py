@@ -17,6 +17,7 @@ def register_route_frontend_authentication(app):
             redirect_uri=url_for('authorized', _external=True, _scheme='https') # Ensure scheme is https if deployed
         )
         print("Redirecting to Azure AD for authentication.")
+        #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
 
     @app.route('/getAToken') # This is your redirect URI path
@@ -59,6 +60,37 @@ def register_route_frontend_authentication(app):
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
         return redirect(url_for('index')) # Or another appropriate page
+
+    # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
+    @app.route('/getATokenApi') # This is your redirect URI path
+    def authorized_api():
+        # Check for errors passed back from Azure AD
+        if request.args.get('error'):
+            error = request.args.get('error')
+            error_description = request.args.get('error_description', 'No description provided.')
+            print(f"Azure AD Login Error: {error} - {error_description}")
+            return f"Login Error: {error} - {error_description}", 400 # Or render an error page
+
+        code = request.args.get('code')
+        if not code:
+            print("Authorization code not found in callback.")
+            return "Authorization code not found", 400
+
+        # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
+        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+
+        result = msal_app.acquire_token_by_authorization_code(
+            code=code,
+            scopes=SCOPE, # Request the same scopes again
+            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+        )
+
+        if "error" in result:
+            error_description = result.get("error_description", result.get("error"))
+            print(f"Token acquisition failure: {error_description}")
+            return f"Login failure: {error_description}", 500
+
+        return jsonify(result, 200)
 
     @app.route('/logout')
     def logout():
