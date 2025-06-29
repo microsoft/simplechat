@@ -51,7 +51,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
     *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
     *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
 
-![Architecture Diagram](./images/architecture.png)
+![Architecture](./images/architecture.png)
 
 ### Why Enable Optional Features?
 
@@ -1097,6 +1097,81 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    - **Cosmos DB**: Set AZURE_COSMOS_AUTHENTICATION_TYPE="managed_identity" in Application Settings. Remove AZURE_COSMOS_KEY and AZURE_COSMOS_CONNECTION_STRING.
    - **Other Services (OpenAI, Search, DI, CS, Storage)**: Check the **Admin Settings UI** first. Most sections (GPT, Embeddings, Image Gen, Citations, Safety, Search & Extract) have toggles or dropdowns to select "Managed Identity" as the authentication method. Using the UI toggle is preferred as it handles the backend configuration. If UI options aren't present or for overrides, you might need specific environment variables like AZURE_OPENAI_USE_MANAGED_IDENTITY="True", but rely on the UI where possible.
 
+## Enterprise Network
+
+![Architecture with Private Endpoints](./images/architecture-private-endpoints.png)
+
+### Private Endpoints, Virtual Networks, Subnets, and Private DNS Zones
+
+For enterprise deployments—whether in Azure Commercial, Azure Government, or custom/sovereign environments—network isolation and private connectivity are critical for security, compliance, and data protection. The Simple Chat reference architecture leverages Azure Private Endpoints, Virtual Networks (VNets), dedicated subnets, and Private DNS Zones to ensure all traffic between the application and Azure services remains on the Microsoft backbone, never traversing the public internet.
+
+#### **Why Use Private Endpoints and Private DNS?**
+
+- **Security & Compliance:** Private Endpoints restrict access to Azure PaaS services (Cosmos DB, AI Search, OpenAI, Storage, Redis, etc.) to only resources within your VNet, preventing data exfiltration and unauthorized access.
+- **Data Privacy:** All data-in-transit between the App Service and backend services stays within the Azure backbone, never exposed to the public internet.
+- **Zero Trust & Defense-in-Depth:** Network-level controls complement identity and RBAC, supporting regulatory requirements (e.g., FedRAMP, HIPAA, GDPR).
+- **Custom DNS Resolution:** Private DNS Zones ensure that service FQDNs (e.g., *.documents.azure.com) resolve to private IPs within your VNet, so all traffic is routed privately.
+
+#### **Network Topology Overview**
+
+The architecture consists of a single VNet with multiple subnets and a set of Private DNS Zones, as shown in the diagram above.
+
+**Subnets:**
+- **App Inbound:** Hosts the Private Endpoint for inbound traffic to the App Service (front end). This allows secure, private access from internal users or jump hosts.
+- **App Outbound:** Used for VNet Integration, enabling the App Service to make outbound calls to private endpoints of backend services (Cosmos DB, Redis, Storage, etc.).
+- **Data:** Hosts Private Endpoints for data services (Cosmos DB, Redis, Storage).
+- **AI Services:** Hosts Private Endpoints for AI-related services (OpenAI, AI Search, Document Intelligence, Content Safety, Speech, Video Indexer).
+
+**Key Points:**
+- The App Service has **two network connections**:
+  - **Private Endpoint (Inbound):** Exposes the app privately for internal access (e.g., from a corporate network or jump box).
+  - **VNet Integration (Outbound):** Allows the app to reach private endpoints of backend services via the VNet.
+- All backend services are deployed with Private Endpoints in their respective subnets.
+- Each service type requires a corresponding Private DNS Zone for name resolution.
+
+#### **Required Private DNS Zones**
+
+For each Azure service with a Private Endpoint, you must create and link the following Private DNS Zones to your VNet:
+
+| Service                | Private DNS Zone Name                        |
+|------------------------|----------------------------------------------|
+| App Service            | privatelink.azurewebsites.net                |
+| Cosmos DB              | privatelink.documents.azure.com              |
+| Redis Cache            | privatelink.redis.cache.windows.net          |
+| Storage Account        | privatelink.blob.core.windows.net            |
+| Azure AI Search        | privatelink.search.windows.net               |
+| Azure OpenAI           | privatelink.openai.azure.com                 |
+| Document Intelligence  | privatelink.cognitiveservices.azure.com      |
+| Content Safety         | privatelink.cognitiveservices.azure.com      |
+| Speech Service         | privatelink.cognitiveservices.azure.com      |
+| Video Indexer          | privatelink.cognitiveservices.azure.com      |
+
+> **Note:** Some services (like Document Intelligence, Content Safety, Speech, Video Indexer) share the same DNS zone: `privatelink.cognitiveservices.azure.com`.
+
+**You must link each DNS zone to the VNet and ensure the correct records are created for each private endpoint.**
+
+#### **How Private Endpoints and DNS Work Together**
+
+- When a Private Endpoint is created for a service, Azure automatically creates a private IP in the subnet and a DNS record in the linked Private DNS Zone.
+- The App Service (via VNet Integration) resolves the service FQDN to the private IP, ensuring all traffic is routed privately.
+- This setup prevents accidental data leakage to the public internet, even if a developer or admin uses a public FQDN in configuration.
+
+#### **Summary of Steps for Enterprise Network Isolation**
+
+1. **Create a VNet** with at least four subnets: App Inbound, App Outbound, Data, and AI Services.
+2. **Deploy Private Endpoints** for each backend service (Cosmos DB, Redis, Storage, AI Search, OpenAI, etc.) into the appropriate subnet.
+3. **Create and link Private DNS Zones** for each service type to the VNet.
+4. **Configure App Service:**
+   - Enable a **Private Endpoint** for inbound access (frontend).
+   - Enable **VNet Integration** for outbound access to backend services.
+5. **Restrict public network access** on all backend services (set "Deny public network access" to "Yes").
+6. **Test connectivity** from the App Service to each backend service to ensure all traffic is private.
+
+> This architecture is recommended for all production, government, and regulated environments. The pattern is identical for Azure Commercial, Azure Government, and custom/sovereign clouds—only the region and service endpoints differ.
+
+For more details, see the [Azure documentation on Private Endpoints](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) and [App Service VNet Integration](https://learn.microsoft.com/azure/app-service/overview-vnet-integration).
+
+
 ## FAQ
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
@@ -1342,7 +1417,9 @@ Services like Azure OpenAI, Document Intelligence, Content Safety, Speech Servic
   - [Admin Settings Configuration](#admin-settings-configuration)
   - [Azure Government Configuration](#azure-government-configuration)
   - [How to use Managed Identity](#how-to-use-managed-identity)
-- [FAQ](#faq)
+  - [Enterprise Network](#enterprise-network)
+    - [Private Endpoints, Virtual Networks, Subnets, and Private DNS Zones](#private-endpoints-virtual-networks-subnets-and-private-dns-zones)
+  - [FAQ](#faq)
 - [Usage](#usage)
   - [User Workflow Summary](#user-workflow-summary)
 - [Scaling the Application](#scaling-the-application)
