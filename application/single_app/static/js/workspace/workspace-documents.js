@@ -365,7 +365,15 @@ function fetchUserDocuments() {
         })
         .catch(error => {
             console.error("Error fetching documents:", error);
-            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}</td></tr>`;
+            // Check for embedding/vector error keywords
+            const errMsg = (error.error || error.message || '').toLowerCase();
+            let displayMsg;
+            if (errMsg.includes('embedding') || errMsg.includes('vector')) {
+                displayMsg = "There was an issue with the embedding process. Please check with an admin on embedding configuration.";
+            } else {
+                displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
+            }
+            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }

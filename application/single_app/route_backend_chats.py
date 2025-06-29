@@ -357,8 +357,11 @@ def register_route_backend_chats(app):
 
                 search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
             except Exception as e:
-                 print(f"Error during hybrid search: {e}")
-                 # Optionally inform the user or just proceed without search results
+                print(f"Error during hybrid search: {e}")
+                # Only treat as error if the exception is from embedding failure
+                return jsonify({
+                    'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
+                }), 500
 
             if search_results:
                 retrieved_texts = []

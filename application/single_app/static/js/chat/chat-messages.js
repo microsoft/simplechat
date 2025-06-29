@@ -631,11 +631,20 @@ export function actuallySendMessage(finalMessageToSend) {
           error.data.message_id // Use message_id if provided in error
         );
       } else {
-        // General error message
-        appendMessage(
-          "Error",
-          `Could not get a response. ${error.message || ""}`
-        );
+        // Show specific embedding error if present, or if status is 500 (embedding backend error)
+        const errMsg = (error.message || "").toLowerCase();
+        if (errMsg.includes("embedding") || error.status === 500) {
+          appendMessage(
+            "Error",
+            "There was an issue with the embedding process. Please check with an admin on embedding configuration."
+          );
+        } else {
+          // General error message
+          appendMessage(
+            "Error",
+            `Could not get a response. ${error.message || ""}`
+          );
+        }
       }
     });
 }
