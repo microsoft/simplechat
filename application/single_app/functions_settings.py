@@ -12,6 +12,8 @@ def get_settings():
         'show_logo': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_favicon_base64': '',
+        'favicon_version': 1,
         'enable_dark_mode_default': False,
 
         # GPT Settings
