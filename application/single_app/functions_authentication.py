@@ -163,6 +163,97 @@ def get_video_indexer_account_token(settings, video_id=None):
     print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
     return ai
 
+
+JWKS_CACHE = {}
+
+def get_microsoft_entra_jwks():
+    """Fetches the JWKS from Microsoft Entra's OIDC metadata endpoint."""
+    # Microsoft Entra OpenID Connect discovery endpoint
+    global JWKS_CACHE
+    global OIDC_METADATA_URL
+
+    if not JWKS_CACHE:
+        try:
+            # Fetch OIDC configuration
+            oidc_config = requests.get(OIDC_METADATA_URL).json()
+            jwks_uri = oidc_config["jwks_uri"]
+
+            # Fetch JWKS
+            jwks_response = requests.get(jwks_uri).json()
+            JWKS_CACHE = {key['kid']: key for key in jwks_response['keys']}
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching JWKS: {e}")
+            return None
+    return JWKS_CACHE
+
+def validate_bearer_token(token):
+    """Validates a Microsoft Entra bearer token."""
+    global CLIENT_ID, TENANT_ID, AUTHORITY
+    try:
+        jwks = get_microsoft_entra_jwks()
+        if not jwks:
+            return False, "Failed to retrieve signing keys."
+
+        # Decode header to get 'kid' (key ID)
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+
+        if not kid or kid not in jwks:
+            return False, "Invalid or missing key ID."
+
+        key_data = jwks[kid]
+
+        # Construct public key from JWK
+        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+
+        # Validate the token
+        decoded_token = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],  # Microsoft Entra typically uses RS256
+            audience=f"api://{CLIENT_ID}",
+            issuer=f"https://sts.windows.net/{TENANT_ID}/", # Example for common tenant or specific tenant ID
+            #issuer=AUTHORITY, # Example for common tenant or specific tenant ID
+            options={
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iss": True,
+                "verify_aud": True, # TODO: THIS NEEDS TO BE FIXED TO VERIFY AUDIENCE.
+            }
+        )
+        return True, decoded_token
+    except jwt.exceptions.ExpiredSignatureError:
+        return False, "Token has expired."
+    except jwt.exceptions.InvalidAudienceError:
+        return False, "Invalid audience."
+    except jwt.exceptions.InvalidIssuerError:
+        return False, "Invalid issuer."
+    except jwt.exceptions.InvalidTokenError as e:
+        return False, f"Invalid token: {e}"
+    except Exception as e:
+        return False, f"An unexpected error occurred during token validation: {e}"
+
+def accesstoken_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({"message": "Authorization header missing"}), 401
+
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"message": "Invalid Authorization header format"}), 401
+
+        token = auth_header.split(" ")[1]
+        is_valid, data = validate_bearer_token(token)
+
+        if not is_valid:
+            return jsonify({"message": data}), 401
+        
+        # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
+        #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
+        return f(*args, **kwargs)
+    return decorated_function
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):

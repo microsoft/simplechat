@@ -1,19 +1,17 @@
-# route_backend_documents.py
+# route_external_documents.py
 
 from config import *
 from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
-import os
 
-def register_route_backend_documents(app):
-    @app.route('/api/get_file_content', methods=['POST'])
-    @login_required
-    @user_required
+def register_route_external_documents(app):
+    @app.route('/external/get_file_content', methods=['POST'])
     @enabled_required("enable_user_workspace")
-    def get_file_content():
+    def external_get_file_content():
         data = request.get_json()
-        user_id = get_current_user_id()
+        #user_id = get_current_user_id()
+        user_id = get_currdata.get('user_id')
         conversation_id = data.get('conversation_id')
         file_id = data.get('file_id')
 
@@ -93,14 +91,16 @@ def register_route_backend_documents(app):
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Error retrieving file content: " + str(e))
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     
-    @app.route('/api/documents/upload', methods=['POST'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/upload', methods=['POST'])
     @enabled_required("enable_user_workspace")
-    def api_user_upload_document():
-        user_id = get_current_user_id()
+    def external_user_upload_document():
+        user_id = request.form.get('user_id', None)
         if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
+            return jsonify({'error': 'invalid user_id'}), 400
+
+        # user_id = get_current_user_id()
+        # if not user_id:
+        #     return jsonify({'error': 'User not authenticated'}), 401
 
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in the request'}), 400 # Changed error message slightly
@@ -138,13 +138,8 @@ def register_route_backend_documents(app):
             parent_document_id = str(uuid.uuid4())
             temp_file_path = None # Initialize
             try:
-                # The user can configure the app service to use azure storage for temp files,
-                # Check if the 'sc-temp-files' folder exists, and if so, use it.
-                # Otherwise, use the default system temp directory.
-                sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else ""
-
                 # Use NamedTemporaryFile for automatic cleanup, generate safe suffix
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=sc_temp_files_dir) as tmp_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
                     file.save(tmp_file.name)
                     temp_file_path = tmp_file.name
             except Exception as e:
@@ -210,14 +205,16 @@ def register_route_backend_documents(app):
         }), response_status
 
 
-    @app.route('/api/documents', methods=['GET'])
-    @login_required
-    @user_required
+    @app.route('/external/documents', methods=['GET'])
     @enabled_required("enable_user_workspace")
-    def api_get_user_documents():
-        user_id = get_current_user_id()
+    def external_get_user_documents():
+        user_id = request.args.get('user_id', None)
         if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
+            return jsonify({'error': 'invalid user_id'}), 400
+
+        # user_id = get_current_user_id()
+        # if not user_id:
+        #     return jsonify({'error': 'User not authenticated'}), 401
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -357,25 +354,25 @@ def register_route_backend_documents(app):
         }), 200
 
 
-    @app.route('/api/documents/<document_id>', methods=['GET'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/<document_id>', methods=['GET'])
     @enabled_required("enable_user_workspace")
-    def api_get_user_document(document_id):
+    def external_get_user_document(document_id):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
         return get_document(user_id, document_id)
 
-    @app.route('/api/documents/<document_id>', methods=['PATCH'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/<document_id>', methods=['PATCH'])
     @enabled_required("enable_user_workspace")
-    def api_patch_user_document(document_id):
-        user_id = get_current_user_id()
+    def external_patch_user_document(document_id):
+        user_id = request.form.get('user_id', None)
         if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
+            return jsonify({'error': 'invalid user_id'}), 401
+
+        # user_id = get_current_user_id()
+        # if not user_id:
+        #     return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json()  # new metadata values from the client
 
@@ -444,14 +441,16 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(e)}), 500
 
 
-    @app.route('/api/documents/<document_id>', methods=['DELETE'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/<document_id>', methods=['DELETE'])
     @enabled_required("enable_user_workspace")
-    def api_delete_user_document(document_id):
-        user_id = get_current_user_id()
+    def external_delete_user_document(document_id):
+        user_id = request.form.get('user_id', None)
         if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
+            return jsonify({'error': 'invalid user_id'}), 401
+
+        # user_id = get_current_user_id()
+        # if not user_id:
+        #     return jsonify({'error': 'User not authenticated'}), 401
         
         try:
             delete_document(user_id, document_id)
@@ -460,19 +459,28 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
     
-    @app.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/<document_id>/extract_metadata', methods=['POST'])
     @enabled_required("enable_user_workspace")
-    def api_extract_user_metadata(document_id):
+    def external_extract_user_metadata(document_id):
         """
         POST /api/documents/<document_id>/extract_metadata
         Queues a background job that calls extract_document_metadata() 
         and updates the document in Cosmos DB with the new metadata.
         """
-        user_id = get_current_user_id()
+        # user_id = get_current_user_id()
+        # if not user_id:
+        #     return jsonify({'error': 'User not authenticated'}), 401
+
+        if request.is_json:
+            data = request.get_json()
+            #user_id = get_current_user_id()
+            user_id = data.get("user_id")
+            citation_id = data.get("citation_id")
+        else:
+            return jsonify({"error": "Request must be JSON"}), 400
+
         if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
+            return jsonify({"error": "invalid user_id"}), 400
 
         settings = get_settings()
         if not settings.get('enable_extract_meta_data'):
@@ -500,20 +508,22 @@ def register_route_backend_documents(app):
         }), 200
 
 
-    @app.route("/api/get_citation", methods=["POST"])
-    @login_required
-    @user_required
+    @app.route("/extennal/get_citation", methods=["POST"])
     @enabled_required("enable_user_workspace")
-    def get_citation():
-        data = request.get_json()
-        user_id = get_current_user_id()
-        citation_id = data.get("citation_id")
+    def external_get_citation():
+        if request.is_json:
+            data = request.get_json()
+            #user_id = get_current_user_id()
+            user_id = data.get("user_id")
+            citation_id = data.get("citation_id")
+        else:
+            return jsonify({"error": "Request must be JSON"}), 400
 
         if not user_id:
-            return jsonify({"error": "User not authenticated"}), 401
+            return jsonify({"error": "invalid user_id"}), 400
                 
         if not citation_id:
-            return jsonify({"error": "Missing citation_id"}), 400
+            return jsonify({"error": "invalid citation_id"}), 400
 
         try:
             search_client_user = CLIENTS['search_client_user']
@@ -546,12 +556,14 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
         
-    @app.route('/api/documents/upgrade_legacy', methods=['POST'])
-    @login_required
-    @user_required
+    @app.route('/external/documents/upgrade_legacy', methods=['POST'])
     @enabled_required("enable_user_workspace")
-    def api_upgrade_legacy_user_documents():
-        user_id = get_current_user_id()
+    def external_upgrade_legacy_user_documents():
+        #user_id = get_current_user_id()
+        user_id = request.form.get('user_id', None)
+        if not user_id:
+            return jsonify({'error': 'invalid user_id'}), 401
+        
         # returns how many docs were updated
         count = upgrade_legacy_documents(user_id)
         return jsonify({
