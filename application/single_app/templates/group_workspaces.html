@@ -2269,11 +2269,31 @@ app_settings.app_title }} {% endblock %} {% block head %}
   createGroupPromptBtn?.addEventListener("click", () => {
     groupPromptIdEl.value = "";
     groupPromptNameEl.value = "";
-    if (groupSimplemde) groupSimplemde.value("");
+    if (groupSimplemde) {
+      // Clear the editor completely
+      groupSimplemde.codemirror.setValue("");
+      groupSimplemde.value("");
+    }
     else groupPromptContentEl.value = "";
     document.getElementById("groupPromptModalLabel").textContent =
       "Create Group Prompt";
     groupPromptModalEl.show();
+    
+    // Force refresh after modal is fully shown
+    setTimeout(() => {
+      if (groupSimplemde) {
+        groupSimplemde.codemirror.refresh();
+        groupSimplemde.codemirror.focus();
+      }
+    }, 300);
+  });
+  
+  // Add event listener for modal shown event
+  document.getElementById("groupPromptModal")?.addEventListener('shown.bs.modal', function () {
+    if (groupSimplemde) {
+      groupSimplemde.codemirror.refresh();
+      groupSimplemde.codemirror.focus();
+    }
   });
 
   groupPromptForm?.addEventListener("submit", (e) => {
@@ -2324,9 +2344,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
         ).textContent = `Edit: ${data.name}`;
         groupPromptIdEl.value = data.id;
         groupPromptNameEl.value = data.name;
-        if (groupSimplemde) groupSimplemde.value(data.content || "");
+        
+        // Clear the editor completely first
+        if (groupSimplemde) {
+          groupSimplemde.codemirror.setValue("");
+          groupSimplemde.value(data.content || "");
+        }
         else groupPromptContentEl.value = data.content || "";
+        
         groupPromptModalEl.show();
+        
+        // Force refresh after modal is fully shown
+        setTimeout(() => {
+          if (groupSimplemde) {
+            groupSimplemde.codemirror.refresh();
+            groupSimplemde.codemirror.focus();
+          }
+        }, 300);
       })
       .catch((err) => {
         console.error("Error loading prompt:", err);
