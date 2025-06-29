@@ -219,6 +219,7 @@ def register_route_frontend_admin_settings(app):
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',
+                'hide_app_title': form_data.get('hide_app_title') == 'on',
                 'custom_logo_base64': settings.get('custom_logo_base64', ''),
                 'logo_version': settings.get('logo_version', 1),
                 'custom_favicon_base64': settings.get('custom_favicon_base64', ''),

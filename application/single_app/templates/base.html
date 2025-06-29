@@ -189,7 +189,9 @@
             <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="30" />
           </a>
         {% endif %}
-      {% else %}
+      {% endif %}
+      
+      {% if not app_settings.hide_app_title %}
         <a class="navbar-brand" href="{{ url_for('index') }}">
           {{ app_settings.app_title }}
         </a>
@@ -203,7 +205,7 @@
       <div class="collapse navbar-collapse" id="navbarNav">
         <!-- Left side nav -->
         <ul class="navbar-nav me-auto">
-          {% if not app_settings.show_logo %}
+          {% if not app_settings.show_logo or app_settings.hide_app_title %}
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('index') }}">Home</a>
           </li>

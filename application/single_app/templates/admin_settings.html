@@ -485,6 +485,11 @@
                             {% if settings.show_logo %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="show_logo">Show Logo</label>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" class="form-check-input" id="hide_app_title" name="hide_app_title"
+                            {% if settings.hide_app_title %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
+                    </div>
                     <div class="form-group mb-3">
                         <label for="logo_file">Upload Custom Logo</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
