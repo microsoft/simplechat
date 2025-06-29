@@ -5,6 +5,7 @@ import { loadConversations } from "./chat-conversations.js";
 import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange } from "./chat-documents.js";
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
+import { loadUserSettings } from "./chat-layout.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -55,14 +56,24 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Load documents and prompts
+  // Load documents, prompts, and user settings
   Promise.all([
       loadAllDocs(),
       loadUserPrompts(),
-      loadGroupPrompts()
+      loadGroupPrompts(),
+      loadUserSettings()
   ])
-  .then(() => {
-      console.log("Initial data (Docs, Prompts) loaded successfully."); // Log success
+  .then(([docsResult, userPromptsResult, groupPromptsResult, userSettings]) => {
+      console.log("Initial data (Docs, Prompts, Settings) loaded successfully."); // Log success
+      
+      // Set the preferred model if available
+      if (userSettings && userSettings.preferredModelDeployment) {
+          const modelSelect = document.getElementById("model-select");
+          if (modelSelect) {
+              console.log(`Setting preferred model: ${userSettings.preferredModelDeployment}`);
+              modelSelect.value = userSettings.preferredModelDeployment;
+          }
+      }
 
       // --- Initialize Document-related UI ---
       // This part handles URL params for documents - KEEP IT

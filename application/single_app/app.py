@@ -47,16 +47,19 @@ import json
 
 
 
+
 from route_external_health import *
 from route_external_group_documents import *
 from route_external_documents import *
 from route_external_groups import *
 from route_external_admin_settings import *
+
 # Semantic Kernel integration
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel 
 import builtins
 import logging
+
 
 # =================== Helper Functions ===================
 @app.before_first_request
@@ -114,6 +117,45 @@ def before_first_request():
     if enable_semantic_kernel and not per_user_semantic_kernel:
         print("Semantic Kernel is enabled. Initializing...")
         initialize_semantic_kernel()
+
+    Session(app)
+
+    # Setup session handling
+    if settings.get('enable_redis_cache'):
+        redis_url = settings.get('redis_url', '').strip()
+        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+
+        if redis_url:
+            app.config['SESSION_TYPE'] = 'redis'
+
+            if redis_auth_type == 'managed_identity':
+                print("Redis enabled using Managed Identity")
+                credential = DefaultAzureCredential()
+                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
+                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=token.token,
+                    ssl=True
+                )
+            else:
+                # Default to key-based auth
+                redis_key = settings.get('redis_key', '').strip()
+                print("Redis enabled using Access Key")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=redis_key,
+                    ssl=True
+                )
+        else:
+            print("Redis enabled but URL missing; falling back to filesystem.")
+            app.config['SESSION_TYPE'] = 'filesystem'
+    else:
+        app.config['SESSION_TYPE'] = 'filesystem'
 
     Session(app)
 

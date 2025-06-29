@@ -86,7 +86,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.215.015'
+app.config['VERSION'] = '0.215.034'
 Session(app)
 
 CLIENTS = {}
@@ -315,6 +315,40 @@ def ensure_custom_logo_file_exists(app, settings):
         print(f"Failed to write/overwrite {logo_filename}: {ex}")
     except Exception as ex: # Catch any other unexpected errors
          print(f"Unexpected error during logo file write for {logo_filename}: {ex}")
+
+def ensure_custom_favicon_file_exists(app, settings):
+    """
+    If custom_favicon_base64 is present in settings, ensure static/images/favicon.ico
+    exists and reflects the current base64 data. Overwrites if necessary.
+    If base64 is empty/missing, uses the default favicon.
+    """
+    custom_favicon_b64 = settings.get('custom_favicon_base64', '')
+    # Ensure the filename is consistent
+    favicon_filename = 'favicon.ico'
+    favicon_path = os.path.join(app.root_path, 'static', 'images', favicon_filename)
+    images_dir = os.path.dirname(favicon_path)
+
+    # Ensure the directory exists
+    os.makedirs(images_dir, exist_ok=True)
+
+    if not custom_favicon_b64:
+        # No custom favicon in DB; no need to remove the static file as we want to keep the default
+        return
+
+    # Custom favicon exists in settings, write/overwrite the file
+    try:
+        # Decode the current base64 string
+        decoded = base64.b64decode(custom_favicon_b64)
+
+        # Write the decoded data to the file, overwriting if it exists
+        with open(favicon_path, 'wb') as f:
+            f.write(decoded)
+        print(f"Ensured {favicon_filename} exists and matches current settings.")
+
+    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
+        print(f"Failed to write/overwrite {favicon_filename}: {ex}")
+    except Exception as ex: # Catch any other unexpected errors
+         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
 
 def initialize_clients(settings):
     """

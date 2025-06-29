@@ -254,7 +254,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </select>
           </div>
           <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            {% if enable_extract_meta_data not in [True, 'True', 'true'] %}
             <button
               id="group-docs-apply-filters-btn"
               class="btn btn-primary btn-sm"
@@ -267,7 +266,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
             >
               Clear Filters
             </button>
-            {% endif %}
           </div>
           {% else %}
           <div class="col-md-7">
@@ -282,7 +280,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
             />
           </div>
           <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            {% if enable_extract_meta_data not in [True, 'True', 'true'] %}
             <button
               id="group-docs-apply-filters-btn"
               class="btn btn-primary btn-sm"
@@ -295,13 +292,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
             >
               Clear Filters
             </button>
-            {% endif %}
           </div>
           {% endif %}
         </div>
 
-        <!-- Filter Row 2: Metadata Filters (Conditional) & Buttons -->
-        {% if enable_extract_meta_data in [True, 'True', 'true'] %}
+        <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) & Buttons -->
         <div class="row mb-3 align-items-end filter-controls-row">
           <div class="col-md-3">
             <label for="group-docs-author-filter" class="form-label mb-1 small"
@@ -341,21 +336,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
             />
           </div>
           <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-docs-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-docs-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
+            <!-- Buttons removed from metadata row -->
           </div>
         </div>
-        {% endif %}
         <!-- End Metadata Filters -->
 
         <!-- Documents List Table -->
@@ -780,10 +763,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
     "group-docs-search-input"
   );
   const groupDocsClassificationFilterSelect =
-    window.enable_document_classification === true ||
-    window.enable_document_classification === "true"
-      ? document.getElementById("group-docs-classification-filter")
-      : null;
+      (window.enable_document_classification === true ||
+       window.enable_document_classification === "true")
+        ? document.getElementById("group-docs-classification-filter")
+        : null;
   const groupDocsAuthorFilterInput =
     window.enable_extract_meta_data === true ||
     window.enable_extract_meta_data === "true"
@@ -1242,6 +1225,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function onGroupDocsClearFilters() {
+    console.log("Clearing group document filters...");
     // Clear group-specific filter inputs and state
     if (groupDocsSearchInput) groupDocsSearchInput.value = "";
     if (groupDocsClassificationFilterSelect)
@@ -1257,6 +1241,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupDocsCurrentPage = 1; // Reset page
     fetchGroupDocuments();
   }
+  // Make the function globally available for other components to use
+  window.onGroupDocsClearFilters = onGroupDocsClearFilters;
 
   function fetchGroupDocuments() {
     if (!groupDocumentsTableBody || !activeGroupId) return; // Need table and active group
@@ -2269,11 +2255,31 @@ app_settings.app_title }} {% endblock %} {% block head %}
   createGroupPromptBtn?.addEventListener("click", () => {
     groupPromptIdEl.value = "";
     groupPromptNameEl.value = "";
-    if (groupSimplemde) groupSimplemde.value("");
+    if (groupSimplemde) {
+      // Clear the editor completely
+      groupSimplemde.codemirror.setValue("");
+      groupSimplemde.value("");
+    }
     else groupPromptContentEl.value = "";
     document.getElementById("groupPromptModalLabel").textContent =
       "Create Group Prompt";
     groupPromptModalEl.show();
+    
+    // Force refresh after modal is fully shown
+    setTimeout(() => {
+      if (groupSimplemde) {
+        groupSimplemde.codemirror.refresh();
+        groupSimplemde.codemirror.focus();
+      }
+    }, 300);
+  });
+  
+  // Add event listener for modal shown event
+  document.getElementById("groupPromptModal")?.addEventListener('shown.bs.modal', function () {
+    if (groupSimplemde) {
+      groupSimplemde.codemirror.refresh();
+      groupSimplemde.codemirror.focus();
+    }
   });
 
   groupPromptForm?.addEventListener("submit", (e) => {
@@ -2324,9 +2330,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
         ).textContent = `Edit: ${data.name}`;
         groupPromptIdEl.value = data.id;
         groupPromptNameEl.value = data.name;
-        if (groupSimplemde) groupSimplemde.value(data.content || "");
+        
+        // Clear the editor completely first
+        if (groupSimplemde) {
+          groupSimplemde.codemirror.setValue("");
+          groupSimplemde.value(data.content || "");
+        }
         else groupPromptContentEl.value = data.content || "";
+        
         groupPromptModalEl.show();
+        
+        // Force refresh after modal is fully shown
+        setTimeout(() => {
+          if (groupSimplemde) {
+            groupSimplemde.codemirror.refresh();
+            groupSimplemde.codemirror.focus();
+          }
+        }, 300);
       })
       .catch((err) => {
         console.error("Error loading prompt:", err);
@@ -2357,12 +2377,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupPromptsCurrentPage = 1;
     fetchGroupPrompts();
   });
-  groupPromptsClearFiltersBtn?.addEventListener("click", () => {
+  // Define the clear filters function
+  function clearGroupPromptsFilters() {
+    console.log("Clearing group prompt filters...");
     groupPromptsSearchInput.value = "";
     groupPromptsSearchTerm = "";
     groupPromptsCurrentPage = 1;
     fetchGroupPrompts();
-  });
+  }
+  
+  // Remove any existing event listeners to prevent duplicates
+  groupPromptsClearFiltersBtn?.removeEventListener("click", clearGroupPromptsFilters);
+  
+  // Add the event listener
+  groupPromptsClearFiltersBtn?.addEventListener("click", clearGroupPromptsFilters);
+  
+  // Make the function globally available for other components to use
+  window.clearGroupPromptsFilters = clearGroupPromptsFilters;
   groupPromptsPageSizeSelect?.addEventListener("change", (e) => {
     groupPromptsPageSize = +e.target.value;
     groupPromptsCurrentPage = 1;

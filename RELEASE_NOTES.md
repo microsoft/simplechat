@@ -1,4 +1,91 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
+# Feature Release
+
+### **(v0.215.34)**
+
+#### New Features
+
+*   **Bulk Uploader Utility**
+    *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.  
+        *   Includes: CLI, mapping CSV, and documentation.  
+        *   (Ref: `application/external_apps/bulkloader/`)
+*   **Database Seeder Utility**
+    *   Added a utility to seed or overwrite CosmosDB admin settings from a JSON artifact. This ensures consistent, repeatable environment setup and simplifies configuration drift management across dev, test, and prod.  
+        *   (Ref: `application/external_apps/databaseseeder/`)
+*   **Redis Cache Support for Sessions**
+    *   Full support for Azure Cache for Redis as a session backend. This enables true horizontal scaling and high availability for enterprise deployments, as user sessions are no longer tied to a single app instance.  
+        *   Admin UI for configuration and connection testing.  
+        *   (Ref: `app.py`, `route_backend_settings.py`, `admin_settings.html`)
+*   **Comprehensive Private Endpoint & Enterprise Network Documentation**
+    *   Added a detailed section and architecture diagram to the README covering Private Endpoints, Virtual Networks, Private DNS Zones, and secure enterprise network deployment. This guidance helps organizations implement best practices for network isolation, compliance, and secure Azure PaaS integration.
+*   **Custom Azure Environment Support**
+    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.
+        *   (Ref: `config.py`)
+*   **Admin Setting: Use Local File for Document Intelligence Testing**
+    *   The Document Intelligence test now uses a local test file, making it easier to validate configuration without relying on external URLs or network access.  
+        *   (Ref: `route_backend_settings.py`)
+*   **Support for Azure File Share as Temp Storage**
+    *   File uploads can now use an Azure File Share mount (`/sc-temp-files`) for temporary storage, improving performance and scalability for large files or distributed deployments.  
+        *   (Ref: `route_backend_documents.py`)
+*   **Custom Favicon Support**
+    *   Admins can upload a custom favicon (PNG/JPG/ICO) via the admin UI, allowing organizations to brand the application for their users.  
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `config.py`, `base.html`)
+*   **Show/Hide Application Title Independently of Logo**
+    *   New admin setting to hide the app title in the navbar, even if the logo is shown. This provides more control over branding and UI layout.  
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `base.html`)
+*   **Multi-Conversation Delete**
+    *   Users can now select and delete multiple conversations at once in the chat UI, streamlining cleanup and improving user productivity.  
+        *   (Ref: `route_backend_conversations.py`, `chat-conversations.js`, `chats.html`)
+*   **Markdown Alignment Setting for Index Page**
+    *   Admins can set the alignment (left/center/right) of the landing page markdown, supporting more flexible and visually appealing home pages.  
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `index.html`)
+*   **Added Group.Read.All to Documentation**
+    *   The README now documents the need for Group.Read.All permission for group workspaces, reducing confusion during setup.  
+        *   (Ref: `README.md`)
+*   **New Infrastructure-as-Code Deployers**
+    *   Added Bicep, Terraform, and Azure CLI deployers, making it easier for organizations to automate and standardize deployments in CI/CD pipelines.  
+        *   (Ref: `deployers/`)
+*   **Architecture Diagram Update**
+    *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.  
+        *   (Ref: `artifacts/architecture.vsdx`)
+
+#### Bug Fixes
+
+*   **Improved Code Snippet Readability in Dark Mode**
+    *   Code blocks now have better background and text color contrast, making them easier to read for all users, especially in accessibility scenarios.  
+        *   (Ref: `chats.css`)
+*   **Improved File Link Contrast in Dark Mode**
+    *   File links in chat messages are now more visible in dark mode, reducing user frustration and improving accessibility.  
+        *   (Ref: `chats.css`)
+*   **Prevented Chat When Embedding Fails**
+    *   The system now returns a clear error if embedding fails, preventing users from sending messages that would be lost or cause confusion. This improves reliability and user trust.  
+        *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `workspace-documents.js`)
+*   **Resolved Document Classification Bug**
+    *   Fixed issues where document classification was not updating or displaying correctly, ensuring that document metadata is always accurate and actionable.  
+        *   (Ref: `chat-documents.js`)
+*   **Fixed Prompt Input Field Display Bug**
+    *   Resolved a UI bug where prompt text only appeared when clicking on the input field, improving usability for prompt editing.  
+        *   (Ref: `workspace-prompts.js`)
+*   **Repaired Search in Workspaces**
+    *   Fixed search and filter logic in workspace and group workspace document lists, so users can reliably find documents by metadata or keywords.  
+        *   (Ref: `workspace-documents.js`, `workspace.html`, `group_workspaces.html`)
+*   **Restored System Prompt in Chat Workflow**
+    *   Ensures the default system prompt is always included in the chat history if not present, maintaining intended conversation context and behavior.  
+        *   (Ref: `route_backend_chats.py`)
+*   **Improved Author/Keyword Filter Logic**
+    *   Filters for authors and keywords now use case-insensitive substring matching, making search more intuitive and forgiving for users.  
+        *   (Ref: `route_backend_documents.py`, `route_backend_group_documents.py`)
+*   **Removed Test Files from Bulk Uploader**
+    *   Cleaned up test files from the bulk uploader app, reducing clutter and potential confusion for new users.  
+        *   (Ref: `bulkloader/`)
+*   **Updated Dockerfile to Use Chainguard Images**
+    *   Switched to Chainguard Python images for improved security and reduced CVEs, aligning with best practices for container hardening.  
+        *   (Ref: `Dockerfile`)
+*   **Changed Base Image to Reduce CVEs**
+    *   Updated the base image to further reduce vulnerabilities, supporting compliance and security requirements.  
+        *   (Ref: `Dockerfile`)
+*   **Other Minor UI/UX and Documentation Fixes**
+    *   Various small improvements and typo fixes across admin UI, documentation, and error handling, contributing to a more polished and reliable user experience.
 
 # Feature Release
 

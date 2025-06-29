@@ -295,9 +295,13 @@ def register_route_frontend_admin_settings(app):
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',
+                'hide_app_title': form_data.get('hide_app_title') == 'on',
                 'custom_logo_base64': settings.get('custom_logo_base64', ''),
                 'logo_version': settings.get('logo_version', 1),
+                'custom_favicon_base64': settings.get('custom_favicon_base64', ''),
+                'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
+                'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
@@ -532,9 +536,82 @@ def register_route_frontend_admin_settings(app):
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
                     # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
 
-            # --- Update settings in DB ---
-            # new_settings now contains either the new logo base64 or the original one
+            # Process favicon file upload
+            favicon_file = request.files.get('favicon_file')
+            if favicon_file and allowed_file(favicon_file.filename, ALLOWED_EXTENSIONS_IMG):
+                try:
+                    # 1) Read file fully into memory:
+                    file_bytes = favicon_file.read()
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Favicon file uploaded: {favicon_file.filename}"
+                    )
 
+                    # 2) Load into Pillow from the original bytes for processing
+                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
+                    img = Image.open(in_memory_for_process)
+                    
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Loaded favicon image for processing: {favicon_file.filename}"
+                    )
+
+                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    elif img.mode != 'RGB' and img.mode != 'RGBA':
+                         img = img.convert('RGB')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted favicon image mode for processing: {favicon_file.filename} (mode: {img.mode})"
+                    )
+
+                    # 4) Resize to appropriate favicon size (16x16 or 32x32)
+                    img = img.resize((32, 32), Image.Resampling.LANCZOS)
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Resized favicon image for processing: {favicon_file.filename} (new size: {img.size})"
+                    )
+
+                    # 5) Convert to ICO in-memory
+                    img_bytes_io = BytesIO()
+                    img.save(img_bytes_io, format='ICO')
+                    ico_data = img_bytes_io.getvalue()
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted favicon image to ICO for processing: {favicon_file.filename}"
+                    )
+
+                    # 6) Turn to base64
+                    base64_str = base64.b64encode(ico_data).decode('utf-8')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted favicon image to base64 for processing: {base64_str}"
+                    )
+
+                    # Update only on success
+                    new_settings['custom_favicon_base64'] = base64_str
+
+                    current_version = settings.get('favicon_version', 1) # Get version from settings loaded at start
+                    new_settings['favicon_version'] = current_version + 1 # Increment
+
+                except Exception as e:
+                    print(f"Error processing favicon file: {e}") # Log the error for debugging
+                    flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
+                    # On error, new_settings['custom_favicon_base64'] keeps its initial value (the old favicon)
+
+            # --- Update settings in DB ---
+            # new_settings now contains either the new logo/favicon base64 or the original ones
             if update_settings(new_settings):
                 flash("Admin settings updated successfully.", "success")
                 # Reconfigure Application Insights logging immediately if the setting changed
@@ -545,8 +622,10 @@ def register_route_frontend_admin_settings(app):
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
                 if updated_settings_for_file:
                     ensure_custom_logo_file_exists(app, updated_settings_for_file)
+                    ensure_custom_favicon_file_exists(app, updated_settings_for_file)
                 else:
-                    print("ERROR: Could not fetch settings after update to ensure logo file.")
+                    print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
             else:
                 flash("Failed to update admin settings.", "danger")
 

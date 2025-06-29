@@ -36,11 +36,13 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 -   **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
 -   **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
 -   **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
+-   **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
 -   **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
 -   **Backend Services**:
     -   **Azure Cosmos DB**: Stores conversations, document metadata, user/group information, settings, and optionally archived chats and feedback.
     -   **Azure AI Search**: Powers efficient hybrid search and retrieval over personal and group documents.
     -   **Azure AI Document Intelligence**: Extracts text, layout, and structured data from PDFs, Office files, images, and more during ingestion.
+    -   **Azure Cache for Redis**: (Optional) Provides a distributed cache for session data, enabling seamless scaling and improved reliability.
 
 -   **Supported File Types**:
     -   Text: `txt`, `md`, `html`, `json`
@@ -49,11 +51,23 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
     *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
     *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
 
-![Architecture Diagram](./images/architecture.png)
+![Architecture](./images/architecture.png)
 
 ### Why Enable Optional Features?
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
+
+#### **Redis Cache (Azure Cache for Redis)**
+
+Enabling Redis Cache provides a distributed, high-performance session store for the application. This is essential for supporting horizontal scaling (scale out) and high availability in enterprise deployments. By storing user session data in Redis, all app instances can access and update sessions consistently, eliminating issues with session stickiness and enabling seamless load balancing.
+
+-   **Enables true horizontal scaling** by decoupling user sessions from individual app instances.
+-   **Improves reliability and availability** by providing a central, resilient cache for session data.
+-   **Reduces login issues** (such as infinite login loops) when running multiple app instances behind a load balancer.
+-   **Supports high concurrency** and fast session access, critical for large user bases.
+-   **Configurable authentication**: Supports Access Keys or Entra ID (Managed Identity) for secure access.
+
+> **When to enable:** Enable Redis Cache if you plan to scale out the application to multiple App Service instances, require high availability, or want to future-proof your deployment for enterprise workloads.
 
 #### **Content Safety**
 
@@ -94,8 +108,6 @@ Facilitates teamwork by enabling users to create or join groups where documents 
 | ![My Groups - Group list](./images/my_groups-group_list.png) | ![My Groups - Find group - Request to join](./images/my_groups-find_group-request_to_join.png) | ![Manage Group - Group details as owner](./images/manage_group-group_details_as_owner.png) |
 | ![Manage Group - Add member](./images/manage_group-add_member.png) | ![Manage Group - Assign member role](./images/manage_group-update_member_role.png) | ![Group Workspace - Document list](./images/group_workspace-doc_list.png) |
 
-
-
 #### **User Feedback**
 
 Provides a mechanism for end-users to offer direct feedback on the quality and relevance of AI-generated responses. This feedback loop is crucial for monitoring model performance, identifying areas for improvement, and understanding user satisfaction.
@@ -108,8 +120,6 @@ Provides a mechanism for end-users to offer direct feedback on the quality and r
 | ![Admin Settings - Enable User Feedback](./images/admin_settings-enable_user_feedback.png) | ![Chat - Negative Feedback](./images/chat-feedback-negative.png) | ![Feedback Review - List all](./images/feedback_review-list_all.png) |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | ![Feedback Review - Feedback review workflow](./images/feedback_review-workflow.png) | ![My feedback - List all](./images/my_feedback-list_all.png) | ![My feedback - View specific](./images/my_feedback-view_specific.png) |
-
-
 
 #### **Conversation Archiving**
 
@@ -196,72 +206,97 @@ Enables detailed logging for the entire file ingestion and processing pipeline, 
 
 [Roadmap (as of 5/1/25) · microsoft/simplechat · Discussion #133](https://github.com/microsoft/simplechat/discussions/133)
 
-| Phase                               | Duration    | Key Deliverables                                             |
-| :---------------------------------- | :---------- | :----------------------------------------------------------- |
-| **Phase 0: Docs & Deployment Prep** | Weeks 1–2   | • Improve documentation & guides<br>• Produce “how-to” videos<br>• Create one-click Terraform/ARM deployment scripts |
-| **Phase 1: “N+” Feature Release**   | Weeks 2–6   | • Public workspaces<br>• Horizontal scaling & high availability (Redis Cache)<br>• External AI search index in group & public workspaces |
-| **Phase 1.5: Docs Refresh**         | Weeks 6–8   | Update all docs, videos & guides to reflect Phase 1 features and deployment changes |
-| **Phase 2: “N+1” Feature Release**  | Weeks 7–11  | • Graph-based RAG support in groups & public workspaces<br>• Database as a data-source (users, groups, public)<br>• API as a data-source (users, groups, public)<br>• Dark mode UI<br>• Conversation vertical-scroll pagination |
-| **Phase 2.5: Docs Refresh**         | Weeks 11–13 | Update docs, videos & quick-start guides for Phase 2 additions |
-| **Phase 3: “N+2” Feature Release**  | Weeks 12–16 | • MCP server support with admin-defined whitelist<br>• AI agent framework & sample agents |
-| **Phase 3.5: Docs Refresh**         | Weeks 16–18 | Produce new tutorials & update reference docs for MCP & agents |
-| **Phase 4: “N+3” Feature Release**  | Weeks 17–21 | • Data & workspace management enhancements                   |
-
 ## Latest Features
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
 
-Below is a summary of recent additions, reflecting the state as of version `v0.212.91`.
+Below is a summary of latest features and bug fixes.
 
-Here's a structured changelog entry for version `v0.213.001` following your previous format:
-
-### **(v0.214.001)**
+### **(v0.215.34)**
 
 #### New Features
 
-*   **Dark Mode Support**
-    *   Added full dark mode theming with support for:
-        *   Chat interface (left and right panes)
-        *   File metadata panels
-        *   Dropdowns, headers, buttons, and classification tables
-    *   User preferences persist across sessions.
-    *   Dark mode toggle in navbar with text labels and styling fixes (no flash during navigation).
-*   **Admin Management Enhancements**
-    *   **First-Time Configuration Wizard**: Introduced a guided setup wizard on the Admin Settings page. This wizard simplifies the initial configuration process for application basics (title, logo), GPT API settings, workspace settings, additional services (Embedding, AI Search, Document Intelligence), and optional features. (Ref: `README.md`, `admin_settings.js`, `admin_settings.html`)
-    *   Admin Settings UI updated to show application version check status, comparing against the latest GitHub release. (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`)
-    *   Added `logout_hint` parameter to resolve multi-identity logout errors.
-    *   Updated favicon and admin settings layout for improved clarity and usability.
-*   **UI Banner & Visual Updates**
-    *   **Enhanced Document Dropdown (Chat Interface)**: The document selection dropdown in the chat interface has been significantly improved:
-        *   Increased width and scrollability for better handling of numerous documents.
-        *   Client-side search/filter functionality added to quickly find documents.
-        *   Improved visual feedback, including a "no matches found" message. (Ref: `chats.css`, `chat-documents.js`, `chats.html`)
-    *   New top-of-page banner added (configurable).
-    *   Local CSS/JS used across admin, group, and user workspaces for consistency and performance.
-    *   Updated `base.html` and `workspace.html` to reflect visual improvements.
-*   **Application Setup & Configuration**
-    *   **Automatic Storage Container Creation**: The application now attempts to automatically create the `user-documents` and `group-documents` Azure Storage containers during initialization if they are not found, provided "Enhanced Citations" are enabled and a valid storage connection string is configured. Manual creation as per documentation is still the recommended primary approach. (Ref: `config.py`)
-    *   Updated documentation for Azure Storage Account setup, including guidance for the new First-Time Configuration Wizard. (Ref: `README.md`)
-*   **Security Improvements**
-    *   Implemented `X-Content-Type-Options: nosniff` header to mitigate MIME sniffing vulnerabilities.
-    *   Enhanced security for loading AI Search index schema JSON files by implementing path validation and using `secure_filename` in backend settings. (Ref: `route_backend_settings.py`)
-*   **Build & Deployment**
-    *   Added `docker_image_publish_dev.yml` GitHub Action workflow for publishing dev Docker images.
-    *   Updated Dockerfile to use Python 3.12.
-*   **Version Enforcement**
-    *   GitHub workflow `enforce-dev-to-main.yml` added to prevent pull requests to `main` unless from `development`.
+*   **Bulk Uploader Utility**
+    *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.
+        *   Includes: CLI, mapping CSV, and documentation.
+        *   (Ref: `application/external_apps/bulkloader/`)
+*   **Database Seeder Utility**
+    *   Added a utility to seed or overwrite CosmosDB admin settings from a JSON artifact. This ensures consistent, repeatable environment setup and simplifies configuration drift management across dev, test, and prod.
+        *   (Ref: `application/external_apps/databaseseeder/`)
+*   **Redis Cache Support for Sessions**
+    *   Full support for Azure Cache for Redis as a session backend. This enables true horizontal scaling and high availability for enterprise deployments, as user sessions are no longer tied to a single app instance.
+        *   Admin UI for configuration and connection testing.
+        *   (Ref: `app.py`, `route_backend_settings.py`, `admin_settings.html`)
+*   **Comprehensive Private Endpoint & Enterprise Network Documentation**
+    *   Added a detailed section and architecture diagram to the README covering Private Endpoints, Virtual Networks, Private DNS Zones, and secure enterprise network deployment. This guidance helps organizations implement best practices for network isolation, compliance, and secure Azure PaaS integration.
+*   **Custom Azure Environment Support**
+    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.
+        *   (Ref: `config.py`)
+*   **Admin Setting: Use Local File for Document Intelligence Testing**
+    *   The Document Intelligence test now uses a local test file, making it easier to validate configuration without relying on external URLs or network access.
+        *   (Ref: `route_backend_settings.py`)
+*   **Support for Azure File Share as Temp Storage**
+    *   File uploads can now use an Azure File Share mount (`/sc-temp-files`) for temporary storage, improving performance and scalability for large files or distributed deployments.
+        *   (Ref: `route_backend_documents.py`)
+*   **Custom Favicon Support**
+    *   Admins can upload a custom favicon (PNG/JPG/ICO) via the admin UI, allowing organizations to brand the application for their users.
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `config.py`, `base.html`)
+*   **Show/Hide Application Title Independently of Logo**
+    *   New admin setting to hide the app title in the navbar, even if the logo is shown. This provides more control over branding and UI layout.
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `base.html`)
+*   **Multi-Conversation Delete**
+    *   Users can now select and delete multiple conversations at once in the chat UI, streamlining cleanup and improving user productivity.
+        *   (Ref: `route_backend_conversations.py`, `chat-conversations.js`, `chats.html`)
+*   **Markdown Alignment Setting for Index Page**
+    *   Admins can set the alignment (left/center/right) of the landing page markdown, supporting more flexible and visually appealing home pages.
+        *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `index.html`)
+*   **Added Group.Read.All to Documentation**
+    *   The README now documents the need for Group.Read.All permission for group workspaces, reducing confusion during setup.
+        *   (Ref: `README.md`)
+*   **New Infrastructure-as-Code Deployers**
+    *   Added Bicep, Terraform, and Azure CLI deployers, making it easier for organizations to automate and standardize deployments in CI/CD pipelines.
+        *   (Ref: `deployers/`)
+*   **Architecture Diagram Update**
+    *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.
+        *   (Ref: `artifacts/architecture.vsdx`)
 
 #### Bug Fixes
 
-*   **A. Document Processing**
-    *   **Document Deletion**: Resolved an issue where documents were not properly deleted from Azure Blob Storage. Now, when a document is deleted from the application, its corresponding blob is also removed from the `user-documents` or `group-documents` container if enhanced citations are enabled. (Ref: `functions_documents.py`)
-    *   **Configuration Validation (Enhanced Citations)**: Added validation in Admin Settings to ensure that if "Enhanced Citations" is enabled, the "Office Docs Storage Account Connection String" is also provided. If the connection string is missing, Enhanced Citations will be automatically disabled, and a warning message will be displayed to the admin, preventing silent failures. (Ref: `route_frontend_admin_settings.py`)
-*   **C. UI & Usability**
-    *   **Local Assets for SimpleMDE**: The SimpleMDE Markdown editor assets (JS/CSS) are now served locally from `/static/js/simplemde/` and `/static/css/simplemde.min.css` instead of a CDN. This improves page load times, reduces external dependencies, and allows for use in offline or air-gapped environments. (Ref: `simplemde.min.js`, `simplemde.min.css` additions, template updates in `group_workspaces.html`, `workspace.html`)
-    *   General CSS cleanups across admin and workspace UIs.
-*   **D. General Stability**
-    *   Merged contributions from multiple devs including UI fixes, backend updates, and config changes.
-    *   Removed unused video/audio container declarations for a leaner frontend.
+*   **Improved Code Snippet Readability in Dark Mode**
+    *   Code blocks now have better background and text color contrast, making them easier to read for all users, especially in accessibility scenarios.  
+        *   (Ref: `chats.css`)
+*   **Improved File Link Contrast in Dark Mode**
+    *   File links in chat messages are now more visible in dark mode, reducing user frustration and improving accessibility.  
+        *   (Ref: `chats.css`)
+*   **Prevented Chat When Embedding Fails**
+    *   The system now returns a clear error if embedding fails, preventing users from sending messages that would be lost or cause confusion. This improves reliability and user trust.  
+        *   (Ref: `route_backend_chats.py`, `chat-messages.js`, `workspace-documents.js`)
+*   **Resolved Document Classification Bug**
+    *   Fixed issues where document classification was not updating or displaying correctly, ensuring that document metadata is always accurate and actionable.  
+        *   (Ref: `chat-documents.js`)
+*   **Fixed Prompt Input Field Display Bug**
+    *   Resolved a UI bug where prompt text only appeared when clicking on the input field, improving usability for prompt editing.  
+        *   (Ref: `workspace-prompts.js`)
+*   **Repaired Search in Workspaces**
+    *   Fixed search and filter logic in workspace and group workspace document lists, so users can reliably find documents by metadata or keywords.  
+        *   (Ref: `workspace-documents.js`, `workspace.html`, `group_workspaces.html`)
+*   **Restored System Prompt in Chat Workflow**
+    *   Ensures the default system prompt is always included in the chat history if not present, maintaining intended conversation context and behavior.  
+        *   (Ref: `route_backend_chats.py`)
+*   **Improved Author/Keyword Filter Logic**
+    *   Filters for authors and keywords now use case-insensitive substring matching, making search more intuitive and forgiving for users.  
+        *   (Ref: `route_backend_documents.py`, `route_backend_group_documents.py`)
+*   **Removed Test Files from Bulk Uploader**
+    *   Cleaned up test files from the bulk uploader app, reducing clutter and potential confusion for new users.  
+        *   (Ref: `bulkloader/`)
+*   **Updated Dockerfile to Use Chainguard Images**
+    *   Switched to Chainguard Python images for improved security and reduced CVEs, aligning with best practices for container hardening.  
+        *   (Ref: `Dockerfile`)
+*   **Changed Base Image to Reduce CVEs**
+    *   Updated the base image to further reduce vulnerabilities, supporting compliance and security requirements.  
+        *   (Ref: `Dockerfile`)
+*   **Other Minor UI/UX and Documentation Fixes**
+    *   Various small improvements and typo fixes across admin UI, documentation, and error handling, contributing to a more polished and reliable user experience.
 
 ## Release Notes
 
@@ -376,7 +411,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 | **Video Indexer**            | Standard Tier (Optional)                                     | Required only if Video Extraction feature is enabled. Pay-as-you-go per input content minute (All Insights). |
 | **Speech Service**           | Standard S0 (Optional)                                       | Required only if Audio Extraction feature is enabled. Pay-as-you-go per audio hour (Standard fast transcription). |
 | **Storage Account**          | General Purpose V2, LRS, Hot Tier (Optional)                 | Required if Enhanced Citations feature is enabled. Stores processed files. Hierarchical Namespace (ADLS Gen2) recommended. - OR - Required if you want to use Azure Storage for temporaty file storage which is recommend for scalability and better performance |
-| **Azure Cache for Redis**    | Standard Tier, C0 cache size (Optional)                      | Required only if need the performance and scalability a Redis Cache for session data |
+| **Azure Cache for Redis**    | Standard Tier, C0 cache size (Optional)                      | Required only if you need the performance, scalability, and distributed session support provided by Redis Cache. |
 
 > **Note**: Pricing is subject to change and varies significantly based on usage, region, specific configurations (e.g., network security, backup policies), and selected tiers. Always use the official Azure Pricing Calculator and monitor your Azure costs closely.
 
@@ -459,16 +494,18 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   After deployment, note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
     *   Navigate to **Data Storage** > **Containers** > **+ Container**. Add two new containers - `user-documents` and `group-documents
 12. **Deploy Azure Cache for Redis (Optional)**:
-    *   Create an **Azure Cache for Redis service**.
+    *   Create an **Azure Cache for Redis** service.
+    *   **Name**: Choose a unique name for your Redis instance (e.g., `simplechat-redis`).
+    *   **Region**: Select the same region as your App Service for lowest latency.
     *   **Cache SKU**: Standard.
     *   **Cache Size**: C0 (or higher based on requirements).
-    *   Review Networking settings.
-    *   Note the **Keys** if using key authenication.
-    *   After Redis is created, note the **Host Name**
-    *   **Authentication**: 
-    *    - If using keys, turn on Access Keys and note the primary key
-    *    - If using managed identities, enable Entra Authentication and select the app service managed identity 
-    *   NOTE: The Redis service can take 15-30 minutes to fully deploy`
+    *   **Networking**: Set to **Public** for initial setup (can be made private later for enhanced security).
+    *   **Advanced**:
+        - Enable **Access Keys Authentication** (required for key-based access).
+        - All other advanced settings can remain at their defaults unless you have specific requirements.
+    *   After Redis is created, note the **Host Name** and **Access Keys** (if using key authentication).
+    *   If using managed identities, enable Entra Authentication and select the App Service managed identity.
+    *   The Redis service can take 15-30 minutes to fully deploy.
 13. **Use Azure Storage for temporary data data (Optional)**:
     *   Create an **Azure Storage Account** if you previously created Enhanced Citations you can use it.  Otherwise look at step 11 for recommendations on settings.
     *   **Enable Storage Account Key Access**
@@ -564,6 +601,7 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
         *   `User.Read` (Allows sign-in and reading the user's profile)
         *   `User.ReadBasic.All` (Allows reading basic profiles of all users - often needed for people pickers if not using `People.Read.All`)
         *   **(Conditional)** `People.Read.All`: **Required if** you enable the **My Groups** feature, as it's used to search for users within your tenant to add to groups. Add this permission if needed.
+        *   **(Conditional)** `Group.Read.All`: **Required if** you enable the **My Groups** feature or need to read group memberships and group details for group workspaces. This permission allows the app to list groups and read group properties and memberships in your organization. Add this permission if group-based collaboration or group document access is needed.
     *   After adding permissions, click **Grant admin consent for [Your Tenant Name]**. This is crucial, especially for `*.All` permissions.
 
     ![App Registration - API Permissions](./images/app_reg-api_permissions.png) 
@@ -1057,6 +1095,81 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    - **Cosmos DB**: Set AZURE_COSMOS_AUTHENTICATION_TYPE="managed_identity" in Application Settings. Remove AZURE_COSMOS_KEY and AZURE_COSMOS_CONNECTION_STRING.
    - **Other Services (OpenAI, Search, DI, CS, Storage)**: Check the **Admin Settings UI** first. Most sections (GPT, Embeddings, Image Gen, Citations, Safety, Search & Extract) have toggles or dropdowns to select "Managed Identity" as the authentication method. Using the UI toggle is preferred as it handles the backend configuration. If UI options aren't present or for overrides, you might need specific environment variables like AZURE_OPENAI_USE_MANAGED_IDENTITY="True", but rely on the UI where possible.
 
+## Enterprise Network
+
+![Architecture with Private Endpoints](./images/architecture-private-endpoints.png)
+
+### Private Endpoints, Virtual Networks, Subnets, and Private DNS Zones
+
+For enterprise deployments—whether in Azure Commercial, Azure Government, or custom/sovereign environments—network isolation and private connectivity are critical for security, compliance, and data protection. The Simple Chat reference architecture leverages Azure Private Endpoints, Virtual Networks (VNets), dedicated subnets, and Private DNS Zones to ensure all traffic between the application and Azure services remains on the Microsoft backbone, never traversing the public internet.
+
+#### **Why Use Private Endpoints and Private DNS?**
+
+- **Security & Compliance:** Private Endpoints restrict access to Azure PaaS services (Cosmos DB, AI Search, OpenAI, Storage, Redis, etc.) to only resources within your VNet, preventing data exfiltration and unauthorized access.
+- **Data Privacy:** All data-in-transit between the App Service and backend services stays within the Azure backbone, never exposed to the public internet.
+- **Zero Trust & Defense-in-Depth:** Network-level controls complement identity and RBAC, supporting regulatory requirements (e.g., FedRAMP, HIPAA, GDPR).
+- **Custom DNS Resolution:** Private DNS Zones ensure that service FQDNs (e.g., *.documents.azure.com) resolve to private IPs within your VNet, so all traffic is routed privately.
+
+#### **Network Topology Overview**
+
+The architecture consists of a single VNet with multiple subnets and a set of Private DNS Zones, as shown in the diagram above.
+
+**Subnets:**
+- **App Inbound:** Hosts the Private Endpoint for inbound traffic to the App Service (front end). This allows secure, private access from internal users or jump hosts.
+- **App Outbound:** Used for VNet Integration, enabling the App Service to make outbound calls to private endpoints of backend services (Cosmos DB, Redis, Storage, etc.).
+- **Data:** Hosts Private Endpoints for data services (Cosmos DB, Redis, Storage).
+- **AI Services:** Hosts Private Endpoints for AI-related services (OpenAI, AI Search, Document Intelligence, Content Safety, Speech, Video Indexer).
+
+**Key Points:**
+- The App Service has **two network connections**:
+  - **Private Endpoint (Inbound):** Exposes the app privately for internal access (e.g., from a corporate network or jump box).
+  - **VNet Integration (Outbound):** Allows the app to reach private endpoints of backend services via the VNet.
+- All backend services are deployed with Private Endpoints in their respective subnets.
+- Each service type requires a corresponding Private DNS Zone for name resolution.
+
+#### **Required Private DNS Zones**
+
+For each Azure service with a Private Endpoint, you must create and link the following Private DNS Zones to your VNet:
+
+| Service                | Private DNS Zone Name                        |
+|------------------------|----------------------------------------------|
+| App Service            | privatelink.azurewebsites.net                |
+| Cosmos DB              | privatelink.documents.azure.com              |
+| Redis Cache            | privatelink.redis.cache.windows.net          |
+| Storage Account        | privatelink.blob.core.windows.net            |
+| Azure AI Search        | privatelink.search.windows.net               |
+| Azure OpenAI           | privatelink.openai.azure.com                 |
+| Document Intelligence  | privatelink.cognitiveservices.azure.com      |
+| Content Safety         | privatelink.cognitiveservices.azure.com      |
+| Speech Service         | privatelink.cognitiveservices.azure.com      |
+| Video Indexer          | privatelink.cognitiveservices.azure.com      |
+
+> **Note:** Some services (like Document Intelligence, Content Safety, Speech, Video Indexer) share the same DNS zone: `privatelink.cognitiveservices.azure.com`.
+
+**You must link each DNS zone to the VNet and ensure the correct records are created for each private endpoint.**
+
+#### **How Private Endpoints and DNS Work Together**
+
+- When a Private Endpoint is created for a service, Azure automatically creates a private IP in the subnet and a DNS record in the linked Private DNS Zone.
+- The App Service (via VNet Integration) resolves the service FQDN to the private IP, ensuring all traffic is routed privately.
+- This setup prevents accidental data leakage to the public internet, even if a developer or admin uses a public FQDN in configuration.
+
+#### **Summary of Steps for Enterprise Network Isolation**
+
+1. **Create a VNet** with at least four subnets: App Inbound, App Outbound, Data, and AI Services.
+2. **Deploy Private Endpoints** for each backend service (Cosmos DB, Redis, Storage, AI Search, OpenAI, etc.) into the appropriate subnet.
+3. **Create and link Private DNS Zones** for each service type to the VNet.
+4. **Configure App Service:**
+   - Enable a **Private Endpoint** for inbound access (frontend).
+   - Enable **VNet Integration** for outbound access to backend services.
+5. **Restrict public network access** on all backend services (set "Deny public network access" to "Yes").
+6. **Test connectivity** from the App Service to each backend service to ensure all traffic is private.
+
+> This architecture is recommended for all production, government, and regulated environments. The pattern is identical for Azure Commercial, Azure Government, and custom/sovereign clouds—only the region and service endpoints differ.
+
+For more details, see the [Azure documentation on Private Endpoints](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) and [App Service VNet Integration](https://learn.microsoft.com/azure/app-service/overview-vnet-integration).
+
+
 ## FAQ
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
@@ -1178,15 +1291,10 @@ The App Service hosts the Python backend application.
     *   **What:** Increasing the number of instances running your application. Traffic is load-balanced across these instances.
     *   **How:** Adjust the "Instance count" slider in the App Service Plan's "Scale out (App Service plan)" settings, or configure Autoscale rules based on metrics (CPU percentage, memory usage, request queue length).
     *   **When:** Essential for handling higher numbers of concurrent users and improving availability.
-    *   **Simple Chat Support:** **Currently Limited / Requires Future Update.**
-        *   **Limitation:** The current authentication mechanism stores the user's MSAL session token cache within the local file system of the specific App Service instance that handled the login. If you scale out to multiple instances, subsequent requests from the same user might be routed to a *different* instance that doesn't have the cached token, leading to authentication failures or requiring re-authentication.
-        *   **Future Enhancement (Roadmap Phase 1):** Full horizontal scaling support requires:
-            1.  Modifying the authentication token caching logic to use a distributed cache.
-            2.  Introducing **Azure Cache for Redis** as a central, shared store for session tokens, accessible by all instances.
-            3.  Potentially updating Admin Settings to reflect or configure scaling-related behaviors.
-            4.  [Prioritized backlog · Simple Chat feature release](https://github.com/orgs/microsoft/projects/1758)
-                1.  [Infinite Login Loop with Multi-Instance Scaling · Issue #115 · microsoft/simplechat](https://github.com/microsoft/simplechat/issues/115)
-        *   Until this update, rely primarily on **Vertical Scaling** for performance improvements.
+    *   **Simple Chat Support:** **Fully Supported.**
+        *   With the integration of **Azure Cache for Redis** as a distributed session backend, Simple Chat now supports true horizontal scaling. User sessions are no longer tied to a single app instance, allowing seamless load balancing and high availability across multiple instances.
+        *   **Best Practice:** Enable Redis Cache and configure the application to use it for session storage before scaling out. This ensures consistent user experience and prevents authentication issues.
+        *   **Reference:** See [Setup Instructions](#setup-instructions) for details on deploying and configuring Azure Cache for Redis.
 
 ### Azure Cosmos DB
 
@@ -1254,67 +1362,80 @@ Services like Azure OpenAI, Document Intelligence, Content Safety, Speech Servic
         3.  **Reference:** For detailed patterns, especially for Azure OpenAI, refer to the guidance and examples provided in the **[AzureOpenAI-with-APIM GitHub repository](https://github.com/microsoft/AzureOpenAI-with-APIM)**. This repository demonstrates robust methods for load balancing and scaling Azure OpenAI consumption.
         4.  **Simple Chat Integration:** Configure the **Admin Settings** within Simple Chat to point to your **APIM Gateway URL** and use your **APIM Subscription Key** for authentication, instead of directly using the backend service endpoint and key. The UI supports APIM configuration for Azure OpenAI (GPT, Embeddings, Image Gen), Content Safety, Document Intelligence, and AI Search.
 
-## Table of Contents 
+## Table of Contents
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
 
 - [Simple Chat](#simple-chat)
-  - [Overview](#overview)
-        - [Screenshot of the Chat UI](#screenshot-of-the-chat-ui)
-  - [Features](#features)
-    - [Why Enable Optional Features?](#why-enable-optional-features)
-      - [**Content Safety**](#content-safety)
-      - [**Your Workspaces**](#your-workspaces)
-      - [**My Groups (includes Group Workspaces)**](#my-groups-includes-group-workspaces)
-      - [**User Feedback**](#user-feedback)
-      - [**Conversation Archiving**](#conversation-archiving)
-      - [**Video Extraction (Video Indexer)**](#video-extraction-video-indexer)
-      - [**Audio Extraction (Speech Service)**](#audio-extraction-speech-service)
-      - [**Document Classification**](#document-classification)
-      - [**Enhanced Citation (Storage Account)**](#enhanced-citation-storage-account)
-      - [**Metadata Extraction**](#metadata-extraction)
-      - [**File Processing Logs**](#file-processing-logs)
-  - [Roadmap](#roadmap)
-  - [Latest Features](#latest-features)
-    - [**(v0.214.001)**](#v0214001)
-      - [New Features](#new-features)
-      - [Bug Fixes](#bug-fixes)
-  - [Release Notes](#release-notes)
-  - [Demos](#demos)
-    - [Upload document and review metadata](#upload-document-and-review-metadata)
-    - [Classify document and chat with document](#classify-document-and-chat-with-document)
-  - [Detailed Workflows](#detailed-workflows)
-    - [Content Safety](#content-safety-1)
-    - [Add your data (RAG Ingestion)](#add-your-data-rag-ingestion)
-  - [Prerequisites](#prerequisites)
-  - [Setup Instructions](#setup-instructions)
-    - [Provision Azure Resources](#provision-azure-resources)
-    - [Application-Specific Configuration Steps](#application-specific-configuration-steps)
-      - [Setting Up Authentication (Azure AD / Entra ID)](#setting-up-authentication-azure-ad--entra-id)
-      - [Grant App Registration Access to Azure OpenAI (for Model Fetching)](#grant-app-registration-access-to-azure-openai-for-model-fetching)
-      - [Clone the Repository](#clone-the-repository)
-      - [Configure Environment Variables (`.env` File)](#configure-environment-variables-env-file)
-      - [Alternate Method: Update App Settings via JSON (Advanced)](#alternate-method-update-app-settings-via-json-advanced)
-      - [Initializing Indexes in Azure AI Search](#initializing-indexes-in-azure-ai-search)
-    - [Installing and Deploying the Application Code](#installing-and-deploying-the-application-code)
-      - [Deploying via VS Code (Recommended for Simplicity)](#deploying-via-vs-code-recommended-for-simplicity)
-      - [Deploying via Azure CLI (Zip Deploy)](#deploying-via-azure-cli-zip-deploy)
-    - [Running the Application](#running-the-application)
-    - [Upgrading the Application](#upgrading-the-application)
-      - [Using Deployment Slots (Recommended for Production/Staging)](#using-deployment-slots-recommended-for-productionstaging)
-      - [Using Direct Deployment to Production (Simpler, for Dev/Test or Low Impact Changes)](#using-direct-deployment-to-production-simpler-for-devtest-or-low-impact-changes)
-      - [Automate via CI/CD](#automate-via-cicd)
-    - [Admin Settings Configuration](#admin-settings-configuration)
-    - [Azure Government Configuration](#azure-government-configuration)
-    - [How to use Managed Identity](#how-to-use-managed-identity)
+- [Overview](#overview)
+  - [Screenshot of the Chat UI](#screenshot-of-the-chat-ui)
+- [Features](#features)
+- [Why Enable Optional Features?](#why-enable-optional-features)
+  - [Redis Cache (Azure Cache for Redis)](#redis-cache-azure-cache-for-redis)
+  - [Content Safety](#content-safety)
+  - [Your Workspaces](#your-workspaces)
+  - [My Groups (includes Group Workspaces)](#my-groups-includes-group-workspaces)
+  - [User Feedback](#user-feedback)
+  - [Conversation Archiving](#conversation-archiving)
+  - [Video Extraction (Video Indexer)](#video-extraction-video-indexer)
+  - [Audio Extraction (Speech Service)](#audio-extraction-speech-service)
+  - [Document Classification](#document-classification)
+  - [Enhanced Citation (Storage Account)](#enhanced-citation-storage-account)
+  - [Metadata Extraction](#metadata-extraction)
+  - [File Processing Logs](#file-processing-logs)
+- [Roadmap](#roadmap)
+- [Latest Features](#latest-features)
+  - [New Features](#new-features)
+  - [Bug Fixes](#bug-fixes)
+- [Release Notes](#release-notes)
+- [Demos](#demos)
+  - [Upload document and review metadata](#upload-document-and-review-metadata)
+  - [Classify document and chat with document](#classify-document-and-chat-with-document)
+- [Detailed Workflows](#detailed-workflows)
+  - [Content Safety](#content-safety-1)
+  - [Add your data (RAG Ingestion)](#add-your-data-rag-ingestion)
+- [Prerequisites](#prerequisites)
+- [Setup Instructions](#setup-instructions)
+  - [Provision Azure Resources](#provision-azure-resources)
+  - [Application-Specific Configuration Steps](#application-specific-configuration-steps)
+    - [Setting Up Authentication (Azure AD / Entra ID)](#setting-up-authentication-azure-ad--entra-id)
+    - [Grant App Registration Access to Azure OpenAI (for Model Fetching)](#grant-app-registration-access-to-azure-openai-for-model-fetching)
+    - [Clone the Repository](#clone-the-repository)
+    - [Configure Environment Variables (.env File)](#configure-environment-variables-env-file)
+    - [Alternate Method: Update App Settings via JSON (Advanced)](#alternate-method-update-app-settings-via-json-advanced)
+    - [Initializing Indexes in Azure AI Search](#initializing-indexes-in-azure-ai-search)
+  - [Installing and Deploying the Application Code](#installing-and-deploying-the-application-code)
+    - [Deploying via VS Code (Recommended for Simplicity)](#deploying-via-vs-code-recommended-for-simplicity)
+    - [Deploying via Azure CLI (Zip Deploy)](#deploying-via-azure-cli-zip-deploy)
+  - [Running the Application](#running-the-application)
+  - [Upgrading the Application](#upgrading-the-application)
+    - [Using Deployment Slots (Recommended for Production/Staging)](#using-deployment-slots-recommended-for-productionstaging)
+    - [Using Direct Deployment to Production (Simpler, for Dev/Test or Low Impact Changes)](#using-direct-deployment-to-production-simpler-for-devtest-or-low-impact-changes)
+    - [Automate via CI/CD](#automate-via-cicd)
+  - [Admin Settings Configuration](#admin-settings-configuration)
+  - [Azure Government Configuration](#azure-government-configuration)
+  - [How to use Managed Identity](#how-to-use-managed-identity)
+  - [Enterprise Network](#enterprise-network)
+    - [Private Endpoints, Virtual Networks, Subnets, and Private DNS Zones](#private-endpoints-virtual-networks-subnets-and-private-dns-zones)
   - [FAQ](#faq)
-  - [Usage](#usage)
-    - [User Workflow Summary](#user-workflow-summary)
-  - [Scaling the Application](#scaling-the-application)
-    - [Azure App Service](#azure-app-service)
-    - [Azure Cosmos DB](#azure-cosmos-db)
-    - [Azure AI Search](#azure-ai-search)
-    - [Azure AI / Cognitive Services (OpenAI, Document Intelligence, etc.)](#azure-ai--cognitive-services-openai-document-intelligence-etc)
+- [Usage](#usage)
+  - [User Workflow Summary](#user-workflow-summary)
+- [Scaling the Application](#scaling-the-application)
+  - [Azure App Service](#azure-app-service)
+  - [Azure Cosmos DB](#azure-cosmos-db)
+  - [Azure AI Search](#azure-ai-search)
+  - [Azure AI / Cognitive Services (OpenAI, Document Intelligence, etc.)](#azure-ai--cognitive-services-openai-document-intelligence-etc)
+
+---
+
+### Related Documentation
+
+- [External Apps Overview](application/external_apps/README.md)
+- [Bulk Uploader Utility](application/external_apps/bulkloader/README.md)
+- [Database Seeder Utility](application/external_apps/databaseseeder/README.md)
+- [Deployers Overview](deployers/README.md)
+- [Bicep Deployer](deployers/bicep/README.md)
+- [Terraform Deployer](deployers/terraform/README.md)
   - [Table of Contents](#table-of-contents)
 
 <!-- END REVISED README.MD BLOCK -->

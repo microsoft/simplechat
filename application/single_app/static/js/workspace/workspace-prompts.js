@@ -224,9 +224,31 @@ if (createPromptBtn && promptModalEl) {
         if (modalLabel) modalLabel.textContent = "Create New Prompt";
         promptIdEl.value = "";
         promptNameEl.value = "";
-        if (simplemde) { simplemde.value(""); }
+        if (simplemde) {
+            simplemde.value("");
+            // Clear the editor completely
+            simplemde.codemirror.setValue("");
+        }
         else { promptContentEl.value = ""; }
         promptModalEl.show();
+        
+        // Force refresh after modal is fully shown
+        setTimeout(() => {
+            if (simplemde) {
+                simplemde.codemirror.refresh();
+                simplemde.codemirror.focus();
+            }
+        }, 300);
+    });
+}
+
+// Add event listener for modal shown event
+if (promptModalEl) {
+    document.getElementById("promptModal")?.addEventListener('shown.bs.modal', function () {
+        if (simplemde) {
+            simplemde.codemirror.refresh();
+            simplemde.codemirror.focus();
+        }
     });
 }
 
@@ -290,12 +312,23 @@ if (promptsApplyFiltersBtn) {
 }
 
 if (promptsClearFiltersBtn) {
-    promptsClearFiltersBtn.addEventListener('click', () => {
+    // Remove any existing event listeners to prevent duplicates
+    promptsClearFiltersBtn.removeEventListener('click', clearPromptsFilters);
+    
+    // Define the clear filters function
+    function clearPromptsFilters() {
+        console.log("Clearing prompt filters...");
         if (promptsSearchInput) promptsSearchInput.value = '';
         promptsSearchTerm = '';
         promptsCurrentPage = 1; // Reset to first page
         fetchUserPrompts();
-    });
+    }
+    
+    // Add the event listener
+    promptsClearFiltersBtn.addEventListener('click', clearPromptsFilters);
+    
+    // Make the function globally available for other components to use
+    window.clearPromptsFilters = clearPromptsFilters;
 }
 
 // Optional: Trigger search on Enter key in prompts search input
@@ -321,9 +354,23 @@ window.onEditPrompt = function (promptId) {
                 if (modalLabel) modalLabel.textContent = `Edit Prompt: ${escapeHtml(data.name)}`;
             promptIdEl.value = data.id;
             promptNameEl.value = data.name;
-            if (simplemde) { simplemde.value(data.content || ""); }
+            
+            // Clear the editor completely first
+            if (simplemde) {
+                simplemde.codemirror.setValue("");
+                simplemde.value(data.content || "");
+            }
             else { promptContentEl.value = data.content || ""; }
+            
             promptModalEl.show();
+            
+            // Force refresh after modal is fully shown
+            setTimeout(() => {
+                if (simplemde) {
+                    simplemde.codemirror.refresh();
+                    simplemde.codemirror.focus();
+                }
+            }, 300);
         })
         .catch(err => {
             console.error("Error retrieving prompt for edit:", err);

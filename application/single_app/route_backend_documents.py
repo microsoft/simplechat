@@ -264,16 +264,16 @@ def register_route_backend_documents(app):
             param_name = f"@author_{param_count}"
             # Use ARRAY_CONTAINS for searching within the authors array (case-insensitive)
             # Note: This checks if the array *contains* the exact author string.
-            # For partial matches *within* author names, CONTAINS(ToString(c.authors)...) might be needed, but less precise.
-            query_conditions.append(f"ARRAY_CONTAINS(c.authors, {param_name}, true)") # true enables case-insensitivity
+            # Case-insensitive substring match for any author
+            query_conditions.append(f"EXISTS(SELECT VALUE a FROM a IN c.authors WHERE CONTAINS(LOWER(a), LOWER({param_name})))")
             query_params.append({"name": param_name, "value": author_filter})
             param_count += 1
 
         # Keywords Filter (Assuming 'keywords' is an array of strings)
         if keywords_filter:
             param_name = f"@keywords_{param_count}"
-            # Use ARRAY_CONTAINS for searching within the keywords array (case-insensitive)
-            query_conditions.append(f"ARRAY_CONTAINS(c.keywords, {param_name}, true)") # true enables case-insensitivity
+            # Case-insensitive substring match for any keyword
+            query_conditions.append(f"EXISTS(SELECT VALUE k FROM k IN c.keywords WHERE CONTAINS(LOWER(k), LOWER({param_name})))")
             query_params.append({"name": param_name, "value": keywords_filter})
             param_count += 1
 

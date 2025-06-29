@@ -327,7 +327,7 @@ def generate_embedding(
             current_delay *= delay_multiplier
 
         except Exception as e:
-            return None
+            raise
 
 def get_all_chunks(document_id, user_id):
     try:

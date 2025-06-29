@@ -5,7 +5,35 @@
 
 {% block head %}
     <link rel="stylesheet" href="/static/css/chats.css">
-    
+    <style>
+        /* Styles for conversation checkboxes */
+        .conversation-item {
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .conversation-checkbox {
+            cursor: pointer;
+            min-width: 18px;
+            min-height: 18px;
+            display: none; /* Hide checkboxes by default */
+        }
+        
+        /* Show checkboxes when in selection mode */
+        .selection-mode .conversation-checkbox {
+            display: block;
+        }
+        
+        /* Ensure the delete button is properly styled */
+        #delete-selected-btn {
+            transition: all 0.3s ease;
+        }
+        
+        /* Add some padding to the left when in selection mode */
+        .selection-mode .conversation-item {
+            padding-left: 0.5rem;
+        }
+    </style>
 {% endblock %}
 
 {% block content %}
@@ -15,7 +43,10 @@
         <div id="left-pane" class="d-flex flex-column h-100">
             <div class="d-flex justify-content-between align-items-center p-3 border-bottom flex-shrink-0">
                 <h5>Conversations</h5>
-                <div> 
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
+                        <i class="bi bi-trash"></i> <span class="d-none d-md-inline"></span>
+                    </button>
                     <button class="btn btn-sm btn-outline-secondary" id="dock-toggle-btn" title="Toggle Docked Sidebar">
                         <i class="bi bi-layout-sidebar-inset"></i>
                     </button>

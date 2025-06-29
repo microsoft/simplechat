@@ -1,4 +1,6 @@
-# ReadMe.md
+# Bulkloader
+
+The Bulkloader application is a command-line utility designed to streamline the process of uploading large batches of files into your system. By leveraging a mapping CSV file, it allows administrators or power users to efficiently associate folders of files with specific users and groups, automating what would otherwise be a time-consuming manual process. This tool is especially useful for initial data migrations, onboarding new users with pre-existing documents, or synchronizing large repositories of files into the platform.
 
 ```python
 pip freeze > requirements.txt
@@ -7,23 +9,9 @@ pip install -r requirements.txt
 
 ## STEP 1: .env file
 
-Create a .env file to put environment variables in.
-
-### .env file format
-
-```markup
-AUTHORITY_URL=<https://login.microsoftonline.us>
-AZURE_TENANT_ID=[YOUR TENANT ID]
-AZURE_CLIENT_ID=[YOUR CLIENT ID]
-AZURE_CLIENT_SECRET=[YOUR SECRET]
-API_SCOPE=api://37d7a13d-a5b5-48a6-972f-428cbf316bd9/.default (Example only)
-API_BASE_URL=<https://web-8000.azurewebsites.us> (Example only)
-UPLOAD_DIRECTORY=./test-documents (Example only)
-```
+Rename a example.env file to .env and update variables.
 
 ## STEP 2: Create a folder repository of files to upload
-
-./test-documents is a sample folder
 
 ## STEP 3: Update the map.csv file and add the following columns (Example only)
 

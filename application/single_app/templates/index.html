@@ -24,7 +24,8 @@
     {% if session.get('user') and session['user'].get('roles')
           and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         <h2>Welcome to {{ app_settings.app_title }}</h2>
-        <div>
+        <div
+            class="{% if app_settings.landing_page_alignment == 'center' %}text-center{% elif app_settings.landing_page_alignment == 'right' %}text-end{% else %}text-start{% endif %}">
             {{ landing_html | safe }}
         </div>
         <a href="{{ url_for('chats') }}" class="btn btn-primary btn-lg">

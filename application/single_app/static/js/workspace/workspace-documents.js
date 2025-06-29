@@ -25,10 +25,12 @@ const docMetadataForm = document.getElementById("doc-metadata-form");
 // --- Filter elements ---
 const docsSearchInput = document.getElementById('docs-search-input');
 // Conditionally get elements based on flags passed from template
-const docsClassificationFilterSelect = window.enable_document_classification === true ? document.getElementById('docs-classification-filter') : null;
-const docsAuthorFilterInput = window.enable_extract_meta_data === true ? document.getElementById('docs-author-filter') : null;
-const docsKeywordsFilterInput = window.enable_extract_meta_data === true ? document.getElementById('docs-keywords-filter') : null;
-const docsAbstractFilterInput = window.enable_extract_meta_data === true ? document.getElementById('docs-abstract-filter') : null;
+const docsClassificationFilterSelect = (window.enable_document_classification === true || window.enable_document_classification === "true")
+    ? document.getElementById('docs-classification-filter')
+    : null;
+const docsAuthorFilterInput = document.getElementById('docs-author-filter');
+const docsKeywordsFilterInput = document.getElementById('docs-keywords-filter');
+const docsAbstractFilterInput = document.getElementById('docs-abstract-filter');
 // Buttons (get them regardless, they might be rendered in different places)
 const docsApplyFiltersBtn = document.getElementById('docs-apply-filters-btn');
 const docsClearFiltersBtn = document.getElementById('docs-clear-filters-btn');
@@ -91,7 +93,12 @@ if (docsApplyFiltersBtn) {
 
 // Filters - Clear Button
 if (docsClearFiltersBtn) {
-    docsClearFiltersBtn.addEventListener('click', () => {
+    // Remove any existing event listeners to prevent duplicates
+    docsClearFiltersBtn.removeEventListener('click', clearDocsFilters);
+    
+    // Define the clear filters function
+    function clearDocsFilters() {
+        console.log("Clearing document filters...");
         // Clear all potentially available filter inputs and state variables
         if (docsSearchInput) docsSearchInput.value = '';
         if (docsClassificationFilterSelect) docsClassificationFilterSelect.value = '';
@@ -107,7 +114,13 @@ if (docsClearFiltersBtn) {
 
         docsCurrentPage = 1; // Reset to first page
         fetchUserDocuments();
-    });
+    }
+    
+    // Add the event listener
+    docsClearFiltersBtn.addEventListener('click', clearDocsFilters);
+    
+    // Make the function globally available for other components to use
+    window.clearDocsFilters = clearDocsFilters;
 }
 
 // Optional: Trigger search on Enter key in primary search input
@@ -365,7 +378,15 @@ function fetchUserDocuments() {
         })
         .catch(error => {
             console.error("Error fetching documents:", error);
-            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}</td></tr>`;
+            // Check for embedding/vector error keywords
+            const errMsg = (error.error || error.message || '').toLowerCase();
+            let displayMsg;
+            if (errMsg.includes('embedding') || errMsg.includes('vector')) {
+                displayMsg = "There was an issue with the embedding process. Please check with an admin on embedding configuration.";
+            } else {
+                displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
+            }
+            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }

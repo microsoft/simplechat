@@ -257,15 +257,15 @@ export function loadAllDocs() {
   // Use the toBoolean helper for consistent checking
   const classificationEnabled = toBoolean(window.enable_document_classification);
 
-  if (!hasDocControls || !classificationEnabled) { // Only load if feature enabled
-    // Hide classification container entirely if feature disabled
-    if (classificationContainer && !classificationEnabled) {
-        classificationContainer.style.display = 'none';
-    }
+  if (!hasDocControls) {
     return Promise.resolve();
   }
-   // Ensure container is visible if feature is enabled
-   if (classificationContainer) classificationContainer.style.display = '';
+  // Only hide the classification container if feature disabled
+  if (classificationContainer && !classificationEnabled) {
+      classificationContainer.style.display = 'none';
+  }
+  // Ensure container is visible if feature is enabled
+  if (classificationContainer && classificationEnabled) classificationContainer.style.display = '';
 
   // Initialize custom document dropdown if available
   if (docDropdownButton && docDropdownItems) {
@@ -638,21 +638,32 @@ if (docSearchInput) {
    Handle Document Selection & Update Classification UI
 --------------------------------------------------------------------------- */
 export function handleDocumentSelectChange() {
-  // Guard clauses for missing elements
-  if (!docSelectEl || !classificationSelectInput || !classificationMultiselectDropdown || !classificationDropdownBtn || !classificationDropdownMenu || !classificationContainer) {
-      console.error("Classification elements not found, cannot update UI.");
+  // Only require docSelectEl for document selection logic
+  if (!docSelectEl) {
+      console.error("Document select element not found, cannot update UI.");
       return;
   }
-   // Ensure classification container is visible (might be hidden if feature was disabled)
-   const classificationEnabled = toBoolean(window.enable_document_classification);
-   
-   if (classificationEnabled) {
-        classificationContainer.style.display = '';
-   } else {
-        classificationContainer.style.display = 'none';
-        return; // Don't proceed if feature disabled
-   }
 
+  // Classification UI logic (optional, only if elements exist)
+  const classificationEnabled = toBoolean(window.enable_document_classification);
+
+  if (classificationContainer) {
+    if (classificationEnabled) {
+      classificationContainer.style.display = '';
+    } else {
+      classificationContainer.style.display = 'none';
+    }
+  }
+
+  // If classification is not enabled, skip classification UI logic, but allow document selection to work
+  if (!classificationEnabled) {
+    return;
+  }
+
+  if (!classificationSelectInput || !classificationMultiselectDropdown || !classificationDropdownBtn || !classificationDropdownMenu) {
+    // If classification elements are missing, skip classification UI logic
+    return;
+  }
 
   const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
   const docId = selectedOption.value;
