@@ -705,6 +705,31 @@ def register_route_backend_chats(app):
             return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
 
         # ---------------------------------------------------------------------
+        # [PATCH] Insert default system prompt if not present
+        # ---------------------------------------------------------------------
+        default_system_prompt = settings.get('default_system_prompt', '').strip()
+        # Only add if non-empty and not already present (excluding summary/augmentation system messages)
+        if default_system_prompt:
+            # Find if any system message (not summary or augmentation) is present
+            has_general_system_prompt = any(
+                msg.get('role') == 'system' and not (
+                    msg.get('content', '').startswith('<Summary of previous conversation context>') or
+                    "retrieved document excerpts" in msg.get('content', '') or
+                    "web search results" in msg.get('content', '')
+                )
+                for msg in conversation_history_for_api
+            )
+            if not has_general_system_prompt:
+                # Insert at the start, after any summary if present
+                insert_idx = 0
+                if conversation_history_for_api and conversation_history_for_api[0].get('role') == 'system' and conversation_history_for_api[0].get('content', '').startswith('<Summary of previous conversation context>'):
+                    insert_idx = 1
+                conversation_history_for_api.insert(insert_idx, {
+                    "role": "system",
+                    "content": default_system_prompt
+                })
+
+        # ---------------------------------------------------------------------
         # 6) Final GPT Call
         # ---------------------------------------------------------------------
         ai_message = "Sorry, I encountered an error." # Default error message
