@@ -457,16 +457,20 @@ export function actuallySendMessage(finalMessageToSend) {
   const docSel = document.getElementById("document-select");
   const classificationInput = document.getElementById("classification-select"); // Get the input
 
-  if (hybridSearchEnabled && docSel && classificationInput) {
+  // Always set selectedDocumentId if a document is selected, regardless of hybridSearchEnabled
+  if (docSel) {
     const selectedDocOption = docSel.options[docSel.selectedIndex];
     if (selectedDocOption && selectedDocOption.value !== "") {
       selectedDocumentId = selectedDocOption.value;
-      classificationsToSend =
-        classificationInput.value === "N/A" ? null : classificationInput.value;
     } else {
       selectedDocumentId = null;
-      classificationsToSend = classificationInput.value || null;
     }
+  }
+
+  // Only set classificationsToSend if classificationInput exists
+  if (classificationInput) {
+    classificationsToSend =
+      classificationInput.value === "N/A" ? null : classificationInput.value;
   }
 
   let bingSearchEnabled = false;
