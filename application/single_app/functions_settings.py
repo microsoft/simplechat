@@ -9,6 +9,7 @@ def get_settings():
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
                              'You agree to our [acceptable user policy](acceptable_use_policy.html) by using this service.',
+        'landing_page_alignment': 'left',
         'show_logo': False,
         'hide_app_title': False,
         'custom_logo_base64': '',

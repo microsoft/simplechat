@@ -225,6 +225,7 @@ def register_route_frontend_admin_settings(app):
                 'custom_favicon_base64': settings.get('custom_favicon_base64', ''),
                 'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
+                'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
 
                 # GPT (Direct & APIM)

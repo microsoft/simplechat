@@ -506,6 +506,16 @@
                     <h5>Page Text (Markdown)</h5>
                     <p class="text-muted mb-1">You can either edit the text in a Markdown editor or switch to a preview mode.</p>
 
+                    <!-- Alignment Selector -->
+                    <div class="mb-3">
+                        <label for="landing_page_alignment" class="form-label">Markdown Alignment</label>
+                        <select class="form-select" id="landing_page_alignment" name="landing_page_alignment">
+                            <option value="left" {% if settings.landing_page_alignment == "left" or not settings.landing_page_alignment %}selected{% endif %}>Left</option>
+                            <option value="center" {% if settings.landing_page_alignment == "center" %}selected{% endif %}>Center</option>
+                            <option value="right" {% if settings.landing_page_alignment == "right" %}selected{% endif %}>Right</option>
+                        </select>
+                        <small class="form-text text-muted">Choose how the landing page markdown is aligned on the home page.</small>
+                    </div>
                     
                     <div class="form-check form-switch mb-3">
                         <input
