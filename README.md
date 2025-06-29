@@ -564,6 +564,7 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
         *   `User.Read` (Allows sign-in and reading the user's profile)
         *   `User.ReadBasic.All` (Allows reading basic profiles of all users - often needed for people pickers if not using `People.Read.All`)
         *   **(Conditional)** `People.Read.All`: **Required if** you enable the **My Groups** feature, as it's used to search for users within your tenant to add to groups. Add this permission if needed.
+        *   **(Conditional)** `Group.Read.All`: **Required if** you enable the **My Groups** feature or need to read group memberships and group details for group workspaces. This permission allows the app to list groups and read group properties and memberships in your organization. Add this permission if group-based collaboration or group document access is needed.
     *   After adding permissions, click **Grant admin consent for [Your Tenant Name]**. This is crucial, especially for `*.All` permissions.
 
     ![App Registration - API Permissions](./images/app_reg-api_permissions.png) 
