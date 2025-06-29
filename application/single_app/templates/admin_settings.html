@@ -428,9 +428,9 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="redis-cache-tab" data-bs-toggle="tab" data-bs-target="#redis-cache"
-                    type="button" role="tab" aria-controls="redis-cache" aria-selected="false">
-                    Redis Cache
+                <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
+                    type="button" role="tab" aria-controls="scale" aria-selected="false">
+                    Scale
                 </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -859,7 +859,7 @@
             
             <div class="tab-pane fade" id="image-gen" role="tabpanel" aria-labelledby="image-gen-tab">
                 
-                 <p class="text-muted">
+                <p class="text-muted">
                     Configure image generation settings. Enable/disable, set endpoints, and choose a model.
                 </p>
 
@@ -1013,25 +1013,31 @@
             </div>
 
 
-            <div class="tab-pane fade" id="redis-cache" role="tabpanel" aria-labelledby="redis-cache-tab">
-
+            <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
                 <p class="text-muted">
-                    Use Redis Cache for session data. Enable/disable, set endpoint, and provide authentication key.
+                    Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
                 </p>
-
-                <div class="form-group form-check form-switch mb-3">
-                    <input type="checkbox" class="form-check-input" id="enable_redis_cache"
-                        name="enable_redis_cache" {% if settings.enable_redis_cache %}checked{% endif %}>
-                    <label class="form-check-label ms-2" for="enable_redis_cache">
-                        Enable Redis Cache
-                    </label>
-                </div>
-
-                <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
-
-                    <div class="card p-3 mb-3">
+                <div class="card p-3 mb-3">
+                    <h5>Redis Cache</h5>
+                    <p class="text-muted">
+                        Enable Redis Cache to store session data in a distributed cache. This is recommended for production and multi-instance deployments.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_redis_cache"
+                            name="enable_redis_cache"
+                            {% if settings.enable_redis_cache %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_redis_cache">
+                            Enable Redis Cache
+                        </label>
+                    </div>
+                    <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
                         <div class="mb-3">
-                            <label for="redis_url" class="form-label">Redis Server Host Name (i.e simple-chat.redis.cache.windows.net) </label>
+                            <label for="redis_url" class="form-label">Redis Server Host Name</label>
+                            <p class="text-muted">(example: simple-chat.redis.cache.windows.net)</p>
                             <input type="text" class="form-control" id="redis_url" name="redis_url" value="{{ settings.redis_url or '' }}">
                         </div>
                         <div class="mb-3">
@@ -1048,13 +1054,12 @@
                                 <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
                             </div>
                         </div>
+                        <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
+                            Test Redis Connection
+                        </button>
+                        <div id="test_redis_result" class="mt-2"></div>
                     </div>
                 </div>
-
-                <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
-                    Test Redis Connection
-                </button>
-                <div id="test_redis_result" class="mt-2"></div>
             </div>
 
 
@@ -1122,7 +1127,7 @@
 
                 <div class="card mb-3 p-3">
                     
-                     <h5>Multimedia Support</h5>
+                    <h5>Multimedia Support</h5>
                     <p class="text-muted mb-2">
                         Support video and audio file upload for transcription, indexing, and embedding.
                     </p>
