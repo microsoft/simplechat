@@ -16,8 +16,10 @@
     *   Full support for Azure Cache for Redis as a session backend. This enables true horizontal scaling and high availability for enterprise deployments, as user sessions are no longer tied to a single app instance.  
         *   Admin UI for configuration and connection testing.  
         *   (Ref: `app.py`, `route_backend_settings.py`, `admin_settings.html`)
+*   **Comprehensive Private Endpoint & Enterprise Network Documentation**
+    *   Added a detailed section and architecture diagram to the README covering Private Endpoints, Virtual Networks, Private DNS Zones, and secure enterprise network deployment. This guidance helps organizations implement best practices for network isolation, compliance, and secure Azure PaaS integration.
 *   **Custom Azure Environment Support**
-    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.  
+    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.
         *   (Ref: `config.py`)
 *   **Admin Setting: Use Local File for Document Intelligence Testing**
     *   The Document Intelligence test now uses a local test file, making it easier to validate configuration without relying on external URLs or network access.  

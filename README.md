@@ -108,8 +108,6 @@ Facilitates teamwork by enabling users to create or join groups where documents 
 | ![My Groups - Group list](./images/my_groups-group_list.png) | ![My Groups - Find group - Request to join](./images/my_groups-find_group-request_to_join.png) | ![Manage Group - Group details as owner](./images/manage_group-group_details_as_owner.png) |
 | ![Manage Group - Add member](./images/manage_group-add_member.png) | ![Manage Group - Assign member role](./images/manage_group-update_member_role.png) | ![Group Workspace - Document list](./images/group_workspace-doc_list.png) |
 
-
-
 #### **User Feedback**
 
 Provides a mechanism for end-users to offer direct feedback on the quality and relevance of AI-generated responses. This feedback loop is crucial for monitoring model performance, identifying areas for improvement, and understanding user satisfaction.
@@ -122,8 +120,6 @@ Provides a mechanism for end-users to offer direct feedback on the quality and r
 | ![Admin Settings - Enable User Feedback](./images/admin_settings-enable_user_feedback.png) | ![Chat - Negative Feedback](./images/chat-feedback-negative.png) | ![Feedback Review - List all](./images/feedback_review-list_all.png) |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | ![Feedback Review - Feedback review workflow](./images/feedback_review-workflow.png) | ![My feedback - List all](./images/my_feedback-list_all.png) | ![My feedback - View specific](./images/my_feedback-view_specific.png) |
-
-
 
 #### **Conversation Archiving**
 
@@ -221,45 +217,47 @@ Below is a summary of latest features and bug fixes.
 #### New Features
 
 *   **Bulk Uploader Utility**
-    *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.  
-        *   Includes: CLI, mapping CSV, and documentation.  
+    *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.
+        *   Includes: CLI, mapping CSV, and documentation.
         *   (Ref: `application/external_apps/bulkloader/`)
 *   **Database Seeder Utility**
-    *   Added a utility to seed or overwrite CosmosDB admin settings from a JSON artifact. This ensures consistent, repeatable environment setup and simplifies configuration drift management across dev, test, and prod.  
+    *   Added a utility to seed or overwrite CosmosDB admin settings from a JSON artifact. This ensures consistent, repeatable environment setup and simplifies configuration drift management across dev, test, and prod.
         *   (Ref: `application/external_apps/databaseseeder/`)
 *   **Redis Cache Support for Sessions**
-    *   Full support for Azure Cache for Redis as a session backend. This enables true horizontal scaling and high availability for enterprise deployments, as user sessions are no longer tied to a single app instance.  
-        *   Admin UI for configuration and connection testing.  
+    *   Full support for Azure Cache for Redis as a session backend. This enables true horizontal scaling and high availability for enterprise deployments, as user sessions are no longer tied to a single app instance.
+        *   Admin UI for configuration and connection testing.
         *   (Ref: `app.py`, `route_backend_settings.py`, `admin_settings.html`)
+*   **Comprehensive Private Endpoint & Enterprise Network Documentation**
+    *   Added a detailed section and architecture diagram to the README covering Private Endpoints, Virtual Networks, Private DNS Zones, and secure enterprise network deployment. This guidance helps organizations implement best practices for network isolation, compliance, and secure Azure PaaS integration.
 *   **Custom Azure Environment Support**
-    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.  
+    *   Added support for "custom" Azure environments, allowing deployment in sovereign or private clouds with non-standard endpoints. This increases flexibility for government, regulated, or air-gapped scenarios.
         *   (Ref: `config.py`)
 *   **Admin Setting: Use Local File for Document Intelligence Testing**
-    *   The Document Intelligence test now uses a local test file, making it easier to validate configuration without relying on external URLs or network access.  
+    *   The Document Intelligence test now uses a local test file, making it easier to validate configuration without relying on external URLs or network access.
         *   (Ref: `route_backend_settings.py`)
 *   **Support for Azure File Share as Temp Storage**
-    *   File uploads can now use an Azure File Share mount (`/sc-temp-files`) for temporary storage, improving performance and scalability for large files or distributed deployments.  
+    *   File uploads can now use an Azure File Share mount (`/sc-temp-files`) for temporary storage, improving performance and scalability for large files or distributed deployments.
         *   (Ref: `route_backend_documents.py`)
 *   **Custom Favicon Support**
-    *   Admins can upload a custom favicon (PNG/JPG/ICO) via the admin UI, allowing organizations to brand the application for their users.  
+    *   Admins can upload a custom favicon (PNG/JPG/ICO) via the admin UI, allowing organizations to brand the application for their users.
         *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `config.py`, `base.html`)
 *   **Show/Hide Application Title Independently of Logo**
-    *   New admin setting to hide the app title in the navbar, even if the logo is shown. This provides more control over branding and UI layout.  
+    *   New admin setting to hide the app title in the navbar, even if the logo is shown. This provides more control over branding and UI layout.
         *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `base.html`)
 *   **Multi-Conversation Delete**
-    *   Users can now select and delete multiple conversations at once in the chat UI, streamlining cleanup and improving user productivity.  
+    *   Users can now select and delete multiple conversations at once in the chat UI, streamlining cleanup and improving user productivity.
         *   (Ref: `route_backend_conversations.py`, `chat-conversations.js`, `chats.html`)
 *   **Markdown Alignment Setting for Index Page**
-    *   Admins can set the alignment (left/center/right) of the landing page markdown, supporting more flexible and visually appealing home pages.  
+    *   Admins can set the alignment (left/center/right) of the landing page markdown, supporting more flexible and visually appealing home pages.
         *   (Ref: `route_frontend_admin_settings.py`, `admin_settings.html`, `index.html`)
 *   **Added Group.Read.All to Documentation**
-    *   The README now documents the need for Group.Read.All permission for group workspaces, reducing confusion during setup.  
+    *   The README now documents the need for Group.Read.All permission for group workspaces, reducing confusion during setup.
         *   (Ref: `README.md`)
 *   **New Infrastructure-as-Code Deployers**
-    *   Added Bicep, Terraform, and Azure CLI deployers, making it easier for organizations to automate and standardize deployments in CI/CD pipelines.  
+    *   Added Bicep, Terraform, and Azure CLI deployers, making it easier for organizations to automate and standardize deployments in CI/CD pipelines.
         *   (Ref: `deployers/`)
 *   **Architecture Diagram Update**
-    *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.  
+    *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.
         *   (Ref: `artifacts/architecture.vsdx`)
 
 #### Bug Fixes
