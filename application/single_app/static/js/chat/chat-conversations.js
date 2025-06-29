@@ -5,12 +5,81 @@ import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js"; // Import toBoolean helper
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
+const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const conversationsList = document.getElementById("conversations-list");
 const currentConversationTitleEl = document.getElementById("current-conversation-title");
 const currentConversationClassificationsEl = document.getElementById("current-conversation-classifications");
 const chatbox = document.getElementById("chatbox");
 
+// Track selected conversations
+let selectedConversations = new Set();
+
 let currentlyEditingId = null; // Track which item is being edited
+let selectionModeActive = false; // Track if selection mode is active
+let selectionModeTimer = null; // Timer for auto-hiding checkboxes
+
+// Clear selected conversations when loading the page
+document.addEventListener('DOMContentLoaded', () => {
+  selectedConversations.clear();
+  if (deleteSelectedBtn) {
+    deleteSelectedBtn.style.display = "none";
+  }
+});
+
+// Function to enter selection mode
+function enterSelectionMode() {
+  selectionModeActive = true;
+  conversationsList.classList.add('selection-mode');
+  
+  // Show delete button
+  if (deleteSelectedBtn) {
+    deleteSelectedBtn.style.display = "block";
+  }
+  
+  // Start timer to exit selection mode if no selections are made
+  resetSelectionModeTimer();
+}
+
+// Function to exit selection mode
+function exitSelectionMode() {
+  selectionModeActive = false;
+  conversationsList.classList.remove('selection-mode');
+  
+  // Hide delete button
+  if (deleteSelectedBtn) {
+    deleteSelectedBtn.style.display = "none";
+  }
+  
+  // Clear any selections
+  selectedConversations.clear();
+  
+  // Update checkbox states
+  const checkboxes = document.querySelectorAll('.conversation-checkbox');
+  checkboxes.forEach(checkbox => {
+    checkbox.checked = false;
+  });
+  
+  // Clear timer
+  if (selectionModeTimer) {
+    clearTimeout(selectionModeTimer);
+    selectionModeTimer = null;
+  }
+}
+
+// Function to reset the selection mode timer
+function resetSelectionModeTimer() {
+  // Clear existing timer
+  if (selectionModeTimer) {
+    clearTimeout(selectionModeTimer);
+  }
+  
+  // Set new timer - exit selection mode after 5 seconds if no selections
+  selectionModeTimer = setTimeout(() => {
+    if (selectedConversations.size === 0) {
+      exitSelectionMode();
+    }
+  }, 5000);
+}
 
 export function loadConversations() {
   if (!conversationsList) return;
@@ -36,14 +105,25 @@ export function loadConversations() {
 }
 
 export function createConversationItem(convo) {
-  const convoItem = document.createElement("a"); // Use <a> for better semantics if appropriate
-  convoItem.href = "#"; // Prevent default link behavior later
-  convoItem.classList.add("list-group-item", "list-group-item-action", "conversation-item"); // Use action class
+  const convoItem = document.createElement("div"); // Changed from <a> to <div> for better semantics with checkboxes
+  convoItem.classList.add("list-group-item", "list-group-item-action", "conversation-item", "d-flex", "align-items-center"); // Use action class
   convoItem.setAttribute("data-conversation-id", convo.id);
   convoItem.setAttribute("data-conversation-title", convo.title); // Store title too
 
   // *** Store classification data as stringified JSON ***
   convoItem.dataset.classifications = JSON.stringify(convo.classification || []);
+
+  // Add checkbox for multi-select
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.classList.add("form-check-input", "me-2", "conversation-checkbox");
+  checkbox.setAttribute("data-conversation-id", convo.id);
+  
+  // Prevent checkbox clicks from triggering conversation selection
+  checkbox.addEventListener("click", (event) => {
+    event.stopPropagation();
+    updateSelectedConversations(convo.id, checkbox.checked);
+  });
 
   const leftDiv = document.createElement("div");
   leftDiv.classList.add("d-flex", "flex-column", "flex-grow-1", "pe-2"); // flex-grow and padding-end
@@ -78,6 +158,14 @@ export function createConversationItem(convo) {
   const dropdownMenu = document.createElement("ul");
   dropdownMenu.classList.add("dropdown-menu", "dropdown-menu-end");
 
+  // Add Select option
+  const selectLi = document.createElement("li");
+  const selectA = document.createElement("a");
+  selectA.classList.add("dropdown-item", "select-btn");
+  selectA.href = "#";
+  selectA.innerHTML = '<i class="bi bi-check-square me-2"></i>Select';
+  selectLi.appendChild(selectA);
+
   const editLi = document.createElement("li");
   const editA = document.createElement("a");
   editA.classList.add("dropdown-item", "edit-btn");
@@ -92,6 +180,7 @@ export function createConversationItem(convo) {
   deleteA.innerHTML = '<i class="bi bi-trash-fill me-2"></i>Delete';
   deleteLi.appendChild(deleteA);
 
+  dropdownMenu.appendChild(selectLi);
   dropdownMenu.appendChild(editLi);
   dropdownMenu.appendChild(deleteLi);
   rightDiv.appendChild(dropdownBtn);
@@ -102,17 +191,20 @@ export function createConversationItem(convo) {
   wrapper.classList.add("d-flex", "justify-content-between", "align-items-center", "w-100");
   wrapper.appendChild(leftDiv);
   wrapper.appendChild(rightDiv);
+  
+  // Add checkbox first, then the wrapper
+  convoItem.appendChild(checkbox);
   convoItem.appendChild(wrapper);
 
   // Event Listeners
   convoItem.addEventListener("click", (event) => {
-    event.preventDefault(); // Prevent default <a> behavior
-    if (event.target.closest(".dropdown, .dropdown-menu")) {
-      return; // Don't select if click is on dropdown elements
+    // Don't select if click is on checkbox, dropdown elements, or if editing
+    if (event.target.closest(".dropdown, .dropdown-menu") ||
+        event.target.type === "checkbox" ||
+        convoItem.classList.contains('editing')) {
+      return;
     }
-    // Don't select if editing this item
-    if(convoItem.classList.contains('editing')) return;
-
+    
     selectConversation(convo.id);
   });
 
@@ -128,6 +220,14 @@ export function createConversationItem(convo) {
     event.stopPropagation();
     closeDropdownMenu(dropdownBtn);
     deleteConversation(convo.id);
+  });
+  
+  // Add event listener for the Select button
+  selectA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    enterSelectionMode();
   });
 
   return convoItem;
@@ -474,8 +574,84 @@ export async function createNewConversation(callback) {
   }
 }
 
+// Function to update the selected conversations set
+function updateSelectedConversations(conversationId, isSelected) {
+  if (isSelected) {
+    selectedConversations.add(conversationId);
+    // If at least one item is selected, clear the auto-hide timer
+    if (selectionModeTimer) {
+      clearTimeout(selectionModeTimer);
+      selectionModeTimer = null;
+    }
+  } else {
+    selectedConversations.delete(conversationId);
+    
+    // If no items are selected, start the timer to exit selection mode
+    if (selectedConversations.size === 0) {
+      resetSelectionModeTimer();
+    }
+  }
+  
+  // Show/hide the delete button based on selection
+  if (selectedConversations.size > 0) {
+    deleteSelectedBtn.style.display = "block";
+  } else {
+    deleteSelectedBtn.style.display = "none";
+  }
+}
 
-// --- Event Listener ---
+// Function to delete multiple conversations
+async function deleteSelectedConversations() {
+  if (selectedConversations.size === 0) return;
+  
+  if (!confirm(`Are you sure you want to delete ${selectedConversations.size} conversation(s)? This action cannot be undone.`)) {
+    return;
+  }
+  
+  const conversationIds = Array.from(selectedConversations);
+  
+  try {
+    const response = await fetch('/api/delete_multiple_conversations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ conversation_ids: conversationIds })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to delete conversations');
+    }
+    
+    // Remove deleted conversations from the UI
+    conversationIds.forEach(id => {
+      const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${id}"]`);
+      if (convoItem) convoItem.remove();
+      
+      // If the deleted conversation was the current one, reset the chat view
+      if (currentConversationId === id) {
+        currentConversationId = null;
+        if (currentConversationTitleEl) currentConversationTitleEl.textContent = "Select or start a conversation";
+        if (currentConversationClassificationsEl) currentConversationClassificationsEl.innerHTML = "";
+        if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Select a conversation to view messages.</div>';
+        highlightSelectedConversation(null);
+      }
+    });
+    
+    // Clear the selected conversations set and exit selection mode
+    selectedConversations.clear();
+    deleteSelectedBtn.style.display = "none";
+    exitSelectionMode();
+    
+    showToast(`${conversationIds.length} conversation(s) deleted.`, "success");
+  } catch (error) {
+    console.error("Error deleting conversations:", error);
+    showToast(`Error deleting conversations: ${error.message}`, "danger");
+  }
+}
+
+// --- Event Listeners ---
 if (newConversationBtn) {
   newConversationBtn.addEventListener("click", () => {
     // If already editing, ask to finish first
@@ -485,4 +661,8 @@ if (newConversationBtn) {
     }
     createNewConversation();
   });
+}
+
+if (deleteSelectedBtn) {
+  deleteSelectedBtn.addEventListener("click", deleteSelectedConversations);
 }

@@ -169,3 +169,83 @@ def register_route_backend_conversations(app):
         return jsonify({
             "success": True
         }), 200
+        
+    @app.route('/api/delete_multiple_conversations', methods=['POST'])
+    @login_required
+    @user_required
+    def delete_multiple_conversations():
+        """
+        Delete multiple conversations at once. If archiving is enabled, copy them to archived_conversations first.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+            
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        
+        if not conversation_ids:
+            return jsonify({'error': 'No conversation IDs provided'}), 400
+            
+        settings = get_settings()
+        archiving_enabled = settings.get('enable_conversation_archiving', False)
+        
+        success_count = 0
+        failed_ids = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                # Verify the conversation exists and belongs to the user
+                try:
+                    conversation_item = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    
+                    # Check if the conversation belongs to the current user
+                    if conversation_item.get('user_id') != user_id:
+                        failed_ids.append(conversation_id)
+                        continue
+                        
+                except CosmosResourceNotFoundError:
+                    failed_ids.append(conversation_id)
+                    continue
+                
+                # Archive if enabled
+                if archiving_enabled:
+                    archived_item = dict(conversation_item)
+                    archived_item["archived_at"] = datetime.utcnow().isoformat()
+                    cosmos_archived_conversations_container.upsert_item(archived_item)
+                
+                # Get and archive messages if enabled
+                message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
+                messages = list(cosmos_messages_container.query_items(
+                    query=message_query,
+                    partition_key=conversation_id
+                ))
+                
+                for message in messages:
+                    if archiving_enabled:
+                        archived_message = dict(message)
+                        archived_message["archived_at"] = datetime.utcnow().isoformat()
+                        cosmos_archived_messages_container.upsert_item(archived_message)
+                    
+                    cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
+                
+                # Delete the conversation
+                cosmos_conversations_container.delete_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+                
+                success_count += 1
+                
+            except Exception as e:
+                print(f"Error deleting conversation {conversation_id}: {str(e)}")
+                failed_ids.append(conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "deleted_count": success_count,
+            "failed_ids": failed_ids
+        }), 200
