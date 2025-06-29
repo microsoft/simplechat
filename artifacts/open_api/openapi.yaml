@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Simple Chat APIs
-  version: 0.212.078
+  version: 0.215.34
   description: API for the Simple Chat, handling chats, conversations, documents, user settings, groups, feedback, prompts, models, safety, and admin functions.
 
 servers:
@@ -43,15 +43,65 @@ paths:
       tags:
         - Chat
       summary: Send a message to the chat API
-      description: Processes a user message, potentially performs searches (hybrid, Bing), generates images, interacts with the AI model, and returns a response. Handles conversation history, summarization, and content safety. Requires user authentication. Specific features depend on admin settings (e.g., `enable_content_safety`, `enable_web_search`, `enable_image_generation`).
+      description: |
+        Processes a user message, optionally performs hybrid search, Bing search, or image generation, interacts with the AI model, and returns a response. Handles conversation history, summarization, and content safety. Requires user authentication. Features depend on admin settings (e.g., `enable_content_safety`, `enable_web_search`, `enable_image_generation`).
+
+        **Request Body:**
+        - `message` (string, required): The user's message.
+        - `conversation_id` (string, optional): Existing conversation ID. If not provided, a new conversation is created.
+        - `hybrid_search` (boolean, optional): Whether to enable hybrid search augmentation.
+        - `selected_document_id` (string, optional): If specified, scope hybrid search to this document.
+        - `bing_search` (boolean, optional): Whether to enable Bing web search augmentation.
+        - `image_generation` (boolean, optional): Whether to enable image generation.
+        - `doc_scope` (string, optional): Scope for document search ('user', 'group', 'all').
+        - `active_group_id` (string, optional): The user's active group ID, required if doc_scope is 'group'.
+        - `model_deployment` (string, optional): Optional override for the GPT model deployment.
+
+        **Responses:**
+        - 200: Success (returns chat, image, or block response)
+        - 400: Bad request (invalid input)
+        - 401: Unauthorized (not authenticated)
+        - 500: Internal server error
+
       security:
-        - bearerAuth: [] # Assumes authentication is required
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChatRequest'
+              type: object
+              properties:
+                message:
+                  type: string
+                  description: The user's message content.
+                conversation_id:
+                  type: string
+                  description: Existing conversation ID (optional).
+                hybrid_search:
+                  type: boolean
+                  description: Enable hybrid search augmentation.
+                selected_document_id:
+                  type: string
+                  description: Scope hybrid search to this document.
+                bing_search:
+                  type: boolean
+                  description: Enable Bing web search augmentation.
+                image_generation:
+                  type: boolean
+                  description: Enable image generation.
+                doc_scope:
+                  type: string
+                  enum: [user, group, all]
+                  description: Scope for document search.
+                active_group_id:
+                  type: string
+                  description: Active group ID (required if doc_scope is 'group').
+                model_deployment:
+                  type: string
+                  description: Optional override for GPT model deployment.
+              required:
+                - message
       responses:
         '200':
           description: Successful chat response, image generation response, or content safety block response.
@@ -217,7 +267,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the conversation to update.
       requestBody:
         required: true
@@ -241,22 +290,20 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Conversation updated"
                   title:
                     type: string
                   classification:
                     type: array
                     items:
                       type: string
-                    description: Current classifications associated with the conversation.
         '400':
-          description: Bad Request (Missing or empty title)
+          description: Title is required
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
@@ -274,7 +321,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Internal Server Error (Failed to read or update conversation)
+          description: Failed to update conversation
           content:
             application/json:
               schema:
@@ -292,7 +339,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the conversation to delete.
       responses:
         '200':
@@ -304,15 +350,14 @@ paths:
                 properties:
                   success:
                     type: boolean
-                    example: true
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Attempting to delete conversation not owned by user - checked implicitly by read_item check in implementation)
+          description: Forbidden (Attempting to delete conversation not owned by user)
           content:
             application/json:
               schema:
@@ -324,7 +369,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Internal Server Error (Failed to read, archive, or delete conversation/messages)
+          description: Failed to delete conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /delete_multiple_conversations:
+    post:
+      tags:
+        - Conversations
+      summary: Delete multiple conversations
+      description: Deletes multiple conversations and their associated messages, owned by the authenticated user. Optionally archives them first if `enable_conversation_archiving` setting is true. Requires user authentication.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - conversation_ids
+              properties:
+                conversation_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Array of conversation IDs to delete.
+      responses:
+        '200':
+          description: Conversations deleted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deleted_count:
+                    type: integer
+                    description: Number of conversations successfully deleted.
+                  failed_ids:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                    description: IDs of conversations that failed to delete (if any).
+        '400':
+          description: Bad Request (Missing conversation_ids or empty array)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: User not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (Attempting to delete conversations not owned by user)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to delete conversations
           content:
             application/json:
               schema:
@@ -568,7 +680,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the document to retrieve.
       responses:
         '200':
@@ -578,13 +689,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/DocumentMetadata'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_user_workspace` disabled or user does not own document)
+          description: Feature `enable_user_workspace` disabled or user does not own document
           content:
             application/json:
               schema:
@@ -614,7 +725,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the document to update.
       requestBody:
         required: true
@@ -625,27 +735,24 @@ paths:
               properties:
                 title:
                   type: string
-                  description: New title for the document.
                 abstract:
                   type: string
-                  description: New abstract for the document.
                 keywords:
-                  type: array | string # Code handles both list and comma-separated string
-                  items:
-                    type: string
-                  description: New list of keywords (or comma-separated string).
+                  oneOf:
+                    - type: array
+                      items:
+                        type: string
+                    - type: string
                 publication_date:
                   type: string
-                  # format: date-time # Or date string depending on how it's stored/validated
-                  description: New publication date.
                 document_classification:
                   type: string
-                  description: New classification category.
                 authors:
-                  type: array | string # Code handles both list and single string
-                  items:
-                    type: string
-                  description: New list of authors (or single author string).
+                  oneOf:
+                    - type: array
+                      items:
+                        type: string
+                    - type: string
       responses:
         '200':
           description: Document metadata updated successfully.
@@ -656,27 +763,26 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Document metadata updated successfully"
         '400':
-          description: Bad Request (Invalid data format - although code doesn't explicitly check types)
+          description: Invalid data format
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_user_workspace` disabled or user does not own document)
+          description: Feature `enable_user_workspace` disabled or user does not own document
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Document not found (Implicit check in update_document function)
+          description: Document not found
           content:
             application/json:
               schema:
@@ -700,7 +806,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the document to delete.
       responses:
         '200':
@@ -712,21 +817,20 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Document deleted successfully"
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_user_workspace` disabled or user does not own document - implicit check in delete_document)
+          description: Feature `enable_user_workspace` disabled or user does not own document
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Document not found (Implicit check in delete_document function)
+          description: Document not found
           content:
             application/json:
               schema:
@@ -919,14 +1023,13 @@ paths:
               properties:
                 messageId:
                   type: string
-                  description: The ID ('id' field from Message schema) of the AI message receiving feedback.
+                  description: The ID of the AI message receiving feedback.
                 conversationId:
                   type: string
-                  format: uuid
                   description: The ID of the conversation containing the message.
                 feedbackType:
                   type: string
-                  enum: [Positive, Negative, Neutral] # Based on code implementation
+                  enum: [Positive, Negative, Neutral]
                   description: The type of feedback.
                 reason:
                   type: string
@@ -941,29 +1044,26 @@ paths:
                 properties:
                   success:
                     type: boolean
-                    example: true
                   feedbackId:
                     type: string
-                    format: uuid
         '400':
-          description: Bad Request (Missing required fields)
+          description: Missing required fields
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_user_feedback` disabled)
+          description: Feature `enable_user_feedback` disabled
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        # 404 for conversation not found isn't explicitly handled but might occur in DB lookup
         '500':
           description: Internal Server Error (Failed to query messages or save feedback)
           content:
@@ -977,9 +1077,9 @@ paths:
         - Feedback
         - Admin
       summary: Get feedback items for admin review (paginated)
-      description: Retrieves submitted feedback items for administrative review, with pagination and filtering options. Requires admin privileges (`admin_required`) and potentially specific AD group membership (`feedback_admin_required`) and `enable_user_feedback` setting.
+      description: Retrieves submitted feedback items for administrative review, with pagination and filtering options. Requires admin privileges and `enable_user_feedback` setting.
       security:
-        - bearerAuth: [] # Admin/role check via decorators
+        - bearerAuth: []
       parameters:
         - name: page
           in: query
@@ -993,7 +1093,7 @@ paths:
           schema:
             type: integer
             default: 10
-            enum: [10, 20, 50] # Allowed sizes based on code
+            enum: [10, 20, 50]
           description: Items per page.
         - name: type
           in: query
@@ -1028,13 +1128,13 @@ paths:
                   total_pages:
                     type: integer
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Not admin/required role or feature disabled)
+          description: Forbidden (Not admin or feature disabled)
           content:
             application/json:
               schema:
@@ -1052,16 +1152,15 @@ paths:
         - Feedback
         - Admin
       summary: Get a single feedback item (Admin)
-      description: Fetches the details of a single feedback item by its ID. Needed for editing after pagination. Requires admin privileges (`admin_required`) and potentially specific AD group membership (`feedback_admin_required`) and `enable_user_feedback` setting.
+      description: Fetches the details of a single feedback item by its ID. Needed for editing after pagination. Requires admin privileges and `enable_user_feedback` setting.
       security:
-        - bearerAuth: [] # Admin/role check via decorators
+        - bearerAuth: []
       parameters:
         - name: feedbackId
           in: path
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the feedback item to retrieve.
       responses:
         '200':
@@ -1071,13 +1170,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/FeedbackItem'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Not admin/required role or feature disabled)
+          description: Forbidden (Not admin or feature disabled)
           content:
             application/json:
               schema:
@@ -1099,16 +1198,15 @@ paths:
         - Feedback
         - Admin
       summary: Update admin review fields for a feedback item (Admin)
-      description: Allows admins to update the review status (`acknowledged`) and associated notes/actions for a specific feedback item. Requires admin privileges (`admin_required`) and potentially specific AD group membership (`feedback_admin_required`) and `enable_user_feedback` setting.
+      description: Allows admins to update the review status (`acknowledged`) and associated notes/actions for a specific feedback item. Requires admin privileges and `enable_user_feedback` setting.
       security:
-        - bearerAuth: [] # Admin/role check via decorators
+        - bearerAuth: []
       parameters:
         - name: feedbackId
           in: path
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the feedback item to update.
       requestBody:
         required: true
@@ -1119,19 +1217,12 @@ paths:
               properties:
                 acknowledged:
                   type: boolean
-                  description: Set to true to mark as reviewed/acknowledged.
                 analysisNotes:
                   type: string
-                  nullable: true
-                  description: Admin's notes on the feedback.
                 responseToUser:
                   type: string
-                  nullable: true
-                  description: Any response communicated back to the user (if applicable).
                 actionTaken:
                   type: string
-                  nullable: true
-                  description: Description of any corrective action taken based on the feedback.
       responses:
         '200':
           description: Feedback item updated successfully.
@@ -1142,21 +1233,20 @@ paths:
                 properties:
                   success:
                     type: boolean
-                    example: true
         '400':
-          description: Bad Request (Invalid data format - unlikely with current code)
+          description: Invalid data format
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Not admin/required role or feature disabled)
+          description: Forbidden (Not admin or feature disabled)
           content:
             application/json:
               schema:
@@ -1180,16 +1270,15 @@ paths:
         - Feedback
         - Admin
       summary: Retest a prompt from feedback (Admin)
-      description: Allows admins to re-run the original user prompt (provided in the request body, typically sourced from the feedback item) against the current AI model configuration to check for improvements. Requires admin privileges (`admin_required`) and potentially specific AD group membership (`feedback_admin_required`) and `enable_user_feedback` setting.
+      description: Allows admins to re-run the original user prompt (provided in the request body, typically sourced from the feedback item) against the current AI model configuration to check for improvements. Requires admin privileges and `enable_user_feedback` setting.
       security:
-        - bearerAuth: [] # Admin/role check via decorators
+        - bearerAuth: []
       parameters:
         - name: feedbackId
           in: path
           required: true
           schema:
             type: string
-            format: uuid
           description: The ID of the feedback item context (used for authorization/logging, prompt sent in body).
       requestBody:
         required: true
@@ -1202,7 +1291,6 @@ paths:
               properties:
                 prompt:
                   type: string
-                  description: The user prompt extracted from the feedback item to be retested.
       responses:
         '200':
           description: Retest completed successfully (returns placeholder response in current code).
@@ -1213,21 +1301,20 @@ paths:
                 properties:
                   retestResponse:
                     type: string
-                    description: The new response generated by the AI model for the prompt.
         '400':
-          description: Bad Request (Missing prompt in request body)
+          description: Missing prompt in request body
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Not admin/required role or feature disabled)
+          description: Forbidden (Not admin or feature disabled)
           content:
             application/json:
               schema:
@@ -1285,22 +1372,21 @@ paths:
                   feedback:
                     type: array
                     items:
-                      $ref: '#/components/schemas/FeedbackItem' # Read-only view for user
+                      $ref: '#/components/schemas/FeedbackItem'
                   page:
                     type: integer
                   page_size:
                     type: integer
                   total_count:
                     type: integer
-                  # total_pages might be useful here too
         '401':
-          description: Unauthorized
+          description: No user ID found in session
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_user_feedback` disabled or user ID not found in session)
+          description: Feature `enable_user_feedback` disabled
           content:
             application/json:
               schema:
@@ -1373,7 +1459,7 @@ paths:
                   documents:
                     type: array
                     items:
-                      $ref: '#/components/schemas/GroupDocumentMetadata' # Using specific schema
+                      $ref: '#/components/schemas/GroupDocumentMetadata'
                   page:
                     type: integer
                   page_size:
@@ -1382,21 +1468,20 @@ paths:
                     type: integer
                   needs_legacy_update_check:
                     type: boolean
-                    description: Indicates if there are legacy documents needing update.
         '400':
-          description: Bad Request (No active group selected)
+          description: No active group selected
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or user not a member of the active group)
+          description: Feature `enable_group_workspaces` disabled or user not a member of the active group
           content:
             application/json:
               schema:
@@ -1422,7 +1507,7 @@ paths:
       summary: Upload document(s) to the active group
       description: Uploads one or more documents to the user's active group. Requires appropriate role (Owner, Admin, DocumentManager) in the group, `enable_group_workspaces` setting to be true, and user authentication. Triggers background processing.
       security:
-        - bearerAuth: [] # Role check via decorator
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1437,14 +1522,13 @@ paths:
                   items:
                     type: string
                     format: binary
-                  description: One or more document files to upload.
       responses:
         '200':
           description: File(s) accepted for background processing. All processed successfully.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DocumentUploadResponse' # Reusing user upload response schema
+                $ref: '#/components/schemas/DocumentUploadResponse'
         '207':
           description: Multi-Status. Some files processed, but errors occurred with others. Check 'errors' array.
           content:
@@ -1452,19 +1536,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/DocumentUploadResponse'
         '400':
-          description: Bad Request (No active group, no file part, no files selected, all failed). Check 'errors' array.
+          description: No active group, no file part, no files selected, all failed. Check 'errors' array.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DocumentUploadResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or insufficient permissions in the group)
+          description: Feature `enable_group_workspaces` disabled or insufficient permissions in the group
           content:
             application/json:
               schema:
@@ -1497,7 +1581,6 @@ paths:
           required: true
           schema:
             type: string
-            # format: uuid # If group doc IDs are UUIDs
           description: The ID of the group document to retrieve.
       responses:
         '200':
@@ -1507,19 +1590,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/GroupDocumentMetadata'
         '400':
-          description: Bad Request (No active group selected)
+          description: No active group selected
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or user not a member of the active group)
+          description: Feature `enable_group_workspaces` disabled or user not a member of the active group
           content:
             application/json:
               schema:
@@ -1543,14 +1626,13 @@ paths:
       summary: Update metadata of a group document
       description: Partially updates metadata fields of a document in the active group. Requires specific role (Owner, Admin, DocumentManager) in the group, `enable_group_workspaces` setting to be true, and user authentication.
       security:
-        - bearerAuth: [] # Role check via decorator
+        - bearerAuth: []
       parameters:
         - name: document_id
           in: path
           required: true
           schema:
             type: string
-            # format: uuid
           description: The ID of the group document to update.
       requestBody:
         required: true
@@ -1564,18 +1646,21 @@ paths:
                 abstract:
                   type: string
                 keywords:
-                  type: array | string # List or comma-separated string
-                  items:
-                    type: string
+                  oneOf:
+                    - type: array
+                      items:
+                        type: string
+                    - type: string
                 publication_date:
                   type: string
-                  # format: date-time / date
                 document_classification:
                   type: string
                 authors:
-                  type: array | string # List or single string
-                  items:
-                    type: string
+                  oneOf:
+                    - type: array
+                      items:
+                        type: string
+                    - type: string
       responses:
         '200':
           description: Group document metadata updated successfully.
@@ -1586,21 +1671,20 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Group document metadata updated successfully"
         '400':
-          description: Bad Request (No active group selected, invalid data)
+          description: No active group selected or invalid data
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or insufficient permissions in group)
+          description: Feature `enable_group_workspaces` disabled or insufficient permissions in group
           content:
             application/json:
               schema:
@@ -1624,14 +1708,13 @@ paths:
       summary: Delete a document from the active group
       description: Deletes a document and its associated chunks from the active group. Requires specific role (Owner, Admin, DocumentManager) in the group, `enable_group_workspaces` setting to be true, and user authentication.
       security:
-        - bearerAuth: [] # Role check via decorator
+        - bearerAuth: []
       parameters:
         - name: document_id
           in: path
           required: true
           schema:
             type: string
-            # format: uuid
           description: The ID of the document to delete from the active group.
       responses:
         '200':
@@ -1643,21 +1726,20 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Group document deleted successfully"
         '400':
-          description: Bad Request (No active group selected)
+          description: No active group selected
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or insufficient permissions in group)
+          description: Feature `enable_group_workspaces` disabled or insufficient permissions in group
           content:
             application/json:
               schema:
@@ -1683,17 +1765,16 @@ paths:
       summary: Queue metadata extraction for a group document
       description: Queues a background job to extract metadata from a document within the active group. Requires specific role (Owner, Admin, DocumentManager) in the group, `enable_group_workspaces` and `enable_extract_meta_data` settings to be true, and user authentication.
       security:
-        - bearerAuth: [] # Role check via decorator
+        - bearerAuth: []
       parameters:
         - name: document_id
           in: path
           required: true
           schema:
             type: string
-            # format: uuid
           description: The ID of the group document for metadata extraction.
       responses:
-        '200': # Code returns 200
+        '200':
           description: Group metadata extraction task queued successfully.
           content:
             application/json:
@@ -1702,24 +1783,22 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Group metadata extraction has been queued. Check document status periodically."
                   document_id:
                     type: string
-                    # format: uuid
         '400':
-          description: Bad Request (No active group selected)
+          description: No active group selected
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` or `enable_extract_meta_data` disabled, or insufficient permissions in group)
+          description: Feature `enable_group_workspaces` or `enable_extract_meta_data` disabled, or insufficient permissions in group
           content:
             application/json:
               schema:
@@ -1742,11 +1821,11 @@ paths:
       tags:
         - Group Documents
         - Groups
-        - Admin # Often an admin/owner action
+        - Admin
       summary: Upgrade legacy group documents
       description: Triggers a process to update documents in the active group that were created before a schema change. Requires specific role (Owner, Admin, DocumentManager) in the group, `enable_group_workspaces` setting to be true, and user authentication.
       security:
-        - bearerAuth: [] # Role check via decorator
+        - bearerAuth: []
       responses:
         '200':
           description: Legacy group document upgrade process completed.
@@ -1757,21 +1836,20 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Upgraded 3 group document(s) to the new format."
         '400':
-          description: Bad Request (No active group selected)
+          description: No active group selected
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: User not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
-          description: Forbidden (Feature `enable_group_workspaces` disabled or insufficient permissions in group)
+          description: Feature `enable_group_workspaces` disabled or insufficient permissions in group
           content:
             application/json:
               schema:
