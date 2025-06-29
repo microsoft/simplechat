@@ -312,12 +312,23 @@ if (promptsApplyFiltersBtn) {
 }
 
 if (promptsClearFiltersBtn) {
-    promptsClearFiltersBtn.addEventListener('click', () => {
+    // Remove any existing event listeners to prevent duplicates
+    promptsClearFiltersBtn.removeEventListener('click', clearPromptsFilters);
+    
+    // Define the clear filters function
+    function clearPromptsFilters() {
+        console.log("Clearing prompt filters...");
         if (promptsSearchInput) promptsSearchInput.value = '';
         promptsSearchTerm = '';
         promptsCurrentPage = 1; // Reset to first page
         fetchUserPrompts();
-    });
+    }
+    
+    // Add the event listener
+    promptsClearFiltersBtn.addEventListener('click', clearPromptsFilters);
+    
+    // Make the function globally available for other components to use
+    window.clearPromptsFilters = clearPromptsFilters;
 }
 
 // Optional: Trigger search on Enter key in prompts search input

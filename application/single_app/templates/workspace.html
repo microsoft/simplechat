@@ -194,11 +194,8 @@
                         </select>
                     </div>
                     <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-                        <!-- Buttons moved to second row if metadata filters enabled -->
-                        {% if enable_extract_meta_data not in [True, 'True', 'true'] %}
-                            <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
-                            <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
-                        {% endif %}
+                        <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
+                        <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                     </div>
                 {% else %}
                     <!-- Layout when classification is disabled -->
@@ -207,17 +204,13 @@
                         <input type="search" id="docs-search-input" class="form-control form-control-sm" placeholder="Enter search term...">
                     </div>
                     <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-                         <!-- Buttons moved to second row if metadata filters enabled -->
-                         {% if enable_extract_meta_data not in [True, 'True', 'true'] %}
-                            <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
-                            <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
-                         {% endif %}
-                     </div>
+                        <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
+                        <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+                    </div>
                 {% endif %}
            </div>
 
-           <!-- Filter Row 2: Metadata Filters (Conditional) & Buttons -->
-           {% if enable_extract_meta_data in [True, 'True', 'true'] %}
+           <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) -->
            <div class="row mb-3 align-items-end filter-controls-row">
                 <div class="col-md-3">
                     <label for="docs-author-filter" class="form-label mb-1 small">Search Authors:</label>
@@ -227,16 +220,14 @@
                     <label for="docs-keywords-filter" class="form-label mb-1 small">Search Keywords:</label>
                     <input type="search" id="docs-keywords-filter" class="form-control form-control-sm" placeholder="Keyword...">
                 </div>
-                 <div class="col-md-3">
+                <div class="col-md-3">
                     <label for="docs-abstract-filter" class="form-label mb-1 small">Search Abstract:</label>
                     <input type="search" id="docs-abstract-filter" class="form-control form-control-sm" placeholder="Abstract content...">
                 </div>
                 <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-                    <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
-                    <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+                    <!-- Buttons removed from metadata row -->
                 </div>
            </div>
-           {% endif %}
            <!-- End Metadata Filters -->
 
           <!-- Documents List -->

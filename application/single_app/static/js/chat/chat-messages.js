@@ -15,6 +15,7 @@ import {
 } from "./chat-conversations.js";
 import { escapeHtml } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { saveUserSetting } from "./chat-layout.js";
 
 export const userInput = document.getElementById("user-input");
 const sendBtn = document.getElementById("send-btn");
@@ -715,5 +716,14 @@ if (userInput) {
       }
       // If Shift key IS pressed, do nothing - allow the default behavior (inserting a newline)
     }
+  });
+}
+
+// Save the selected model when it changes
+if (modelSelect) {
+  modelSelect.addEventListener("change", function() {
+    const selectedModel = modelSelect.value;
+    console.log(`Saving preferred model: ${selectedModel}`);
+    saveUserSetting({ 'preferredModelDeployment': selectedModel });
   });
 }

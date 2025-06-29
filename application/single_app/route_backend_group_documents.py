@@ -195,13 +195,13 @@ def register_route_backend_group_documents(app):
 
         if author_filter:
             param_name = f"@author_{param_count}"
-            query_conditions.append(f"ARRAY_CONTAINS(c.authors, {param_name}, true)")
+            query_conditions.append(f"EXISTS(SELECT VALUE a FROM a IN c.authors WHERE CONTAINS(LOWER(a), LOWER({param_name})))")
             query_params.append({"name": param_name, "value": author_filter})
             param_count += 1
 
         if keywords_filter:
             param_name = f"@keywords_{param_count}"
-            query_conditions.append(f"ARRAY_CONTAINS(c.keywords, {param_name}, true)")
+            query_conditions.append(f"EXISTS(SELECT VALUE k FROM k IN c.keywords WHERE CONTAINS(LOWER(k), LOWER({param_name})))")
             query_params.append({"name": param_name, "value": keywords_filter})
             param_count += 1
 
