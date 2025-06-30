@@ -20,10 +20,8 @@ class FactMemoryStore:
     def set_fact(self, scope_type, scope_id, value, conversation_id=None, agent_id=None):
         now = datetime.now(timezone.utc).isoformat()
         doc_id = str(uuid.uuid4())
-        partition_key = self.get_partition_key(scope_id)
         item = {
             "id": doc_id,
-            "partition_key": partition_key,
             "agent_id": agent_id,
             "scope_type": scope_type,
             "scope_id": scope_id,
@@ -39,7 +37,7 @@ class FactMemoryStore:
     def get_fact(self, scope_id, fact_id):
         partition_key = self.get_partition_key(scope_id)
         try:
-            item = self.container.read_item(item=fact_id, partition_key=partition_key)
+            item = self.container.read_item(item=fact_id, scope_id=partition_key)
             return item.get("value")
         except exceptions.CosmosResourceNotFoundError:
             return None
