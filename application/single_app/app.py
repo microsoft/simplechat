@@ -47,12 +47,13 @@ import json
 
 
 
-
+"""
 from route_external_health import *
 from route_external_group_documents import *
 from route_external_documents import *
 from route_external_groups import *
 from route_external_admin_settings import *
+"""
 
 # Semantic Kernel integration
 from semantic_kernel import Kernel
@@ -316,19 +317,19 @@ register_route_backend_prompts(app)
 register_route_backend_group_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
-register_route_external_health(app)
+#register_route_external_health(app)
 
 # ------------------- Extenral Groups Routes ----------
-register_route_external_groups(app)
+#register_route_external_groups(app)
 
 # ------------------- Extenral Group Documents Routes ----------
-register_route_external_group_documents(app)
+#register_route_external_group_documents(app)
 
 # ------------------- Extenral Documents Routes ----------
-register_route_external_documents(app)
+#register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
-register_route_external_admin_settings(app)
+#register_route_external_admin_settings(app)
 
 if __name__ == '__main__':
     settings = get_settings()
