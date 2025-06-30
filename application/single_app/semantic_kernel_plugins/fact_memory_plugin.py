@@ -55,16 +55,24 @@ class FactMemoryPlugin:
         )
 
     @kernel_function(
-        description="Retrieve all facts for the given agent, scope, and conversation. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.",
+        description="""
+        Retrieve all facts for the given user or group. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.
+        Allows the agent to remember important information about the user or group that they designate.
+        
+        Args:
+            scope_type (str): The type of scope, either 'user' or 'group'.
+            scope_id (str): The id of the user or group, depending on scope_type.
+
+        Returns:
+            List[dict]: A list of fact objects, each representing a persistent fact relevant to the agent and context.
+        """,
         name="get_facts"
     )
-    def get_facts(self, agent_id: str, scope_type: str, scope_id: str, conversation_id: str) -> List[dict]:
+    def get_facts(self, scope_type: str, scope_id: str,) -> List[dict]:
         """
-        Retrieve all facts for the given agent, scope, and conversation. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.
+        Retrieve all facts for the user. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.
         """
         return self.store.get_facts(
-            agent_id=agent_id,
             scope_type=scope_type,
             scope_id=scope_id,
-            conversation_id=conversation_id
         )
