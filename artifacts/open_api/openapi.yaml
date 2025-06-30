@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Simple Chat APIs
-  version: 0.215.34
+  version: 0.216.003
   description: API for the Simple Chat, handling chats, conversations, documents, user settings, groups, feedback, prompts, models, safety, and admin functions.
 
 servers:
@@ -10,6 +10,28 @@ servers:
 
 tags:
   - name: Chat
+  - name: Agents
+    description: Agent management and orchestration endpoints
+  - name: External Documents
+    description: External user document management endpoints
+  - name: External Group Documents
+    description: External group document management endpoints
+  - name: External Groups
+    description: External group management endpoints
+  - name: External Health
+    description: External health and diagnostics endpoints
+  - name: External Admin Settings
+    description: External application settings management endpoints
+  - name: Agents
+    description: Agent management and orchestration endpoints
+  - name: External Documents
+    description: External user document management endpoints
+  - name: External Group Documents
+    description: External group document management endpoints
+  - name: External Health
+    description: External health and diagnostics endpoints
+  - name: External Admin Settings
+    description: External application settings management endpoints
     description: Chat interaction endpoints
   - name: Conversations
     description: Managing conversations and messages
@@ -4257,6 +4279,25 @@ paths:
 
 components:
   schemas:
+    Agent:
+    # ... (rest unchanged) ...
+      type: object
+      description: Agent configuration object.
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the agent.
+        name:
+          type: string
+          description: Name of the agent.
+        default_agent:
+          type: boolean
+          description: Whether this agent is the default.
+        # Add other agent properties as needed
+        # e.g., description, orchestration_type, etc.
+      required:
+        - name
+        - default_agent
     ErrorResponse:
       type: object
       properties:
@@ -4265,6 +4306,7 @@ components:
           description: A description of the error that occurred.
 
     ChatRequest:
+    # ... (rest unchanged) ...
       type: object
       required:
         - message
@@ -4591,6 +4633,7 @@ components:
            description: Classifications derived from documents used in the conversation.
 
     DocumentMetadata: # For user documents list/details
+    # ... (rest unchanged) ...
       type: object
       description: Metadata associated with a user-uploaded document.
       properties:
@@ -4652,6 +4695,7 @@ components:
         # Add other relevant fields like _ts (Cosmos timestamp) if needed for display/sorting
 
     DocumentUploadResponse:
+    # ... (rest unchanged) ...
       type: object
       description: Response after attempting to upload one or more documents.
       properties:
@@ -5118,4 +5162,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT # Indicates the type of token expected
-      description: "Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'."
+      description: |
+        Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'.
+        For endpoints requiring external API access, the JWT must include the "ExternalApi" role in its "roles" claim.

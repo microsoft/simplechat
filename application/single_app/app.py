@@ -334,4 +334,4 @@ if __name__ == '__main__':
     settings = get_settings()
     print(f"Starting Single App. Initializing clients...")
     initialize_clients(settings)
-    app.run(debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)

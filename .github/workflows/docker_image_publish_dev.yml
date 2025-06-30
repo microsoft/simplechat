@@ -1,5 +1,5 @@
 
-name: SimpleChat Docker Image Publish (dev-chainguard)
+name: SimpleChat Docker Image Publish (dev branch)
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       run: node scripts/generate-validators.mjs
     - name: Build the Docker image
       run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;
+        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;

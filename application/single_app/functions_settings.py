@@ -6,6 +6,8 @@ from functions_appinsights import log_event
 def get_settings():
     import secrets
     default_settings = {
+        # Health check
+        'enable_health_check': True,
         # Security settings
         'enable_appinsights_global_logging': False,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
@@ -529,26 +531,5 @@ def enabled_required(setting_key):
 
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    keys_to_exclude = {
-        'azure_document_intelligence_key',
-        'azure_ai_search_key',
-        'azure_openai_gpt_key',
-        'azure_openai_embedding_key',
-        'azure_openai_image_gen_key',
-        'bing_search_key',
-        'azure_apim_gpt_subscription_key',
-        'azure_apim_embedding_subscription_key',
-        'azure_apim_image_gen_subscription_key',
-        'azure_apim_web_search_subscription_key',
-        'azure_apim_ai_search_subscription_key',
-        'azure_apim_document_intelligence_subscription_key',
-        'redis_key',
-        'azure_apim_redis_subscription_key',
-        'azure_apim_content_safety_subscription_key',
-        'content_safety_key',
-        'office_docs_key',
-        'video_files_key',
-        'audio_files_key'
-        # any others that are secrets
-    }
-    return {k:v for k,v in full_settings.items() if k not in keys_to_exclude}
+    # Exclude any key containing the substring "key"
+    return {k: v for k, v in full_settings.items() if "key" not in k}

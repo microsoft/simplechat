@@ -57,18 +57,22 @@ def get_plugin_types():
     # Path to the plugin types directory (semantic_kernel_plugins)
     plugintypes_dir = os.path.join(current_app.root_path, 'semantic_kernel_plugins')
     types = []
+    debug_log = []
     for fname in os.listdir(plugintypes_dir):
         if fname.endswith('_plugin.py') and fname != 'base_plugin.py':
             module_name = fname[:-3]
             file_path = os.path.join(plugintypes_dir, fname)
+            debug_log.append(f"Checking plugin file: {fname}")
             try:
                 spec = importlib.util.spec_from_file_location(module_name, file_path)
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
+                debug_log.append(f"Imported module: {module_name}")
             except Exception as e:
-                # Skip modules that fail to import
+                debug_log.append(f"Failed to import {fname}: {e}")
                 continue
             # Find classes that are subclasses of BasePlugin (but not BasePlugin itself)
+            found = False
             for attr in dir(module):
                 obj = getattr(module, attr)
                 if (
@@ -76,11 +80,16 @@ def get_plugin_types():
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
                 ):
+                    found = True
                     types.append({
                         'type': module_name.replace('_plugin', ''),
                         'class': attr,
                         'display': attr.replace('Plugin', '').replace('_', ' ')
                     })
+            if not found:
+                debug_log.append(f"No valid plugin class found in {fname}")
+    # Log the debug output to the server log
+    print("[PLUGIN DISCOVERY DEBUG]", *debug_log, sep="\n")
     return jsonify(types)
 
 bpap = Blueprint('admin_plugins', __name__)

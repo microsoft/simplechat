@@ -719,6 +719,24 @@
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
                 </div>
+                <!-- Health Check Toggle -->
+                <div class="card p-3 mb-3">
+                    <h5>Health Check</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_health_check"
+                            name="enable_health_check"
+                            {% if settings.enable_health_check %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_health_check">
+                            Enable Health Check Endpoint
+                        </label>
+                    </div>
+                    <p class="text-muted mb-0">
+                        When enabled, the /health endpoint will respond to health check requests. Disable to turn off health check endpoint for this app.
+                    </p>
+                </div>
                 <!-- New Classification Banner Section -->
                 <div class="card p-3 mb-3">
                     <h5>Classification Banner</h5>
