@@ -46,11 +46,11 @@ import pickle
 import json
 
 
-#from route_external_health import *
-#from route_external_group_documents import *
-#from route_external_documents import *
-#from route_external_groups import *
-#from route_external_admin_settings import *
+from route_external_health import *
+from route_external_group_documents import *
+from route_external_documents import *
+from route_external_groups import *
+from route_external_admin_settings import *
 
 
 # Semantic Kernel integration
