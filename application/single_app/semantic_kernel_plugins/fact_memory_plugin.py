@@ -18,37 +18,27 @@ class FactMemoryPlugin:
         Store a fact for the given agent, scope, and conversation.
 
         Args:
-            agent_id (str): The id of the agent, as specified in the agent's manifest.
             scope_type (str): The type of scope, either 'user' or 'group'.
             scope_id (str): The id of the user or group, depending on scope_type.
-            conversation_id (str): The id of the conversation.
             value (str): The value to be stored in memory.
+            conversation_id (str): The id of the conversation.
+            agent_id (str): The id of the agent, as specified in the agent's manifest.
 
         Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent.
         Use facts to remember things that should always be available as context for this agent.
         """,
         name="set_fact"
     )
-    def set_fact(self, agent_id: str, scope_type: str, scope_id: str, conversation_id: str, value: str) -> dict:
+    def set_fact(self, scope_type: str, scope_id: str, value: str, conversation_id: str, agent_id: str) -> dict:
         """
         Store a fact for the given agent, scope, and conversation.
-
-        Args:
-            agent_id (str): The id of the agent, as specified in the agent's manifest.
-            scope_type (str): The type of scope, either 'user' or 'group'.
-            scope_id (str): The id of the user or group, depending on scope_type.
-            conversation_id (str): The id of the conversation.
-            value (str): The value to be stored in memory.
-
-        Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent.
-        Use facts to remember things that should always be available as context for this agent.
         """
         return self.store.set_fact(
-            agent_id=agent_id,
             scope_type=scope_type,
             scope_id=scope_id,
+            value=value,
             conversation_id=conversation_id,
-            value=value
+            agent_id=agent_id
         )
 
     @kernel_function(
