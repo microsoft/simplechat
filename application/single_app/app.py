@@ -46,7 +46,6 @@ import pickle
 import json
 
 
-
 #from route_external_health import *
 #from route_external_group_documents import *
 #from route_external_documents import *
@@ -334,4 +333,4 @@ if __name__ == '__main__':
     settings = get_settings()
     print(f"Starting Single App. Initializing clients...")
     initialize_clients(settings)
-    app.run(debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
