@@ -43,17 +43,26 @@ class FactMemoryPlugin:
         Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent.
         Use facts to remember things that should always be available as context for this agent.
         """
-        return self.store.set_fact(agent_id, scope_type, scope_id, conversation_id, value)
+        return self.store.set_fact(
+            agent_id=agent_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            conversation_id=conversation_id,
+            value=value
+        )
 
     @kernel_function(
         description="Delete a fact by its unique id.",
         name="delete_fact"
     )
-    def delete_fact(self, agent_id: str, fact_id: str) -> bool:
+    def delete_fact(self, scope_id: str, fact_id: str) -> bool:
         """
-        Delete a fact by its unique id.
+        Delete a fact by its unique id and the scope_id which is the partition key.
         """
-        return self.store.delete_fact(agent_id, fact_id)
+        return self.store.delete_fact(
+            scope_id=scope_id,
+            fact_id=fact_id
+        )
 
     @kernel_function(
         description="Retrieve all facts for the given agent, scope, and conversation. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.",
@@ -63,4 +72,9 @@ class FactMemoryPlugin:
         """
         Retrieve all facts for the given agent, scope, and conversation. Facts are persistent values that provide important context, background knowledge, or user preferences to the AI agent. Use this to get all facts that will be injected as context for the agent.
         """
-        return self.store.get_facts(agent_id, scope_type, scope_id, conversation_id)
+        return self.store.get_facts(
+            agent_id=agent_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            conversation_id=conversation_id
+        )
