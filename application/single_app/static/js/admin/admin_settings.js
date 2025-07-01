@@ -675,6 +675,22 @@ function updateClassificationJsonInput() {
 }
 
 function setupToggles() {
+    // --- Health Check Toggle ---
+    const enableHealthCheckToggle = document.getElementById('enable_health_check');
+    const healthCheckSettingsDiv = document.getElementById('health_check_settings');
+    if (enableHealthCheckToggle) {
+        // Set initial state if there is a settings div
+        if (healthCheckSettingsDiv) {
+            healthCheckSettingsDiv.style.display = enableHealthCheckToggle.checked ? 'block' : 'none';
+        }
+        enableHealthCheckToggle.addEventListener('change', function () {
+            if (healthCheckSettingsDiv) {
+                healthCheckSettingsDiv.style.display = this.checked ? 'block' : 'none';
+            }
+            markFormAsModified();
+        });
+    }
+
     // --- Enable Agents (Semantic Kernel) Toggle ---
     const agentsMainContent = document.getElementById('agents-main-content');
     const agentsDisabledMsg = document.getElementById('agents-disabled-message');

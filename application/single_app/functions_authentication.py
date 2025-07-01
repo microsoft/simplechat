@@ -248,7 +248,12 @@ def accesstoken_required(f):
 
         if not is_valid:
             return jsonify({"message": data}), 401
-        
+
+        # Check for "ExternalApi" role in the token claims
+        roles = data.get("roles") if isinstance(data, dict) else None
+        if not roles or "ExternalApi" not in roles:
+            return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
+
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
         return f(*args, **kwargs)

@@ -87,6 +87,7 @@ executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['VERSION'] = '0.216.010'
+
 Session(app)
 
 CLIENTS = {}

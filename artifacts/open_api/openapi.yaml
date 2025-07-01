@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Simple Chat APIs
-  version: 0.216.002
+  version: 0.216.003
   description: API for the Simple Chat, handling chats, conversations, documents, user settings, groups, feedback, prompts, models, safety, and admin functions.
 
 servers:
@@ -5162,4 +5162,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT # Indicates the type of token expected
-      description: "Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'."
+      description: |
+        Azure AD issued JWT Bearer token required for authenticated endpoints. Include in the request header as 'Authorization: Bearer <YOUR_TOKEN>'.
+        For endpoints requiring external API access, the JWT must include the "ExternalApi" role in its "roles" claim.
