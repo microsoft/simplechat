@@ -303,6 +303,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 deployment_name=agent_config["deployment"],
                 endpoint=agent_config["endpoint"],
                 api_key=agent_config["key"],
+                api_version=agent_config["api_version"],
                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
             )
         else:
@@ -310,7 +311,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 service_id=service_id,
                 deployment_name=agent_config["deployment"],
                 endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"]
+                api_key=agent_config["key"],
+                api_version=agent_config["api_version"]
             )
         kernel.add_service(chat_service)
         log_event(
@@ -521,6 +523,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=agent_config["deployment"],
                                 endpoint=agent_config["endpoint"],
                                 api_key=agent_config["key"],
+                                api_version=agent_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
                             )
                         else:
@@ -528,7 +531,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 service_id=service_id,
                                 deployment_name=agent_config["deployment"],
                                 endpoint=agent_config["endpoint"],
-                                api_key=agent_config["key"]
+                                api_key=agent_config["key"],
+                                api_version=agent_config["api_version"]
                             )
                         kernel.add_service(chat_service)
                 except Exception as e:
@@ -612,6 +616,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=orchestrator_config["deployment"],
                                 endpoint=orchestrator_config["endpoint"],
                                 api_key=orchestrator_config["key"],
+                                api_version=orchestrator_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
                             )
                         else:
@@ -619,7 +624,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 service_id=service_id,
                                 deployment_name=orchestrator_config["deployment"],
                                 endpoint=orchestrator_config["endpoint"],
-                                api_key=orchestrator_config["key"]
+                                api_key=orchestrator_config["key"],
+                                api_version=orchestrator_config["api_version"]
                             )
                         kernel.add_service(chat_service)
                 if not chat_service:
@@ -715,6 +721,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
             endpoint = settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint")
             key = settings.get("azure_openai_gpt_key") or selected_model.get("key")
             deployment = settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName")
+            api_version = settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
             if AzureChatCompletion and endpoint and key and deployment:
                 apim_enabled = settings.get("enable_gpt_apim", False)
                 if apim_enabled:
@@ -724,6 +731,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             deployment_name=deployment,
                             endpoint=endpoint,
                             api_key=key,
+                            api_version=api_version,
                             # default_headers={"Ocp-Apim-Subscription-Key": key}
                         )
                     )
@@ -733,7 +741,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             service_id=f"aoai-chat-global",
                             deployment_name=deployment,
                             endpoint=endpoint,
-                            api_key=key
+                            api_key=key,
+                            api_version=api_version
                         )
                     )
                 log_event(
