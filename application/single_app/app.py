@@ -86,7 +86,7 @@ def before_first_request():
                 print("Redis enabled using Managed Identity")
                 credential = DefaultAzureCredential()
                 redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                token = credential.get_token(f"https://{redis_hostname}.{REDIS_URL_VALUE}:10225/appid")
                 app.config['SESSION_REDIS'] = Redis(
                     host=redis_url,
                     port=6380,
@@ -132,7 +132,7 @@ def before_first_request():
                 print("Redis enabled using Managed Identity")
                 credential = DefaultAzureCredential()
                 redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                token = credential.get_token(f"https://{redis_hostname}.{REDIS_URL_VALUE}:10225/appid")
                 app.config['SESSION_REDIS'] = Redis(
                     host=redis_url,
                     port=6380,

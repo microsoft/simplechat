@@ -102,10 +102,13 @@ MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
-CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
-CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
-CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
-CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
+CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "https://login.microsoftonline.com")
+CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "https://management.azure.com")
+CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "blob.core.windows.net")
+CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "https://cognitiveservices.azure.com/.default")
+REDIS_URL_VALUE = os.getenv("CUSTOM_REDIS_URL_VALUE","cacheinfra.windows.net")
+ISSUER_URL_ENDPOINT = os.getenv("CUSTOM_ISSUER_URL_ENDPOINT_VALUE", "https://sts.windows.net")
+BING_SEARCH_ENDPOINT = os.getenv("CUSTOM_BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/")
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -115,13 +118,9 @@ TENANT_ID = os.getenv("TENANT_ID")
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
 
-OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
-
-if AZURE_ENVIRONMENT == "custom":
-    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-else:
-    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+ISSUER_URL = f"{ISSUER_URL_ENDPOINT}/{TENANT_ID}"
+AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
@@ -131,19 +130,24 @@ if AZURE_ENVIRONMENT == "usgovernment":
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+    arm_scope = "https://management.usgovcloudapi.net/.default"
 elif AZURE_ENVIRONMENT == "custom":
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+    OIDC_METADATA_URL = f"{AUTHORITY}/v2.0/.well-known/openid-configuration"
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
     authority = CUSTOM_IDENTITY_URL_VALUE
     credential_scopes=[resource_manager + "/.default"]
-    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE
+    arm_scope = f"{CUSTOM_RESOURCE_MANAGER_URL_VALUE}/.default"
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    arm_scope = "https://management.azure.com/.default"
 
-bing_search_endpoint = "https://api.bing.microsoft.com/"
+bing_search_endpoint = BING_SEARCH_ENDPOINT
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"

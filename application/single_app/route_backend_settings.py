@@ -254,7 +254,7 @@ def _test_redis_connection(payload):
         if redis_auth_type == 'managed_identity':
             # Acquire token from managed identity for Redis scope
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid/.default").token
+            token = credential.get_token("https://*.{REDIS_URL_VALUE}:10225/appid/.default").token
             redis_password = token
         else:
             if not redis_key:
@@ -459,7 +459,7 @@ def _test_web_search_connection(payload):
         direct_data = payload.get('direct', {})
         # For direct Bing calls, you typically do something like:
         key = direct_data.get('key')
-        url = "https://api.bing.microsoft.com/v7.0/search"
+        url = f"{BING_SEARCH_ENDPOINT}/v7.0/search"
         headers = {
             'Ocp-Apim-Subscription-Key': key
         }

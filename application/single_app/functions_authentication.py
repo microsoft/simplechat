@@ -107,13 +107,7 @@ def get_video_indexer_account_token(settings, video_id=None):
     3) Return the account-level accessToken
     """
     # 1) ARM token
-    if AZURE_ENVIRONMENT == "usgovernment":
-        arm_scope = "https://management.usgovcloudapi.net/.default"
-    elif AZURE_ENVIRONMENT == "custom":
-        arm_scope = f"{CUSTOM_RESOURCE_MANAGER_URL_VALUE}/.default"
-    else:
-        arm_scope = "https://management.azure.com/.default"
-    
+    arm_scope = arm_scope    
     credential = DefaultAzureCredential()
     arm_token = credential.get_token(arm_scope).token
     print("[VIDEO] ARM token acquired", flush=True)
@@ -124,23 +118,8 @@ def get_video_indexer_account_token(settings, video_id=None):
     acct     = settings["video_indexer_account_name"]
     api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
     
-    if AZURE_ENVIRONMENT == "usgovernment":
-        url = (
-        f"https://management.usgovcloudapi.net/subscriptions/{sub}"
-        f"/resourceGroups/{rg}"
-        f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
-        f"/generateAccessToken?api-version={api_ver}"
-        )
-    elif AZURE_ENVIRONMENT == "custom":
-        url = (
-        f"{CUSTOM_RESOURCE_MANAGER_URL_VALUE}/subscriptions/{sub}"
-        f"/resourceGroups/{rg}"
-        f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
-        f"/generateAccessToken?api-version={api_ver}"
-        )
-    else:
-        url = (
-        f"https://management.azure.com/subscriptions/{sub}"
+    url = (
+        f"{resource_manager}/subscriptions/{sub}"
         f"/resourceGroups/{rg}"
         f"/providers/Microsoft.VideoIndexer/accounts/{acct}"
         f"/generateAccessToken?api-version={api_ver}"
@@ -212,7 +191,7 @@ def validate_bearer_token(token):
             public_key,
             algorithms=["RS256"],  # Microsoft Entra typically uses RS256
             audience=f"api://{CLIENT_ID}",
-            issuer=f"https://sts.windows.net/{TENANT_ID}/", # Example for common tenant or specific tenant ID
+            issuer=f"{ISSUER_URL_ENDPOINT}/{TENANT_ID}/", # Example for common tenant or specific tenant ID
             #issuer=AUTHORITY, # Example for common tenant or specific tenant ID
             options={
                 "verify_exp": True,
