@@ -19,9 +19,21 @@
     "endpointOverride": {
       "type": "string",
       "description": "(Required if cloud is 'custom') Override the Log Analytics API endpoint. Only needed for custom clouds."
+    },
+    "query_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
     }
   },
-  "required": ["workspaceId", "cloud"],
+  "required": ["workspaceId", "cloud", "query_history"],
   "allOf": [
     {
       "if": {

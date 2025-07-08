@@ -364,7 +364,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         log_event(
             f"[SK Loader] ChatCompletionAgent or AzureChatCompletion not available for agent: {agent_config['name']} ({mode_label})",
             {"agent_name": agent_config["name"]},
-            level=logging.ERROR
+            level=logging.ERROR,
+            exceptionTraceback=True
         )
         return None
     return kernel, agent_objs

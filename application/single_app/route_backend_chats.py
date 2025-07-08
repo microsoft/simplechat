@@ -762,9 +762,6 @@ def register_route_backend_chats(app):
                     "content": default_system_prompt
                 })
 
-        # ---------------------------------------------------------------------
-        # 6) Final GPT Call
-        # ---------------------------------------------------------------------
         # --- DRY Fallback Chain Helper ---
         def try_fallback_chain(steps):
             """
@@ -1118,7 +1115,7 @@ def register_route_backend_chats(app):
                     "Please contact your administrator to resolve Semantic Kernel integration."
                 )
             log_event(
-                "[Tokens] GPT completion response received",
+                f"[Tokens] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
                 extra={
                     "model": gpt_model,
                     "completion_tokens": response.usage.completion_tokens,
@@ -1156,7 +1153,7 @@ def register_route_backend_chats(app):
                     total_tokens = getattr(service, "total_tokens", None)
                     print(f"Service {getattr(service, 'service_id', None)} prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}")
                     log_event(
-                        "[Tokens] Service token usage",
+                        f"[Tokens] Service token usage: prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}",
                         extra={
                             "service_id": getattr(service, "service_id", None),
                             "prompt_tokens": prompt_tokens,

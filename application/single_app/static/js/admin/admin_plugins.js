@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (authTypeSelect.value === 'key') {
             if (authKeyGroup) authKeyGroup.style.display = '';
             if (authKeyLabel) authKeyLabel.textContent = 'Key';
-        } else if (authTypeSelect.value === 'managedIdentity') {
+        } else if (authTypeSelect.value === 'identity') {
             if (authIdentityGroup) authIdentityGroup.style.display = '';
             if (authIdentityLabel) authIdentityLabel.textContent = 'Identity';
         } else if (authTypeSelect.value === 'servicePrincipal') {

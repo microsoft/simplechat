@@ -3,6 +3,10 @@
 from config import *
 from functions_settings import *
 
+# Default redirect path for OAuth consent flow (must match your Azure AD app registration)
+# REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
+REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+
 def _load_cache():
     """Loads the MSAL token cache from the Flask session."""
     cache = SerializableTokenCache()
@@ -35,6 +39,21 @@ def _build_msal_app(cache=None):
     )
 
 
+# Helper: Generate a consent URL for user to grant permissions
+def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt="consent"):
+    msal_app = _build_msal_app() if msal_app is None else msal_app
+    required_scopes = scopes or SCOPE
+    # Use a default redirect URI if not provided
+    redirect_uri = redirect_uri or REDIRECT_PATH
+    auth_url = msal_app.get_authorization_request_url(
+        required_scopes,
+        redirect_uri=redirect_uri,
+        state=state,
+        prompt=prompt
+    )
+    return auth_url
+
+
 def get_valid_access_token(scopes=None):
     """
     Gets a valid access token for the current user.
@@ -43,7 +62,12 @@ def get_valid_access_token(scopes=None):
     """
     if "user" not in session:
         print("get_valid_access_token: No user in session.")
-        return None # User not logged in
+        return {
+            "error": "not_logged_in",
+            "message": "User is not logged in.",
+            "error_code": None,
+            "error_description": "No user in session."
+        }
 
     required_scopes = scopes or SCOPE # Use default SCOPE if none provided
 
@@ -67,37 +91,72 @@ def get_valid_access_token(scopes=None):
              account = accounts[0] # Fallback to first account if no perfect match
              print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
 
-    if account:
-        # Try to get token silently (checks cache, then uses refresh token)
-        result = msal_app.acquire_token_silent(required_scopes, account=account)
-        _save_cache(msal_app.token_cache) # Save cache state AFTER attempt
-
-        if result and "access_token" in result:
-            # Optional: Check expiry if you want fine-grained control, but MSAL usually handles it
-            # expires_in = result.get('expires_in', 0)
-            # if expires_in > 60: # Check if token is valid for at least 60 seconds
-            #     print("get_valid_access_token: Token acquired silently.")
-            #     return result['access_token']
-            # else:
-            #     print("get_valid_access_token: Silent token expired or about to expire.")
-            #     # MSAL should have refreshed, but if not, fall through
-            print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
-            return result['access_token']
-        else:
-            # acquire_token_silent failed (e.g., refresh token expired, needs interaction)
-            print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
-            # Log the specific error if available in result
-            if result and ('error' in result or 'error_description' in result):
-                print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
-            # Optionally clear session or specific keys if refresh consistently fails
-            # session.pop("token_cache", None)
-            # session.pop("user", None)
-            return None # Indicate failure to get a valid token
-
-    else:
+    if not account:
         print("get_valid_access_token: No matching account found in MSAL cache.")
-        # This might happen if the cache was cleared or the user logged in differently
-        return None # Cannot acquire token without an account context
+        return {
+            "error": "no_account",
+            "message": "No matching account found in MSAL cache.",
+            "error_code": None,
+            "error_description": "No account context."
+        }
+
+    result = msal_app.acquire_token_silent_with_error(required_scopes, account=account) # Ensure we handle errors properly
+    _save_cache(msal_app.token_cache)
+
+    if result and "access_token" in result:
+        print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        return {"access_token": result['access_token']}
+
+    # If we reach here, it means silent acquisition failed
+    print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
+    if result is None: # Assume invalid grants or no token
+        print("result is None: get_valid_access_token: Consent required.")
+        host_url = request.host_url.rstrip('/')
+        # Only enforce https if not localhost or 127.0.0.1
+        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
+            if not host_url.startswith('https://'):
+                host_url = 'https://' + host_url.split('://', 1)[-1]
+        redirect_url = host_url + REDIRECT_PATH
+        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
+        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
+        logging.debug(f"Consent URL: {consent_url}")
+        return {
+            "error": "consent_required",
+            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
+            "consent_url": consent_url,
+            "scopes": required_scopes,
+            "error_code": None,
+            "error_description": "No token result; interactive authentication required."
+        }
+
+    error_code = result.get('error') if result else None
+    error_desc = result.get('error_description') if result else None
+    print(f"MSAL Error: {error_code}, Description: {error_desc}")
+
+    if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
+        host_url = request.host_url.rstrip('/')
+        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
+            if not host_url.startswith('https://'):
+                host_url = 'https://' + host_url.split('://', 1)[-1]
+        redirect_url = host_url + REDIRECT_PATH
+        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
+        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
+        logging.debug(f"Consent URL: {consent_url}")
+        return {
+            "error": "consent_required",
+            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
+            "consent_url": consent_url,
+            "scopes": required_scopes,
+            "error_code": error_code,
+            "error_description": error_desc
+        }
+    else:
+        return {
+            "error": "token_acquisition_failed",
+            "message": "Failed to acquire access token.",
+            "error_code": error_code,
+            "error_description": error_desc
+        }
     
 def get_video_indexer_account_token(settings, video_id=None):
     """

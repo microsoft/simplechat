@@ -11,6 +11,7 @@ import logging
 import os
 
 import importlib.util
+from functions_plugins import get_merged_plugin_settings
 from semantic_kernel_plugins.base_plugin import BasePlugin
 
 
@@ -289,6 +290,20 @@ def delete_plugin(plugin_name):
     except Exception as e:
         log_event(f"Error deleting plugin: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to delete plugin.'}), 500
+    
+
+# === PLUGIN SETTINGS MERGE ENDPOINT ===
+bpap.route('/api/plugins/<plugin_type>/merge_settings', methods=['POST'])
+def merge_plugin_settings(plugin_type):
+    """
+    Accepts current settings (JSON body), merges with schema defaults, returns merged settings.
+    """
+    # Accepts: { ...current settings... }
+    current_settings = request.get_json(force=True)
+    # Path to schemas
+    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
+    merged = get_merged_plugin_settings(plugin_type, current_settings, schema_dir)
+    return jsonify(merged)
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint

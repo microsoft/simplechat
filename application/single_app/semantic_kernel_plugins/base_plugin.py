@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 class BasePlugin(ABC):
     @property
@@ -24,6 +24,10 @@ class BasePlugin(ABC):
         }
         """
         pass
+    
+    @abstractmethod
+    def __init__(self, manifest: Optional[Dict[str, Any]] = None):
+        self.manifest = manifest or {}
 
     @abstractmethod
     def get_functions(self) -> List[str]:
@@ -31,3 +35,5 @@ class BasePlugin(ABC):
         Returns a list of function names this plugin exposes for registration with SK.
         """
         pass
+
+    
