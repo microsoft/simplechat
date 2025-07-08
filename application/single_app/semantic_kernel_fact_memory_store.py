@@ -50,10 +50,11 @@ class FactMemoryStore:
             {"name": "@scope_id", "value": scope_id},
             {"name": "@scope_type", "value": scope_type}
         ]
-        if agent_id is not None:
+        useOptionalFilters = False
+        if useOptionalFilters and agent_id is not None:
             query += " AND c.agent_id=@agent_id"
             params.append({"name": "@agent_id", "value": agent_id})
-        if conversation_id is not None:
+        if useOptionalFilters and conversation_id is not None:
             query += " AND c.conversation_id=@conversation_id"
             params.append({"name": "@conversation_id", "value": conversation_id})
         items = list(self.container.query_items(query=query, parameters=params, partition_key=partition_key))

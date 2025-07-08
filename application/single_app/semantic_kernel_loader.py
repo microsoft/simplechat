@@ -79,13 +79,18 @@ def get_agent_orchestration_types_by_mode(mode):
     """Filter orchestration types by agent_mode ('single' or 'multi')."""
     return [t for t in orchestration_types if t["agent_mode"] == mode]
 
+def first_if_comma(val):
+        if isinstance(val, str) and "," in val:
+            return val.split(",")[0].strip()
+        return val
+
 def resolve_agent_config(agent, settings):
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
-
     # User APIM enabled if agent has azure_apim_gpt_enabled True (or 1, or 'true')
     user_apim_enabled = agent.get("azure_apim_gpt_enabled") in [True, 1, "true", "True"]
     global_apim_enabled = settings.get("enable_gpt_apim", False)
+    per_user_enabled = settings.get('per_user_semantic_kernel', False)
 
     def any_filled(*fields):
         return any(bool(f) for f in fields)
@@ -102,7 +107,7 @@ def resolve_agent_config(agent, settings):
         return (
             settings.get("azure_apim_gpt_endpoint"),
             settings.get("azure_apim_gpt_subscription_key"),
-            settings.get("azure_apim_gpt_deployment"),
+            first_if_comma(settings.get("azure_apim_gpt_deployment")),
             settings.get("azure_apim_gpt_api_version")
         )
 
@@ -122,30 +127,61 @@ def resolve_agent_config(agent, settings):
             settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
         )
 
-    # Helper to merge fields with fallback (user > global > default)
     def merge_fields(primary, fallback):
         return tuple(p if p not in [None, ""] else f for p, f in zip(primary, fallback))
 
-    # Inheritance logic with partial override support
-    if user_apim_enabled:
-        # 1. User APIM (partial override, fallback to global APIM, then user GPT, then global GPT)
-        u_apim = get_user_apim()
-        g_apim = get_global_apim()
-        u_gpt = get_user_gpt()
-        g_gpt = get_global_gpt()
-        # Try user APIM, fallback each field to global APIM, then user GPT, then global GPT
-        merged = merge_fields(u_apim, g_apim)
-        merged = merge_fields(merged, u_gpt)
-        merged = merge_fields(merged, g_gpt)
+    # If per-user mode is not enabled, ignore all user/agent-specific config fields
+    if not per_user_enabled:
+        try:
+            if global_apim_enabled:
+                endpoint, key, deployment, api_version = get_global_apim()
+            else:
+                endpoint, key, deployment, api_version = get_global_gpt()
+            return {
+                "endpoint": endpoint,
+                "key": key,
+                "deployment": deployment,
+                "api_version": api_version,
+                "instructions": agent.get("instructions", ""),
+                "actions_to_load": agent.get("actions_to_load", []),
+                "additional_settings": agent.get("additional_settings", {}),
+                "name": agent.get("name"),
+                "display_name": agent.get("display_name", agent.get("name")),
+                "description": agent.get("description", ""),
+                "id": agent.get("id", ""),
+                "default_agent": agent.get("default_agent", False)
+            }
+        except Exception as e:
+            log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
+
+    # Decision tree for config resolution:
+    # 1. If user APIM is enabled and any user APIM values are set, use user APIM (with fallback to global APIM if enabled and any values)
+    # 2. If user APIM is enabled but no user APIM values are set, and global APIM is enabled and any values, use global APIM
+    # 3. If agent/user GPT config is set, use that
+    # 4. If global APIM is enabled and any values, use global APIM
+    # 5. Otherwise, use global GPT config
+
+    u_apim = get_user_apim()
+    g_apim = get_global_apim()
+    u_gpt = get_user_gpt()
+    g_gpt = get_global_gpt()
+
+    if user_apim_enabled and any_filled(*u_apim):
+        # User APIM is enabled and has values
+        merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
+    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
+        # User APIM enabled but no user APIM values, use global APIM if enabled and has values
+        endpoint, key, deployment, api_version = g_apim
+    elif any_filled(*u_gpt):
+        # Use agent/user GPT config
+        endpoint, key, deployment, api_version = u_gpt
+    elif global_apim_enabled and any_filled(*g_apim):
+        # Use global APIM if enabled and has values
+        endpoint, key, deployment, api_version = g_apim
     else:
-        # 1. User GPT (partial override, fallback to global APIM, then global GPT)
-        u_gpt = get_user_gpt()
-        g_apim = get_global_apim()
-        g_gpt = get_global_gpt()
-        merged = merge_fields(u_gpt, g_apim)
-        merged = merge_fields(merged, g_gpt)
-        endpoint, key, deployment, api_version = merged
+        # Fallback to global GPT config
+        endpoint, key, deployment, api_version = g_gpt
 
     return {
         "endpoint": endpoint,
@@ -267,6 +303,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 deployment_name=agent_config["deployment"],
                 endpoint=agent_config["endpoint"],
                 api_key=agent_config["key"],
+                api_version=agent_config["api_version"],
                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
             )
         else:
@@ -274,7 +311,8 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 service_id=service_id,
                 deployment_name=agent_config["deployment"],
                 endpoint=agent_config["endpoint"],
-                api_key=agent_config["key"]
+                api_key=agent_config["key"],
+                api_version=agent_config["api_version"]
             )
         kernel.add_service(chat_service)
         log_event(
@@ -485,6 +523,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=agent_config["deployment"],
                                 endpoint=agent_config["endpoint"],
                                 api_key=agent_config["key"],
+                                api_version=agent_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
                             )
                         else:
@@ -492,7 +531,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 service_id=service_id,
                                 deployment_name=agent_config["deployment"],
                                 endpoint=agent_config["endpoint"],
-                                api_key=agent_config["key"]
+                                api_key=agent_config["key"],
+                                api_version=agent_config["api_version"]
                             )
                         kernel.add_service(chat_service)
                 except Exception as e:
@@ -576,6 +616,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 deployment_name=orchestrator_config["deployment"],
                                 endpoint=orchestrator_config["endpoint"],
                                 api_key=orchestrator_config["key"],
+                                api_version=orchestrator_config["api_version"],
                                 # default_headers={"Ocp-Apim-Subscription-Key": orchestrator_config["key"]}
                             )
                         else:
@@ -583,7 +624,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 service_id=service_id,
                                 deployment_name=orchestrator_config["deployment"],
                                 endpoint=orchestrator_config["endpoint"],
-                                api_key=orchestrator_config["key"]
+                                api_key=orchestrator_config["key"],
+                                api_version=orchestrator_config["api_version"]
                             )
                         kernel.add_service(chat_service)
                 if not chat_service:
@@ -679,6 +721,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
             endpoint = settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint")
             key = settings.get("azure_openai_gpt_key") or selected_model.get("key")
             deployment = settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName")
+            api_version = settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
             if AzureChatCompletion and endpoint and key and deployment:
                 apim_enabled = settings.get("enable_gpt_apim", False)
                 if apim_enabled:
@@ -688,6 +731,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             deployment_name=deployment,
                             endpoint=endpoint,
                             api_key=key,
+                            api_version=api_version,
                             # default_headers={"Ocp-Apim-Subscription-Key": key}
                         )
                     )
@@ -697,7 +741,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             service_id=f"aoai-chat-global",
                             deployment_name=deployment,
                             endpoint=endpoint,
-                            api_key=key
+                            api_key=key,
+                            api_version=api_version
                         )
                     )
                 log_event(

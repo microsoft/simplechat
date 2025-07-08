@@ -14,12 +14,19 @@ def get_settings():
         'enable_time_plugin': True,
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
-        'enable_default_embedding_model_plugin': True,
+        'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
-        'semantic_kernel_plugins': [],
-        'enable_semantic_kernel': True,
+        'semantic_kernel_plugins': [
+            {
+                "name": "OpenApiPlugin",
+                "type": "openapi",
+                "description": "Semantic Kernel plugin for all OpenAPI endpoints.",
+                # Optionally, you can add more config here if needed
+            }
+        ],
+        'enable_semantic_kernel': False,
         'per_user_semantic_kernel': False,
         'orchestration_type': 'default_agent',
         'semantic_kernel_agents': [
@@ -492,18 +499,43 @@ def update_user_settings(user_id, settings_to_update):
                 # Add any other default top-level fields if needed
             }
 
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
+
+        # Ensure 'agents' and 'plugins' keys exist in settings
+        if 'agents' not in doc['settings'] or doc['settings']['agents'] is None:
+            doc['settings']['agents'] = [
+                {
+                    "id": "fcdf009d-b8c5-46b6-833f-5d7b3d763468",
+                    "name": "researcher",
+                    "display_name": "researcher",
+                    "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "azure_agent_apim_gpt_endpoint": "",
+                    "azure_agent_apim_gpt_subscription_key": "",
+                    "azure_agent_apim_gpt_deployment": "",
+                    "azure_agent_apim_gpt_api_version": "",
+                    "enable_agent_gpt_apim": False,
+                    "default_agent": True,
+                    "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
+                    "actions_to_load": [],
+                    "other_settings": {},
+                    "plugins_to_load": []
+                }
+            ]
+        if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
+            doc['settings']['plugins'] = []
 
         # --- Update the timestamp ---
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-
-
         # Upsert the modified document
         cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
-
 
         return True
 

@@ -4,7 +4,7 @@ Flask==2.2.5
 Flask-WTF==1.2.1
 gunicorn
 Werkzeug==3.0.6
-requests==2.32.0
+requests==2.32.4
 openai==1.67
 docx2txt==0.8
 Markdown==3.3.4
