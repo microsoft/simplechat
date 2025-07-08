@@ -84,9 +84,25 @@ function openPluginModal(plugin = null) {
   const endpointInput = document.getElementById('plugin-endpoint');
   const authTypeInput = document.getElementById('plugin-auth-type');
   const authKeyInput = document.getElementById('plugin-auth-key');
-  const authIdentityInput = document.getElementById('plugin-auth-managed-identity');
+  const authIdentityInput = document.getElementById('plugin-auth-identity');
   const authKeyGroup = document.getElementById('auth-key-group');
   const authIdentityGroup = document.getElementById('auth-identity-group');
+  // Patch: update dropdown value for identity if legacy value exists
+  if (authTypeInput) {
+    for (const opt of authTypeInput.options) {
+      if (opt.value === 'managedIdentity') {
+        opt.value = 'identity';
+        opt.textContent = 'Identity';
+      }
+    }
+  }
+  // New fields for service principal
+  const authClientIdInput = document.getElementById('plugin-auth-clientid');
+  const authClientSecretInput = document.getElementById('plugin-auth-clientsecret');
+  const authTenantIdInput = document.getElementById('plugin-auth-tenantid');
+  const authClientIdGroup = document.getElementById('auth-clientid-group');
+  const authClientSecretGroup = document.getElementById('auth-clientsecret-group');
+  const authTenantIdGroup = document.getElementById('auth-tenantid-group');
   const metadataInput = document.getElementById('plugin-metadata');
   const additionalFieldsInput = document.getElementById('plugin-additional-fields');
   const errorDiv = document.getElementById('plugin-modal-error');
@@ -131,9 +147,15 @@ function openPluginModal(plugin = null) {
     nameInput.disabled = true;
     descInput.value = plugin.description || '';
     endpointInput.value = plugin.endpoint || '';
-    authTypeInput.value = plugin.auth_type || 'key';
-    authKeyInput.value = plugin.auth_key || '';
-    authIdentityInput.value = plugin.auth_managed_identity || '';
+    // Auth type and fields
+    const auth = plugin.auth || {};
+    // Legacy support: treat managedIdentity as identity
+    let authTypeValue = auth.type;
+    if (authTypeValue === 'managedIdentity') authTypeValue = 'identity';
+    authTypeInput.value = authTypeValue || 'key';
+    // Prefer identity, fallback to managedIdentity for legacy
+    authKeyInput.value = auth.key || '';
+    authIdentityInput.value = auth.identity || auth.managedIdentity || '';
     metadataInput.value = plugin.metadata ? JSON.stringify(plugin.metadata, null, 2) : '';
     additionalFieldsInput.value = plugin.additional_fields ? JSON.stringify(plugin.additional_fields, null, 2) : '';
     populatePluginTypes(plugin.type || '');
@@ -151,13 +173,22 @@ function openPluginModal(plugin = null) {
   }
   // Auth type toggle
   function updateAuthFields() {
+    // Hide all by default
+    if (authKeyGroup) authKeyGroup.style.display = 'none';
+    if (authIdentityGroup) authIdentityGroup.style.display = 'none';
+    if (authClientIdGroup) authClientIdGroup.style.display = 'none';
+    if (authClientSecretGroup) authClientSecretGroup.style.display = 'none';
+    if (authTenantIdGroup) authTenantIdGroup.style.display = 'none';
     if (authTypeInput.value === 'key') {
-      authKeyGroup.style.display = '';
-      authIdentityGroup.style.display = 'none';
-    } else {
-      authKeyGroup.style.display = 'none';
-      authIdentityGroup.style.display = '';
+      if (authKeyGroup) authKeyGroup.style.display = '';
+    } else if (authTypeInput.value === 'identity') {
+      if (authIdentityGroup) authIdentityGroup.style.display = '';
+    } else if (authTypeInput.value === 'servicePrincipal') {
+      if (authClientIdGroup) authClientIdGroup.style.display = '';
+      if (authClientSecretGroup) authClientSecretGroup.style.display = '';
+      if (authTenantIdGroup) authTenantIdGroup.style.display = '';
     }
+    // If 'user', all remain hidden
   }
   authTypeInput.onchange = updateAuthFields;
   updateAuthFields();
@@ -183,16 +214,24 @@ function openPluginModal(plugin = null) {
       return;
     }
     // Build plugin object
+    const authType = authTypeInput.value;
+    const auth = { type: authType };
+    if (authType === 'key') {
+      auth.key = authKeyInput.value.trim();
+    } else if (authType === 'identity') {
+      auth.identity = authIdentityInput.value.trim();
+    } else if (authType === 'servicePrincipal') {
+      auth.identity = authIdentityInput.value.trim();
+      auth.key = authKeyInput.value.trim();
+      auth.tenantId = document.getElementById('plugin-auth-tenant-id').value.trim();
+    }
+    // For 'user', no extra fields
     const newPlugin = {
       name: nameInput.value.trim(),
       type: typeInput.value.trim(),
       description: descInput.value.trim(),
       endpoint: endpointInput.value.trim(),
-      auth: {
-        type: authTypeInput.value,
-        key: authKeyInput.value.trim(),
-        managedIdentity: authIdentityInput.value.trim()
-      },
+      auth,
       metadata: metadataObj,
       additionalFields: additionalFieldsObj
     };

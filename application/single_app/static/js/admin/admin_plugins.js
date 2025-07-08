@@ -25,14 +25,34 @@ document.addEventListener('DOMContentLoaded', function () {
     const authTypeSelect = document.getElementById('plugin-auth-type');
     const authKeyGroup = document.getElementById('auth-key-group');
     const authIdentityGroup = document.getElementById('auth-identity-group');
+    const authTenantIdGroup = document.getElementById('auth-tenantid-group');
+    const authKeyLabel = document.getElementById('auth-key-label');
+    const authIdentityLabel = document.getElementById('auth-identity-label');
+    const authTenantIdLabel = document.getElementById('auth-tenantid-label');
     function toggleAuthFields() {
+        // Hide all by default
+        if (authKeyGroup) authKeyGroup.style.display = 'none';
+        if (authIdentityGroup) authIdentityGroup.style.display = 'none';
+        if (authTenantIdGroup) authTenantIdGroup.style.display = 'none';
+        // Reset labels
+        if (authKeyLabel) authKeyLabel.textContent = 'Key';
+        if (authIdentityLabel) authIdentityLabel.textContent = 'Identity';
+        if (authTenantIdLabel) authTenantIdLabel.textContent = 'Tenant Id';
         if (authTypeSelect.value === 'key') {
-            authKeyGroup.style.display = '';
-            authIdentityGroup.style.display = 'none';
-        } else {
-            authKeyGroup.style.display = 'none';
-            authIdentityGroup.style.display = '';
+            if (authKeyGroup) authKeyGroup.style.display = '';
+            if (authKeyLabel) authKeyLabel.textContent = 'Key';
+        } else if (authTypeSelect.value === 'managedIdentity') {
+            if (authIdentityGroup) authIdentityGroup.style.display = '';
+            if (authIdentityLabel) authIdentityLabel.textContent = 'Identity';
+        } else if (authTypeSelect.value === 'servicePrincipal') {
+            if (authIdentityGroup) authIdentityGroup.style.display = '';
+            if (authKeyGroup) authKeyGroup.style.display = '';
+            if (authTenantIdGroup) authTenantIdGroup.style.display = '';
+            if (authIdentityLabel) authIdentityLabel.textContent = 'Client Id';
+            if (authKeyLabel) authKeyLabel.textContent = 'Client Secret';
+            if (authTenantIdLabel) authTenantIdLabel.textContent = 'Tenant Id';
         }
+        // If 'user', all remain hidden
     }
     authTypeSelect.addEventListener('change', toggleAuthFields);
 
@@ -146,16 +166,31 @@ async function showPluginModal(plugin = null) {
     document.getElementById('plugin-modal-title').textContent = plugin ? 'Edit Plugin' : 'Add Plugin';
     document.getElementById('plugin-description').value = plugin ? plugin.description || '' : '';
     document.getElementById('plugin-endpoint').value = plugin ? plugin.endpoint || '' : '';
-    document.getElementById('plugin-auth-type').value = plugin && plugin.auth ? plugin.auth.type || 'key' : 'key';
-    document.getElementById('plugin-auth-key').value = plugin && plugin.auth ? plugin.auth.key || '' : '';
-    document.getElementById('plugin-auth-managed-identity').value = plugin && plugin.auth ? plugin.auth.managedIdentity || '' : '';
+    // Patch: treat managedIdentity as identity for legacy support
+    const auth = plugin && plugin.auth ? plugin.auth : {};
+    let authTypeValue = auth.type;
+    if (authTypeValue === 'managedIdentity') authTypeValue = 'identity';
+    document.getElementById('plugin-auth-type').value = authTypeValue || 'key';
+    document.getElementById('plugin-auth-key').value = auth.key || '';
+    document.getElementById('plugin-auth-identity').value = auth.identity || auth.managedIdentity || '';
+    document.getElementById('plugin-auth-tenant-id').value = auth.tenantId || '';
     document.getElementById('plugin-metadata').value = plugin && plugin.metadata ? JSON.stringify(plugin.metadata, null, 2) : '{}';
     document.getElementById('plugin-additional-fields').value = plugin && plugin.additionalFields ? JSON.stringify(plugin.additionalFields, null, 2) : '{}';
     document.getElementById('plugin-modal-error').classList.add('d-none');
     document.getElementById('plugin-modal').setAttribute('data-editing', plugin ? plugin.name : '');
+    // Patch: update dropdown value for identity if legacy value exists
+    const authTypeInput = document.getElementById('plugin-auth-type');
+    if (authTypeInput) {
+        for (const opt of authTypeInput.options) {
+            if (opt.value === 'managedIdentity') {
+                opt.value = 'identity';
+                opt.textContent = 'Identity';
+            }
+        }
+    }
     // Set auth fields visibility
-    if (document.getElementById('plugin-auth-type')) {
-        document.getElementById('plugin-auth-type').dispatchEvent(new Event('change'));
+    if (authTypeInput) {
+        authTypeInput.dispatchEvent(new Event('change'));
     }
     // Only show the modal if not missing required fields
     if (nameField && typeField) {
@@ -173,7 +208,8 @@ function savePlugin() {
     const endpoint = document.getElementById('plugin-endpoint').value.trim();
     const authType = document.getElementById('plugin-auth-type').value.trim();
     const authKey = document.getElementById('plugin-auth-key').value.trim();
-    const authManagedIdentity = document.getElementById('plugin-auth-managed-identity').value.trim();
+    const authIdentity = document.getElementById('plugin-auth-identity').value.trim();
+    const authTenantId = document.getElementById('plugin-auth-tenant-id').value.trim();
     let metadata, additionalFields;
     try {
         metadata = JSON.parse(document.getElementById('plugin-metadata').value.trim() || '{}');
@@ -190,16 +226,24 @@ function savePlugin() {
     const editing = document.getElementById('plugin-modal').getAttribute('data-editing');
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `/api/admin/plugins/${encodeURIComponent(editing)}` : '/api/admin/plugins';
+    // Patch: always use identity, never managedIdentity
+    const auth = { type: authType };
+    if (authType === 'key') {
+        auth.key = authKey;
+    } else if (authType === 'identity') {
+        auth.identity = authIdentity;
+    } else if (authType === 'servicePrincipal') {
+        auth.identity = authIdentity; // clientId
+        auth.key = authKey; // clientSecret
+        auth.tenantId = authTenantId;
+    }
+    // For 'user', no extra fields
     const pluginManifest = {
         name,
         type,
         description,
         endpoint,
-        auth: {
-            type: authType,
-            key: authKey,
-            managedIdentity: authManagedIdentity
-        },
+        auth,
         metadata,
         additionalFields
     };

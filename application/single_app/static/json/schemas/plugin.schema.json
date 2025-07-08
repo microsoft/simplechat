@@ -25,13 +25,16 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["key", "managedIdentity"],
-              "description": "Auth type must be 'key' or 'managedIdentity'"
+              "enum": ["key", "managedIdentity", "user", "servicePrincipal"],
+              "description": "Auth type must be 'key', 'user', 'managedIdentity', or 'servicePrincipal'"
             },
             "key": {
               "type": "string"
             },
-            "managedIdentity": {
+            "identity": {
+              "type": "string"
+            },
+            "tenantId": {
               "type": "string"
             }
           },

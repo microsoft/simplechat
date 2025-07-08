@@ -10,6 +10,7 @@
         <div class="mb-3">
           <label for="plugin-name" class="form-label">Name</label>
           <input type="text" class="form-control" id="plugin-name" required pattern="^[^\s]+$" name="plugin_name"/>
+          <div class="form-text">Plugin name must be unique.</div>
         </div>
         <div class="mb-3">
           <label for="plugin-type" class="form-label">Type</label>
@@ -31,16 +32,22 @@
             <span class="input-group-text">Type</span>
             <select class="form-select" id="plugin-auth-type">
               <option value="key">Key</option>
-              <option value="identity">Identity</option>
+              <option value="identity">Managed Identity</option>
+              <option value="user">User</option>
+              <option value="servicePrincipal">Service Principal</option>
             </select>
           </div>
-          <div class="input-group mb-2" id="auth-key-group">
-            <span class="input-group-text">Key</span>
+          <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
+            <span class="input-group-text" id="auth-identity-label">Identity</span>
+            <input type="text" class="form-control" id="plugin-auth-identity" />
+          </div>
+          <div class="input-group mb-2" id="auth-key-group" style="display:none;">
+            <span class="input-group-text" id="auth-key-label">Key</span>
             <input type="text" class="form-control" id="plugin-auth-key" />
           </div>
-          <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
-            <span class="input-group-text">Managed Identity</span>
-            <input type="text" class="form-control" id="plugin-auth-managed-identity" />
+          <div class="input-group mb-2" id="auth-tenantid-group" style="display:none;">
+            <span class="input-group-text" id="auth-tenantid-label">Tenant Id</span>
+            <input type="text" class="form-control" id="plugin-auth-tenant-id" />
           </div>
         </div>
         <div class="mb-3">
