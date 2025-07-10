@@ -4,6 +4,16 @@ Welcome to Simplechat! This guide explains how agents and plugins work, how to c
 
 ---
 
+## What's New (July 2025)
+
+- **Global vs. Workspace Agents/Plugins**: Admins can now manage global agents and plugins that are protected from editing/deletion by users. Users manage their own workspace agents/plugins.
+- **Schema-Driven Validation**: All agent and plugin configuration is validated against backend schemas. The UI and backend will prevent saving invalid or incomplete settings.
+- **UI Feedback & Protection**: The UI clearly marks global agents/plugins, disables editing/deletion for protected items, and provides robust error messages for validation issues.
+- **Automatic Type Handling**: Plugin creation always requires a valid type, and the UI ensures the type is set before saving.
+- **Live Merging**: Admins can toggle merging of global agents/plugins into workspace lists for user convenience.
+
+---
+
 ## 1. Introduction
 
 **Agents** are the core automation and intelligence units in Simplechat. They can perform tasks, answer questions, and interact with users or systems.  
@@ -32,12 +42,33 @@ Configuration settings are the backbone of how plugins and agents behave in Simp
 <br>
 In summary: treat instructions and descriptions as code. They are the bridge between your logic and the LLM's reasoning.
 
-### Global vs. Workspace Agents
 
-- **Global Agents**: These agents are available across all workspaces and can be managed by admins. They are currently only enabled when per-user mode is disabled, meaning all users share the same global agents and use the same default agent. They have a constant lifecycle that persists across sessions and users and changes to the global agent configuration affect all users. Changes in global mode require an admin to restart the backend to take effect.
-- **Workspace Agents**: These agents are specific to a single workspace and can be managed by users within that workspace. They are suitable for tasks that are confined to a particular project or team. These agents are created at the start of every request, and destroyed at the end. A user can toggle between agents in a single conversation in between messages if desired.
+### Global vs. Workspace Agents & Plugins
 
-***Recommended mode***: Workspace Agents
+- **Global Agents/Plugins**: Managed by admins, available to all users. These are protected from editing or deletion by non-admins. Changes require a backend restart to take effect in if global mode. Global items are visually tagged in the UI.
+- **Workspace Agents/Plugins**: Managed by users within their workspace. These can be created, edited, or deleted by users, and are isolated to their workspace. Workspace items are created and destroyed per user session.
+
+**Recommended mode:** Workspace Agents/Plugins for most use cases. Use global mode for shared, organization-wide logic or integrations.
+
+---
+
+## 2a. Admin Features
+
+- Manage global agents and plugins from the admin UI or API.
+- Global items are protected from user edits/deletes and are visually marked.
+- Toggle merging of global agents/plugins into workspace lists for user visibility.
+- All changes to global agents/plugins require a backend restart to take effect for all users.
+- Backend enforces schema validation and strips protected fields (like `is_global`) from user submissions.
+
+---
+
+## 2b. User Features
+
+- Manage workspace agents and plugins from the workspace UI.
+- Cannot edit or delete global agents/plugins; these are visually marked and protected.
+- UI provides robust feedback: error messages for missing required fields, schema validation errors, and type selection.
+- Plugin creation always requires a valid type; the UI prevents saving if type is missing.
+- Workspace agents/plugins are isolated to your workspace and do not affect other users.
 
 ---
 
@@ -52,15 +83,18 @@ In summary: treat instructions and descriptions as code. They are the bridge bet
 
 ## 4. Plugin Management
 
+
 ### Adding, Editing, and Deleting Plugins
-- Use the Plugins UI (admin or workspace) to add, edit, or remove plugins.
-- Click "New Plugin" to open the modal. Select a type, and the system will auto-populate required fields based on the plugin's schema.
+- Use the Plugins UI (admin for global, workspace for per-user) to add, edit, or remove plugins.
+- Global plugins can only be managed by admins; users cannot edit or delete them.
+- Click "New Plugin" to open the modal. Select a type (required), and the system will auto-populate required fields based on the plugin's schema.
 - Fill in any required fields (see the right-hand descriptions or placeholders for guidance).
-- Save to register the plugin. Plugins are validated against their schema before saving.
+- Save to register the plugin. Plugins are validated against their schema before saving. The UI will prevent saving if required fields are missing or invalid.
+
 
 ### Plugin Settings
 
-- **Required Fields**: Marked in the UI and enforced by the backend schema.
+- **Required Fields**: Marked in the UI and enforced by the backend schema. The UI will show errors if missing.
 - **Additional Fields**: Plugin-specific settings, auto-populated and validated.
 - **Metadata**: Optional extra information for advanced scenarios.
 
@@ -68,16 +102,19 @@ In summary: treat instructions and descriptions as code. They are the bridge bet
 
 
 
+
 ### How Defaults and Validation Work
 - When you select a plugin type, the backend merges your current settings with the schema defaults, ensuring all required fields are present.
 - The UI will always show the latest required fields, even if the schema changes.
+- The backend and UI both enforce schema validation. If you try to save an invalid plugin or agent, you will see a clear error message and the save will be blocked.
+
 
 ### Plugin Types and Discovery
 - Plugin types are discovered automatically from the backend by scanning for Python classes that subclass `BasePlugin` in the plugin directory (`application/single_app/semantic_kernel_plugins/`).
 - To add a new plugin type, simply create a new file named `<yourtype>_plugin.py`, ensure your main plugin class inherits from `BasePlugin`, and provide a corresponding JSON schema in `static/json/schemas/`.
 - The backend will register any valid plugin type that follows this pattern, and the UI will automatically display it as an option; no frontend changes required.
 - Each type has a description and a set of required/optional fields, as defined in its schema:
-  - **Required fields** are the minimum settings needed for the plugin to function (e.g., API keys, endpoint URLs, or resource names). These are enforced by the schema and must be provided by the user.
+  - **Required fields** are the minimum settings needed for the plugin to function (e.g., API keys, endpoint URLs, or resource names). These are enforced by the schema and must be provided by the user. The UI will block saving if these are missing.
   - **Optional fields** are additional settings that can customize or extend plugin behavior (e.g., timeouts, filters, or advanced options). These are also defined in the schema and will appear in the UI if present, but are not mandatory.
 
 
@@ -126,15 +163,21 @@ This approach ensures the LLM knows how and when to use your function as part of
 - `/api/plugins/<plugin_type>/merge_settings`: Get schema-compliant plugin settings.
 - See code for more endpoints and usage.
 
+
 ### Troubleshooting
-- If you see schema validation errors, check your field values and consult the plugin's schema.
+- If you see schema validation errors, check your field values and consult the plugin's schema. The UI will show a detailed error message if a required field is missing or invalid.
 - If a plugin type is missing, ensure its code and schema are present and valid.
+- If you cannot edit or delete a plugin or agent, check if it is marked as global (admins only can manage these).
+- If you see a message about "Please select a plugin type", make sure you have chosen a type from the dropdown before saving.
 
 ---
 
-## 7. Security and Permissions
 
-- Only admins can manage global plugins and agents as well as enable per-user mode; users can manage their own workspace plugins and agents when admins allow it.
+## 7. Security, Permissions, and Protections
+
+
+- Only admins can manage global plugins and agents, as well as enable per-user mode. Users can manage their own workspace plugins and agents when admins allow it.
+- Global agents/plugins are protected from user edits/deletes and are visually marked in the UI.
 - Authentication and authorization are enforced for all plugin and agent actions.
     - Plugin authentication currently supports:
         - **API Key**: Simple key-based authentication.
@@ -147,6 +190,7 @@ This approach ensures the LLM knows how and when to use your function as part of
 
 ## 8. FAQ / Tips
 
+
 **Q: Can I use multiple plugins with one agent?**
 A: Yes! Assign as many as needed for your workflow.
 
@@ -157,7 +201,13 @@ A: Only enable the plugins you need for your specific use case with that agent. 
 A: Add the code and schema, then restart the backend if needed. The UI will pick it up automatically.
 
 **Q: What if a required field is missing?**
-A: The UI and backend will prompt you to fill it in before saving.
+A: The UI and backend will prompt you to fill it in before saving. You will see a clear error message and the save will be blocked until you fix it.
+
+**Q: Why can't I edit or delete a plugin or agent?**
+A: It is likely a global agent/plugin, which is protected. Only admins can manage global items.
+
+**Q: Why do I see 'Please select a plugin type'?**
+A: You must select a type from the dropdown before saving a new plugin. The UI will block saving until you do.
 
 **Q: Where can I get help?**
 A: Check the README, this guide, or open an issue in the repo.

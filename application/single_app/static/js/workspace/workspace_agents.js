@@ -2,11 +2,10 @@
 // Handles user agent CRUD in the workspace UI
 
 // DOM elements
+const agentSelect = document.getElementById('active-agent-select'); // Renamed for clarity
 const agentsTbody = document.getElementById('agents-table-body');
 const agentsErrorDiv = document.getElementById('workspace-agents-error');
 const createAgentBtn = document.getElementById('create-agent-btn');
-const defaultAgentSelect = document.getElementById('default-agent-select');
-const defaultAgentSelectMsg = document.getElementById('default-agent-select-msg');
 
 function renderLoading() {
   if (agentsTbody) {
@@ -32,48 +31,89 @@ function renderAgentsTable(agents) {
     tr.innerHTML = '<td colspan="4" class="text-center text-muted">No agents found.</td>';
     agentsTbody.appendChild(tr);
   } else {
-    for (const agent of agents) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${agent.name || ''}</td>
-        <td>${agent.display_name || ''}</td>
-        <td>${agent.default_agent ? '<span class="badge bg-primary">Default</span>' : ''}</td>
-        <td>
-          <button class="btn btn-sm btn-primary edit-agent-btn" data-name="${agent.name}">Edit</button>
-          <button class="btn btn-sm btn-danger ms-1 delete-agent-btn" data-name="${agent.name}">Delete</button>
-        </td>
-      `;
-      agentsTbody.appendChild(tr);
-    }
+    // Fetch selected_agent from user settings (async)
+    fetch('/api/user/settings').then(res => {
+      if (!res.ok) throw new Error('Failed to load user settings');
+      return res.json();
+    }).then(settings => {
+      let selectedAgentObj = settings.selected_agent;
+      if (!selectedAgentObj && settings.settings && settings.settings.selected_agent) {
+        selectedAgentObj = settings.settings.selected_agent;
+      }
+      let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
+      agentsTbody.innerHTML = '';
+      for (const agent of agents) {
+        const tr = document.createElement('tr');
+        let selectedBadge = '';
+        let deleteBtnDisabled = '';
+        let deleteBtnTooltip = '';
+        if (selectedAgentName && agent.name && String(agent.name) === String(selectedAgentName)) {
+          selectedBadge = '<span class="badge bg-success">Selected</span>';
+          deleteBtnDisabled = 'disabled';
+          deleteBtnTooltip = 'title="Cannot delete selected agent"';
+        }
+        let actionButtons = '';
+        if (!agent.is_global) {
+          actionButtons = `
+            <button class="btn btn-sm btn-primary edit-agent-btn" data-name="${agent.name}">Edit</button>
+            <button class="btn btn-sm btn-danger ms-1 delete-agent-btn" data-name="${agent.name}" ${deleteBtnDisabled} ${deleteBtnTooltip}>Delete</button>
+          `;
+        }
+        tr.innerHTML = `
+          <td>${agent.name || ''}</td>
+          <td>${agent.display_name || ''}${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}</td>
+          <td>${selectedBadge}</td>
+          <td>${actionButtons}</td>
+        `;
+        agentsTbody.appendChild(tr);
+      }
+      renderAgentSelectDropdown(agents, selectedAgentObj);
+      attachAgentTableEvents(agents, selectedAgentName);
+    }).catch(e => {
+      renderError('Could not load selected agent: ' + e.message);
+      // Fallback: render table without selected badge
+      agentsTbody.innerHTML = '';
+      for (const agent of agents) {
+        const tr = document.createElement('tr');
+        let actionButtons = '';
+        if (!agent.is_global) {
+          actionButtons = `
+            <button class="btn btn-sm btn-primary edit-agent-btn" data-name="${agent.name}">Edit</button>
+            <button class="btn btn-sm btn-danger ms-1 delete-agent-btn" data-name="${agent.name}">Delete</button>
+          `;
+        }
+        tr.innerHTML = `
+          <td>${agent.name || ''}</td>
+          <td>${agent.display_name || ''}${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}</td>
+          <td></td>
+          <td>${actionButtons}</td>
+        `;
+        agentsTbody.appendChild(tr);
+      }
+      renderAgentSelectDropdown(agents);
+      attachAgentTableEvents(agents);
+    });
   }
-  renderDefaultAgentDropdown(agents);
 }
 
-function renderDefaultAgentDropdown(agents) {
-  if (!defaultAgentSelect) return;
-  defaultAgentSelect.innerHTML = '';
+// Renders the agent selection dropdown for choosing the active agent
+function renderAgentSelectDropdown(agents, selectedAgentObj) {
+  if (!agentSelect) return;
+  agentSelect.innerHTML = '';
   if (!agents.length) {
-    defaultAgentSelect.disabled = true;
-    if (defaultAgentSelectMsg) defaultAgentSelectMsg.textContent = 'No agents available.';
+    agentSelect.disabled = true;
     return;
   }
-  let foundDefault = false;
+  // Defensive: get name from object or string
+  let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
   agents.forEach(agent => {
     let opt = document.createElement('option');
     opt.value = agent.name;
-    opt.textContent = agent.display_name || agent.name;
-    if (agent.default_agent) {
-      opt.selected = true;
-      foundDefault = true;
-    }
-    defaultAgentSelect.appendChild(opt);
+    opt.textContent = (agent.display_name || agent.name) + (agent.is_global ? ' (Global)' : '');
+    if (agent.name === selectedAgentName) opt.selected = true;
+    agentSelect.appendChild(opt);
   });
-  defaultAgentSelect.disabled = false;
-  if (!foundDefault && defaultAgentSelectMsg) {
-    defaultAgentSelectMsg.textContent = 'No default agent set.';
-  } else if (defaultAgentSelectMsg) {
-    defaultAgentSelectMsg.textContent = '';
-  }
+  agentSelect.disabled = false;
 }
 
 async function fetchAgents() {
@@ -89,55 +129,59 @@ async function fetchAgents() {
   }
 }
 
-function attachAgentTableEvents(agents) {
+function attachAgentTableEvents(agents, selectedAgentName) {
   if (createAgentBtn) {
     createAgentBtn.onclick = () => openAgentModal();
   }
-  // Default agent dropdown change
-  if (defaultAgentSelect) {
-    defaultAgentSelect.onchange = async function () {
-      const selectedName = defaultAgentSelect.value;
+  // Attach agent selection handler only once
+  if (agentSelect && !agentSelect._handlerAttached) {
+    agentSelect.onchange = async function () {
+      const selectedName = agentSelect.value;
       if (!selectedName) return;
-      defaultAgentSelect.disabled = true;
-      if (defaultAgentSelectMsg) defaultAgentSelectMsg.textContent = '';
+      agentSelect.disabled = true;
+      // Find the selected agent object
+      const selectedAgentObj = agents.find(a => a.name === selectedName);
+      if (!selectedAgentObj) {
+        alert('Failed to find selected agent object.');
+        agentSelect.disabled = false;
+        return;
+      }
       try {
-        const resp = await fetch('/api/user/agents/set-default', {
+        const resp = await fetch('/api/user/settings/selected_agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: selectedName })
+          body: JSON.stringify({ selected_agent: { name: selectedAgentObj.name, is_global: !!selectedAgentObj.is_global } })
         });
-        const data = await resp.json();
         if (!resp.ok) {
-          if (defaultAgentSelectMsg) defaultAgentSelectMsg.textContent = data.error || 'Failed to update default agent.';
+          alert('Failed to update selected agent.');
           return;
         }
-        await fetchAgents();
+        // Immediately reload agents/settings so the badge updates
+        fetchAgents();
       } catch (err) {
-        if (defaultAgentSelectMsg) defaultAgentSelectMsg.textContent = 'Failed to update default agent.';
+        alert('Failed to update selected agent.');
       } finally {
-        defaultAgentSelect.disabled = false;
+        agentSelect.disabled = false;
       }
     };
+    agentSelect._handlerAttached = true;
   }
   for (const btn of document.querySelectorAll('.edit-agent-btn')) {
     btn.onclick = () => {
       const agent = agents.find(a => a.name === btn.dataset.name);
-      openAgentModal(agent);
+      openAgentModal(agent, selectedAgentName);
     };
   }
   for (const btn of document.querySelectorAll('.delete-agent-btn')) {
     btn.onclick = () => {
       const agent = agents.find(a => a.name === btn.dataset.name);
-      if (agent.default_agent) {
-        alert('You must set another agent as default before deleting this one.');
-        return;
-      }
+      if (btn.disabled) return;
       if (confirm(`Delete agent '${agent.name}'?`)) deleteAgent(agent.name);
     };
   }
 }
 
-function openAgentModal(agent = null) {
+function openAgentModal(agent = null, selectedAgentName = null) {
   // Get modal and fields
   const modalEl = document.getElementById('agentModal');
   if (!modalEl) return alert('Agent modal not found.');
@@ -160,9 +204,38 @@ function openAgentModal(agent = null) {
   const instructionsInput = document.getElementById('agent-instructions');
   const actionsInput = document.getElementById('agent-actions-to-load');
   const settingsInput = document.getElementById('agent-additional-settings');
-  const defaultCheckbox = document.getElementById('agent-default-agent');
+  // Removed defaultCheckbox
   const errorDiv = document.getElementById('agent-modal-error');
   const saveBtn = document.getElementById('agent-modal-save-btn');
+  // Add Set as Selected Agent button (only in modal, only for edit)
+  let setSelectedBtn = document.getElementById('agent-modal-set-selected-btn');
+  // Always reference the button, do not create it dynamically (it's in the HTML)
+  if (agent) {
+    setSelectedBtn.classList.remove('d-none');
+    setSelectedBtn.style.display = '';
+    setSelectedBtn.disabled = agent.name === selectedAgentName;
+    setSelectedBtn.onclick = async () => {
+      setSelectedBtn.disabled = true;
+      try {
+        const resp = await fetch('/api/user/settings/selected_agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selected_agent: { name: agent.name, is_global: !!agent.is_global } })
+        });
+        if (!resp.ok) throw new Error('Failed to set selected agent');
+        fetchAgents();
+        modal.hide();
+      } catch (e) {
+        alert(e.message);
+      } finally {
+        setSelectedBtn.disabled = false;
+      }
+    };
+  } else {
+    setSelectedBtn.classList.add('d-none');
+    setSelectedBtn.style.display = 'none';
+    setSelectedBtn.onclick = null;
+  }
   // Reset error
   errorDiv.classList.add('d-none');
   errorDiv.textContent = '';
@@ -196,7 +269,7 @@ function openAgentModal(agent = null) {
     instructionsInput.value = agent.instructions || '';
     actionsInput.value = Array.isArray(agent.actions_to_load) ? JSON.stringify(agent.actions_to_load, null, 2) : (agent.actions_to_load || '');
     settingsInput.value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '';
-    defaultCheckbox.checked = !!agent.default_agent;
+    // Removed defaultCheckbox logic
   } else {
     nameInput.value = '';
     nameInput.disabled = false;
@@ -215,7 +288,7 @@ function openAgentModal(agent = null) {
     instructionsInput.value = '';
     actionsInput.value = '';
     settingsInput.value = '';
-    defaultCheckbox.checked = false;
+    // Removed defaultCheckbox logic
   }
   // Save handler
   saveBtn.onclick = async () => {
@@ -240,7 +313,7 @@ function openAgentModal(agent = null) {
     }
     // Build agent object
     const newAgent = {
-      id: agent ? agent.id : crypto.randomUUID(),
+      id: agent ? agent.id : crypto.randomUUID() || '',
       name: nameInput.value.trim(),
       display_name: displayNameInput.value.trim(),
       description: descInput.value.trim(),
@@ -253,24 +326,34 @@ function openAgentModal(agent = null) {
       azure_agent_apim_gpt_deployment: apimDeploymentInput.value.trim(),
       azure_agent_apim_gpt_api_version: apimApiVersionInput.value.trim(),
       enable_agent_gpt_apim: apimToggle.checked,
-      default_agent: defaultCheckbox.checked,
       instructions: instructionsInput.value.trim(),
       actions_to_load: actionsArr,
       other_settings: settingsObj,
-      plugins_to_load: []
+      plugins_to_load: [],
+      is_global: false
     };
     // Validate with JSON schema (Ajv)
     try {
       if (!window.validateAgent) {
         window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
       }
+      console.log('[DEBUG] Validating agent object:', newAgent);
       const valid = window.validateAgent(newAgent);
+      console.log('[DEBUG] Validation result:', valid);
       if (!valid) {
-        errorDiv.textContent = 'Validation error: Invalid agent data.';
+        let errorMsg = 'Validation error: Invalid agent data.';
+        if (window.validateAgent.errors && window.validateAgent.errors.length) {
+          errorMsg += '\n' + window.validateAgent.errors.map(e => `${e.instancePath} ${e.message}`).join('\n');
+          console.log('[DEBUG] Ajv validation errors:', window.validateAgent.errors);
+        } else {
+          console.log('[DEBUG] Ajv validation errors: none or undefined');
+        }
+        errorDiv.textContent = errorMsg;
         errorDiv.classList.remove('d-none');
         return;
       }
     } catch (e) {
+      console.log('[DEBUG] Validation threw error:', e);
       errorDiv.textContent = 'Schema validation failed: ' + e.message;
       errorDiv.classList.remove('d-none');
       return;

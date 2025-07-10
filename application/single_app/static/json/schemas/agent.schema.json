@@ -50,7 +50,13 @@
           "type": "boolean"
         },
         "default_agent": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "(deprecated) Use selected_agent for agent selection."
+        },
+        "is_global": {
+          "type": "boolean",
+          "description": "True if this agent is a global agent; required for agent selection and UI badging.",
+          "default": false
         },
         "instructions": {
           "type": "string"
@@ -73,7 +79,7 @@
         "name",
         "display_name",
         "description",
-        "default_agent",
+        "is_global",
         "instructions",
         "actions_to_load",
         "other_settings"

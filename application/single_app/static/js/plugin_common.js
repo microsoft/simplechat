@@ -77,14 +77,19 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, en
     const safeName = escapeHtml(plugin.name);
     const safeType = escapeHtml(plugin.type);
     const safeDesc = escapeHtml(plugin.description || '');
-    tr.innerHTML = `
-      <td>${safeName}</td>
-      <td>${safeType}</td>
-      <td>${safeDesc}</td>
-      <td>
+    let actionButtons = '';
+    let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
+    if (!plugin.is_global) {
+      actionButtons = `
         <button type="button" class="btn btn-sm btn-secondary me-1 edit-plugin-btn" data-plugin-name="${safeName}">Edit</button>
         <button type="button" class="btn btn-sm btn-danger delete-plugin-btn" data-plugin-name="${safeName}">Delete</button>
-      </td>
+      `;
+    }
+    tr.innerHTML = `
+      <td>${safeName}${globalBadge}</td>
+      <td>${safeType}</td>
+      <td>${safeDesc}</td>
+      <td>${actionButtons}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -156,10 +161,28 @@ export async function showPluginModal({
   modalEl,
   afterShow
 }) {
+  console.log('[PLUGIN MODAL] showPluginModal called', plugin);
+
   await populateTypes();
+  console.log('[PLUGIN MODAL] After populateTypes, typeField.value:', typeField.value, 'options:', Array.from(typeField.options).map(o => o.value));
   nameField.value = plugin && plugin.name ? plugin.name : '';
   descField.value = plugin ? plugin.description || '' : '';
   endpointField.value = plugin ? plugin.endpoint || '' : '';
+  // Always pre-populate additionalFields and metadata from plugin object if present
+  if (additionalFieldsField) {
+    if (plugin && plugin.additionalFields && Object.keys(plugin.additionalFields).length > 0) {
+      additionalFieldsField.value = JSON.stringify(plugin.additionalFields, null, 2);
+    } else {
+      additionalFieldsField.value = '{}';
+    }
+  }
+  if (metadataField) {
+    if (plugin && plugin.metadata && Object.keys(plugin.metadata).length > 0) {
+      metadataField.value = JSON.stringify(plugin.metadata, null, 2);
+    } else {
+      metadataField.value = '{}';
+    }
+  }
   const auth = plugin && plugin.auth ? plugin.auth : {};
   let authTypeValue = auth.type;
   if (authTypeValue === 'managedIdentity') authTypeValue = 'identity';
@@ -172,6 +195,7 @@ export async function showPluginModal({
 
   // Helper to update additionalFields/metadata from backend
   async function updateFieldsForType(selectedType) {
+    console.log('Updating fields for type:', selectedType);
     if (!selectedType) return;
     // Compose current settings for merge (if editing)
     let currentSettings = {};
@@ -182,27 +206,50 @@ export async function showPluginModal({
       };
     } catch (e) {
       // Ignore parse errors, treat as empty
+      console.error('Error parsing current settings. Continuing with empty settings:', e);
       currentSettings = {};
     }
+    console.log('Current settings for merge:', currentSettings);
     const merged = await fetchAndMergePluginSettings(selectedType, currentSettings);
-    populatePluginFieldsFromSettings({
-      mergedSettings: merged,
-      additionalFieldsField,
-      metadataField
+    console.log('Merged settings:', merged);
+    // Only overwrite if merged value is non-empty, otherwise preserve user input
+    if (additionalFieldsField && merged.additionalFields && Object.keys(merged.additionalFields).length > 0) {
+      additionalFieldsField.value = JSON.stringify(merged.additionalFields, null, 2);
+    }
+    if (metadataField && merged.metadata && Object.keys(merged.metadata).length > 0) {
+      metadataField.value = JSON.stringify(merged.metadata, null, 2);
+    }
+    console.log('Updated additionalFields:', additionalFieldsField.value);
+    console.log('Updated metadata:', metadataField.value);
+  }
+
+  // Remove any previous change event listeners to avoid duplicates
+  if (typeField) {
+    const newTypeField = typeField.cloneNode(true);
+    typeField.parentNode.replaceChild(newTypeField, typeField);
+    typeField = newTypeField;
+    typeField.addEventListener('change', async () => {
+      const selectedType = typeField.value;
+      console.log('[PLUGIN MODAL] typeField changed to:', selectedType);
+      await updateFieldsForType(selectedType);
     });
   }
 
-  // Set initial type and fetch defaults if type is present
+  // Set initial type and always fetch defaults from backend for both edit and new
   if (plugin && plugin.type) {
-    setTimeout(() => {
-      typeField.value = plugin.type;
-      updateFieldsForType(plugin.type);
-    }, 0);
+    typeField.value = plugin.type;
+    console.log('[PLUGIN MODAL] Editing plugin, set typeField.value to:', typeField.value);
+    await updateFieldsForType(plugin.type);
   } else {
     typeField.value = '';
-    // Optionally clear fields
     additionalFieldsField.value = '{}';
     metadataField.value = '{}';
+    console.log('[PLUGIN MODAL] New plugin, typeField.value after reset:', typeField.value);
+    // If a type is already selected (e.g., user picks before modal shows), fetch defaults
+    if (typeField && typeField.value) {
+      console.log('[PLUGIN MODAL] New plugin, typeField.value before updateFieldsForType:', typeField.value);
+      await updateFieldsForType(typeField.value);
+    }
   }
 
   // Patch: update dropdown value for identity if legacy value exists
@@ -219,16 +266,17 @@ export async function showPluginModal({
   }
 
   // Wire up typeField change to auto-fetch defaults
-  if (typeField) {
-    typeField.addEventListener('change', async () => {
-      const selectedType = typeField.value;
-      await updateFieldsForType(selectedType);
-    });
-  }
+  //if (typeField) {
+  //  typeField.addEventListener('change', async () => {
+  //    const selectedType = typeField.value;
+  //    await updateFieldsForType(selectedType);
+  //  });
+  //}
 
   if (afterShow) afterShow();
   // Show modal
   if (nameField && typeField) {
+    console.log('[PLUGIN MODAL] Before show, typeField.value:', typeField.value);
     const modal = new bootstrap.Modal(modalEl);
     modal.show();
   }

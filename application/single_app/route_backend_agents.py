@@ -20,27 +20,59 @@ def get_user_agents():
     user_id = get_current_user_id()
     user_settings = get_user_settings(user_id)
     agents = user_settings.get('settings', {}).get('agents', [])
-    return jsonify(agents)
+    # Always mark user agents as is_global: False
+    for agent in agents:
+        agent['is_global'] = False
+
+    # Check global/merge toggles
+    settings = get_settings()
+    per_user = settings.get('per_user_semantic_kernel', False)
+    merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
+    if per_user and merge_global:
+        global_agents = settings.get('semantic_kernel_agents', [])
+        # Mark global agents
+        for agent in global_agents:
+            agent['is_global'] = True
+        # Workspace agents take precedence
+        all_agents = {a['name']: a for a in agents}
+        all_agents.update({a['name']: a for a in global_agents})
+
+        return jsonify(list(all_agents.values()))
+    else:
+        return jsonify(agents)
 
 @bpa.route('/api/user/agents', methods=['POST'])
 @login_required
 def set_user_agents():
     user_id = get_current_user_id()
     agents = request.json if isinstance(request.json, list) else []
-    # Validate all agents with JSON schema
+    # Remove any global agents before saving
+    filtered_agents = []
     for agent in agents:
+        if agent.get('is_global', False):
+            continue  # Skip global agents
+        agent['is_global'] = False  # Ensure user agents are not global
         validation_error = validate_agent(agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
-    # Enforce only one default agent
-    default_count = sum(1 for a in agents if a.get('default_agent'))
-    if default_count != 1 and len(agents) > 0:
-        return jsonify({'error': 'There must be exactly one default agent.'}), 400
+        filtered_agents.append(agent)
+
+    # Enforce global agent only if per_user_semantic_kernel is False
+    settings = get_settings()
+    per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+    if not per_user_semantic_kernel:
+        global_selected_agent = settings.get('global_selected_agent', {})
+        global_name = global_selected_agent.get('name')
+        if global_name:
+            found = any(a.get('name') == global_name for a in filtered_agents)
+            if not found:
+                return jsonify({'error': f'At least one agent must match the global_selected_agent ("{global_name}").'}), 400
+
     user_settings = get_user_settings(user_id)
     settings_to_update = user_settings.get('settings', {})
-    settings_to_update['agents'] = agents
+    settings_to_update['agents'] = filtered_agents
     update_user_settings(user_id, settings_to_update)
-    log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(agents)})
+    log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
 # Add a DELETE endpoint for user agents (if not present)
@@ -67,42 +99,52 @@ def delete_user_agent(agent_name):
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 
-# User endpoint to set default agent (mirrors admin, but for user agents)
-@bpa.route('/api/user/agents/set-default', methods=['POST'])
+# User endpoint to set selected agent (new model, not legacy default_agent)
+@bpa.route('/api/user/settings/selected_agent', methods=['POST'])
 @login_required
-def set_user_default_agent():
+def set_user_selected_agent():
     user_id = get_current_user_id()
     data = request.json
-    agent_name = data.get('name')
-    if not agent_name:
-        return jsonify({'error': 'Agent name is required.'}), 400
+    selected_agent = data.get('selected_agent')
+    if not selected_agent:
+        return jsonify({'error': 'selected_agent is required.'}), 400
     user_settings = get_user_settings(user_id)
-    agents = user_settings.get('settings', {}).get('agents', [])
-    found = False
-    for agent in agents:
-        if agent['name'] == agent_name:
-            agent['default_agent'] = True
-            found = True
-        else:
-            agent['default_agent'] = False
-    if not found:
-        return jsonify({'error': 'Agent not found.'}), 404
-    # Enforce exactly one default agent
-    default_count = sum(1 for a in agents if a.get('default_agent'))
-    if default_count != 1:
-        return jsonify({'error': 'There must be exactly one default agent.'}), 400
     settings_to_update = user_settings.get('settings', {})
-    settings_to_update['agents'] = agents
+    agent = {
+        "name": selected_agent.get('name'),
+        "is_global": selected_agent.get('is_global', False)
+    }
+    settings_to_update['selected_agent'] = agent
     update_user_settings(user_id, settings_to_update)
-    log_event("User default agent set", extra={"user_id": user_id, "agent_name": agent_name})
+    log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": selected_agent})
     return jsonify({'success': True})
 
 # === ADMIN AGENTS ENDPOINTS ===
-
-@bpa.route('/api/admin/agents/set-default', methods=['POST'])
+@bpa.route('/api/admin/agent/settings', methods=['GET'])
 @login_required
 @admin_required
-def set_default_agent():
+def get_all_admin_settings():
+    settings = get_settings()
+    # Return selected_agent and any other relevant settings for admin UI
+    return jsonify({
+        "semantic_kernel_agents": settings.get("semantic_kernel_agents", []),
+        "orchestration_type": settings.get("orchestration_type", "default_agent"),
+        "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration", False),
+        "max_rounds_per_agent": settings.get("max_rounds_per_agent", 1),
+        "per_user_semantic_kernel": settings.get("per_user_semantic_kernel", False),
+        "enable_time_plugin": settings.get("enable_time_plugin", False),
+        "enable_fact_memory_plugin": settings.get("enable_fact_memory_plugin", False),
+        "enable_http_plugin": settings.get("enable_http_plugin", False),
+        "enable_wait_plugin": settings.get("enable_wait_plugin", False),
+        "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
+        "global_selected_agent": settings.get("global_selected_agent", {}),
+        "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
+    })
+
+@bpa.route('/api/admin/agents/selected_agent', methods=['POST'])
+@login_required
+@admin_required
+def set_selected_agent():
     try:
         data = request.json
         agent_name = data.get('name')
@@ -111,24 +153,15 @@ def set_default_agent():
 
         settings = get_settings()
         agents = settings.get('semantic_kernel_agents', [])
-        found = False
-        for agent in agents:
-            if agent['name'] == agent_name:
-                agent['default_agent'] = True
-                found = True
-            else:
-                agent['default_agent'] = False
+        # Check that the agent exists
+        found = any(a.get('name') == agent_name for a in agents)
         if not found:
             return jsonify({'error': 'Agent not found.'}), 404
 
-        # Enforce exactly one default agent
-        default_count = sum(1 for a in agents if a.get('default_agent'))
-        if default_count != 1:
-            return jsonify({'error': 'There must be exactly one default agent.'}), 400
-
-        settings['semantic_kernel_agents'] = agents
+        # Set global_selected_agent field only
+        settings['global_selected_agent'] = { 'name': agent_name, 'is_global': True }
         update_settings(settings)
-        log_event("Default agent set", extra={"action": "set-default", "agent_name": agent_name, "user": str(get_current_user_id())})
+        log_event("Global selected agent set", extra={"action": "set-global-selected", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
@@ -158,6 +191,7 @@ def add_agent():
         settings = get_settings()
         agents = settings.get('semantic_kernel_agents', [])
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
+        new_agent['is_global'] = True
         validation_error = validate_agent(new_agent)
         if validation_error:
             log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": new_agent, "error": validation_error})
@@ -187,6 +221,14 @@ def add_agent():
     except Exception as e:
         log_event(f"Error adding agent: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to add agent.'}), 500
+
+@bpa.route('/api/admin/agents/settings/<setting_name>', methods=['GET'])
+@login_required
+@admin_required
+def get_admin_agent_settings(setting_name):
+    settings = get_settings()
+    selected_value = settings.get(setting_name, {})
+    return jsonify({setting_name: selected_value})
 
 # Add a generic agent settings update route for simple values
 @bpa.route('/api/admin/agents/settings/<setting_name>', methods=['POST'])
@@ -241,6 +283,7 @@ def edit_agent(agent_name):
         settings = get_settings()
         agents = settings.get('semantic_kernel_agents', [])
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
+        updated_agent['is_global'] = True
         validation_error = validate_agent(updated_agent)
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})

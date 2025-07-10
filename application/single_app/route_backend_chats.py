@@ -904,9 +904,6 @@ def register_route_backend_chats(app):
         # --- Semantic Kernel state management (per-user mode) ---
         if enable_semantic_kernel and per_user_semantic_kernel:
             redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
-            #g.kernel, g.kernel_agents = load_user_kernel(user_id, redis_client)
-            #if g.kernel is None:
-            #    initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
             initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
         elif enable_semantic_kernel:
             # Global mode: set g.kernel/g.kernel_agents from builtins
@@ -914,14 +911,25 @@ def register_route_backend_chats(app):
             g.kernel_agents = getattr(builtins, 'kernel_agents', None)
         if per_user_semantic_kernel:
             settings_agents = user_settings.get('agents', [])
-            print(f"[SKChat] Per-user Semantic Kernel enabled. Using user-specific settings.")
+            logging.debug(f"[SKChat] Per-user Semantic Kernel enabled. Using user-specific settings.")
         else: 
             enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
             settings_agents = settings.get('semantic_kernel_agents', [])
         kernel = get_kernel()
         all_agents = get_kernel_agents()
         
+        selected_agent = None
         if enable_semantic_kernel:
+        # PATCH: Use new agent selection logic
+            agent_name_to_select = None
+            if per_user_semantic_kernel:
+                agent_name_to_select = user_settings.get('selected_agent')
+                log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
+            else:
+                global_selected_agent_info = settings.get('global_selected_agent')
+                if global_selected_agent_info:
+                    agent_name_to_select = global_selected_agent_info.get('name')
+                    log_event(f"[SKChat] Global mode: selected_agent from global_selected_agent: {agent_name_to_select}")
             if all_agents:
                 agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
                 agent_debug_info = []
@@ -929,13 +937,25 @@ def register_route_backend_chats(app):
                     agent_debug_info.append({
                         "name": getattr(agent, 'name', None),
                         "default_agent": getattr(agent, 'default_agent', None),
+                        "is_global": getattr(agent, 'is_global', None),
                         "repr": repr(agent)
                     })
-                    if getattr(agent, 'default_agent', False):
+                    # Prefer explicit selection, fallback to default_agent
+                    if agent_name_to_select and getattr(agent, 'name', None) == agent_name_to_select:
                         selected_agent = agent
-                        log_event(f"[SKChat] selected_agent found by default_agent=True")
+                        log_event(f"[SKChat] selected_agent found by explicit selection: {agent_name_to_select}")
                         break
-                # log_event(f"[SKChat] Agent selection debug info: {agent_debug_info}")
+                if not selected_agent:
+                    # Fallback to default_agent
+                    for agent in agent_iter:
+                        if getattr(agent, 'default_agent', False):
+                            selected_agent = agent
+                            log_event(f"[SKChat] selected_agent found by default_agent=True")
+                            break
+                if not selected_agent and agent_iter:
+                    selected_agent = next(iter(agent_iter), None)
+                    log_event(f"[SKChat] selected_agent fallback to first agent: {getattr(selected_agent, 'name', None)}")
+                log_event(f"[SKChat] Agent selection debug info: {agent_debug_info}")
             else:
                 log_event(f"[SKChat] all_agents is empty or None!", level=logging.WARNING)
             if selected_agent is None:
@@ -959,7 +979,7 @@ def register_route_backend_chats(app):
             # Allows for additional per agent and per conversation scoping.
             facts = get_facts_for_context(
                 scope_id=scope_id,
-                scope_type=scope_type,
+                scope_type=scope_type
             )
             if facts:
                 conversation_history_for_api.insert(0, {

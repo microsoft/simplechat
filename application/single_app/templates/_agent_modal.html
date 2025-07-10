@@ -87,16 +87,13 @@
           <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
           <textarea class="form-control" id="agent-additional-settings" rows="2" placeholder='{}'></textarea>
         </div>
-        <div class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" id="agent-default-agent" />
-          <label class="form-check-label" for="agent-default-agent">Default Agent</label>
-          <span id="default-agent-checkbox-msg" class="ms-2 text-muted small"></span>
-        </div>
         <div id="agent-modal-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary" id="agent-modal-save-btn">Save Agent</button>
+        <!-- Set as Selected Agent button is injected by JS only for edit mode -->
+        <button type="button" class="btn btn-outline-success ms-2 d-none" id="agent-modal-set-selected-btn">Set as Selected Agent</button>
       </div>
     </div>
   </div>

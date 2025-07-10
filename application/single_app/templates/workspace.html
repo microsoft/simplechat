@@ -382,20 +382,23 @@
       <div class="tab-pane-inner">
         <div class="card p-3 my-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5>Your Agents</h5>
+            <h5 class="mb-0 d-flex align-items-center gap-2">
+              Your Agents
+              <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+            </h5>
             <button class="btn btn-success btn-sm" id="create-agent-btn">New Agent</button>
           </div>
           <div class="mb-3 row align-items-center">
-            <label for="default-agent-select" class="col-sm-3 col-form-label">Default Agent:</label>
+            <label for="active-agent-select" class="col-sm-3 col-form-label">Selected Agent:</label>
             <div class="col-sm-5">
-              <select id="default-agent-select" class="form-select form-select-sm"></select>
+              <select id="active-agent-select" class="form-select form-select-sm"></select>
             </div>
             <div class="col-sm-4">
-              <span id="default-agent-select-msg" class="text-muted small"></span>
+              <span id="active-agent-select-msg" class="text-muted small"></span>
             </div>
           </div>
           <table class="table table-striped" id="agents-table">
-            <thead><tr><th>Name</th><th>Display Name</th><th>Default</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Display Name</th><th>Selected</th><th>Actions</th></tr></thead>
             <tbody id="agents-table-body">
               <tr class="table-loading-row">
                 <td colspan="4">
@@ -421,7 +424,10 @@
       <template id="plugins-table-template">
         <div class="card p-3 my-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5>Your Plugins</h5>
+            <h5 class="mb-0 d-flex align-items-center gap-2">
+              Your Plugins
+              <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+            </h5>
             <button class="btn btn-success btn-sm" id="create-plugin-btn">New Plugin</button>
           </div>
           <table class="table table-striped" id="plugins-table">

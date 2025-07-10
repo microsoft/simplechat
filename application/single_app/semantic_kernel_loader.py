@@ -48,9 +48,9 @@ if 'logger' in globals() and logger is not None:
 orchestration_types = [
     {
         "value": "default_agent",
-        "label": "Default Agent",
+        "label": "Selected Agent",
         "agent_mode": "single",
-        "description": "Single-agent chat with the selected default agent."
+        "description": "Single-agent chat with the selected agent."
     }
 ]
 """
@@ -454,6 +454,23 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Redis is now optional for per-user mode. If not present, state will not persist.
     user_settings = get_user_settings(user_id).get('settings', {})
     agents_cfg = user_settings.get('agents', [])
+    # Always mark user agents as is_global: False
+    for agent in agents_cfg:
+        agent['is_global'] = False
+
+    # PATCH: Merge global agents if enabled
+    merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
+    if merge_global:
+        global_agents = settings.get('semantic_kernel_agents', [])
+        # Mark global agents
+        for agent in global_agents:
+            agent['is_global'] = True
+        # User agents take precedence
+        all_agents = {a['name']: a for a in global_agents}
+        all_agents.update({a['name']: a for a in agents_cfg})
+        agents_cfg = list(all_agents.values())
+        log_event(f"[SK Loader] Merged global agents into per-user agents: {[a.get('name') for a in agents_cfg]}", level=logging.INFO)
+
     log_event(f"[SK Loader] Found {len(agents_cfg)} agents in user settings for user '{user_id}'.",
         extra={
             "user_id": user_id,
@@ -463,7 +480,15 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         },
         level=logging.INFO)
     plugin_manifests = user_settings.get('plugins', [])
-    # Load user plugins from user settings
+    # PATCH: Merge global plugins if enabled
+    if merge_global:
+        global_plugins = settings.get('semantic_kernel_plugins', [])
+        # User plugins take precedence
+        all_plugins = {p.get('name'): p for p in plugin_manifests}
+        all_plugins.update({p.get('name'): p for p in global_plugins})
+        plugin_manifests = list(all_plugins.values())
+        log_event(f"[SK Loader] Merged global plugins into per-user plugins: {[p.get('name') for p in plugin_manifests]}", level=logging.INFO)
+    # Load user+global plugins from merged list
     load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="per-user")
     # Only single-agent supported in per-user mode
     default_agents = [a for a in agents_cfg if a.get('default_agent')]
@@ -488,6 +513,26 @@ def load_semantic_kernel(kernel: Kernel, settings):
 # region Multi-agent Orchestration
     agents_cfg = settings.get('semantic_kernel_agents', [])
     enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
+    merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
+    # PATCH: Merge global agents if enabled
+    if merge_global:
+        global_agents = []
+        global_selected_agent_info = settings.get('global_selected_agent')
+        if global_selected_agent_info:
+            global_agent = next((a for a in agents_cfg if a.get('name') == global_selected_agent_info.get('name')), None)
+            if global_agent:
+                # Badge as global
+                global_agent = dict(global_agent)  # Copy to avoid mutating original
+                global_agent['is_global'] = True
+                global_agents.append(global_agent)
+        # Merge global agents into agents_cfg if not already present
+        merged_agents = agents_cfg.copy()
+        for ga in global_agents:
+            if not any(a.get('name') == ga.get('name') for a in merged_agents):
+                merged_agents.append(ga)
+        agents_cfg = merged_agents
+        log_event(f"[SK Loader] Merged global agents into workspace agents: {[a.get('name') for a in agents_cfg]}", level=logging.INFO)
+    # END PATCH
     if enable_multi_agent_orchestration and len(agents_cfg) > 0:
         agent_objs = {}
         orchestrator_cfg = None
@@ -553,6 +598,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
                     agent_obj = LoggingChatCompletionAgent(**kwargs)
+                    # PATCH: Badge global agents
+                    if agent_cfg.get('is_global'):
+                        agent_obj.is_global = True
+                        log_event(f"[SK Loader] Agent '{agent_obj.name}' is marked as global.", level=logging.INFO)
                     agent_objs[agent_config["name"]] = agent_obj
                     specialist_agents.append(agent_obj)
                     log_event(
@@ -701,20 +750,24 @@ def load_semantic_kernel(kernel: Kernel, settings):
             log_event("[SK Loader] Multi-agent orchestration is enabled but no agents defined in settings.", level=logging.WARNING)
         else:
             log_event("[SK Loader] Multi-agent orchestration is disabled in settings.", level=logging.INFO)
+        # PATCH: Use global_selected_agent for single-agent mode
         agents_cfg = settings.get('semantic_kernel_agents', [])
-        # Use DRY single-agent loader for single-agent mode
-        if agents_cfg:
-            default_agents = [a for a in agents_cfg if a.get('is_default') or a.get('default_agent')]
-            if len(default_agents) > 1:
-                log_event(f"[SK Loader] No more than one agent can be marked as default. Found: {len(default_agents)}", level=logging.ERROR, exceptionTraceback=True)
-                raise Exception("No more than one agent can be marked as default.")
-            if len(default_agents) == 1:
-                kernel, agent_objs = load_single_agent_for_kernel(kernel, default_agents[0], settings, builtins, redis_client=None, mode_label="global")
-            else:
-                log_event("[SK Loader] No default agent defined. Proceeding in kernel-only mode.", level=logging.INFO)
-                agent_objs = None
+        global_selected_agent_cfg = None
+        global_selected_agent_info = settings.get('global_selected_agent')
+        if global_selected_agent_info:
+            global_selected_agent_cfg = next((a for a in agents_cfg if a.get('name') == global_selected_agent_info.get('name')), None)
+            if not global_selected_agent_cfg:
+                log_event(f"[SK Loader] global_selected_agent name '{global_selected_agent_info.get('name')}' not found in semantic_kernel_agents. Fallback to first agent.", level=logging.WARNING)
+                if agents_cfg:
+                    global_selected_agent_cfg = agents_cfg[0]
         else:
-            log_event("[SK Loader] No agents defined in settings. Proceeding without agent; kernel-only mode enabled.", level=logging.WARNING)
+            if agents_cfg:
+                global_selected_agent_cfg = agents_cfg[0]
+        if global_selected_agent_cfg:
+            log_event(f"[SK Loader] Using global_selected_agent: {global_selected_agent_cfg.get('name')}", level=logging.INFO)
+            kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+        else:
+            log_event("[SK Loader] No global_selected_agent found. Proceeding in kernel-only mode.", level=logging.WARNING)
             agent_objs = None
             # Optionally, register a global AzureChatCompletion service if config is present in settings
             gpt_model_obj = settings.get('gpt_model', {})

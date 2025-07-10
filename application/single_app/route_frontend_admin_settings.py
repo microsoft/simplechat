@@ -73,6 +73,8 @@ def register_route_frontend_admin_settings(app):
             settings['orchestration_type'] = 'default_agent'
         if 'semantic_kernel_plugins' not in settings:
             settings['semantic_kernel_plugins'] = []
+        if 'merge_global_semantic_kernel_with_workspace' not in settings:
+            settings['merge_global_semantic_kernel_with_workspace'] = False
         if 'semantic_kernel_agents' not in settings:
             settings['semantic_kernel_agents'] = [
                 {
@@ -118,6 +120,25 @@ def register_route_frontend_admin_settings(app):
                     "additional_settings": {}
                 }
             ]
+        if 'global_selected_agents' not in settings:
+            default_agent = next((a for a in settings.get('semantic_kernel_agents', []) if a['default_agent']), None)
+            if default_agent:
+                settings['global_selected_agents'] = {
+                    'name': default_agent['name'],
+                    'is_global': True
+                }
+            else:
+                # Fallback if no default agent is found
+                if settings.get('semantic_kernel_agents', []):
+                    settings['global_selected_agents'] = {
+                        'name': settings['semantic_kernel_agents'][0]['name'],
+                        'is_global': True
+                    }
+                else: 
+                    settings['global_selected_agents'] = {
+                        'name': 'default_agent',
+                        'is_global': True
+                    }
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:

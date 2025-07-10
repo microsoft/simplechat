@@ -92,6 +92,8 @@ function openPluginModal(plugin = null) {
       // Save handler
       document.getElementById('save-plugin-btn').onclick = async (event) => {
         event.preventDefault();
+        // Always get the latest typeField from the DOM in case it was replaced
+        const currentTypeField = document.getElementById('plugin-type');
         // Parse JSON fields
         let metadataObj = {};
         let additionalFieldsObj = {};
@@ -124,9 +126,16 @@ function openPluginModal(plugin = null) {
           auth.tenantId = authTenantIdField.value.trim();
         }
         // For 'user', no extra fields
+        const selectedType = currentTypeField ? currentTypeField.value.trim() : '';
+        console.log('[PLUGIN SAVE] Selected type:', selectedType);
+        if (!selectedType) {
+          errorDiv.textContent = 'Please select a plugin type.';
+          errorDiv.classList.remove('d-none');
+          return;
+        }
         const newPlugin = {
           name: nameField.value.trim(),
-          type: typeField.value.trim(),
+          type: selectedType,
           description: descField.value.trim(),
           endpoint: endpointField.value.trim(),
           auth,

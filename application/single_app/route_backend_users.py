@@ -118,7 +118,7 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins'} # Add others as needed
+                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent"} # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")

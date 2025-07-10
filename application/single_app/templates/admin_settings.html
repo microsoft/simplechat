@@ -494,7 +494,7 @@
                 {% else %}
                     <div>
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4>Semantic Kernel Plugins</h4>
+                            <h4>Global  Plugins</h4>
                             <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Plugin</button>
                         </div>
                         <!-- Core Plugin Toggles -->
@@ -559,6 +559,14 @@
                             <label class="form-check-label ms-2" for="toggle-per-user-sk">Workspace Mode (workspace-specific agents/plugins and disables global configuration)</label>
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
                         </div>
+                        {% if settings.per_user_semantic_kernel %}
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                        </div>
+                        {% endif %}
+                        </div>
                         <!-- Orchestration Settings Card -->
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h4>Agent Orchestration Settings</h4>
@@ -576,11 +584,15 @@
                             <button type="button" class="btn btn-primary" id="save-orchestration-settings-btn">Save Orchestration Settings</button>
                         </div>
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4>Semantic Kernel Agents</h4>
+                            <h4>Global  Agents</h4>
                             <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
                         </div>
                         <div class="mb-3 d-flex align-items-center">
-                            <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator (Default Agent):</label>
+                            {% if settings.orchestration_type == "default_agent" %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Selected Agent:</label>
+                            {% else %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator Agent:</label>
+                            {% endif %}
                             <select id="default-agent-select" class="form-select w-auto" style="min-width:200px;"></select>
                             <span id="default-agent-select-msg" class="ms-2 text-muted small"></span>
                         </div>
@@ -590,7 +602,11 @@
                                     <th>Name</th>
                                     <th>Display Name</th>
                                     <th>Description</th>
-                                    <th>Orchestrator</th>
+                                    {% if settings.orchestration_type == "default_agent" %}
+                                        <th>Selected Agent</th>
+                                    {% else %}
+                                        <th>Orchestrator Agent</th>
+                                    {% endif %}
                                     <th>Actions</th>
                                 </tr>
                             </thead>
