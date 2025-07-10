@@ -25,6 +25,14 @@ async function fetchPlugins() {
       onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
       onDelete: name => deletePlugin(name)
     });
+    const createPluginBtn = document.getElementById('create-plugin-btn');
+    if (createPluginBtn) {
+      createPluginBtn.onclick = () => {
+        console.log('[WORKSPACE PLUGINS] New Plugin button clicked');
+        //showToast('Workspace: New Plugin button clicked', 'info');
+        openPluginModal();
+      };
+    }
   } catch (e) {
     renderError(e.message);
   }
@@ -184,9 +192,3 @@ async function deletePlugin(name) {
 
 // Initial load
 if (root) fetchPlugins();
-
-// Wire up Create Plugin button
-const createPluginBtn = document.getElementById('create-plugin-btn');
-if (createPluginBtn) {
-  createPluginBtn.onclick = () => openPluginModal();
-}

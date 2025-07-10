@@ -293,7 +293,8 @@ def delete_plugin(plugin_name):
     
 
 # === PLUGIN SETTINGS MERGE ENDPOINT ===
-bpap.route('/api/plugins/<plugin_type>/merge_settings', methods=['POST'])
+@bpap.route('/api/plugins/<plugin_type>/merge_settings', methods=['POST'])
+@login_required
 def merge_plugin_settings(plugin_type):
     """
     Accepts current settings (JSON body), merges with schema defaults, returns merged settings.
