@@ -273,7 +273,11 @@ def login_required(f):
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
                 print(f"Browser request to {request.path} redirected ta login. No valid session.")
-                return redirect(url_for('login'))
+                # return redirect(url_for('login'))
+                if LOGIN_REDIRECT_URL:
+                    return redirect(LOGIN_REDIRECT_URL)
+                else:
+                    return redirect(url_for('login'))
 
         return f(*args, **kwargs)
     return decorated_function
