@@ -57,7 +57,7 @@ class LogAnalyticsPlugin(BasePlugin):
             authority_host = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
 
         # Auth selection logic (unchanged)
-        if self.auth.get("type") == "managedIdentity":
+        if self.auth.get("type") == "identity":
             identity_client_id = (
                 self.auth.get("identity")
                 or self.additional_fields.get("identity")

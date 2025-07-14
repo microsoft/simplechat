@@ -120,22 +120,22 @@ def register_route_frontend_admin_settings(app):
                     "additional_settings": {}
                 }
             ]
-        if 'global_selected_agents' not in settings:
+        if 'global_selected_agent' not in settings:
             default_agent = next((a for a in settings.get('semantic_kernel_agents', []) if a['default_agent']), None)
             if default_agent:
-                settings['global_selected_agents'] = {
+                settings['global_selected_agent'] = {
                     'name': default_agent['name'],
                     'is_global': True
                 }
             else:
                 # Fallback if no default agent is found
-                if settings.get('semantic_kernel_agents', []):
-                    settings['global_selected_agents'] = {
+                if settings.get('semantic_kernel_agent', []):
+                    settings['global_selected_agent'] = {
                         'name': settings['semantic_kernel_agents'][0]['name'],
                         'is_global': True
                     }
                 else: 
-                    settings['global_selected_agents'] = {
+                    settings['global_selected_agent'] = {
                         'name': 'default_agent',
                         'is_global': True
                     }
