@@ -1909,7 +1909,7 @@ function shouldSkipWalkthroughStep(stepNumber) {
  * @param {number} currentStep - The current step number
  * @returns {number} The next applicable step number or -1 if none found
  */
-/*
+
 function findNextApplicableStep(currentStep) {
     const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
@@ -1961,7 +1961,6 @@ function findNextApplicableStep(currentStep) {
     // If we've gone past all steps, return -1
     return -1;
 }
-*/
 
 /**
  * Find the previous applicable step before a given step
