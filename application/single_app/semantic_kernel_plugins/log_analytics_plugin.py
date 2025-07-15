@@ -80,9 +80,9 @@ class LogAnalyticsPlugin(BasePlugin):
                 credential = None
         elif self.auth.get("type") == "user":
             try:
-                from application.single_app.functions_authentication import get_valid_access_token
+                from application.single_app.functions_authentication import get_valid_access_token_for_plugins
             except ImportError:
-                from functions_authentication import get_valid_access_token
+                from functions_authentication import get_valid_access_token_for_plugins
 
             from azure.core.credentials import AccessToken, TokenCredential
             import time
@@ -92,7 +92,7 @@ class LogAnalyticsPlugin(BasePlugin):
                     self.scope = scope
 
                 def get_token(self, *args, **kwargs):
-                    token_result = get_valid_access_token(scopes=[self.scope])
+                    token_result = get_valid_access_token_for_plugins(scopes=[self.scope])
                     if isinstance(token_result, dict) and token_result.get("access_token"):
                         token = token_result["access_token"]
                     elif isinstance(token_result, dict) and token_result.get("error"):
