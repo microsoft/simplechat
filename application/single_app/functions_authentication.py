@@ -4,8 +4,8 @@ from config import *
 from functions_settings import *
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
-# REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
-REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+# REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
 def _load_cache():
     """Loads the MSAL token cache from the Flask session."""
@@ -53,8 +53,71 @@ def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, p
     )
     return auth_url
 
-
 def get_valid_access_token(scopes=None):
+    """
+    Gets a valid access token for the current user.
+    Tries MSAL cache first, then uses refresh token if needed.
+    Returns the access token string or None if refresh failed or user not logged in.
+    """
+    if "user" not in session:
+        print("get_valid_access_token: No user in session.")
+        return None # User not logged in
+
+    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+
+    msal_app = _build_msal_app(cache=_load_cache())
+    user_info = session.get("user", {})
+    # MSAL uses home_account_id which combines oid and tid
+    # Construct it carefully based on your id_token_claims structure
+    # Assuming 'oid' is the user's object ID and 'tid' is the tenant ID in claims
+    home_account_id = f"{user_info.get('oid')}.{user_info.get('tid')}"
+
+    accounts = msal_app.get_accounts(username=user_info.get('preferred_username')) # Or use home_account_id if available reliably
+    account = None
+    if accounts:
+        # Find the correct account if multiple exist (usually only one for web apps)
+        # Prioritize matching home_account_id if available
+        for acc in accounts:
+            if acc.get('home_account_id') == home_account_id:
+                 account = acc
+                 break
+        if not account:
+             account = accounts[0] # Fallback to first account if no perfect match
+             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+
+    if account:
+        # Try to get token silently (checks cache, then uses refresh token)
+        result = msal_app.acquire_token_silent(required_scopes, account=account)
+        _save_cache(msal_app.token_cache) # Save cache state AFTER attempt
+
+        if result and "access_token" in result:
+            # Optional: Check expiry if you want fine-grained control, but MSAL usually handles it
+            # expires_in = result.get('expires_in', 0)
+            # if expires_in > 60: # Check if token is valid for at least 60 seconds
+            #     print("get_valid_access_token: Token acquired silently.")
+            #     return result['access_token']
+            # else:
+            #     print("get_valid_access_token: Silent token expired or about to expire.")
+            #     # MSAL should have refreshed, but if not, fall through
+            print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+            return result['access_token']
+        else:
+            # acquire_token_silent failed (e.g., refresh token expired, needs interaction)
+            print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
+            # Log the specific error if available in result
+            if result and ('error' in result or 'error_description' in result):
+                print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
+            # Optionally clear session or specific keys if refresh consistently fails
+            # session.pop("token_cache", None)
+            # session.pop("user", None)
+            return None # Indicate failure to get a valid token
+
+    else:
+        print("get_valid_access_token: No matching account found in MSAL cache.")
+        # This might happen if the cache was cleared or the user logged in differently
+        return None # Cannot acquire token without an account context
+
+def get_valid_access_token_for_plugins(scopes=None):
     """
     Gets a valid access token for the current user.
     Tries MSAL cache first, then uses refresh token if needed.
