@@ -50,6 +50,8 @@ def register_route_frontend_authentication(app):
 
         # --- Store results ---
         # Store user identity info (claims from ID token)
+        print(f"[claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
+        print(f"[claims] User claims: {result.get('id_token_claims', {})}")
         session["user"] = result.get("id_token_claims")
         # DO NOT store access/refresh token directly in session anymore
 
