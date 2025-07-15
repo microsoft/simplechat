@@ -201,8 +201,7 @@ def update_core_plugin_settings():
         'enable_http_plugin',
         'enable_wait_plugin',
         'enable_default_embedding_model_plugin',
-        'enable_fact_memory_plugin',
-        'enable_semantic_kernel'
+        'enable_fact_memory_plugin'
     ]
     updates = {}
     for key in expected_keys:
