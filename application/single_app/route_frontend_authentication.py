@@ -59,7 +59,10 @@ def register_route_frontend_authentication(app):
         print(f"User {session['user'].get('name')} logged in successfully.")
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
-        return redirect(url_for('index')) # Or another appropriate page
+        if HOME_REDIRECT_URL:
+            return redirect(HOME_REDIRECT_URL)
+        else:
+            return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path

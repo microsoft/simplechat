@@ -115,6 +115,7 @@ TENANT_ID = os.getenv("TENANT_ID")
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL", "/getAToken")
+HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 
 OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
