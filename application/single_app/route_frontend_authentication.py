@@ -12,9 +12,16 @@ def register_route_frontend_authentication(app):
 
         # Use helper to build app (cache not strictly needed here, but consistent)
         msal_app = _build_msal_app()
+        
+        # Use LOGIN_REDIRECT_URL if set, otherwise fall back to url_for
+        redirect_uri = LOGIN_REDIRECT_URL if LOGIN_REDIRECT_URL else url_for('authorized', _external=True, _scheme='https')
+        
+        print(f"LOGIN_REDIRECT_URL value: {LOGIN_REDIRECT_URL}")
+        print(f"Using redirect_uri for Azure AD: {redirect_uri}")
+        
         auth_url = msal_app.get_authorization_request_url(
             scopes=SCOPE, # Use SCOPE from config (includes offline_access)
-            redirect_uri=url_for('authorized', _external=True, _scheme='https') # Ensure scheme is https if deployed
+            redirect_uri=redirect_uri
         )
         print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
@@ -37,10 +44,15 @@ def register_route_frontend_authentication(app):
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
         msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
 
+        # Use LOGIN_REDIRECT_URL if set, otherwise fall back to url_for
+        redirect_uri = LOGIN_REDIRECT_URL if LOGIN_REDIRECT_URL else url_for('authorized', _external=True, _scheme='https')
+        
+        print(f"Token exchange using redirect_uri: {redirect_uri}")
+
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=SCOPE, # Request the same scopes again
-            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+            redirect_uri=redirect_uri
         )
 
         if "error" in result:
@@ -59,9 +71,12 @@ def register_route_frontend_authentication(app):
         print(f"User {session['user'].get('name')} logged in successfully.")
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
+        print(f"HOME_REDIRECT_URL value: {HOME_REDIRECT_URL}")
         if HOME_REDIRECT_URL:
+            print(f"Redirecting to Front Door URL: {HOME_REDIRECT_URL}")
             return redirect(HOME_REDIRECT_URL)
         else:
+            print("HOME_REDIRECT_URL not set, falling back to url_for('index')")
             return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
