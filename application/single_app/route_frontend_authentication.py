@@ -119,7 +119,10 @@ def register_route_frontend_authentication(app):
         session.clear()
         # Redirect user to Azure AD logout endpoint
         # MSAL provides a helper for this too, but constructing manually is fine
-        logout_uri = url_for('index', _external=True, _scheme='https') # Where to land after logout
+        logout_uri = HOME_REDIRECT_URL if HOME_REDIRECT_URL else url_for('index', _external=True, _scheme='https') # Where to land after logout
+        
+        print(f"Logout redirect URI: {logout_uri}")
+        
         logout_url = (
             f"{AUTHORITY}/oauth2/v2.0/logout"
             f"?post_logout_redirect_uri={quote(logout_uri)}"
