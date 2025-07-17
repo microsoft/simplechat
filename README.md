@@ -987,7 +987,10 @@ Once the application is running and you log in as a user assigned the Admin role
 
 Key configuration sections include:
 
-1. **General**: Application title, custom logo upload, landing page markdown text.
+1. **General**: Application title, custom logo upload, landing page markdown text, authentication & redirect settings.
+   - **Authentication & Redirect Settings**: Configure redirect URLs for Front Door or load balancer scenarios:
+     - **Home Redirect URL**: Optional URL to redirect users when accessing the home page (useful for Front Door configurations)
+     - **Login Redirect URL**: Optional override for OAuth2 redirect URI during authentication (useful for Front Door or custom authentication flows)
 2. **GPT**: Configure Azure OpenAI endpoint(s) for chat models. Supports Direct endpoint or APIM. Allows Key or Managed Identity authentication. Test connection button. Select active deployment(s).
    1. Setting up Multi-model selection for users
 3. **Embeddings**: Configure Azure OpenAI endpoint(s) for embedding models. Supports Direct/APIM, Key/Managed Identity. Test connection. Select active deployment.
