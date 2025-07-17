@@ -894,12 +894,11 @@ def register_route_backend_chats(app):
         conversation_id=conversation_id
         enable_multi_agent_orchestration = False
         fallback_steps = []
-        default_agent_name = None
         selected_agent = None
-        settings_agents = []
         user_settings = get_user_settings(user_id).get('settings', {})
         per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
         enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+        user_enable_agents = user_settings.get('enable_agents', False)
         redis_client = None
         # --- Semantic Kernel state management (per-user mode) ---
         if enable_semantic_kernel and per_user_semantic_kernel:
@@ -918,8 +917,8 @@ def register_route_backend_chats(app):
         kernel = get_kernel()
         all_agents = get_kernel_agents()
         
-        selected_agent = None
-        if enable_semantic_kernel:
+        log_event(f"[SKChat] Semantic Kernel enabled. Per-user mode: {per_user_semantic_kernel}, Multi-agent orchestration: {enable_multi_agent_orchestration}, agents enabled: {user_enable_agents}")
+        if enable_semantic_kernel and user_enable_agents:
         # PATCH: Use new agent selection logic
             agent_name_to_select = None
             if per_user_semantic_kernel:
@@ -1127,7 +1126,7 @@ def register_route_backend_chats(app):
             )
             msg = response.choices[0].message.content
             notice = None
-            if enable_semantic_kernel:
+            if enable_semantic_kernel and user_enable_agents:
                 msg = f"[GPT Fallback. Advanced features not available.] {msg}"
                 notice = (
                     "[SK Fallback]: The AI assistant is running in GPT only mode. "

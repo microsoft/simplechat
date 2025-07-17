@@ -119,6 +119,11 @@
                         <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
                     </button>
                     {% endif %}
+                    {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                    <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
+                        <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
+                    </button>
+                    {% endif %}
                 </div>
 
                 
@@ -194,30 +199,38 @@
 
                     <!-- Model selector -->
                     <div class="flex-shrink-0">
-                        <label for="model-select" class="visually-hidden">Model</label>
-                        <select id="model-select" class="form-select">
-                        {% if settings.enable_gpt_apim %}
-                            {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
-                            {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                            {% set apim_list = raw.split(',') %}
-                            {% for dep in apim_list %}
-                            {% set d = dep.strip() %}
-                            <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                {{ d }}
-                            </option>
-                            {% endfor %}
-                        {% else %}
-                            {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
-                            {% for model in settings.gpt_model.selected %}
-                            <option
-                                value="{{ model.deploymentName }}"
-                                {% if loop.first %}selected{% endif %}
-                            >
-                                {{ model.modelName }}
-                            </option>
-                            {% endfor %}
-                        {% endif %}
-                        </select>
+                        <div id="model-select-container">
+                            <label for="model-select" class="visually-hidden">Model</label>
+                            <select id="model-select" class="form-select">
+                            {% if settings.enable_gpt_apim %}
+                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                {% set apim_list = raw.split(',') %}
+                                {% for dep in apim_list %}
+                                {% set d = dep.strip() %}
+                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                    {{ d }}
+                                </option>
+                                {% endfor %}
+                            {% else %}
+                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
+                                {% for model in settings.gpt_model.selected %}
+                                <option
+                                    value="{{ model.deploymentName }}"
+                                    {% if loop.first %}selected{% endif %}
+                                >
+                                    {{ model.modelName }}
+                                </option>
+                                {% endfor %}
+                            {% endif %}
+                            </select>
+                        </div>
+                        <div id="agent-select-container" style="display: none;">
+                            <label for="agent-select" class="visually-hidden">Agent</label>
+                            <select id="agent-select" class="form-select">
+                                <!-- Agents will be populated dynamically by JS -->
+                            </select>
+                        </div>
                     </div>
 
                      <!-- Send Button (doesn't shrink) -->
@@ -300,4 +313,9 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
+{% if settings.enable_semantic_kernel %}
+    <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/chat/agents_common.js') }}"></script>
+{% endif %}
+
 {% endblock %}
