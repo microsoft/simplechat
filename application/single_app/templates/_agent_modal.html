@@ -28,65 +28,95 @@
           <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent’s behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
           <textarea class="form-control" id="agent-instructions" rows="2"></textarea>
         </div>
+        <!-- Custom Connection Toggle -->
         <div class="d-flex align-items-center mb-3">
-          <label for="agent-enable-apim" class="form-label mb-0 me-2">Enable APIM Integration</label>
+          <label for="agent-custom-connection" class="form-label mb-0 me-2">Custom Connection</label>
           <div class="form-check form-switch">
-            <input class="form-check-input" type="checkbox" id="agent-enable-apim" />
-            <label class="form-check-label" for="agent-enable-apim"></label>
+            <input class="form-check-input" type="checkbox" id="agent-custom-connection" />
+            <label class="form-check-label" for="agent-custom-connection"></label>
           </div>
         </div>
-        <div id="agent-gpt-fields">
-          <div class="mb-3">
-            <label for="agent-gpt-endpoint" class="form-label">Azure OpenAI GPT Endpoint</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-gpt-endpoint" placeholder="https://" />
-          </div>
-          <div class="mb-3">
-            <label for="agent-gpt-key" class="form-label">Azure OpenAI GPT Key</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-gpt-key" />
-          </div>
-          <div class="mb-3">
-            <label for="agent-gpt-deployment" class="form-label">GPT Deployment</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-gpt-deployment" />
-          </div>
-          <div class="mb-3">
-            <label for="agent-gpt-api-version" class="form-label">GPT API Version</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-gpt-api-version" />
-          </div>
+        <!-- Global Model Dropdown (hidden when custom connection is ON) -->
+        <div class="mb-3" id="agent-global-model-group">
+          <label for="agent-global-model-select" class="form-label">Select Global Model</label>
+          <select class="form-select" id="agent-global-model-select">
+            <option value="">Loading models...</option>
+          </select>
         </div>
-        <div id="agent-apim-fields" style="display:none;">
-          <div class="mb-3">
-            <label for="agent-apim-endpoint" class="form-label">APIM GPT Endpoint</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-apim-endpoint" placeholder="https://" />
+          <!-- Custom Connection Fields (shown only when custom connection is ON) -->
+          <div id="agent-custom-connection-fields">
+            <div class="d-flex align-items-center mb-3">
+              <label for="agent-enable-apim" class="form-label mb-0 me-2">Enable APIM Integration</label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="agent-enable-apim" />
+                <label class="form-check-label" for="agent-enable-apim"></label>
+              </div>
+            </div>
+            <div id="agent-gpt-fields">
+              <div class="mb-3">
+                <label for="agent-gpt-endpoint" class="form-label">Azure OpenAI GPT Endpoint</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-endpoint" placeholder="https://" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-key" class="form-label">Azure OpenAI GPT Key</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-key" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-deployment" class="form-label">GPT Deployment</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-deployment" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-api-version" class="form-label">GPT API Version</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-api-version" />
+              </div>
+            </div>
+            <div id="agent-apim-fields" style="display:none;">
+              <div class="mb-3">
+                <label for="agent-apim-endpoint" class="form-label">APIM GPT Endpoint</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-endpoint" placeholder="https://" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-subscription-key" class="form-label">APIM Subscription Key</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-subscription-key" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-deployment" class="form-label">APIM Deployment</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-deployment" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-api-version" class="form-label">APIM API Version</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-api-version" />
+              </div>
+            </div>
           </div>
-          <div class="mb-3">
-            <label for="agent-apim-subscription-key" class="form-label">APIM Subscription Key</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-apim-subscription-key" />
+
+          <!-- Advanced Toggle -->
+          <div class="d-flex align-items-center mb-3">
+            <label for="agent-advanced-toggle" class="form-label mb-0 me-2">Advanced</label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="agent-advanced-toggle" />
+              <label class="form-check-label" for="agent-advanced-toggle"></label>
+            </div>
           </div>
-          <div class="mb-3">
-            <label for="agent-apim-deployment" class="form-label">APIM Deployment</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-apim-deployment" />
+          <!-- Advanced Section (hidden by default) -->
+          <div id="agent-advanced-section" style="display:none;">
+            <div class="mb-3">
+              <label for="agent-actions-to-load" class="form-label">Actions to Load (JSON Array)</label>
+              <textarea class="form-control" id="agent-actions-to-load" rows="2" placeholder='[]'></textarea>
+            </div>
+            <div class="mb-3">
+              <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
+              <textarea class="form-control" id="agent-additional-settings" rows="2" placeholder='{}'></textarea>
+            </div>
           </div>
-          <div class="mb-3">
-            <label for="agent-apim-api-version" class="form-label">APIM API Version</label>
-            <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
-            <input type="text" class="form-control" id="agent-apim-api-version" />
-          </div>
-        </div>
-        <div class="mb-3">
-          <label for="agent-actions-to-load" class="form-label">Actions to Load (JSON Array)</label>
-          <textarea class="form-control" id="agent-actions-to-load" rows="2" placeholder='[]'></textarea>
-        </div>
-        <div class="mb-3">
-          <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
-          <textarea class="form-control" id="agent-additional-settings" rows="2" placeholder='{}'></textarea>
-        </div>
         <div id="agent-modal-error" class="alert alert-danger d-none"></div>
       </div>
       <div class="modal-footer">

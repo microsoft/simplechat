@@ -119,27 +119,17 @@ def set_user_selected_agent():
     log_event("User selected agent set", extra={"user_id": user_id, "selected_agent": selected_agent})
     return jsonify({'success': True})
 
+@bpa.route('/api/user/agent/settings', methods=['GET'])
+@login_required
+def get_global_agent_settings():
+    return get_global_agent_settings(include_admin_extras=False)
+
 # === ADMIN AGENTS ENDPOINTS ===
 @bpa.route('/api/admin/agent/settings', methods=['GET'])
 @login_required
 @admin_required
 def get_all_admin_settings():
-    settings = get_settings()
-    # Return selected_agent and any other relevant settings for admin UI
-    return jsonify({
-        "semantic_kernel_agents": settings.get("semantic_kernel_agents", []),
-        "orchestration_type": settings.get("orchestration_type", "default_agent"),
-        "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration", False),
-        "max_rounds_per_agent": settings.get("max_rounds_per_agent", 1),
-        "per_user_semantic_kernel": settings.get("per_user_semantic_kernel", False),
-        "enable_time_plugin": settings.get("enable_time_plugin", False),
-        "enable_fact_memory_plugin": settings.get("enable_fact_memory_plugin", False),
-        "enable_http_plugin": settings.get("enable_http_plugin", False),
-        "enable_wait_plugin": settings.get("enable_wait_plugin", False),
-        "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
-        "global_selected_agent": settings.get("global_selected_agent", {}),
-        "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
-    })
+    return get_global_agent_settings(include_admin_extras=True)
 
 @bpa.route('/api/admin/agents/selected_agent', methods=['POST'])
 @login_required
@@ -387,3 +377,25 @@ def orchestration_settings():
         except Exception as e:
             log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
+
+def get_global_agent_settings(include_admin_extras=False):
+    settings = get_settings()
+    # Return selected_agent and any other relevant settings for admin UI
+    return jsonify({
+        "semantic_kernel_agents": settings.get("semantic_kernel_agents", []),
+        "orchestration_type": settings.get("orchestration_type", "default_agent"),
+        "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration", False),
+        "max_rounds_per_agent": settings.get("max_rounds_per_agent", 1),
+        "per_user_semantic_kernel": settings.get("per_user_semantic_kernel", False),
+        "enable_time_plugin": settings.get("enable_time_plugin", False),
+        "enable_fact_memory_plugin": settings.get("enable_fact_memory_plugin", False),
+        "enable_http_plugin": settings.get("enable_http_plugin", False),
+        "enable_wait_plugin": settings.get("enable_wait_plugin", False),
+        "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
+        "global_selected_agent": settings.get("global_selected_agent", {}),
+        "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
+        "enable_gpt_apim": settings.get("enable_gpt_apim", False),""
+        "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
+        "gpt_model": settings.get("gpt_model", {}).get("selected", []),
+    })
+    

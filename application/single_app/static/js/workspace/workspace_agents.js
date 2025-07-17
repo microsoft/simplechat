@@ -1,6 +1,8 @@
 // workspace_agents.js
 // Handles user agent CRUD in the workspace UI
 
+import { shouldEnableCustomConnection, toggleCustomConnectionUI, toggleAdvancedUI, populateGlobalModelDropdown, getAvailableModels, shouldExpandAdvanced, fetchAndGetAvailableModels } from '../agents_common.js';
+
 // DOM elements
 const agentSelect = document.getElementById('active-agent-select'); // Renamed for clarity
 const agentsTbody = document.getElementById('agents-table-body');
@@ -239,56 +241,111 @@ function openAgentModal(agent = null, selectedAgentName = null) {
   // Reset error
   errorDiv.classList.add('d-none');
   errorDiv.textContent = '';
-  // APIM toggle logic
-  function updateApimVisibility() {
-    if (apimToggle.checked) {
-      apimFields.style.display = '';
-      gptFields.style.display = 'none';
-    } else {
-      apimFields.style.display = 'none';
-      gptFields.style.display = '';
+
+  // --- Custom Connection Toggle Logic ---
+  const customConnectionToggle = document.getElementById('agent-custom-connection');
+  const customConnectionFields = document.getElementById('agent-custom-connection-fields');
+  const globalModelGroup = document.getElementById('agent-global-model-group');
+  const globalModelSelect = document.getElementById('agent-global-model-select');
+  const advancedToggle = document.getElementById('agent-advanced-toggle');
+  const advancedSection = document.getElementById('agent-advanced-section');
+
+  // Helper for modal elements
+  const modalElements = {
+    customFields: customConnectionFields,
+    globalModelGroup: globalModelGroup,
+    advancedSection: advancedSection
+  };
+
+  // --- Custom Connection Toggle Logic ---
+  let customEnabled = shouldEnableCustomConnection(agent);
+  customConnectionToggle.checked = customEnabled;
+  toggleCustomConnectionUI(customEnabled, modalElements);
+  customConnectionToggle.onchange = function () {
+    toggleCustomConnectionUI(this.checked, modalElements);
+    // When toggling custom connection, reload models if needed
+    if (!this.checked) {
+      loadGlobalModels();
     }
+  };
+
+  // --- Advanced Toggle Logic ---
+  let expandAdvanced = shouldExpandAdvanced(agent);
+  advancedToggle.checked = expandAdvanced;
+  toggleAdvancedUI(expandAdvanced, modalElements);
+  advancedToggle.onchange = function () {
+    toggleAdvancedUI(this.checked, modalElements);
+  };
+
+  // --- Global Model Dropdown Logic ---
+  async function loadGlobalModels() {
+    const endpoint = '/api/user/agent/settings'; // Use user endpoint for workspace
+    const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
+    populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+    globalModelSelect.onchange = function () {
+      const selected = models.find(m => m.deployment === this.value || m.name === this.value || m.id === this.value);
+      if (selected) {
+        if (apimEnabled) {
+          document.getElementById('agent-apim-deployment').value = selected.deployment || '';
+          document.getElementById('agent-gpt-endpoint').value = '';
+          document.getElementById('agent-gpt-key').value = '';
+          document.getElementById('agent-gpt-deployment').value = '';
+          document.getElementById('agent-gpt-api-version').value = '';
+        } else {
+          document.getElementById('agent-gpt-endpoint').value = selected.endpoint || '';
+          document.getElementById('agent-gpt-key').value = selected.key || '';
+          document.getElementById('agent-gpt-deployment').value = selected.deployment || selected.name || '';
+          document.getElementById('agent-gpt-api-version').value = selected.api_version || '';
+          document.getElementById('agent-apim-deployment').value = '';
+        }
+      }
+    };
   }
-  apimToggle.onchange = updateApimVisibility;
+
+  // Listen for APIM toggle changes to reload models
+  if (apimToggle) {
+    apimToggle.onchange = function () {
+      loadGlobalModels();
+    };
+  }
+
+  if (!customEnabled) {
+    loadGlobalModels();
+  }
+
   // Populate fields
   if (agent) {
     nameInput.value = agent.name || '';
-    nameInput.disabled = true;
     displayNameInput.value = agent.display_name || '';
     descInput.value = agent.description || '';
     endpointInput.value = agent.azure_openai_gpt_endpoint || '';
     keyInput.value = agent.azure_openai_gpt_key || '';
     deploymentInput.value = agent.azure_openai_gpt_deployment || '';
     apiVersionInput.value = agent.azure_openai_gpt_api_version || '';
+    apimToggle.checked = !!agent.enable_agent_gpt_apim;
     apimEndpointInput.value = agent.azure_agent_apim_gpt_endpoint || '';
     apimKeyInput.value = agent.azure_agent_apim_gpt_subscription_key || '';
     apimDeploymentInput.value = agent.azure_agent_apim_gpt_deployment || '';
     apimApiVersionInput.value = agent.azure_agent_apim_gpt_api_version || '';
-    apimToggle.checked = !!agent.enable_agent_gpt_apim;
-    updateApimVisibility();
     instructionsInput.value = agent.instructions || '';
-    actionsInput.value = Array.isArray(agent.actions_to_load) ? JSON.stringify(agent.actions_to_load, null, 2) : (agent.actions_to_load || '');
-    settingsInput.value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '';
-    // Removed defaultCheckbox logic
+    actionsInput.value = agent.actions_to_load ? JSON.stringify(agent.actions_to_load, null, 2) : '[]';
+    settingsInput.value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
   } else {
     nameInput.value = '';
-    nameInput.disabled = false;
     displayNameInput.value = '';
     descInput.value = '';
     endpointInput.value = '';
     keyInput.value = '';
     deploymentInput.value = '';
     apiVersionInput.value = '';
+    apimToggle.checked = false;
     apimEndpointInput.value = '';
     apimKeyInput.value = '';
     apimDeploymentInput.value = '';
     apimApiVersionInput.value = '';
-    apimToggle.checked = false;
-    updateApimVisibility();
     instructionsInput.value = '';
-    actionsInput.value = '';
-    settingsInput.value = '';
-    // Removed defaultCheckbox logic
+    actionsInput.value = '[]';
+    settingsInput.value = '{}';
   }
   // Save handler
   saveBtn.onclick = async () => {

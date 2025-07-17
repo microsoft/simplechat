@@ -26,6 +26,152 @@ export async function getUserSetting(key) {
 }
 // agents_common.js
 // Reusable agent logic for chat, workspace, and group modules
+/**
+ * Returns true if actions_to_load or other_settings are non-empty (not [], {}, null, or undefined)
+ * @param {Object} agent
+ */
+export function shouldExpandAdvanced(agent) {
+	if (!agent) return false;
+	let actions = agent.actions_to_load;
+	let settings = agent.other_settings;
+	let hasActions = false;
+	let hasSettings = false;
+	// Check actions_to_load
+	if (Array.isArray(actions)) {
+		hasActions = actions.length > 0;
+	} else if (typeof actions === 'string') {
+		try {
+			const arr = JSON.parse(actions);
+			hasActions = Array.isArray(arr) && arr.length > 0;
+		} catch { hasActions = !!actions.trim(); }
+	} else if (actions && actions !== null && actions !== undefined) {
+		hasActions = true;
+	}
+	// Check other_settings
+	if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+		hasSettings = Object.keys(settings).length > 0;
+	} else if (typeof settings === 'string') {
+		try {
+			const obj = JSON.parse(settings);
+			hasSettings = obj && typeof obj === 'object' && Object.keys(obj).length > 0;
+		} catch { hasSettings = !!settings.trim(); }
+	} else if (settings && settings !== null && settings !== undefined) {
+		hasSettings = true;
+	}
+	return hasActions || hasSettings;
+}
+
+/**
+ * Returns true if any custom connection fields are set (non-empty or true)
+ * @param {Object} agent
+ */
+export function shouldEnableCustomConnection(agent) {
+	if (!agent) return false;
+	return Boolean(
+		(agent.azure_openai_gpt_endpoint && agent.azure_openai_gpt_endpoint.trim()) ||
+		(agent.azure_openai_gpt_key && agent.azure_openai_gpt_key.trim()) ||
+		(agent.azure_openai_gpt_api_version && agent.azure_openai_gpt_api_version.trim()) ||
+		(agent.azure_agent_apim_gpt_endpoint && agent.azure_agent_apim_gpt_endpoint.trim()) ||
+		(agent.azure_agent_apim_gpt_subscription_key && agent.azure_agent_apim_gpt_subscription_key.trim()) ||
+		(agent.azure_agent_apim_gpt_api_version && agent.azure_agent_apim_gpt_api_version.trim()) ||
+		agent.enable_agent_gpt_apim
+	);
+}
+/**
+ * Returns available models and selected model for dropdown, based on APIM toggle and settings
+ * @param {Object} opts - { apimEnabled, settings, agent }
+ * @returns {Object} { models, selectedModel }
+ */
+export function getAvailableModels({ apimEnabled, settings, agent }) {
+	let models = [];
+	let selectedModel = null;
+	if (apimEnabled) {
+		// azure_apim_gpt_deployment is a string, could be comma separated
+		let apimDeployments = (settings && settings.azure_apim_gpt_deployment) || '';
+		models = apimDeployments.split(',').map(s => ({ deployment: s.trim(), display_name: s.trim() })).filter(m => m.deployment);
+		selectedModel = agent && agent.azure_agent_apim_gpt_deployment ? agent.azure_agent_apim_gpt_deployment : null;
+	} else {
+		// Otherwise use gpt_model.selected (array)
+		models = (settings && settings.gpt_model && settings.gpt_model.selected) ? settings.gpt_model.selected : [];
+		selectedModel = agent && agent.azure_openai_gpt_deployment ? agent.azure_openai_gpt_deployment : null;
+	}
+	return { models, selectedModel };
+}
+/**
+ * Fetches settings from endpoint and returns available models, selected model, and apimEnabled
+ * @param {string} endpoint - API endpoint to fetch settings
+ * @param {Object} agent - Current agent object
+ * @returns {Promise<{models: Array, selectedModel: string, apimEnabled: boolean}>}
+ */
+export async function fetchAndGetAvailableModels(endpoint, agent) {
+	try {
+		const resp = await fetch(endpoint);
+		if (!resp.ok) throw new Error('Failed to fetch global models');
+		const settings = await resp.json();
+		// Check APIM enabled (support both enable_gpt_apim and enable_apim)
+		const apimEnabled = settings.enable_gpt_apim || settings.enable_apim || false;
+		const { models, selectedModel } = getAvailableModels({ apimEnabled, settings, agent });
+		return { models, selectedModel, apimEnabled };
+	} catch (e) {
+		return { models: [], selectedModel: null, apimEnabled: false };
+	}
+}
+
+/**
+ * Shows/hides custom connection fields and global model dropdown
+ * @param {boolean} isEnabled
+ * @param {Object} modalElements - { customFields, globalModelGroup }
+ */
+export function toggleCustomConnectionUI(isEnabled, modalElements) {
+	if (!modalElements) return;
+	if (modalElements.customFields) {
+		modalElements.customFields.style.display = isEnabled ? '' : 'none';
+	}
+	if (modalElements.globalModelGroup) {
+		modalElements.globalModelGroup.style.display = isEnabled ? 'none' : '';
+	}
+}
+
+/**
+ * Shows/hides advanced section
+ * @param {boolean} isEnabled
+ * @param {Object} modalElements - { advancedSection }
+ */
+export function toggleAdvancedUI(isEnabled, modalElements) {
+	if (!modalElements) return;
+	if (modalElements.advancedSection) {
+		modalElements.advancedSection.style.display = isEnabled ? '' : 'none';
+	}
+}
+
+/**
+ * Populates the global model dropdown
+ * @param {HTMLElement} selectEl
+ * @param {Array} models
+ * @param {string} selectedModel
+ */
+export function populateGlobalModelDropdown(selectEl, models, selectedModel) {
+	if (!selectEl) return;
+	selectEl.innerHTML = '';
+	if (!models || !models.length) {
+		let opt = document.createElement('option');
+		opt.value = '';
+		opt.textContent = 'No models available';
+		selectEl.appendChild(opt);
+		selectEl.disabled = true;
+		return;
+	}
+	models.forEach(model => {
+		let opt = document.createElement('option');
+		opt.value = model.name || model.deployment || model.id || '';
+		opt.textContent = model.display_name || model.name || model.deployment || model.id || '';
+		if (selectedModel && (model.name === selectedModel || model.deployment === selectedModel || model.id === selectedModel)) {
+			opt.selected = true;
+		}
+		selectEl.appendChild(opt);
+	});
+	selectEl.disabled = false;
+}
 
 /**
  * Fetch user agents from backend
