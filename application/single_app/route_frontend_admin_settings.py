@@ -288,6 +288,32 @@ def register_route_frontend_admin_settings(app):
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
 
+            # --- Authentication & Redirect Settings ---
+            home_redirect_url = form_data.get('home_redirect_url', '').strip()
+            login_redirect_url = form_data.get('login_redirect_url', '').strip()
+            
+            # Validate redirect URLs if provided
+            def is_valid_url(url):
+                if not url:
+                    return True  # Empty URL is valid (no redirect)
+                import re
+                url_pattern = re.compile(
+                    r'^https?://'  # http:// or https://
+                    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+                    r'localhost|'  # localhost...
+                    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+                    r'(?::\d+)?'  # optional port
+                    r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+                return url_pattern.match(url) is not None
+            
+            if home_redirect_url and not is_valid_url(home_redirect_url):
+                flash('Invalid Home Redirect URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
+                home_redirect_url = ''
+                
+            if login_redirect_url and not is_valid_url(login_redirect_url):
+                flash('Invalid Login Redirect URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
+                login_redirect_url = ''
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -425,6 +451,10 @@ def register_route_frontend_admin_settings(app):
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
+
+                # Authentication & Redirect Settings
+                'home_redirect_url': home_redirect_url,
+                'login_redirect_url': login_redirect_url,
 
                 # Other
                 'max_file_size_mb': max_file_size_mb,

@@ -273,9 +273,13 @@ def login_required(f):
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
                 print(f"Browser request to {request.path} redirected ta login. No valid session.")
-                # return redirect(url_for('login'))
-                if LOGIN_REDIRECT_URL:
-                    return redirect(LOGIN_REDIRECT_URL)
+                # Get settings from database, with environment variable fallback
+                from functions_settings import get_settings
+                settings = get_settings()
+                login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
+                
+                if login_redirect_url:
+                    return redirect(login_redirect_url)
                 else:
                     return redirect(url_for('login'))
 
