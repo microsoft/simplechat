@@ -1234,6 +1234,20 @@ For more details, see the [Azure documentation on Private Endpoints](https://lea
 
    ![Cross-tenant Model Support](./images/cross_tenant-model_support.png)
 
+8. **Q: How do I enable external users (from other organizations) to access Simple Chat group workspaces via Access Packages if they cannot read local Entra?**
+
+   - **A:** When using Access Packages to allow external organizations to log into your deployment of Simple Chat, you may encounter a scenario where external users do not have permissions to read your local Entra directory (Microsoft Entra ID) and therefore cannot search for or assign users to Simple Chat group workspaces.
+
+     - **Solution:** To resolve this, you must create a custom Entra role with the following permissions and update your Access Package to assign this role. This requires the **Microsoft Entra ID Governance** license.
+
+       ```text
+       microsoft.directory/groups/members/read
+       microsoft.directory/users/standard/read
+       ```
+
+
+![Custom Role for External Users](./images/custom_role-external_users.png)
+
 ## Usage
 
 > <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
