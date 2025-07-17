@@ -588,6 +588,9 @@ def update_user_settings(user_id, settings_to_update):
                 if 'default_agent' in agent:
                     del agent['default_agent']
 
+        if 'enable_agents' not in  doc['settings'] or doc['settings']['enable_agents'] is None:
+            doc['settings']['enable_agents'] = False
+
         # --- Update the timestamp ---
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()

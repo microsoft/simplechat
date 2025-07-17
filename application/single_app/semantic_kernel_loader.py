@@ -149,7 +149,7 @@ def resolve_agent_config(agent, settings):
                 "display_name": agent.get("display_name", agent.get("name")),
                 "description": agent.get("description", ""),
                 "id": agent.get("id", ""),
-                "default_agent": agent.get("default_agent", False)
+                "default_agent": agent.get("default_agent", False) #[Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
             }
         except Exception as e:
             log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -195,7 +195,7 @@ def resolve_agent_config(agent, settings):
         "display_name": agent.get("display_name", agent.get("name")),
         "description": agent.get("description", ""),
         "id": agent.get("id", ""),
-        "default_agent": agent.get("default_agent", False)
+        "default_agent": agent.get("default_agent", False) #[Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
     }
 
 def load_time_plugin(kernel: Kernel):
@@ -359,7 +359,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 level=logging.ERROR,
                 exceptionTraceback=True
             )
-            return None
+            return None, None
     else:
         log_event(
             f"[SK Loader] ChatCompletionAgent or AzureChatCompletion not available for agent: {agent_config['name']} ({mode_label})",
@@ -367,7 +367,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        return None
+        return None, None
     return kernel, agent_objs
 
 def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="global"):
@@ -491,14 +491,53 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Load user+global plugins from merged list
     load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="per-user")
     # Only single-agent supported in per-user mode
-    default_agents = [a for a in agents_cfg if a.get('default_agent')]
-    if not default_agents:
-        log_event("[SK Loader] No default agent defined in user settings. Proceeding in kernel-only mode (per-user).", level=logging.INFO)
+    selected_agent = user_settings.get('selected_agent')
+    if isinstance(selected_agent, dict):
+        selected_agent_name = selected_agent.get('name')
+    else:
+        log_event(
+            f"[SK Loader] User {user_id} selected_agent is not a dict: {selected_agent}. Using None.",
+            level=logging.ERROR
+        )
+        selected_agent_name = None
+    agent_cfg = None
+    # Try user-selected agent
+    if selected_agent_name:
+        found = next((a for a in agents_cfg if a.get('name') == selected_agent_name), None)
+        if found:
+            logging.debug(f"[SK Loader] User {user_id} Found user-selected agent: {selected_agent_name}")
+            agent_cfg = found
+        else:
+            log_event(
+                f"[SK Loader] User {user_id} No agent found matching user-selected agent: {selected_agent_name}",
+                level=logging.WARNING
+            )
+    # If not found, try global selected agent
+    if agent_cfg is None:
+        logging.debug(f"[SK Loader] User {user_id} No user-selected agent found. Trying global selected agent.")
+        global_selected_agent_info = settings.get('global_selected_agent')
+        if global_selected_agent_info:
+            global_selected_agent_name = global_selected_agent_info.get('name')
+            found = next((a for a in agents_cfg if a.get('name') == global_selected_agent_name), None)
+            if found:
+                logging.debug(f"[SK Loader] User {user_id} Found global selected agent: {global_selected_agent_name}")
+                agent_cfg = found
+            else:
+                log_event(
+                    f"[SK Loader] User {user_id} No agent found matching global selected agent: {global_selected_agent_name}",
+                    level=logging.WARNING
+                )
+    # If still not found, use first agent
+    if agent_cfg is None and agents_cfg:
+        agent_cfg = agents_cfg[0]
+        log_event(
+            f"[SK Loader] User {user_id} No user or global selected agent found. Using first agent: {agent_cfg.get('name')}",
+            level=logging.WARNING
+        )
+    if agent_cfg is None:
+        log_event("[SK Loader] No agent found to load for user. Proceeding in kernel-only mode (per-user).", level=logging.INFO)
         return kernel, None
-    if len(default_agents) > 1:
-        log_event(f"[SK Loader] No more than one agent can be marked as default in user settings. Found: {len(default_agents)}", level=logging.ERROR, exceptionTraceback=True)
-        raise Exception("No more than one agent can be marked as default in user settings.")
-    kernel, agent_objs = load_single_agent_for_kernel(kernel, default_agents[0], settings, g, redis_client=redis_client, mode_label="per-user")
+    kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
     return kernel, agent_objs
 
 def load_semantic_kernel(kernel: Kernel, settings):
@@ -813,3 +852,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
 
     # Return both kernel and all agents (including orchestrator) for use in the app
     return kernel, agent_objs
+
+
+def load_multi_agent_for_kernel(kernel: Kernel, settings):
+    return None, None
