@@ -177,7 +177,6 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
-)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
