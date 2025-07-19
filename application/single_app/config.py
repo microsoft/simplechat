@@ -24,6 +24,7 @@ ffmpeg_bin.init()
 import ffmpeg as ffmpeg_py
 import glob
 import jwt
+import pandas
 
 from flask import (
     Flask, 
@@ -85,7 +86,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.016'
+app.config['VERSION'] = '0.216.026'
 
 Session(app)
 

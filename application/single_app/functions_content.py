@@ -126,9 +126,9 @@ def extract_content_with_azure_di(file_path):
 def extract_table_file(file_path, file_ext):
     try:
         if file_ext == '.csv':
-            df = pd.read_csv(file_path)
+            df = pandas.read_csv(file_path)
         elif file_ext in ['.xls', '.xlsx']:
-            df = pd.read_excel(file_path)
+            df = pandas.read_excel(file_path)
         else:
             raise ValueError("Unsupported file extension for table extraction.")
         

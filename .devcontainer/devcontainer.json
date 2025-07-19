@@ -6,7 +6,7 @@
 	"image": "mcr.microsoft.com/devcontainers/python:0-3.11",
 	"features": {
 		"ghcr.io/devcontainers/features/python:1": {},
-		"ghcr.io/devcontainers-contrib/features/black:2": {}
+		"ghcr.io/devcontainers-extra/features/black:2": {}
 	},
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
