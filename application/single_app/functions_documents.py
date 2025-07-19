@@ -1417,15 +1417,15 @@ def get_document_versions(user_id, document_id, group_id=None):
     
 def detect_doc_type(document_id, user_id=None):
     """
-    Check Cosmos to see if this doc belongs to the user's docs (has user_id)
-    or the group's docs (has group_id).
-    Returns one of: "user", "group", or None if not found.
+    Check Cosmos to see if this doc belongs to the user's docs (has user_id),
+    the group's docs (has group_id), or public workspace docs (has public_workspace_id).
+    Returns one of: "personal", "group", "public", or None if not found.
     Optionally checks if user_id matches (for user docs).
     """
 
     try:
         doc_item = cosmos_user_documents_container.read_item(
-            document_id, 
+            document_id,
             partition_key=document_id
         )
         if user_id and doc_item.get('user_id') != user_id:
@@ -1437,21 +1437,31 @@ def detect_doc_type(document_id, user_id=None):
 
     try:
         group_doc_item = cosmos_group_documents_container.read_item(
-            document_id, 
+            document_id,
             partition_key=document_id
         )
         return "group", group_doc_item['group_id']
     except:
         pass
 
+    try:
+        public_doc_item = cosmos_public_documents_container.read_item(
+            document_id,
+            partition_key=document_id
+        )
+        return "public", public_doc_item['public_workspace_id']
+    except:
+        pass
+
     return None
 
-def process_metadata_extraction_background(document_id, user_id, group_id=None):
+def process_metadata_extraction_background(document_id, user_id, group_id=None, public_workspace_id=None):
     """
     Background function that calls extract_document_metadata(...)
     and updates Cosmos DB accordingly.
     """
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     try:
         # Log status: starting
@@ -1462,7 +1472,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
             "status": "Metadata extraction started..."
         }
 
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         update_document(**args)
@@ -1473,7 +1485,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
             "user_id": user_id
         }
 
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         metadata = extract_document_metadata(**args)
@@ -1487,7 +1501,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
                 "status": "Metadata extraction returned empty or failed"
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             update_document(**args)
@@ -1506,7 +1522,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
             "organization": metadata.get('organization')
         }
 
-        if is_group:
+        if is_public_workspace:
+            args_metadata["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args_metadata["group_id"] = group_id
 
         update_document(**args_metadata)
@@ -1518,7 +1536,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
             "percentage_complete": 100
         }
 
-        if is_group:
+        if is_public_workspace:
+            args_status["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args_status["group_id"] = group_id
 
         update_document(**args_status)
@@ -1531,7 +1551,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None):
             "status": f"Metadata extraction failed: {str(e)}"
         }
 
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         update_document(**args)
@@ -1592,7 +1614,18 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         "abstract": ""
     }
 
-    if is_group:
+    if is_public_workspace:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.id = @document_id
+                AND c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@document_id", "value": document_id},
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT *
             FROM c
@@ -1607,7 +1640,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         query = """
             SELECT *
             FROM c
-            WHERE c.id = @document_id 
+            WHERE c.id = @document_id
                 AND c.user_id = @user_id
         """
         parameters = [
@@ -1631,7 +1664,9 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             "status": f"Retrieved document items for document {document_id}"
         }
 
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         update_document(**args)
@@ -1682,7 +1717,9 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         "status": f"Extracted metadata for document {document_id}"
     }
 
-    if is_group:
+    if is_public_workspace:
+        args["public_workspace_id"] = public_workspace_id
+    elif is_group:
         args["group_id"] = group_id
 
     update_document(**args)
@@ -1756,34 +1793,59 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                 "status": f"Collecting document data to generate metadata from document: {document_id}"
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             update_document(**args)
 
 
             document_scope, scope_id = detect_doc_type(
-                document_id, 
+                document_id,
                 user_id
             )
 
             if document_scope == "personal":
                 search_results = hybrid_search(
-                    json.dumps(meta_data), 
-                    user_id, 
-                    document_id=document_id, 
-                    top_n=12, 
+                    json.dumps(meta_data),
+                    user_id,
+                    document_id=document_id,
+                    top_n=12,
                     doc_scope=document_scope
                 )
             elif document_scope == "group":
                 search_results = hybrid_search(
-                    json.dumps(meta_data), 
-                    user_id, 
+                    json.dumps(meta_data),
+                    user_id,
                     document_id=document_id,
-                    top_n=12, 
-                    doc_scope=document_scope, 
+                    top_n=12,
+                    doc_scope=document_scope,
                     active_group_id=scope_id
                 )
+            elif document_scope == "public":
+                search_results = hybrid_search(
+                    json.dumps(meta_data),
+                    user_id,
+                    document_id=document_id,
+                    top_n=12,
+                    doc_scope=document_scope,
+                    active_public_workspace_id=scope_id
+                )
+            else:
+                # If document scope is not detected, but we know it's a public workspace document
+                # (since we're in this function with public_workspace_id), use public scope
+                if is_public_workspace:
+                    search_results = hybrid_search(
+                        json.dumps(meta_data),
+                        user_id,
+                        document_id=document_id,
+                        top_n=12,
+                        doc_scope="public",
+                        active_public_workspace_id=public_workspace_id
+                    )
+                else:
+                    search_results = "No Hybrid results"
 
         else:
             search_results = "No Hybrid results"
@@ -1955,7 +2017,9 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         "status": f"Metadata generated for document {document_id}"
     }
 
-    if is_group:
+    if is_public_workspace:
+        args["public_workspace_id"] = public_workspace_id
+    elif is_group:
         args["group_id"] = group_id
 
     update_document(**args)

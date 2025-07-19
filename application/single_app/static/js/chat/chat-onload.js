@@ -95,9 +95,9 @@ window.addEventListener('DOMContentLoaded', () => {
           populateDocumentSelectScope(); // Populate based on scope (might be default or from URL)
 
           if (localDocumentIdParam) {
-               // Wait a tiny moment for populateDocumentSelectScope potentially async operations (less ideal, but sometimes needed)
-               // A better approach would be if populateDocumentSelectScope returned a promise
-               // setTimeout(() => {
+               // Wait a tiny moment for populateDocumentSelectScope potentially async operations
+               // This delay is necessary to ensure the document options are fully populated
+               setTimeout(() => {
                    if ([...localDocSelectEl.options].some(option => option.value === localDocumentIdParam)) {
                        localDocSelectEl.value = localDocumentIdParam;
                    } else {
@@ -105,7 +105,7 @@ window.addEventListener('DOMContentLoaded', () => {
                    }
                    // Ensure classification updates after setting document
                    handleDocumentSelectChange();
-               // }, 0); // Tiny delay
+               }, 100); // Small delay to ensure options are populated
           } else {
               // If no specific doc ID, still might need to trigger change if scope changed
                handleDocumentSelectChange();

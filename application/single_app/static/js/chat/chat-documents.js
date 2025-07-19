@@ -644,6 +644,24 @@ export function handleDocumentSelectChange() {
       return;
   }
 
+  // Update custom dropdown button text to match selected document
+  if (docDropdownButton) {
+    const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
+    if (selectedOption) {
+      docDropdownButton.querySelector(".selected-document-text").textContent = selectedOption.textContent;
+      
+      // Update active state in dropdown
+      if (docDropdownItems) {
+        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
+          item.classList.remove("active");
+          if (item.getAttribute("data-document-id") === selectedOption.value) {
+            item.classList.add("active");
+          }
+        });
+      }
+    }
+  }
+
   // Classification UI logic (optional, only if elements exist)
   const classificationEnabled = toBoolean(window.enable_document_classification);
 

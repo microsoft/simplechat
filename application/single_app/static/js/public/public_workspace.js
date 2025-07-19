@@ -22,6 +22,7 @@ const publicActivePolls = new Set();
 
 // Modals
 const publicPromptModal = new bootstrap.Modal(document.getElementById('publicPromptModal'));
+const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publicDocMetadataModal'));
 
 // Editors
 let publicSimplemde = null;
@@ -87,6 +88,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   createPublicPromptBtn.onclick = ()=> openPublicPromptModal();
   publicPromptForm.onsubmit = onSavePublicPrompt;
+  
+  // Document metadata form submission
+  const publicDocMetadataForm = document.getElementById('public-doc-metadata-form');
+  if (publicDocMetadataForm) {
+    publicDocMetadataForm.addEventListener('submit', onSavePublicDocMetadata);
+  }
   publicPromptsPageSizeSelect.onchange = e=>{ publicPromptsPageSize=+e.target.value; publicPromptsCurrentPage=1; fetchPublicPrompts(); };
   promptsApplyBtn.onclick = ()=>{ publicPromptsSearchTerm = publicPromptsSearchInput.value.trim(); publicPromptsCurrentPage=1; fetchPublicPrompts(); };
   promptsClearBtn.onclick = ()=>{ publicPromptsSearchInput.value=''; publicPromptsSearchTerm=''; publicPromptsCurrentPage=1; fetchPublicPrompts(); };
@@ -168,12 +175,70 @@ async function fetchPublicDocs(){
 
 function renderPublicDocumentRow(doc){
   const canManage=['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic);
-  const tr=document.createElement('tr'); tr.innerHTML=`
-    <td>${doc.percentage_complete>=100?'<i class="bi bi-file-earmark-text-fill"></i>':'<i class="bi bi-hourglass-split"></i>'}</td>
-    <td title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
-    <td title="${escapeHtml(doc.title||'')}">${escapeHtml(doc.title||'')}</td>
-    <td>${canManage?`<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}')"><i class="bi bi-trash-fill"></i></button>`:''}</td>`;
-  document.querySelector('#public-documents-table tbody').append(tr);
+  
+  // Create main document row
+  const tr=document.createElement('tr');
+  tr.id = `public-doc-row-${doc.id}`;
+  tr.innerHTML=`
+    <td class="align-middle"><button class="btn btn-link p-0" onclick="window.togglePublicDetails('${doc.id}')" title="Show/Hide Details"><span id="public-arrow-icon-${doc.id}" class="bi bi-chevron-right"></span></button></td>
+    <td class="align-middle" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
+    <td class="align-middle" title="${escapeHtml(doc.title||'')}">${escapeHtml(doc.title||'')}</td>
+    <td class="align-middle">${canManage?`<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}', event)" title="Delete Document"><i class="bi bi-trash-fill"></i></button><button class="btn btn-sm btn-primary ms-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Search in Chat"><i class="bi bi-chat-dots-fill"></i> Chat</button>`:''}</td>`;
+  
+  // Create details row
+  const detailsRow = document.createElement('tr');
+  detailsRow.id = `public-details-row-${doc.id}`;
+  detailsRow.style.display = 'none';
+  
+  // Helper function to get classification badge style
+  function getClassificationBadgeStyle(classification) {
+    const styles = {
+      'Public': 'background-color: #28a745;',
+      'CUI': 'background-color: #ffc107;',
+      'ITAR': 'background-color: #dc3545;',
+      'Pending': 'background-color: #79bcfb;',
+      'None': 'background-color: #6c757d;',
+      'N/A': 'background-color: #6c757d;'
+    };
+    return styles[classification] || 'background-color: #6c757d;';
+  }
+  
+  // Helper function to get citation badge
+  function getCitationBadge(enhanced_citations) {
+    return enhanced_citations ?
+      '<span class="badge bg-success">Enhanced</span>' :
+      '<span class="badge bg-secondary">Standard</span>';
+  }
+  
+  detailsRow.innerHTML = `
+    <td colspan="4">
+      <div class="bg-light p-3 border rounded small">
+        <p class="mb-1"><strong>Classification:</strong> <span class="classification-badge text-dark" style="${getClassificationBadgeStyle(doc.document_classification || doc.classification)}">${escapeHtml(doc.document_classification || doc.classification || 'N/A')}</span></p>
+        <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || '1')}</p>
+        <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(doc.authors || 'N/A')}</p>
+        <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(doc.number_of_pages || 'N/A')}</p>
+        <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
+        <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
+        <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
+        <p class="mb-0"><strong>Abstract:</strong> ${escapeHtml(doc.abstract || 'N/A')}</p>
+        <hr class="my-2">
+        <div class="d-flex flex-wrap gap-2">
+          ${canManage ? `
+            <button class="btn btn-sm btn-info" onclick="window.onEditPublicDocument('${doc.id}')" title="Edit Metadata">
+              <i class="bi bi-pencil-fill"></i> Edit Metadata
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="window.onExtractPublicMetadata('${doc.id}', event)" title="Re-run Metadata Extraction">
+              <i class="bi bi-magic"></i> Extract Metadata
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    </td>`;
+  
+  // Append both rows to the table
+  const tbody = document.querySelector('#public-documents-table tbody');
+  tbody.append(tr);
+  tbody.append(detailsRow);
 }
 
 function renderPublicDocsPagination(page, pageSize, totalCount){
@@ -191,7 +256,13 @@ async function onPublicUploadClick(){
   try{ const r=await fetch('/api/public_documents/upload',{method:'POST',body:fd}); if(!r.ok) throw await r.json(); const d=await r.json(); uploadStatus.textContent=`Uploaded ${d.document_ids.length}/${files.length}`; fileInput.value=''; publicDocsCurrentPage=1; fetchPublicDocs(); }catch(err){ alert(`Upload failed: ${err.error||err.message}`); }
   finally{ uploadBtn.disabled=false; uploadBtn.textContent='Upload Document(s)'; }
 }
-window.deletePublicDocument=async function(id){ if(!confirm('Delete?')) return; try{ await fetch(`/api/public_documents/${id}`,{method:'DELETE'}); fetchPublicDocs(); }catch(e){ alert(`Error deleting: ${e.error||e.message}`);} };
+window.deletePublicDocument=async function(id, event){ if(!confirm('Delete?')) return; try{ await fetch(`/api/public_documents/${id}`,{method:'DELETE'}); fetchPublicDocs(); }catch(e){ alert(`Error deleting: ${e.error||e.message}`);} };
+
+window.searchPublicDocumentInChat = function(docId) {
+  console.log(`Search public document in chat: ${docId}`);
+  // TODO: Implement search in chat functionality
+  alert('Search in chat functionality not yet implemented');
+};
 
 // Prompts
 async function fetchPublicPrompts(){
@@ -207,8 +278,173 @@ async function onSavePublicPrompt(e){ e.preventDefault(); const id=publicPromptI
 window.onEditPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${id}`); if(!r.ok) throw await r.json(); const d=await r.json(); document.getElementById('publicPromptModalLabel').textContent=`Edit: ${d.name}`; publicPromptIdEl.value=d.id; publicPromptNameEl.value=d.name; if(publicSimplemde) publicSimplemde.value(d.content); else publicPromptContentEl.value=d.content; publicPromptModal.show(); }catch(e){ alert(e.error||e.message);} };
 window.onDeletePublicPrompt=async function(id){ if(!confirm('Delete prompt?')) return; try{ await fetch(`/api/public_prompts/${id}`,{method:'DELETE'}); fetchPublicPrompts(); }catch(e){ alert(e.error||e.message);} };
 
+// Document metadata functions
+window.onEditPublicDocument = function(docId) {
+  if (!publicDocMetadataModal) {
+    console.error("Public document metadata modal element not found.");
+    return;
+  }
+  
+  fetch(`/api/public_documents/${docId}`)
+    .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+    .then(doc => {
+      const docIdInput = document.getElementById("public-doc-id");
+      const docTitleInput = document.getElementById("public-doc-title");
+      const docAbstractInput = document.getElementById("public-doc-abstract");
+      const docKeywordsInput = document.getElementById("public-doc-keywords");
+      const docPubDateInput = document.getElementById("public-doc-publication-date");
+      const docAuthorsInput = document.getElementById("public-doc-authors");
+      const classificationSelect = document.getElementById("public-doc-classification");
+
+      if (docIdInput) docIdInput.value = doc.id;
+      if (docTitleInput) docTitleInput.value = doc.title || "";
+      if (docAbstractInput) docAbstractInput.value = doc.abstract || "";
+      if (docKeywordsInput) docKeywordsInput.value = Array.isArray(doc.keywords) ? doc.keywords.join(", ") : (doc.keywords || "");
+      if (docPubDateInput) docPubDateInput.value = doc.publication_date || "";
+      if (docAuthorsInput) docAuthorsInput.value = Array.isArray(doc.authors) ? doc.authors.join(", ") : (doc.authors || "");
+
+      // Handle classification dropdown
+      if (classificationSelect) {
+        const currentClassification = doc.classification || doc.document_classification || 'none';
+        classificationSelect.value = currentClassification;
+        // Double-check if the value actually exists in the options
+        if (![...classificationSelect.options].some(option => option.value === classificationSelect.value)) {
+          console.warn(`Classification value "${currentClassification}" not found in dropdown, defaulting.`);
+          classificationSelect.value = "none";
+        }
+      }
+
+      publicDocMetadataModal.show();
+    })
+    .catch(err => {
+      console.error("Error retrieving public document for edit:", err);
+      alert("Error retrieving document details: " + (err.error || err.message || "Unknown error"));
+    });
+};
+
+// Form submission handler for public document metadata
+async function onSavePublicDocMetadata(e) {
+  e.preventDefault();
+  const docSaveBtn = document.getElementById("public-doc-save-btn");
+  if (!docSaveBtn) return;
+  
+  docSaveBtn.disabled = true;
+  docSaveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+
+  const docId = document.getElementById("public-doc-id").value;
+  const payload = {
+    title: document.getElementById("public-doc-title")?.value.trim() || null,
+    abstract: document.getElementById("public-doc-abstract")?.value.trim() || null,
+    keywords: document.getElementById("public-doc-keywords")?.value.trim() || null,
+    publication_date: document.getElementById("public-doc-publication-date")?.value.trim() || null,
+    authors: document.getElementById("public-doc-authors")?.value.trim() || null,
+  };
+
+  if (payload.keywords) {
+    payload.keywords = payload.keywords.split(",").map(kw => kw.trim()).filter(Boolean);
+  } else {
+    payload.keywords = [];
+  }
+  
+  if (payload.authors) {
+    payload.authors = payload.authors.split(",").map(a => a.trim()).filter(Boolean);
+  } else {
+    payload.authors = [];
+  }
+
+  // Add classification
+  const classificationSelect = document.getElementById("public-doc-classification");
+  let selectedClassification = classificationSelect?.value || null;
+  // Treat 'none' selection as null/empty on the backend
+  if (selectedClassification === 'none') {
+    selectedClassification = null;
+  }
+  payload.document_classification = selectedClassification;
+
+  try {
+    const response = await fetch(`/api/public_documents/${docId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Server responded with status ${response.status}`);
+    }
+    
+    const updatedDoc = await response.json();
+    publicDocMetadataModal.hide();
+    fetchPublicDocs(); // Refresh the table
+  } catch (err) {
+    console.error("Error updating public document:", err);
+    alert("Error updating document: " + (err.message || "Unknown error"));
+  } finally {
+    docSaveBtn.disabled = false;
+    docSaveBtn.textContent = "Save Metadata";
+  }
+}
+
+window.onExtractPublicMetadata = function(docId, event) {
+  if (!confirm("Run metadata extraction for this document? This may overwrite existing metadata.")) return;
+
+  const extractBtn = event ? event.target.closest('button') : null;
+  if (extractBtn) {
+    extractBtn.disabled = true;
+    extractBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...`;
+  }
+
+  fetch(`/api/public_documents/${docId}/extract_metadata`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  })
+    .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+    .then(data => {
+      console.log("Public document metadata extraction started/completed:", data);
+      // Refresh the list after a short delay to allow backend processing
+      setTimeout(fetchPublicDocs, 1500);
+      // Optionally close the details view if open
+      const detailsRow = document.getElementById(`public-details-row-${docId}`);
+      if (detailsRow && detailsRow.style.display !== "none") {
+        window.togglePublicDetails(docId); // Close details to show updated summary row first
+      }
+    })
+    .catch(err => {
+      console.error("Error calling extract metadata for public document:", err);
+      alert("Error extracting metadata: " + (err.error || err.message || "Unknown error"));
+    })
+    .finally(() => {
+      if (extractBtn) {
+        // Check if button still exists before re-enabling
+        if (document.body.contains(extractBtn)) {
+          extractBtn.disabled = false;
+          extractBtn.innerHTML = '<i class="bi bi-magic"></i> Extract Metadata';
+        }
+      }
+    });
+};
+
 function updatePublicPromptsRoleUI(){ const canManage=['Owner','Admin','PromptManager'].includes(userRoleInActivePublic); document.getElementById('create-public-prompt-section').style.display=canManage?'block':'none'; document.getElementById('public-prompts-role-warning').style.display=canManage?'none':'block'; }
 
 // Expose fetch
 window.fetchPublicPrompts = fetchPublicPrompts;
+
+// Function to toggle document details
+function togglePublicDetails(docId) {
+  const detailsRow = document.getElementById(`public-details-row-${docId}`);
+  const arrowIcon = document.getElementById(`public-arrow-icon-${docId}`);
+  
+  if (!detailsRow || !arrowIcon) return;
+  
+  if (detailsRow.style.display === "none") {
+    detailsRow.style.display = "";
+    arrowIcon.className = "bi bi-chevron-down";
+  } else {
+    detailsRow.style.display = "none";
+    arrowIcon.className = "bi bi-chevron-right";
+  }
+}
+
+// Make the function globally available
+window.togglePublicDetails = togglePublicDetails;
 window.fetchPublicDocs = fetchPublicDocs;
