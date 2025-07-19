@@ -29,6 +29,8 @@ def register_route_frontend_admin_settings(app):
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
             settings['require_member_of_create_group'] = False
+        if 'require_member_of_create_public_workspace' not in settings:
+            settings['require_member_of_create_public_workspace'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
@@ -235,6 +237,7 @@ def register_route_frontend_admin_settings(app):
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
+            require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
@@ -406,8 +409,10 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
+                'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_processing_logs': form_data.get('enable_file_processing_logs') == 'on',
-                'require_member_of_create_group': require_member_of_create_group, # ADDE
+                'require_member_of_create_group': require_member_of_create_group,
+                'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,

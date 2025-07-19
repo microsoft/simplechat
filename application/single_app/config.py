@@ -88,6 +88,7 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['VERSION'] = '0.216.026'
 
+
 Session(app)
 
 CLIENTS = {}
@@ -150,6 +151,7 @@ bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
+storage_account_public_documents_container_name = "public-documents"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -175,10 +177,6 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
-cosmos_user_documents_container_name = "documents"
-cosmos_user_documents_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_user_documents_container_name,
-    partition_key=PartitionKey(path="/id")
 )
 
 cosmos_settings_container_name = "settings"
@@ -193,12 +191,20 @@ cosmos_groups_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_workspaces_container_name = "public_workspaces"
+cosmos_public_workspaces_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspaces_container_name,
+    partition_key=PartitionKey(path="/id")
 cosmos_group_documents_container_name = "group_documents"
 cosmos_group_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_documents_container_name,
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
+    partition_key=PartitionKey(path="/id")
 cosmos_user_settings_container_name = "user_settings"
 cosmos_user_settings_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_user_settings_container_name,
@@ -241,6 +247,10 @@ cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_prompts_container_name = "public_prompts"
+cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
 cosmos_file_processing_container_name = "file_processing"
 cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_file_processing_container_name,
@@ -408,6 +418,10 @@ def initialize_clients(settings):
                     index_name="simplechat-group-index",
                     credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
                 )
+                search_client_public = SearchClient(
+                    endpoint=azure_apim_ai_search_endpoint,
+                    index_name="simplechat-public-index",
+                    credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
             else:
                 if settings.get("azure_ai_search_authentication_type") == "managed_identity":
                     search_client_user = SearchClient(
@@ -420,6 +434,10 @@ def initialize_clients(settings):
                         index_name="simplechat-group-index",
                         credential=DefaultAzureCredential()
                     )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
+                        credential=DefaultAzureCredential()
                 else:
                     search_client_user = SearchClient(
                         endpoint=azure_ai_search_endpoint,
@@ -431,6 +449,10 @@ def initialize_clients(settings):
                         index_name="simplechat-group-index",
                         credential=AzureKeyCredential(azure_ai_search_key)
                     )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
+                        credential=AzureKeyCredential(azure_ai_search_key)
             CLIENTS["search_client_user"] = search_client_user
             CLIENTS["search_client_group"] = search_client_group
         except Exception as e:
@@ -479,7 +501,9 @@ def initialize_clients(settings):
                 
                 # Create containers if they don't exist
                 # This addresses the issue where the application assumes containers exist
-                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                for container_name in [
+                    storage_account_user_documents_container_name, 
+                    storage_account_group_documents_container_name, 
                     try:
                         container_client = blob_service_client.get_container_client(container_name)
                         if not container_client.exists():
@@ -490,10 +514,6 @@ def initialize_clients(settings):
                             print(f"Container '{container_name}' already exists.")
                     except Exception as container_error:
                         print(f"Error creating container {container_name}: {str(container_error)}")
-                
-                # Handle video and audio support when enabled
-                # if enable_video_file_support:
-                #     video_client = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
                 #     CLIENTS["storage_account_video_files_client"] = video_client
                 #     # Create video containers if needed
                 #

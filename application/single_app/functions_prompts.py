@@ -27,12 +27,27 @@ def list_prompts(user_id, prompt_type, args, group_id=None):
     List prompts for a user or a group with pagination and optional search.
     Returns: (items, total_count, page, page_size)
     """
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_prompts_container if is_group else cosmos_user_prompts_container
+    is_public = prompt_type == 'public_prompt'
+    is_group = group_id is not None and not is_public
+    
+    # Determine container
+    if is_public:
+        cosmos_container = cosmos_public_prompts_container
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+    else:
+        cosmos_container = cosmos_user_prompts_container
 
     # Determine filter field and value
-    id_field = 'group_id' if is_group else 'user_id'
-    id_value = group_id if is_group else user_id
+    if is_public:
+        id_field = 'public_id'
+        id_value = group_id  # For public prompts, group_id is actually the public workspace ID
+    elif is_group:
+        id_field = 'group_id'
+        id_value = group_id
+    else:
+        id_field = 'user_id'
+        id_value = user_id
 
     page, page_size = get_pagination_params(args)
     search_term = args.get('search')
@@ -86,8 +101,16 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None):
     """
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     prompt_id = str(uuid.uuid4())
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_prompts_container if is_group else cosmos_user_prompts_container
+    is_public = prompt_type == 'public_prompt'
+    is_group = group_id is not None and not is_public
+    
+    # Determine container
+    if is_public:
+        cosmos_container = cosmos_public_prompts_container
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+    else:
+        cosmos_container = cosmos_user_prompts_container
 
     # Build the document
     doc = {
@@ -96,9 +119,16 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None):
         "content": content,
         "type": prompt_type,
         "created_at": now,
-        "updated_at": now,
-        "group_id" if is_group else "user_id": group_id if is_group else user_id
+        "updated_at": now
     }
+    
+    # Set the appropriate ID field
+    if is_public:
+        doc["public_id"] = group_id  # For public prompts, group_id is actually the public workspace ID
+    elif is_group:
+        doc["group_id"] = group_id
+    else:
+        doc["user_id"] = user_id
 
     created = cosmos_container.create_item(body=doc)
     return {
@@ -113,22 +143,42 @@ def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None):
     Retrieve a prompt by ID for a user or group.
     Returns the item dict or None.
     """
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_prompts_container if is_group else cosmos_user_prompts_container
+    is_public = prompt_type == 'public_prompt'
+    is_group = group_id is not None and not is_public
+    
+    # Determine container
+    if is_public:
+        cosmos_container = cosmos_public_prompts_container
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+    else:
+        cosmos_container = cosmos_user_prompts_container
 
     # Try direct read
     try:
         item = cosmos_container.read_item(item=prompt_id, partition_key=prompt_id)
-        if item.get("type") == prompt_type and (
-            item.get("group_id") == group_id if is_group else item.get("user_id") == user_id
-        ):
-            return item
+        if item.get("type") == prompt_type:
+            # Check ownership based on prompt type
+            if is_public and item.get("public_id") == group_id:
+                return item
+            elif is_group and item.get("group_id") == group_id:
+                return item
+            elif not is_public and not is_group and item.get("user_id") == user_id:
+                return item
     except CosmosResourceNotFoundError:
         pass
 
     # Fallback to query
-    id_field = 'group_id' if is_group else 'user_id'
-    id_value = group_id if is_group else user_id
+    if is_public:
+        id_field = 'public_id'
+        id_value = group_id  # For public prompts, group_id is actually the public workspace ID
+    elif is_group:
+        id_field = 'group_id'
+        id_value = group_id
+    else:
+        id_field = 'user_id'
+        id_value = user_id
+        
     query = (
         "SELECT * FROM c WHERE c.id=@pid AND c.{0}=@id AND c.type=@type"
     ).format(id_field)
@@ -162,8 +212,17 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None):
         item[k] = v
     item["updated_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_prompts_container if is_group else cosmos_user_prompts_container
+    is_public = prompt_type == 'public_prompt'
+    is_group = group_id is not None and not is_public
+    
+    # Determine container
+    if is_public:
+        cosmos_container = cosmos_public_prompts_container
+    elif is_group:
+        cosmos_container = cosmos_group_prompts_container
+    else:
+        cosmos_container = cosmos_user_prompts_container
+        
     updated = cosmos_container.replace_item(item=prompt_id, body=item)
 
     return {
@@ -178,12 +237,28 @@ def delete_prompt_doc(user_id, prompt_id, group_id=None):
     Delete a prompt for a user or a group.
     Returns True if deleted, False if not found.
     """
-    item = get_prompt_doc(user_id, prompt_id, None, group_id)
+    # For delete, we need to determine if this is a public, group, or user prompt
+    item = None
+    
+    # Check if this is for a public workspace (public_prompt)
+    if group_id is not None:
+        # First try as public prompt
+        item = get_prompt_doc(user_id, prompt_id, 'public_prompt', group_id)
+        if item:
+            cosmos_container = cosmos_public_prompts_container
+        else:
+            # Then try as group prompt
+            item = get_prompt_doc(user_id, prompt_id, 'group_prompt', group_id)
+            if item:
+                cosmos_container = cosmos_group_prompts_container
+    else:
+        # User prompt
+        item = get_prompt_doc(user_id, prompt_id, 'user_prompt', None)
+        if item:
+            cosmos_container = cosmos_user_prompts_container
+    
     if not item:
         return False
 
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_prompts_container if is_group else cosmos_user_prompts_container
     cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
-
     return True
