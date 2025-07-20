@@ -684,3 +684,26 @@ def register_route_backend_public_workspaces(app):
         )
         file_count = next(count_iter, 0)
         return jsonify({"fileCount": file_count}), 200
+
+    @app.route("/api/public_workspaces/<ws_id>/promptCount", methods=["GET"])
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_public_prompt_count(ws_id):
+        """
+        GET /api/public_workspaces/<ws_id>/promptCount
+        Returns count of prompts in this workspace.
+        """
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Not found"}), 404
+
+        query = "SELECT VALUE COUNT(1) FROM p WHERE p.public_workspace_id = @wsId"
+        params = [{"name": "@wsId", "value": ws_id}]
+        count_iter = cosmos_public_prompts_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        )
+        prompt_count = next(count_iter, 0)
+        return jsonify({"promptCount": prompt_count}), 200

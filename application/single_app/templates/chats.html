@@ -137,6 +137,9 @@
                                  <option value="all" selected>All</option>
                                  <option value="personal">Personal</option>
                                  <option value="group">Group</option>
+                                 {% if settings.enable_public_workspaces %}
+                                 <option value="public">Public</option>
+                                 {% endif %}
                              </select>
                          </div>
                              <div class="flex-grow-1" style="min-width: 200px;">

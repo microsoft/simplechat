@@ -81,3 +81,21 @@ def register_route_frontend_public_workspaces(app):
             enable_video_file_support=enable_video_file_support,
             enable_audio_file_support=enable_audio_file_support
         )
+
+    @app.route("/public_directory", methods=["GET"])
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def public_directory():
+        """
+        Renders the Public Directory page (templates/public_directory.html).
+        This page shows all public workspaces in a table format with search functionality.
+        """
+        settings = get_settings()
+        public_settings = sanitize_settings_for_user(settings)
+        
+        return render_template(
+            'public_directory.html',
+            settings=public_settings,
+            app_settings=public_settings
+        )
