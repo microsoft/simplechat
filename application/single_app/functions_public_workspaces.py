@@ -227,3 +227,70 @@ def update_active_public_workspace_for_user(user_id: str, ws_id: str) -> None:
     Persist the user's activePublicWorkspaceOid in their settings.
     """
     update_user_settings(user_id, {"activePublicWorkspaceOid": ws_id})
+
+
+def get_user_visible_public_workspaces(user_id: str) -> list:
+    """
+    Get the list of public workspace IDs that the user has marked as visible.
+    Returns all accessible workspaces if no visibility settings exist yet.
+    """
+    from functions_settings import get_user_settings
+    
+    user_settings = get_user_settings(user_id)
+    visible_workspace_ids = user_settings.get("settings", {}).get("visiblePublicWorkspaceIds")
+    
+    # If no visibility settings exist yet, return all accessible workspaces (backward compatibility)
+    if visible_workspace_ids is None:
+        accessible_workspaces = get_user_public_workspaces(user_id)
+        return [ws["id"] for ws in accessible_workspaces]
+    
+    return visible_workspace_ids
+
+
+def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> None:
+    """
+    Set the list of public workspace IDs that the user wants to be visible.
+    """
+    from functions_settings import update_user_settings
+    
+    update_user_settings(user_id, {"visiblePublicWorkspaceIds": workspace_ids})
+
+
+def add_visible_public_workspace(user_id: str, ws_id: str) -> None:
+    """
+    Add a workspace to the user's visible list.
+    """
+    visible_ids = get_user_visible_public_workspaces(user_id)
+    if ws_id not in visible_ids:
+        visible_ids.append(ws_id)
+        set_user_visible_public_workspaces(user_id, visible_ids)
+
+
+def remove_visible_public_workspace(user_id: str, ws_id: str) -> None:
+    """
+    Remove a workspace from the user's visible list.
+    """
+    visible_ids = get_user_visible_public_workspaces(user_id)
+    if ws_id in visible_ids:
+        visible_ids.remove(ws_id)
+        set_user_visible_public_workspaces(user_id, visible_ids)
+
+
+def get_user_visible_public_workspace_docs(user_id: str) -> list:
+    """
+    Get all public workspaces that the user has access to AND has marked as visible.
+    This replaces get_user_public_workspaces for visibility-filtered results.
+    """
+    # Get all workspaces the user has access to
+    accessible_workspaces = get_user_public_workspaces(user_id)
+    
+    # Get the user's visibility preferences
+    visible_workspace_ids = get_user_visible_public_workspaces(user_id)
+    
+    # Filter to only include visible workspaces
+    visible_workspaces = [
+        ws for ws in accessible_workspaces
+        if ws["id"] in visible_workspace_ids
+    ]
+    
+    return visible_workspaces

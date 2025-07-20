@@ -386,7 +386,8 @@ def register_route_backend_chats(app):
                     search_args["active_group_id"] = active_group_id
                 if selected_document_id:
                     search_args["document_id"] = selected_document_id
-
+                
+                # Public scope now automatically searches all visible public workspaces
                 search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
             except Exception as e:
                 print(f"Error during hybrid search: {e}")

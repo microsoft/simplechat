@@ -172,6 +172,60 @@ def register_route_backend_public_documents(app):
             'needs_legacy_update': legacy_count > 0
         }), 200
 
+    @app.route('/api/public_workspace_documents', methods=['GET'])
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_list_public_workspace_documents():
+        """
+        Endpoint specifically for chat functionality to load public workspace documents
+        Returns documents from ALL visible public workspaces for the chat interface
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        # Get all public workspaces the user has access to AND has marked as visible
+        from functions_public_workspaces import get_user_visible_public_workspace_docs
+        user_public_workspaces = get_user_visible_public_workspace_docs(user_id)
+        
+        if not user_public_workspaces:
+            return jsonify({
+                'documents': [],
+                'workspace_name': 'All Public Workspaces',
+                'error': 'No visible public workspaces found'
+            }), 200
+
+        # Get workspace IDs
+        workspace_ids = [ws['id'] for ws in user_public_workspaces]
+
+        # Get page_size parameter for pagination
+        try:
+            page_size = int(request.args.get('page_size', 1000))
+        except:
+            page_size = 1000
+        if page_size < 1:
+            page_size = 1000
+
+        # Query documents from all visible public workspaces
+        workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
+        query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
+        params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
+        
+        docs = list(cosmos_public_documents_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+
+        # Limit results to page_size
+        docs = docs[:page_size]
+
+        return jsonify({
+            'documents': docs,
+            'workspace_name': 'All Public Workspaces'
+        }), 200
+
     @app.route('/api/public_documents/<doc_id>', methods=['GET'])
     @login_required
     @user_required
