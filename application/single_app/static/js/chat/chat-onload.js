@@ -82,6 +82,8 @@ window.addEventListener('DOMContentLoaded', () => {
       const localDocScopeParam = getUrlParameter("doc_scope") || "";
       const localDocumentIdParam = getUrlParameter("document_id") || "";
       const workspaceParam = getUrlParameter("workspace") || "";
+      const openSearchParam = getUrlParameter("openSearch") === "1";
+      const scopeParam = getUrlParameter("scope") || "";
       const localSearchDocsBtn = document.getElementById("search-documents-btn");
       const localDocScopeSel = document.getElementById("doc-scope-select");
       const localDocSelectEl = document.getElementById("document-select");
@@ -158,6 +160,13 @@ window.addEventListener('DOMContentLoaded', () => {
               // If no specific doc ID, still might need to trigger change if scope changed
                handleDocumentSelectChange();
           }
+      } else if (openSearchParam && scopeParam === "public" && localSearchDocsBtn && localDocScopeSel && searchDocumentsContainer) {
+          // Handle openSearch=1&scope=public from public directory chat button
+          localSearchDocsBtn.classList.add("active");
+          searchDocumentsContainer.style.display = "block";
+          localDocScopeSel.value = "public";
+          populateDocumentSelectScope();
+          handleDocumentSelectChange();
       } else {
           // If not loading from URL params, maybe still populate default scope?
           populateDocumentSelectScope();

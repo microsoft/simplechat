@@ -48,6 +48,7 @@ let groupDocs = [];
 let publicDocs = [];
 let activeGroupName = "";
 let activePublicWorkspaceName = "";
+let publicWorkspaceIdToName = {};
 
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
@@ -102,7 +103,7 @@ export function populateDocumentSelectScope() {
     }));
     const pubDocs = publicDocs.map((d) => ({
       id: d.id,
-      label: `[Public: ${activePublicWorkspaceName}] ${d.title || d.file_name}`,
+      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
       classification: d.document_classification, // Store classification
     }));
     finalDocs = pDocs.concat(gDocs).concat(pubDocs);
@@ -278,6 +279,7 @@ export function loadPublicDocs() {
         console.warn("Error fetching public workspace docs:", data.error);
         publicDocs = [];
         activePublicWorkspaceName = "";
+        publicWorkspaceIdToName = {};
         return;
       }
       // Fetch user settings to determine visible workspaces
@@ -290,21 +292,38 @@ export function loadPublicDocs() {
           publicDocs = (data.documents || []).filter(
             (doc) => publicDirectorySettings[doc.public_workspace_id] !== false
           );
-          activePublicWorkspaceName = "All Public Workspaces";
-          console.log(
-            `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
-          );
+          // Now fetch the workspace list to build the ID->name mapping
+          return fetch("/api/public_workspaces/discover")
+            .then((r) => r.json())
+            .then((workspaces) => {
+              publicWorkspaceIdToName = {};
+              (workspaces || []).forEach(ws => {
+                publicWorkspaceIdToName[ws.id] = ws.name;
+              });
+              activePublicWorkspaceName = "All Public Workspaces";
+              console.log(
+                `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
+              );
+            })
+            .catch((err) => {
+              // If workspace list can't be loaded, fallback to generic label
+              publicWorkspaceIdToName = {};
+              activePublicWorkspaceName = "All Public Workspaces";
+              console.warn("Could not load public workspace names:", err);
+            });
         })
         .catch((err) => {
           // If user settings can't be loaded, default to showing all documents
           console.warn("Could not load user settings, showing all public workspace documents:", err);
           publicDocs = data.documents || [];
+          publicWorkspaceIdToName = {};
           activePublicWorkspaceName = "All Public Workspaces";
         });
     })
     .catch((err) => {
       console.error("Error loading public workspace docs:", err);
       publicDocs = [];
+      publicWorkspaceIdToName = {};
       activePublicWorkspaceName = "";
     });
 }

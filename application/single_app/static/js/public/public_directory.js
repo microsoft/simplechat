@@ -398,8 +398,30 @@ $(document).ready(function () {
   // Chat button
   tableBody.on("click", ".chat-btn", function() {
     const workspaceId = $(this).data("id");
-    // Navigate to chat page - this will be implemented when chat integration is ready
-    window.location.href = `/chats?workspace=${workspaceId}`;
+    // Set only this workspace as visible, all others hidden
+    if (!userSettings || !userSettings.publicDirectorySettings) {
+      userSettings = { publicDirectorySettings: {} };
+    }
+    // Hide all, show only selected
+    Object.keys(userSettings.publicDirectorySettings).forEach(function(key) {
+      userSettings.publicDirectorySettings[key] = false;
+    });
+    userSettings.publicDirectorySettings[workspaceId] = true;
+    // Save settings, then redirect
+    $.ajax({
+      url: '/api/user/settings',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ settings: userSettings }),
+      success: function() {
+        // Redirect to chat with params to open search and select public scope
+        window.location.href = `/chats?workspace=${workspaceId}&openSearch=1&scope=public`;
+      },
+      error: function() {
+        // Even if saving fails, proceed to chat page
+        window.location.href = `/chats?workspace=${workspaceId}&openSearch=1&scope=public`;
+      }
+    });
   });
 
   // View workspace button

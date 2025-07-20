@@ -672,8 +672,7 @@ def register_route_backend_public_workspaces(app):
         ws = find_public_workspace_by_id(ws_id)
         if not ws:
             return jsonify({"error": "Not found"}), 404
-        if ws["owner"]["userId"] != user_id:
-            return jsonify({"error": "Forbidden"}), 403
+        # Allow any logged-in user to view file count for public workspaces
 
         query = "SELECT VALUE COUNT(1) FROM d WHERE d.public_workspace_id = @wsId"
         params = [{"name": "@wsId", "value": ws_id}]
