@@ -173,23 +173,39 @@ async function fetchPublicDocs(){
   } catch(err){ console.error(err); publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center text-danger p-4">Error: ${escapeHtml(err.error||err.message)}</td></tr>`; }
 }
 
-function renderPublicDocumentRow(doc){
-  const canManage=['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic);
-  
+function renderPublicDocumentRow(doc) {
+  const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+
   // Create main document row
-  const tr=document.createElement('tr');
+  const tr = document.createElement('tr');
   tr.id = `public-doc-row-${doc.id}`;
-  tr.innerHTML=`
-    <td class="align-middle"><button class="btn btn-link p-0" onclick="window.togglePublicDetails('${doc.id}')" title="Show/Hide Details"><span id="public-arrow-icon-${doc.id}" class="bi bi-chevron-right"></span></button></td>
+  // Compute status for icon logic and status row logic (declare once)
+  const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
+  const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+  const docStatus = doc.status || "";
+  const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
+  const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+
+  let firstTdHtml = "";
+  if (isComplete && !hasError) {
+    firstTdHtml = `<button class="btn btn-link p-0" onclick="window.togglePublicDetails('${doc.id}')" title="Show/Hide Details"><span id="public-arrow-icon-${doc.id}" class="bi bi-chevron-right"></span></button>`;
+  } else if (hasError) {
+    firstTdHtml = `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`;
+  } else {
+    firstTdHtml = `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`;
+  }
+
+  tr.innerHTML = `
+    <td class="align-middle">${firstTdHtml}</td>
     <td class="align-middle" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
-    <td class="align-middle" title="${escapeHtml(doc.title||'')}">${escapeHtml(doc.title||'')}</td>
-    <td class="align-middle">${canManage?`<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}', event)" title="Delete Document"><i class="bi bi-trash-fill"></i></button><button class="btn btn-sm btn-primary ms-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Search in Chat"><i class="bi bi-chat-dots-fill"></i> Chat</button>`:''}</td>`;
-  
+    <td class="align-middle" title="${escapeHtml(doc.title || '')}">${escapeHtml(doc.title || '')}</td>
+    <td class="align-middle">${canManage ? `<button class="btn btn-sm btn-danger" onclick="deletePublicDocument('${doc.id}', event)" title="Delete Document"><i class="bi bi-trash-fill"></i></button><button class="btn btn-sm btn-primary ms-1" onclick="searchPublicDocumentInChat('${doc.id}')" title="Search in Chat"><i class="bi bi-chat-dots-fill"></i> Chat</button>` : ''}</td>`;
+
   // Create details row
   const detailsRow = document.createElement('tr');
   detailsRow.id = `public-details-row-${doc.id}`;
   detailsRow.style.display = 'none';
-  
+
   // Helper function to get classification badge style
   function getClassificationBadgeStyle(classification) {
     const styles = {
@@ -202,14 +218,14 @@ function renderPublicDocumentRow(doc){
     };
     return styles[classification] || 'background-color: #6c757d;';
   }
-  
+
   // Helper function to get citation badge
   function getCitationBadge(enhanced_citations) {
     return enhanced_citations ?
       '<span class="badge bg-success">Enhanced</span>' :
       '<span class="badge bg-secondary">Standard</span>';
   }
-  
+
   detailsRow.innerHTML = `
     <td colspan="4">
       <div class="bg-light p-3 border rounded small">
@@ -234,11 +250,106 @@ function renderPublicDocumentRow(doc){
         </div>
       </div>
     </td>`;
-  
-  // Append both rows to the table
+
+  // Append main and details rows
   const tbody = document.querySelector('#public-documents-table tbody');
   tbody.append(tr);
+
+  // --- Status Row Logic (like private workspace) ---
+  // Show status row if not complete or errored
+  if (!isComplete || hasError) {
+    const statusRow = document.createElement("tr");
+    statusRow.id = `public-status-row-${doc.id}`;
+    if (hasError) {
+      statusRow.innerHTML = `
+        <td colspan="4">
+          <div class="alert alert-danger alert-sm py-1 px-2 mb-0 small" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            ${escapeHtml(docStatus)}
+          </div>
+        </td>`;
+    } else if (pct < 100) {
+      statusRow.innerHTML = `
+        <td colspan="4">
+          <div class="progress" style="height: 10px;" title="Status: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)">
+            <div id="public-progress-bar-${doc.id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%;" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+          <div class="text-muted text-end small" id="public-status-text-${doc.id}">${escapeHtml(docStatus)} (${pct.toFixed(0)}%)</div>
+        </td>`;
+    } else {
+      statusRow.innerHTML = `
+        <td colspan="4">
+          <div class="alert alert-info alert-sm py-1 px-2 mb-0 small" role="alert">
+            <i class="bi bi-info-circle-fill me-1"></i>
+            ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)
+          </div>
+        </td>`;
+    }
+    tbody.append(statusRow);
+
+    // Start polling for status if still processing and not errored
+    if (!isComplete && !hasError) {
+      pollPublicDocumentStatus(doc.id);
+    }
+  }
+
   tbody.append(detailsRow);
+}
+
+// Polling for public document status (like private workspace)
+function pollPublicDocumentStatus(documentId) {
+  if (publicActivePolls.has(documentId)) return;
+  publicActivePolls.add(documentId);
+
+  const intervalId = setInterval(async () => {
+    const docRow = document.getElementById(`public-doc-row-${documentId}`);
+    const statusRow = document.getElementById(`public-status-row-${documentId}`);
+    if (!docRow && !statusRow) {
+      clearInterval(intervalId);
+      publicActivePolls.delete(documentId);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/public_documents/${documentId}`);
+      if (r.status === 404) throw new Error('Document not found (likely deleted).');
+      const doc = await r.json();
+      const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
+      const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
+      const docStatus = doc.status || "";
+      const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
+      const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+
+      if (!isComplete && statusRow) {
+        // Update progress bar and status text if still processing
+        const progressBar = statusRow.querySelector(`#public-progress-bar-${documentId}`);
+        const statusText = statusRow.querySelector(`#public-status-text-${documentId}`);
+        if (progressBar) {
+          progressBar.style.width = pct + "%";
+          progressBar.setAttribute("aria-valuenow", pct);
+        }
+        if (statusText) {
+          statusText.textContent = `${docStatus} (${pct.toFixed(0)}%)`;
+        }
+      } else {
+        // Stop polling and remove status row if complete or errored
+        clearInterval(intervalId);
+        publicActivePolls.delete(documentId);
+        if (statusRow) statusRow.remove();
+        // Wait 5 seconds, then reload the table to show the detail button
+        setTimeout(() => {
+          const docRow = document.getElementById(`public-doc-row-${documentId}`);
+          if (docRow) fetchPublicDocs();
+        }, 5000);
+      }
+    } catch (err) {
+      clearInterval(intervalId);
+      publicActivePolls.delete(documentId);
+      const statusRow = document.getElementById(`public-status-row-${documentId}`);
+      if (statusRow) {
+        statusRow.innerHTML = `<td colspan="4"><div class="alert alert-warning alert-sm py-1 px-2 mb-0 small" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not retrieve status: ${escapeHtml(err.message || 'Polling failed')}</div></td>`;
+      }
+    }
+  }, 2000);
 }
 
 function renderPublicDocsPagination(page, pageSize, totalCount){
@@ -248,13 +359,124 @@ function renderPublicDocsPagination(page, pageSize, totalCount){
   ul.append(make(page-1,'«',page<=1,false)); let start=1,end=totalPages; if(totalPages>5){ const mid=2; if(page>mid) start=page-mid; end=start+4; if(end>totalPages){ end=totalPages; start=end-4; } } if(start>1){ ul.append(make(1,'1',false,false)); ul.append(make(0,'...',true,false)); } for(let p=start;p<=end;p++) ul.append(make(p,p,false,p===page)); if(end<totalPages){ ul.append(make(0,'...',true,false)); ul.append(make(totalPages,totalPages,false,false)); } ul.append(make(page+1,'»',page>=totalPages,false)); container.append(ul);
 }
 
-async function onPublicUploadClick(){
-  const files=fileInput.files;
-  if(!files.length) return alert('Select files');
-  uploadBtn.disabled=true; uploadBtn.innerHTML='<span class="spinner-border spinner-border-sm me-2"></span>Uploading...'; uploadStatus.textContent=`Uploading ${files.length} file(s)...`;
-  const fd=new FormData(); Array.from(files).forEach(f=>fd.append('file',f,f.name));
-  try{ const r=await fetch('/api/public_documents/upload',{method:'POST',body:fd}); if(!r.ok) throw await r.json(); const d=await r.json(); uploadStatus.textContent=`Uploaded ${d.document_ids.length}/${files.length}`; fileInput.value=''; publicDocsCurrentPage=1; fetchPublicDocs(); }catch(err){ alert(`Upload failed: ${err.error||err.message}`); }
-  finally{ uploadBtn.disabled=false; uploadBtn.textContent='Upload Document(s)'; }
+async function onPublicUploadClick() {
+  const files = fileInput.files;
+  if (!files.length) return alert('Select files');
+  uploadBtn.disabled = true;
+  uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
+  uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
+
+  // Progress container for per-file status
+  const progressContainer = document.getElementById('public-upload-progress-container');
+  if (progressContainer) progressContainer.innerHTML = '';
+
+  let completed = 0;
+  let failed = 0;
+
+  // Helper to create a unique ID for each file
+  function makeId(file) {
+    return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
+  }
+
+  // Helper to create progress bar/status for a file
+  function createProgressBar(file, id) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mb-2';
+    wrapper.id = id + '-wrapper';
+    wrapper.innerHTML = `
+      <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
+        <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+      <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
+    `;
+    return wrapper;
+  }
+
+  // Upload each file individually with progress
+  Array.from(files).forEach(file => {
+    const id = makeId(file);
+    if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
+
+    const progressBar = document.getElementById(id);
+    const statusText = document.getElementById(id + '-text');
+
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/public_documents/upload', true);
+
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        if (progressBar) {
+          progressBar.style.width = percent + '%';
+          progressBar.setAttribute('aria-valuenow', percent);
+        }
+        if (statusText) {
+          statusText.textContent = `Uploading ${file.name} (${percent}%)`;
+        }
+      }
+    };
+
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (progressBar) {
+          progressBar.classList.remove('bg-info');
+          progressBar.classList.add('bg-success');
+          progressBar.classList.remove('progress-bar-animated');
+        }
+        if (statusText) {
+          statusText.textContent = `Uploaded ${file.name} (100%)`;
+        }
+        completed++;
+      } else {
+        if (progressBar) {
+          progressBar.classList.remove('bg-info');
+          progressBar.classList.add('bg-danger');
+          progressBar.classList.remove('progress-bar-animated');
+        }
+        if (statusText) {
+          statusText.textContent = `Failed to upload ${file.name}`;
+        }
+        failed++;
+      }
+      // Update summary status
+      uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      if (completed + failed === files.length) {
+        fileInput.value = '';
+        publicDocsCurrentPage = 1;
+        fetchPublicDocs();
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload Document(s)';
+        // Clear upload progress bars after all uploads and table refresh
+        const progressContainer = document.getElementById('public-upload-progress-container');
+        if (progressContainer) progressContainer.innerHTML = '';
+      }
+    };
+
+    xhr.onerror = function () {
+      if (progressBar) {
+        progressBar.classList.remove('bg-info');
+        progressBar.classList.add('bg-danger');
+        progressBar.classList.remove('progress-bar-animated');
+      }
+      if (statusText) {
+        statusText.textContent = `Failed to upload ${file.name}`;
+      }
+      failed++;
+      uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      if (completed + failed === files.length) {
+        fileInput.value = '';
+        publicDocsCurrentPage = 1;
+        fetchPublicDocs();
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload Document(s)';
+      }
+    };
+
+    xhr.send(formData);
+  });
 }
 window.deletePublicDocument=async function(id, event){ if(!confirm('Delete?')) return; try{ await fetch(`/api/public_documents/${id}`,{method:'DELETE'}); fetchPublicDocs(); }catch(e){ alert(`Error deleting: ${e.error||e.message}`);} };
 

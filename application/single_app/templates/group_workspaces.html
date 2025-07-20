@@ -696,7 +696,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
 </script>
 
-<!-- Main JS Logic for Group Workspace -->
 <script>
   // --- Global State ---
   let userRoleInActiveGroup = null;
@@ -2420,3 +2419,4 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
 </script>
 {% endblock %}
+
