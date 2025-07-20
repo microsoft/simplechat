@@ -122,7 +122,7 @@ export function populateDocumentSelectScope() {
   } else if (scopeVal === "public") {
     finalDocs = publicDocs.map((d) => ({
       id: d.id,
-      label: `[Public: ${activePublicWorkspaceName}] ${d.title || d.file_name}`,
+      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
       classification: d.document_classification,
     }));
   }
@@ -300,7 +300,15 @@ export function loadPublicDocs() {
               (workspaces || []).forEach(ws => {
                 publicWorkspaceIdToName[ws.id] = ws.name;
               });
-              activePublicWorkspaceName = "All Public Workspaces";
+              // Determine if only one public workspace is visible
+              const visibleWorkspaceIds = Object.keys(publicDirectorySettings).filter(
+                id => publicDirectorySettings[id] !== false
+              );
+              if (visibleWorkspaceIds.length === 1) {
+                activePublicWorkspaceName = publicWorkspaceIdToName[visibleWorkspaceIds[0]] || "Unknown";
+              } else {
+                activePublicWorkspaceName = "All Public Workspaces";
+              }
               console.log(
                 `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
               );

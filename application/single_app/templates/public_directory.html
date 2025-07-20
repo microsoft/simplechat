@@ -229,44 +229,53 @@
     </div>
   </div>
 
-  <!-- Bulk Actions -->
-  <div class="bulk-actions">
-    <div class="d-flex align-items-center gap-3 mb-2">
-      <button type="button" class="btn btn-success btn-sm" id="allVisibleBtn">
-        <i class="bi bi-eye"></i> All Visible
-      </button>
-      <button type="button" class="btn btn-secondary btn-sm" id="allHiddenBtn">
-        <i class="bi bi-eye-slash"></i> All Hidden
-      </button>
-    </div>
-    <p class="text-muted small mb-0">Use the buttons to quickly show or hide all workspaces for use on the chat page. Visible workspaces can be searched during chats by selecting the Workspace button. You can also toggle visibility for individual workspaces using the eye icon in each row.</p>
-  </div>
 <!-- Curated List Operations -->
-  <div class="mb-3" id="curatedListOps">
-    <div class="row">
-      <div class="col-md-6">
-        <div class="input-group">
-          <input type="text" id="saveListName" class="form-control form-control-sm" placeholder="List name">
-          <button id="saveVisibleListBtn" class="btn btn-outline-success btn-sm" type="button" title="Save current visible set">
-            <i class="bi bi-bookmark-plus"></i> Save List
-          </button>
+<div class="curated-list-container search-container mb-3" id="curatedListOps">
+  <div class="mb-2">
+    <p class="mb-2 small text-muted">
+      <strong>Curated Lists & Visibility:</strong><br>
+      Save your current set of visible public workspaces as a named list, so you can quickly switch between different workspace sets for chat and search.
+      Use <b>Save List</b> to store your current selection, <b>Load List</b> to apply a saved set.
+      Use <b>All Visible</b> or <b>All Hidden</b> to quickly show or hide all workspaces at once.
+    </p>
+  </div>
+  <div class="row align-items-end g-2">
+    <div class="col-md mb-2 mb-md-0">
+      <div class="d-flex w-100 gap-3 align-items-center">
+        <div class="d-flex align-items-center flex-grow-1 position-relative" style="min-width:220px;">
+          <div id="curatedListSaveArea" class="d-flex gap-2 align-items-center flex-grow-1">
+            <input type="text" id="saveListName" class="form-control form-control-sm flex-grow-1" placeholder="List name">
+            <button id="saveVisibleListBtn" class="btn btn-outline-success btn-sm" type="button" title="Save current visible set">
+              Save
+            </button>
+          </div>
+          <div id="curatedListStatusArea" class="d-flex align-items-center flex-grow-1 d-none">
+            <span id="curatedListStatus" class="badge bg-secondary" style="font-size:1rem;min-width:120px;display:inline-block;">No list loaded</span>
+          </div>
         </div>
-      </div>
-      <div class="col-md-6 mt-2 mt-md-0">
-        <div class="input-group">
-          <select id="loadVisibleListSelect" class="form-select form-select-sm">
-            <option value="">Load curated list...</option>
+        <div class="d-flex gap-2 align-items-center flex-grow-1">
+          <select id="loadVisibleListSelect" class="form-select form-select-sm flex-grow-1">
+            <option value=""></option>
           </select>
           <button id="loadVisibleListBtn" class="btn btn-outline-primary btn-sm" type="button" title="Load selected list">
-            <i class="bi bi-bookmark-check"></i> Load List
+            Load
           </button>
           <button id="deleteVisibleListBtn" class="btn btn-outline-danger btn-sm" type="button" title="Delete selected list">
             <i class="bi bi-trash"></i>
           </button>
         </div>
+        <div class="d-flex gap-2 align-items-center flex-grow-1">
+          <button type="button" class="btn btn-success btn-sm" id="allVisibleBtn">
+            <i class="bi bi-eye"></i> All Visible
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="allHiddenBtn">
+            <i class="bi bi-eye-slash"></i> All Hidden
+          </button>
+        </div>
       </div>
     </div>
   </div>
+</div>
 
   <!-- Directory Table -->
   <div class="card">

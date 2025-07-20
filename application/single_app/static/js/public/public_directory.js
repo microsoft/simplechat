@@ -20,6 +20,9 @@ $(document).ready(function () {
   let userSettings = {};
 
 // --- Curated List Helpers ---
+let currentLoadedList = null;
+let curatedListDirty = false;
+
 function getSavedLists() {
   if (!userSettings || !userSettings.publicDirectorySavedLists) return {};
   return userSettings.publicDirectorySavedLists;
@@ -31,11 +34,19 @@ function saveCurrentVisibleList(listName) {
   const visibleIds = allWorkspaces.filter(ws => getWorkspaceVisibility(ws.id)).map(ws => ws.id);
   userSettings.publicDirectorySavedLists[listName] = visibleIds;
   saveUserSettings();
+  currentLoadedList = listName;
+  curatedListDirty = false;
+  updateCuratedListStatus();
 }
 function deleteVisibleList(listName) {
   if (!userSettings || !userSettings.publicDirectorySavedLists) return;
   delete userSettings.publicDirectorySavedLists[listName];
   saveUserSettings();
+  if (currentLoadedList === listName) {
+    currentLoadedList = null;
+    curatedListDirty = false;
+    updateCuratedListStatus();
+  }
 }
 function applyVisibleList(listName) {
   const lists = getSavedLists();
@@ -43,15 +54,37 @@ function applyVisibleList(listName) {
   // Set all to hidden, then set only those in the list to visible
   allWorkspaces.forEach(ws => setWorkspaceVisibility(ws.id, false));
   lists[listName].forEach(id => setWorkspaceVisibility(id, true));
+  currentLoadedList = listName;
+  curatedListDirty = false;
+  updateCuratedListStatus();
 }
 function refreshVisibleListDropdown() {
   const $select = $("#loadVisibleListSelect");
   const lists = getSavedLists();
   $select.empty();
-  $select.append(`<option value="">Load curated list...</option>`);
+  $select.append(`<option value=""></option>`);
   Object.keys(lists).forEach(name => {
     $select.append(`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`);
   });
+}
+function updateCuratedListStatus() {
+  const $status = $("#curatedListStatus");
+  const $saveArea = $("#curatedListSaveArea");
+  const $statusArea = $("#curatedListStatusArea");
+  if (curatedListDirty || !currentLoadedList) {
+    // Show save area, hide status badge
+    $saveArea.removeClass("d-none");
+    $statusArea.addClass("d-none");
+    $status.text("No list loaded").removeClass("bg-warning text-dark").addClass("bg-secondary");
+  } else {
+    // Show status badge, hide save area
+    $saveArea.addClass("d-none");
+    $statusArea.removeClass("d-none");
+    $status.text(currentLoadedList).removeClass("bg-warning text-dark").addClass("bg-secondary");
+  }
+  if (curatedListDirty && currentLoadedList) {
+    $status.text("Unsaved").removeClass("bg-secondary").addClass("bg-warning text-dark");
+  }
 }
   // Utility: escape HTML to avoid XSS
   function escapeHtml(unsafe) {
@@ -427,6 +460,11 @@ function refreshVisibleListDropdown() {
     }
     
     setWorkspaceVisibility(workspaceId, newVisibility);
+    // Mark curated list as dirty if a list was loaded
+    if (currentLoadedList) {
+      curatedListDirty = true;
+      updateCuratedListStatus();
+    }
   });
 
   // Chat button
@@ -448,10 +486,20 @@ function refreshVisibleListDropdown() {
       contentType: 'application/json',
       data: JSON.stringify({ settings: userSettings }),
       success: function() {
+        // Mark curated list as dirty if a list was loaded
+        if (currentLoadedList) {
+          curatedListDirty = true;
+          updateCuratedListStatus();
+        }
         // Redirect to chat with params to open search and select public scope
         window.location.href = `/chats?workspace=${workspaceId}&openSearch=1&scope=public`;
       },
       error: function() {
+        // Mark curated list as dirty if a list was loaded
+        if (currentLoadedList) {
+          curatedListDirty = true;
+          updateCuratedListStatus();
+        }
         // Even if saving fails, proceed to chat page
         window.location.href = `/chats?workspace=${workspaceId}&openSearch=1&scope=public`;
       }
@@ -469,6 +517,11 @@ function refreshVisibleListDropdown() {
     currentPage = 1;
     fetchWorkspaces();
   });
+  // Mark curated list as dirty if a list was loaded
+  if (currentLoadedList) {
+    curatedListDirty = true;
+    updateCuratedListStatus();
+  }
 
   searchInput.on("keypress", function(e) {
     if (e.which === 13) {
@@ -483,6 +536,11 @@ function refreshVisibleListDropdown() {
     currentPage = 1;
     fetchWorkspaces();
   });
+  // Mark curated list as dirty if a list was loaded
+  if (currentLoadedList) {
+    curatedListDirty = true;
+    updateCuratedListStatus();
+  }
 
   // Page size change
   pageSizeSelect.on("change", function() {
@@ -552,6 +610,7 @@ function refreshVisibleListDropdown() {
     refreshVisibleListDropdown();
     $("#saveListName").val("");
     alert("List saved!");
+    updateCuratedListStatus();
   });
 
   // Load curated list
@@ -577,8 +636,10 @@ function refreshVisibleListDropdown() {
         btn.attr('aria-label', 'Show workspace');
         icon.removeClass('bi-eye').addClass('bi-eye-slash');
       }
+      updateCuratedListStatus();
     });
-    alert("List loaded!");
+    // Show loaded list name
+    updateCuratedListStatus();
   });
 
   // Delete curated list
@@ -592,6 +653,7 @@ function refreshVisibleListDropdown() {
       deleteVisibleList(listName);
       refreshVisibleListDropdown();
       alert("List deleted.");
+      updateCuratedListStatus();
     }
   });
 
