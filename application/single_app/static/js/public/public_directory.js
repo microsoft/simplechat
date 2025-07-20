@@ -19,6 +19,40 @@ $(document).ready(function () {
   let allWorkspaces = [];
   let userSettings = {};
 
+// --- Curated List Helpers ---
+function getSavedLists() {
+  if (!userSettings || !userSettings.publicDirectorySavedLists) return {};
+  return userSettings.publicDirectorySavedLists;
+}
+function saveCurrentVisibleList(listName) {
+  if (!userSettings) userSettings = {};
+  if (!userSettings.publicDirectorySavedLists) userSettings.publicDirectorySavedLists = {};
+  // Get all visible workspace IDs
+  const visibleIds = allWorkspaces.filter(ws => getWorkspaceVisibility(ws.id)).map(ws => ws.id);
+  userSettings.publicDirectorySavedLists[listName] = visibleIds;
+  saveUserSettings();
+}
+function deleteVisibleList(listName) {
+  if (!userSettings || !userSettings.publicDirectorySavedLists) return;
+  delete userSettings.publicDirectorySavedLists[listName];
+  saveUserSettings();
+}
+function applyVisibleList(listName) {
+  const lists = getSavedLists();
+  if (!lists[listName]) return;
+  // Set all to hidden, then set only those in the list to visible
+  allWorkspaces.forEach(ws => setWorkspaceVisibility(ws.id, false));
+  lists[listName].forEach(id => setWorkspaceVisibility(id, true));
+}
+function refreshVisibleListDropdown() {
+  const $select = $("#loadVisibleListSelect");
+  const lists = getSavedLists();
+  $select.empty();
+  $select.append(`<option value="">Load curated list...</option>`);
+  Object.keys(lists).forEach(name => {
+    $select.append(`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`);
+  });
+}
   // Utility: escape HTML to avoid XSS
   function escapeHtml(unsafe) {
     if (!unsafe) return '';
@@ -483,9 +517,88 @@ $(document).ready(function () {
     });
   });
 
+  // Chat with Visible button
+  $("#chatWithVisibleBtn").on("click", function() {
+    // Go to chat page, enable search, select public scope (use currently visible workspaces)
+    window.location.href = "/chats?openSearch=1&scope=public";
+  });
+
+  // Chat with All button
+  $("#chatWithAllBtn").on("click", function() {
+    // Set all workspaces to visible, then go to chat page
+    allWorkspaces.forEach(function(ws) {
+      setWorkspaceVisibility(ws.id, true);
+      const btn = $(`.visibility-btn[data-id="${ws.id}"]`);
+      const icon = btn.find('i');
+      btn.removeClass('hidden').addClass('visible');
+      btn.attr('title', 'Visible - Click to hide');
+      btn.attr('aria-label', 'Hide workspace');
+      icon.removeClass('bi-eye-slash').addClass('bi-eye');
+    });
+    // Give a short delay to ensure settings are saved before redirect
+    setTimeout(function() {
+      window.location.href = "/chats?openSearch=1&scope=public";
+    }, 200);
+  });
+
+  // Save current visible set as a curated list
+  $("#saveVisibleListBtn").on("click", function() {
+    const listName = $("#saveListName").val().trim();
+    if (!listName) {
+      alert("Please enter a name for your list.");
+      return;
+    }
+    saveCurrentVisibleList(listName);
+    refreshVisibleListDropdown();
+    $("#saveListName").val("");
+    alert("List saved!");
+  });
+
+  // Load curated list
+  $("#loadVisibleListBtn").on("click", function() {
+    const listName = $("#loadVisibleListSelect").val();
+    if (!listName) {
+      alert("Please select a list to load.");
+      return;
+    }
+    applyVisibleList(listName);
+    // Update UI to reflect new visibility
+    allWorkspaces.forEach(function(ws) {
+      const btn = $(`.visibility-btn[data-id="${ws.id}"]`);
+      const icon = btn.find('i');
+      if (getWorkspaceVisibility(ws.id)) {
+        btn.removeClass('hidden').addClass('visible');
+        btn.attr('title', 'Visible - Click to hide');
+        btn.attr('aria-label', 'Hide workspace');
+        icon.removeClass('bi-eye-slash').addClass('bi-eye');
+      } else {
+        btn.removeClass('visible').addClass('hidden');
+        btn.attr('title', 'Hidden - Click to show');
+        btn.attr('aria-label', 'Show workspace');
+        icon.removeClass('bi-eye').addClass('bi-eye-slash');
+      }
+    });
+    alert("List loaded!");
+  });
+
+  // Delete curated list
+  $("#deleteVisibleListBtn").on("click", function() {
+    const listName = $("#loadVisibleListSelect").val();
+    if (!listName) {
+      alert("Please select a list to delete.");
+      return;
+    }
+    if (confirm(`Delete list "${listName}"? This cannot be undone.`)) {
+      deleteVisibleList(listName);
+      refreshVisibleListDropdown();
+      alert("List deleted.");
+    }
+  });
+
   // Initialize - load user settings first, then fetch workspaces
   loadUserSettings().always(function() {
     // Settings are now loaded (or failed with defaults), safe to fetch workspaces
     fetchWorkspaces();
+    refreshVisibleListDropdown();
   });
 });

@@ -201,18 +201,28 @@
   </div>
   <p class="text-muted mb-4">Browse and discover public workspaces accessible to all users. Use visibility settings to control which workspaces are shown on the chat page.</p>
 
+  <!-- Chat Action Buttons -->
+  <div class="mb-3 d-flex gap-2">
+    <button id="chatWithVisibleBtn" class="btn btn-primary">
+      <i class="bi bi-chat-dots"></i> Chat with Visible
+    </button>
+    <button id="chatWithAllBtn" class="btn btn-secondary">
+      <i class="bi bi-chat-dots-fill"></i> Chat with All
+    </button>
+  </div>
+
   <!-- Search Section -->
   <div class="search-container">
     <div class="row align-items-end">
       <div class="col-md-8">
-        <input type="search" id="directory-search-input" class="form-control" 
+        <input type="search" id="directory-search-input" class="form-control"
                placeholder="Search by name or description..." spellcheck="false">
       </div>
       <div class="col-md-4 mt-2 mt-md-0">
         <button id="directory-search-btn" class="btn btn-primary me-2">
           <i class="bi bi-search"></i> Search
         </button>
-        <button id="directory-clear-btn" class="btn btn-secondary">
+        <button id="directory-clear-btn" class="btn btn-secondary me-2">
           <i class="bi bi-x-circle"></i> Clear
         </button>
       </div>
@@ -230,6 +240,32 @@
       </button>
     </div>
     <p class="text-muted small mb-0">Use the buttons to quickly show or hide all workspaces for use on the chat page. Visible workspaces can be searched during chats by selecting the Workspace button. You can also toggle visibility for individual workspaces using the eye icon in each row.</p>
+  </div>
+<!-- Curated List Operations -->
+  <div class="mb-3" id="curatedListOps">
+    <div class="row">
+      <div class="col-md-6">
+        <div class="input-group">
+          <input type="text" id="saveListName" class="form-control form-control-sm" placeholder="List name">
+          <button id="saveVisibleListBtn" class="btn btn-outline-success btn-sm" type="button" title="Save current visible set">
+            <i class="bi bi-bookmark-plus"></i> Save List
+          </button>
+        </div>
+      </div>
+      <div class="col-md-6 mt-2 mt-md-0">
+        <div class="input-group">
+          <select id="loadVisibleListSelect" class="form-select form-select-sm">
+            <option value="">Load curated list...</option>
+          </select>
+          <button id="loadVisibleListBtn" class="btn btn-outline-primary btn-sm" type="button" title="Load selected list">
+            <i class="bi bi-bookmark-check"></i> Load List
+          </button>
+          <button id="deleteVisibleListBtn" class="btn btn-outline-danger btn-sm" type="button" title="Delete selected list">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Directory Table -->

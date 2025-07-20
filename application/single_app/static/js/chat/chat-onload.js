@@ -94,18 +94,18 @@ window.addEventListener('DOMContentLoaded', () => {
           console.log(`Handling workspace parameter: ${workspaceParam}`);
           
           // Set the active public workspace
-          fetch('/api/set_active_public_workspace', {
-              method: 'POST',
+          fetch('/api/public_workspaces/setActive', {
+              method: 'PATCH',
               headers: {
                   'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                  workspace_oid: workspaceParam
+                  workspaceId: workspaceParam
               })
           })
           .then(response => response.json())
           .then(data => {
-              if (data.success) {
+              if (data.message) {
                   console.log('Active public workspace set successfully');
                   
                   // Auto-open search documents section
@@ -123,7 +123,7 @@ window.addEventListener('DOMContentLoaded', () => {
                   
                   showToast('Public workspace activated for chat', 'success');
               } else {
-                  console.error('Failed to set active public workspace:', data.message);
+                  console.error('Failed to set active public workspace:', data.error || data.message);
                   showToast('Failed to activate public workspace', 'error');
                   // Fall back to normal document handling
                   populateDocumentSelectScope();
