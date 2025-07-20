@@ -280,10 +280,27 @@ export function loadPublicDocs() {
         activePublicWorkspaceName = "";
         return;
       }
-      publicDocs = data.documents || [];
-      // Note: Public scope now shows documents from ALL visible public workspaces
-      activePublicWorkspaceName = "All Public Workspaces";
-      console.log(`Loaded ${publicDocs.length} public workspace documents from all user-visible public workspaces`);
+      // Fetch user settings to determine visible workspaces
+      return fetch("/api/user/settings")
+        .then((r) => r.json())
+        .then((settingsData) => {
+          const userSettings = settingsData && settingsData.settings ? settingsData.settings : {};
+          const publicDirectorySettings = userSettings.publicDirectorySettings || {};
+          // Only include documents from visible public workspaces
+          publicDocs = (data.documents || []).filter(
+            (doc) => publicDirectorySettings[doc.public_workspace_id] !== false
+          );
+          activePublicWorkspaceName = "All Public Workspaces";
+          console.log(
+            `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
+          );
+        })
+        .catch((err) => {
+          // If user settings can't be loaded, default to showing all documents
+          console.warn("Could not load user settings, showing all public workspace documents:", err);
+          publicDocs = data.documents || [];
+          activePublicWorkspaceName = "All Public Workspaces";
+        });
     })
     .catch((err) => {
       console.error("Error loading public workspace docs:", err);

@@ -33,7 +33,7 @@ $(document).ready(function () {
 
   // Load user settings for view/hide preferences with comprehensive error handling
   function loadUserSettings() {
-    return $.get('/api/settings')
+    return $.get('/api/user/settings')
       .done(function(data) {
         try {
           userSettings = data && data.settings ? data.settings : {};
@@ -68,8 +68,8 @@ $(document).ready(function () {
     }
     
     $.ajax({
-      url: '/api/settings',
-      method: 'PATCH',
+      url: '/api/user/settings',
+      method: 'POST',
       contentType: 'application/json',
       data: JSON.stringify({ settings: userSettings }),
       error: function(jqXHR) {
