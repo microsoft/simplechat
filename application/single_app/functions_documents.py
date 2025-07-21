@@ -135,7 +135,6 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         print(f"Error creating document: {e}")
         raise
 
-
 def get_document_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -198,8 +197,8 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
             )
         )
         add_file_task_to_file_processing_log(
-            document_id=document_id, 
-            user_id=group_id if is_group else user_id,
+            document_id=document_id,
+            user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
             content=f"Document metadata retrieved: {document_items}."
         )
         return document_items[0] if document_items else None
@@ -280,8 +279,6 @@ def save_video_chunk(
 
     except Exception as e:
         print(f"[VideoChunk] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
-
-
 
 def process_video_document(
     document_id,
@@ -448,7 +445,6 @@ def process_video_document(
     update_callback(status=f"VIDEO: done, {total} chunks")
     return total
 
-
 def calculate_processing_percentage(doc_metadata):
     """
     Calculates a simpler, step-based processing percentage based on status
@@ -591,8 +587,8 @@ def update_document(**kwargs):
         ]
     
     add_file_task_to_file_processing_log(
-        document_id=document_id, 
-        user_id=group_id if is_group else user_id, 
+        document_id=document_id,
+        user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
         content=f"Query is {query}, parameters are {parameters}."
     )
 
@@ -610,7 +606,7 @@ def update_document(**kwargs):
         if status:
             add_file_task_to_file_processing_log(
                 document_id=document_id,
-                user_id=group_id if is_group else user_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
                 content=f"Status: {status}"
             )
 
@@ -619,8 +615,8 @@ def update_document(**kwargs):
             log_msg = f"Document {document_id} not found for user {user_id} during update."
             print(log_msg)
             add_file_task_to_file_processing_log(
-                document_id=document_id, 
-                user_id=group_id if is_group else user_id, 
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
                 content=log_msg
             )
             raise CosmosResourceNotFoundError(
@@ -641,8 +637,8 @@ def update_document(**kwargs):
             existing_document['num_chunks'] = current_num_chunks + num_chunks_increment
             update_occurred = True # Incrementing counts as an update
             add_file_task_to_file_processing_log(
-                document_id=document_id, 
-                user_id=group_id if is_group else user_id,  
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
                 content=f"Incrementing num_chunks by {num_chunks_increment} to {existing_document['num_chunks']}"
             )
 
@@ -708,8 +704,8 @@ def update_document(**kwargs):
                     if chunk_updates: # Only call update if there's something to change
                          update_chunk_metadata(chunk_id=chunk['id'], user_id=user_id, document_id=document_id, group_id=group_id, **chunk_updates)
                 add_file_task_to_file_processing_log(
-                    document_id=document_id, 
-                    user_id=group_id if is_group else user_id,
+                    document_id=document_id,
+                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
                     content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to search chunks."
                 )
             except Exception as chunk_sync_error:
@@ -717,8 +713,8 @@ def update_document(**kwargs):
                 error_msg = f"Warning: Failed to sync metadata updates to search chunks for doc {document_id}: {chunk_sync_error}"
                 print(error_msg)
                 add_file_task_to_file_processing_log(
-                    document_id=document_id, 
-                    user_id=group_id if is_group else user_id, 
+                    document_id=document_id,
+                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
                     content=error_msg
                 )
 
@@ -735,8 +731,8 @@ def update_document(**kwargs):
         error_msg = f"Error during update_document for {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}"
         print(error_msg)
         add_file_task_to_file_processing_log(
-            document_id=document_id, 
-            user_id=group_id if is_group else user_id,
+            document_id=document_id,
+            user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
             content=error_msg
         )
         # Optionally update status to failure here if the exception is critical
@@ -904,24 +900,27 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         print(f"Error uploading chunk document for document {document_id}: {e}")
         raise
 
-def get_all_chunks(document_id, user_id, group_id=None):
+def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
-    search_client = CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
+    search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
     filter_expr = (
+        f"document_id eq '{document_id}' and public_workspace_id eq '{public_workspace_id}'"
+        if is_public_workspace else
         f"document_id eq '{document_id}' and group_id eq '{group_id}'"
         if is_group else
         f"document_id eq '{document_id}' and user_id eq '{user_id}'"
     )
 
     select_fields = [
-        "id", 
-        "chunk_text", 
-        "chunk_id", 
+        "id",
+        "chunk_text",
+        "chunk_id",
         "file_name",
-        "group_id" if is_group else "user_id",
-        "version", 
-        "chunk_sequence", 
+        "public_workspace_id" if is_public_workspace else ("group_id" if is_group else "user_id"),
+        "version",
+        "chunk_sequence",
         "upload_date"
     ]
 
@@ -937,18 +936,26 @@ def get_all_chunks(document_id, user_id, group_id=None):
         print(f"Error retrieving chunks for document {document_id}: {e}")
         raise
 
-def update_chunk_metadata(chunk_id, user_id, group_id, document_id, **kwargs):
+def update_chunk_metadata(chunk_id, user_id, group_id, public_workspace_id, document_id, **kwargs):
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     try:
-        search_client = CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
+        search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
         chunk_item = search_client.get_document(key=chunk_id)
 
         if not chunk_item:
             raise Exception("Chunk not found")
 
-        if chunk_item.get('user_id') != user_id or (is_group and chunk_item.get('group_id') != group_id):
-            raise Exception("Unauthorized access to chunk")
+        if is_public_workspace:
+            if chunk_item.get('public_workspace_id') != public_workspace_id:
+                raise Exception("Unauthorized access to chunk")
+        elif is_group:
+            if chunk_item.get('group_id') != group_id:
+                raise Exception("Unauthorized access to chunk")
+        else:
+            if chunk_item.get('user_id') != user_id:
+                raise Exception("Unauthorized access to chunk")
 
         if chunk_item.get('document_id') != document_id:
             raise Exception("Chunk does not belong to document")
@@ -1020,13 +1027,28 @@ def chunk_pdf(input_pdf_path: str, max_pages: int = 500) -> list:
 
     return chunks
 
-def get_documents(user_id, group_id=None):
+def get_documents(user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     # Choose the correct cosmos_container and query parameters
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
 
-    if is_group:
+    if is_public_workspace:
+        query = """
+            SELECT TOP 1 * 
+            FROM c
+            WHERE c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT * 
             FROM c
@@ -1131,11 +1153,31 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
 
-def get_latest_version(document_id, user_id, group_id=None):
+def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
+    is_public_workspace = public_workspace_id is not None
 
-    if is_group:
+    # Choose the correct cosmos_container and query parameters
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    if is_public_workspace:
+        query = """
+            SELECT TOP 1 * 
+            FROM c
+            WHERE c.id = @document_id 
+                AND c.public_workspace_id = @public_workspace_id
+            ORDER BY c.version DESC
+        """
+        parameters = [
+            {"name": "@document_id", "value": document_id},
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT c.version 
             FROM c
@@ -1176,12 +1218,33 @@ def get_latest_version(document_id, user_id, group_id=None):
 
     except Exception as e:
         return None
-    
-def get_document_version(user_id, document_id, version, group_id=None):
-    is_group = group_id is not None
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
 
-    if is_group:
+def get_document_version(user_id, document_id, version, group_id=None, public_workspace_id=None):
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    if is_public_workspace:
+        query = """
+            SELECT * 
+            FROM c
+            WHERE c.id = @document_id
+                AND c.version = @version
+                AND c.public_workspace_id = @public_workspace_id
+            ORDER BY c.version DESC
+        """
+        parameters = [
+            {"name": "@document_id", "value": document_id},
+            {"name": "@version", "value": version},
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT * 
             FROM c
@@ -1334,7 +1397,7 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
     is_public_workspace = public_workspace_id is not None
 
     try:
-        search_client = CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
+        search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
         results = search_client.search(
             search_text="*",
             filter=f"document_id eq '{document_id}'",
@@ -1353,10 +1416,12 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
     except Exception as e:
         raise
 
-def delete_document_version_chunks(document_id, version, group_id=None):
+def delete_document_version_chunks(document_id, version, group_id=None, public_workspace_id=None):
     """Delete document chunks from Azure Cognitive Search index for a specific version."""
     is_group = group_id is not None
-    search_client = CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
+    is_public_workspace = public_workspace_id is not None
+
+    search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
 
     search_client.delete_documents(
         actions=[
@@ -1369,12 +1434,31 @@ def delete_document_version_chunks(document_id, version, group_id=None):
         ]
     )
 
-def get_document_versions(user_id, document_id, group_id=None):
+def get_document_versions(user_id, document_id, group_id=None, public_workspace_id=None):
     """ Get all versions of a document for a user."""
     is_group = group_id is not None
-    cosmos_container = cosmos_group_documents_container if is_group else cosmos_user_documents_container
+    is_public_workspace = public_workspace_id is not None
 
-    if is_group:
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    if is_public_workspace:
+        query = """
+            SELECT c.id, c.file_name, c.version, c.upload_date
+            FROM c
+            WHERE c.id = @document_id 
+                AND c.public_workspace_id = @public_workspace_id
+            ORDER BY c.version DESC
+        """
+        parameters = [
+            {"name": "@document_id", "value": document_id},
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT c.id, c.file_name, c.version, c.upload_date
             FROM c
@@ -1557,8 +1641,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
             args["group_id"] = group_id
 
         update_document(**args)
-
-        
+      
 def extract_document_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
     """
     Extract metadata from a document stored in Cosmos DB.
@@ -2027,7 +2110,6 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     return meta_data
 
-
 def clean_json_codeFence(response_content: str) -> str:
     """
     Removes leading and trailing triple-backticks (```) or ```json
@@ -2078,14 +2160,12 @@ def is_effectively_empty(value):
         return all(not item.strip() for item in value if isinstance(item, str))
     return False
 
-# --- Helper function to estimate word count ---
 def estimate_word_count(text):
     """Estimates the number of words in a string."""
     if not text:
         return 0
     return len(text.split())
 
-# --- Helper function for uploading to blob storage ---
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None):
     """Uploads the file to Azure Blob Storage."""
 
@@ -2136,8 +2216,6 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         print(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
         raise Exception(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
 
-
-# --- Helper function to process TXT files ---
 def process_txt(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes plain text files."""
     is_group = group_id is not None
@@ -2190,7 +2268,9 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
                     "document_id": document_id
                 }
 
-                if is_group:
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
                     args["group_id"] = group_id
 
                 save_chunks(**args)
@@ -2201,10 +2281,10 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved
 
-# --- Helper function to process HTML files ---
-def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None):
+def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     update_callback(status="Processing HTML file...")
     total_chunks_saved = 0
@@ -2219,8 +2299,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             "blob_filename": original_filename,
             "update_callback": update_callback
         }
-
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         upload_to_blob(**args)
@@ -2279,7 +2360,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
                 "document_id": document_id
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             save_chunks(**args)
@@ -2291,11 +2374,10 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
     return total_chunks_saved
 
-
-# --- Helper function to process Markdown files ---
-def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None):
+def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes Markdown files."""
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     update_callback(status="Processing Markdown file...")
     total_chunks_saved = 0
@@ -2313,6 +2395,8 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
         if is_group:
             args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
 
         upload_to_blob(**args)
 
@@ -2376,7 +2460,9 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
                 "document_id": document_id
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             save_chunks(**args)
@@ -2387,11 +2473,10 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
     return total_chunks_saved
 
-
-# --- Helper function to process JSON files ---
-def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None):
+def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes JSON files using RecursiveJsonSplitter."""
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     update_callback(status="Processing JSON file...")
     total_chunks_saved = 0
@@ -2409,6 +2494,8 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
 
         if is_group:
             args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
 
         upload_to_blob(**args)
 
@@ -2461,7 +2548,9 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
                 "document_id": document_id
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             save_chunks(**args)
@@ -2484,11 +2573,10 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
     # Return the count of chunks actually saved
     return total_chunks_saved
 
-
-# --- Helper function to process a single Tabular sheet (CSV or Excel tab) ---
-def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None):
+def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     total_chunks_saved = 0
     target_chunk_size_chars = 800 # Requirement: "800 size chunk" (assuming characters)
@@ -2555,7 +2643,9 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
             "document_id": document_id
         }
 
-        if is_group:
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
             args["group_id"] = group_id
 
         save_chunks(**args)
@@ -2563,8 +2653,6 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
 
     return total_chunks_saved
 
-
-# --- Helper function to process Tabular files (CSV, XLSX, XLS) ---
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes CSV, XLSX, or XLS files using pandas."""
     is_group = group_id is not None
@@ -2657,9 +2745,6 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     return total_chunks_saved
 
-
-# --- Helper function for DI-supported types (PDF, DOCX, PPT, Image) ---
-# This function encapsulates the original logic for these file types
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
@@ -2894,7 +2979,6 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
     return total_final_chunks_processed
 
-# --- Audio transcription support ---
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     mapping = {
@@ -2904,7 +2988,6 @@ def _get_content_type(path: str) -> str:
         '.mp4': 'audio/mp4'
     }
     return mapping.get(ext, 'application/octet-stream')
-
 
 def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     """
@@ -2941,7 +3024,6 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
     print(f"[Debug] Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
-
 
 def process_audio_document(
     document_id: str,
@@ -3039,8 +3121,6 @@ def process_audio_document(
     update_callback(number_of_pages=total_pages, status="Audio transcription complete", percentage_complete=100, current_file_chunk=None)
     print("[Info] Audio transcription complete")
     return total_pages
-
-
 
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None):
     """
@@ -3198,21 +3278,34 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             except Exception as cleanup_e:
                  print(f"Warning: Failed to clean up original temp file {temp_file_path}: {cleanup_e}")
 
-def upgrade_legacy_documents(user_id, group_id=None):
+def upgrade_legacy_documents(user_id, group_id=None, public_workspace_id=None):
     """
     Finds all user or group docs missing percentage_complete
     and backfills them with the new fields.
     Returns the number of docs updated.
     """
     is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
 
     # Choose the correct container and query parameters
-    cosmos_container = (
-        cosmos_group_documents_container if is_group
-        else cosmos_user_documents_container
-    )
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
 
-    if is_group:
+    if is_public_workspace:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.public_workspace_id = @owner
+              AND NOT IS_DEFINED(c.percentage_complete)
+        """
+        parameters = [
+            {"name": "@owner", "value": public_workspace_id}
+        ]
+    elif is_group:
         query = """
             SELECT *
             FROM c
