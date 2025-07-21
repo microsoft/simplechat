@@ -4,8 +4,8 @@ from config import *
 from functions_settings import *
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
-#REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
-REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
+REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+#REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
 def _load_cache():
     """Loads the MSAL token cache from the Flask session."""
