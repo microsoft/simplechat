@@ -442,6 +442,35 @@ def process_video_document(
         )
         total += 1
 
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for video document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
+
     update_callback(status=f"VIDEO: done, {total} chunks")
     return total
 
@@ -2372,6 +2401,35 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
         # Catch potential BeautifulSoup errors too
         raise Exception(f"Failed processing HTML file {original_filename}: {e}")
 
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_chunks_saved > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for HTML document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
+
     return total_chunks_saved
 
 def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
@@ -2471,6 +2529,35 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
 
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_chunks_saved > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for Markdown document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
+
     return total_chunks_saved
 
 def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
@@ -2569,6 +2656,35 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
              print(f"Error during JSON processing for {original_filename}: {type(e).__name__}: {e}")
         # Re-raise wrapped exception for the main handler
         raise Exception(f"Failed processing JSON file {original_filename}: {e}")
+
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_chunks_saved > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for JSON document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
 
     # Return the count of chunks actually saved
     return total_chunks_saved
@@ -2742,6 +2858,35 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
     except Exception as e:
         raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_chunks_saved > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for Tabular document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
 
     return total_chunks_saved
 
@@ -3118,7 +3263,37 @@ def process_audio_document(
             group_id=group_id
         )
 
-    update_callback(number_of_pages=total_pages, status="Audio transcription complete", percentage_complete=100, current_file_chunk=None)
+    # Extract metadata if enabled and chunks were processed
+    settings = get_settings()
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if enable_extract_meta_data and total_pages > 0:
+        try:
+            update_callback(status="Extracting final metadata...")
+            args = {
+                "document_id": document_id,
+                "user_id": user_id
+            }
+
+            if public_workspace_id:
+                args["public_workspace_id"] = public_workspace_id
+            elif group_id:
+                args["group_id"] = group_id
+
+            document_metadata = extract_document_metadata(**args)
+            
+            if document_metadata:
+                update_fields = {k: v for k, v in document_metadata.items() if v is not None and v != ""}
+                if update_fields:
+                    update_fields['status'] = "Final metadata extracted"
+                    update_callback(**update_fields)
+                else:
+                    update_callback(status="Final metadata extraction yielded no new info")
+        except Exception as e:
+            print(f"Warning: Error extracting final metadata for audio document {document_id}: {str(e)}")
+            update_callback(status=f"Processing complete (metadata extraction warning)")
+    else:
+        update_callback(number_of_pages=total_pages, status="Audio transcription complete", percentage_complete=100, current_file_chunk=None)
+
     print("[Info] Audio transcription complete")
     return total_pages
 
