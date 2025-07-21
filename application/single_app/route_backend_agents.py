@@ -121,7 +121,7 @@ def set_user_selected_agent():
 
 @bpa.route('/api/user/agent/settings', methods=['GET'])
 @login_required
-def get_global_agent_settings():
+def get_global_agent_settings_for_users():
     return get_global_agent_settings(include_admin_extras=False)
 
 # === ADMIN AGENTS ENDPOINTS ===

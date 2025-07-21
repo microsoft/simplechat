@@ -1,7 +1,7 @@
 // workspace_agents.js
 // Handles user agent CRUD in the workspace UI
 
-import { shouldEnableCustomConnection, toggleCustomConnectionUI, toggleAdvancedUI, populateGlobalModelDropdown, getAvailableModels, shouldExpandAdvanced, fetchAndGetAvailableModels } from '../agents_common.js';
+import { shouldEnableCustomConnection, toggleCustomConnectionUI, toggleAdvancedUI, populateGlobalModelDropdown, getAvailableModels, shouldExpandAdvanced, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins } from '../agents_common.js';
 
 // DOM elements
 const agentSelect = document.getElementById('active-agent-select'); // Renamed for clarity
@@ -183,7 +183,8 @@ function attachAgentTableEvents(agents, selectedAgentName) {
   }
 }
 
-function openAgentModal(agent = null, selectedAgentName = null) {
+
+async function openAgentModal(agent = null, selectedAgentName = null) {
   // Get modal and fields
   const modalEl = document.getElementById('agentModal');
   if (!modalEl) return alert('Agent modal not found.');
@@ -204,14 +205,12 @@ function openAgentModal(agent = null, selectedAgentName = null) {
   const apimDeploymentInput = document.getElementById('agent-apim-deployment');
   const apimApiVersionInput = document.getElementById('agent-apim-api-version');
   const instructionsInput = document.getElementById('agent-instructions');
-  const actionsInput = document.getElementById('agent-actions-to-load');
   const settingsInput = document.getElementById('agent-additional-settings');
-  // Removed defaultCheckbox
+  const pluginSelect = document.getElementById('agent-plugins-to-load');
   const errorDiv = document.getElementById('agent-modal-error');
   const saveBtn = document.getElementById('agent-modal-save-btn');
-  // Add Set as Selected Agent button (only in modal, only for edit)
   let setSelectedBtn = document.getElementById('agent-modal-set-selected-btn');
-  // Always reference the button, do not create it dynamically (it's in the HTML)
+  // Set as Selected Agent button logic
   if (agent) {
     setSelectedBtn.classList.remove('d-none');
     setSelectedBtn.style.display = '';
@@ -249,8 +248,6 @@ function openAgentModal(agent = null, selectedAgentName = null) {
   const globalModelSelect = document.getElementById('agent-global-model-select');
   const advancedToggle = document.getElementById('agent-advanced-toggle');
   const advancedSection = document.getElementById('agent-advanced-section');
-
-  // Helper for modal elements
   const modalElements = {
     customFields: customConnectionFields,
     globalModelGroup: globalModelGroup,
@@ -263,7 +260,6 @@ function openAgentModal(agent = null, selectedAgentName = null) {
   toggleCustomConnectionUI(customEnabled, modalElements);
   customConnectionToggle.onchange = function () {
     toggleCustomConnectionUI(this.checked, modalElements);
-    // When toggling custom connection, reload models if needed
     if (!this.checked) {
       loadGlobalModels();
     }
@@ -279,7 +275,7 @@ function openAgentModal(agent = null, selectedAgentName = null) {
 
   // --- Global Model Dropdown Logic ---
   async function loadGlobalModels() {
-    const endpoint = '/api/user/agent/settings'; // Use user endpoint for workspace
+    const endpoint = '/api/user/agent/settings';
     const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
     populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
     globalModelSelect.onchange = function () {
@@ -301,16 +297,31 @@ function openAgentModal(agent = null, selectedAgentName = null) {
       }
     };
   }
-
-  // Listen for APIM toggle changes to reload models
   if (apimToggle) {
     apimToggle.onchange = function () {
       loadGlobalModels();
     };
   }
-
   if (!customEnabled) {
     loadGlobalModels();
+  }
+
+  // --- Plugin Multi-Select Logic ---
+  // Fetch available plugins and populate the multi-select (user/workspace context)
+  let availablePlugins = [];
+  try {
+    const resp = await fetch('/api/user/plugins');
+    if (resp.ok) {
+      availablePlugins = await resp.json();
+    }
+  } catch (e) {
+    availablePlugins = [];
+  }
+  populatePluginMultiSelect(pluginSelect, availablePlugins);
+  if (agent && Array.isArray(agent.plugins_to_load)) {
+    setSelectedPlugins(pluginSelect, agent.plugins_to_load);
+  } else {
+    setSelectedPlugins(pluginSelect, []);
   }
 
   // Populate fields
@@ -328,7 +339,6 @@ function openAgentModal(agent = null, selectedAgentName = null) {
     apimDeploymentInput.value = agent.azure_agent_apim_gpt_deployment || '';
     apimApiVersionInput.value = agent.azure_agent_apim_gpt_api_version || '';
     instructionsInput.value = agent.instructions || '';
-    actionsInput.value = agent.actions_to_load ? JSON.stringify(agent.actions_to_load, null, 2) : '[]';
     settingsInput.value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
   } else {
     nameInput.value = '';
@@ -344,22 +354,13 @@ function openAgentModal(agent = null, selectedAgentName = null) {
     apimDeploymentInput.value = '';
     apimApiVersionInput.value = '';
     instructionsInput.value = '';
-    actionsInput.value = '[]';
     settingsInput.value = '{}';
+    setSelectedPlugins(pluginSelect, []);
   }
+
   // Save handler
   saveBtn.onclick = async () => {
-    // Parse JSON fields
-    let actionsArr = [];
     let settingsObj = {};
-    try {
-      actionsArr = actionsInput.value.trim() ? JSON.parse(actionsInput.value) : [];
-      if (!Array.isArray(actionsArr)) throw new Error('Actions must be a JSON array');
-    } catch (e) {
-      errorDiv.textContent = 'Actions to Load: ' + e.message;
-      errorDiv.classList.remove('d-none');
-      return;
-    }
     try {
       settingsObj = settingsInput.value.trim() ? JSON.parse(settingsInput.value) : {};
       if (typeof settingsObj !== 'object' || Array.isArray(settingsObj)) throw new Error('Additional Settings must be a JSON object');
@@ -384,9 +385,9 @@ function openAgentModal(agent = null, selectedAgentName = null) {
       azure_agent_apim_gpt_api_version: apimApiVersionInput.value.trim(),
       enable_agent_gpt_apim: apimToggle.checked,
       instructions: instructionsInput.value.trim(),
-      actions_to_load: actionsArr,
+      actions_to_load: [], // deprecated, always empty for new UI
       other_settings: settingsObj,
-      plugins_to_load: [],
+      plugins_to_load: getSelectedPlugins(pluginSelect),
       is_global: false
     };
     // Validate with JSON schema (Ajv)

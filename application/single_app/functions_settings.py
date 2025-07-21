@@ -34,6 +34,12 @@ def get_settings():
             'name': 'researcher_agent',
             'is_global': True
         },
+        'allow_user_agents': False,
+        'allow_user_custom_agent_endpoints': False,
+        'allow_user_plugins': False,
+        'allow_group_agents': False,
+        'allow_group_custom_agent_endpoints': False,
+        'allow_group_plugins': False,
         'semantic_kernel_agents': [
             {
                 'id': '15b0c92a-741d-42ff-ba0b-367c7ee0c848',

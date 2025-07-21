@@ -1,6 +1,7 @@
 // admin_agents.js
 // Handles CRUD operations and modal logic for Agents in the admin UI
 import { showToast } from "../chat/chat-toast.js";
+import { shouldEnableCustomConnection, toggleCustomConnectionUI, shouldExpandAdvanced, toggleAdvancedUI, populateGlobalModelDropdown, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins } from '../agents_common.js';
 
 document.addEventListener('DOMContentLoaded', function () {
     // Elements
@@ -19,15 +20,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Utility: Get agent data from form
     function getAgentFormData() {
-        let actionsToLoad = [];
         let additionalSettings = {};
-        try {
-            const actionsRaw = document.getElementById('agent-actions-to-load').value.trim();
-            if (actionsRaw) actionsToLoad = JSON.parse(actionsRaw);
-        } catch (e) {
-            alert('Actions to Load must be a valid JSON array.');
-            throw e;
-        }
         try {
             const settingsRaw = document.getElementById('agent-additional-settings').value.trim();
             if (settingsRaw) additionalSettings = JSON.parse(settingsRaw);
@@ -36,13 +29,12 @@ document.addEventListener('DOMContentLoaded', function () {
             throw e;
         }
         let id = '';
-        // If editing, preserve the existing id
         if (editingAgentIndex !== null && agents[editingAgentIndex] && agents[editingAgentIndex].id) {
             id = agents[editingAgentIndex].id;
         } else {
-            // Generate a UUID for new agents
             id = crypto.randomUUID() || '';
         }
+        const pluginSelect = document.getElementById('agent-plugins-to-load');
         return {
             id,
             name: document.getElementById('agent-name').value.trim(),
@@ -58,15 +50,15 @@ document.addEventListener('DOMContentLoaded', function () {
             azure_agent_apim_gpt_api_version: document.getElementById('agent-apim-api-version').value.trim(),
             enable_agent_gpt_apim: document.getElementById('agent-enable-apim').checked,
             instructions: document.getElementById('agent-instructions').value.trim(),
-            actions_to_load: actionsToLoad,
+            actions_to_load: [], // deprecated, always empty for new UI
             other_settings: additionalSettings,
-            plugins_to_load: [],
+            plugins_to_load: getSelectedPlugins(pluginSelect),
             is_global: true
         };
     }
 
     // Utility: Populate form with agent data
-    function setAgentFormData(agent) {
+    async function setAgentFormData(agent) {
         document.getElementById('agent-name').value = agent.name || '';
         document.getElementById('agent-display-name').value = agent.display_name || '';
         document.getElementById('agent-description').value = agent.description || '';
@@ -80,31 +72,101 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('agent-apim-api-version').value = agent.azure_agent_apim_gpt_api_version || '';
         document.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
         // Show/hide APIM fields
-        const apimToggle = document.getElementById('agent-enable-apim');
-        const gptFields = document.getElementById('agent-gpt-fields');
-        const apimFields = document.getElementById('agent-apim-fields');
+        // (apimToggle, gptFields, apimFields) are already declared elsewhere, so don't redeclare them here.
         function updateApimVisibility() {
-            if (apimToggle.checked) {
-                apimFields.style.display = '';
-                gptFields.style.display = 'none';
+            if (document.getElementById('agent-enable-apim').checked) {
+                document.getElementById('agent-apim-fields').style.display = '';
+                document.getElementById('agent-gpt-fields').style.display = 'none';
             } else {
-                apimFields.style.display = 'none';
-                gptFields.style.display = '';
+                document.getElementById('agent-apim-fields').style.display = 'none';
+                document.getElementById('agent-gpt-fields').style.display = '';
             }
         }
-        apimToggle.onchange = updateApimVisibility;
+        document.getElementById('agent-enable-apim').onchange = updateApimVisibility;
         updateApimVisibility();
+
         document.getElementById('agent-instructions').value = agent.instructions || '';
-        document.getElementById('agent-actions-to-load').value = agent.actions_to_load ? JSON.stringify(agent.actions_to_load, null, 2) : '[]';
         document.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
 
-        // Show 'Set as Selected Agent' button only in edit mode and if not already selected
-        if (agentModalSetSelectedBtn) {
-            if (agent.name && selectedAgent && agent.name !== selectedAgent.name) {
-                agentModalSetSelectedBtn.classList.remove('d-none');
-            } else {
-                agentModalSetSelectedBtn.classList.add('d-none');
+        // --- Plugin Multi-Select Logic ---
+        const pluginSelect = document.getElementById('agent-plugins-to-load');
+        let availablePlugins = [];
+        try {
+            const resp = await fetch('/api/admin/plugins');
+            if (resp.ok) {
+                availablePlugins = await resp.json();
             }
+        } catch (e) {
+            availablePlugins = [];
+        }
+        populatePluginMultiSelect(pluginSelect, availablePlugins);
+        if (agent && Array.isArray(agent.plugins_to_load)) {
+            setSelectedPlugins(pluginSelect, agent.plugins_to_load);
+        } else {
+            setSelectedPlugins(pluginSelect, []);
+        }
+
+        // --- Shared Modal Logic ---
+        const customConnectionToggle = document.getElementById('agent-custom-connection');
+        const customConnectionFields = document.getElementById('agent-custom-connection-fields');
+        const globalModelGroup = document.getElementById('agent-global-model-group');
+        const globalModelSelect = document.getElementById('agent-global-model-select');
+        const advancedToggle = document.getElementById('agent-advanced-toggle');
+        const advancedSection = document.getElementById('agent-advanced-section');
+        const modalElements = {
+            customFields: customConnectionFields,
+            globalModelGroup: globalModelGroup,
+            advancedSection: advancedSection
+        };
+        // Custom Connection Toggle
+        let customEnabled = shouldEnableCustomConnection(agent);
+        customConnectionToggle.checked = customEnabled;
+        toggleCustomConnectionUI(customEnabled, modalElements);
+        customConnectionToggle.onchange = function () {
+            toggleCustomConnectionUI(this.checked, modalElements);
+            if (!this.checked) {
+                loadGlobalModels();
+            }
+        };
+        // Advanced Toggle
+        let expandAdvanced = shouldExpandAdvanced(agent);
+        advancedToggle.checked = expandAdvanced;
+        toggleAdvancedUI(expandAdvanced, modalElements);
+        advancedToggle.onchange = function () {
+            toggleAdvancedUI(this.checked, modalElements);
+        };
+        // Global Model Dropdown
+        async function loadGlobalModels() {
+            const endpoint = '/api/admin/agent/settings';
+            const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
+            populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+            globalModelSelect.onchange = function () {
+                const selected = models.find(m => m.deployment === this.value || m.name === this.value || m.id === this.value);
+                if (selected) {
+                    if (apimEnabled) {
+                        document.getElementById('agent-apim-deployment').value = selected.deployment || '';
+                        document.getElementById('agent-gpt-endpoint').value = '';
+                        document.getElementById('agent-gpt-key').value = '';
+                        document.getElementById('agent-gpt-deployment').value = '';
+                        document.getElementById('agent-gpt-api-version').value = '';
+                    } else {
+                        document.getElementById('agent-gpt-endpoint').value = selected.endpoint || '';
+                        document.getElementById('agent-gpt-key').value = selected.key || '';
+                        document.getElementById('agent-gpt-deployment').value = selected.deployment || selected.name || '';
+                        document.getElementById('agent-gpt-api-version').value = selected.api_version || '';
+                        document.getElementById('agent-apim-deployment').value = '';
+                    }
+                }
+            };
+        }
+        // Listen for APIM toggle changes to reload models
+        if (apimToggle) {
+            apimToggle.onchange = function () {
+                loadGlobalModels();
+            };
+        }
+        if (!customEnabled) {
+            loadGlobalModels();
         }
     }
 

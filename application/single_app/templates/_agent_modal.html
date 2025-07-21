@@ -109,8 +109,11 @@
           <!-- Advanced Section (hidden by default) -->
           <div id="agent-advanced-section" style="display:none;">
             <div class="mb-3">
-              <label for="agent-actions-to-load" class="form-label">Actions to Load (JSON Array)</label>
-              <textarea class="form-control" id="agent-actions-to-load" rows="2" placeholder='[]'></textarea>
+              <label for="agent-plugins-to-load" class="form-label">Plugins Whitelist</label>
+              <select class="form-select" id="agent-plugins-to-load" multiple size="6">
+                <!-- Options will be populated dynamically by JS -->
+              </select>
+              <div class="form-text">Hold Ctrl (Windows) or Cmd (Mac) to select multiple plugins.</div>
             </div>
             <div class="mb-3">
               <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
