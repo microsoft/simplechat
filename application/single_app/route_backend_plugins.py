@@ -186,7 +186,9 @@ def get_core_plugin_settings():
         'enable_wait_plugin': bool(settings.get('enable_wait_plugin', True)),
         'enable_default_embedding_model_plugin': bool(settings.get('enable_default_embedding_model_plugin', True)),
         'enable_fact_memory_plugin': bool(settings.get('enable_fact_memory_plugin', True)),
-        'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False))
+        'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False)),
+        'allow_user_plugins': bool(settings.get('allow_user_plugins', True)),
+        'allow_group_plugins': bool(settings.get('allow_group_plugins', True)),
     })
 
 # POST: Update core plugin toggle values
@@ -195,13 +197,16 @@ def get_core_plugin_settings():
 @admin_required
 def update_core_plugin_settings():
     data = request.get_json(force=True)
+    print("Received plugin settings update request:", data)
     # Validate input
     expected_keys = [
         'enable_time_plugin',
         'enable_http_plugin',
         'enable_wait_plugin',
         'enable_default_embedding_model_plugin',
-        'enable_fact_memory_plugin'
+        'enable_fact_memory_plugin',
+        'allow_user_plugins',
+        'allow_group_plugins'
     ]
     updates = {}
     for key in expected_keys:
@@ -209,7 +214,10 @@ def update_core_plugin_settings():
             return jsonify({'error': f"Missing required field: {key}"}), 400
         if not isinstance(data[key], bool):
             return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
+        if key not in expected_keys:
+            return jsonify({'error': f"Unexpected field: {key}"}), 400
         updates[key] = data[key]
+    print("Validated plugin settings:", updates)
     # Update settings
     success = update_settings(updates)
     if success:

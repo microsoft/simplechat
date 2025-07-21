@@ -1,4 +1,30 @@
 /**
+ * Shared logic to show/hide APIM and GPT fields based on APIM toggle state.
+ * @param {HTMLInputElement} apimToggle - The APIM toggle checkbox element
+ * @param {HTMLElement} apimFields - The APIM fields container
+ * @param {HTMLElement} gptFields - The GPT fields container
+ */
+export function setupApimToggle(apimToggle, apimFields, gptFields, onToggle) {
+	if (!apimToggle || !apimFields || !gptFields) return;
+	function updateApimFieldsVisibility() {
+		console.log('[DEBUG] updateApimFieldsVisibility fired. apimToggle.checked:', apimToggle.checked);
+		if (apimToggle.checked) {
+			apimFields.style.display = 'block';
+			gptFields.style.display = 'none';
+			console.log('[DEBUG] Showing APIM fields, hiding GPT fields.');
+		} else {
+			apimFields.style.display = 'none';
+			gptFields.style.display = 'block';
+			console.log('[DEBUG] Hiding APIM fields, showing GPT fields.');
+		}
+		if (typeof onToggle === 'function') {
+			onToggle();
+		}
+	}
+	apimToggle.onchange = updateApimFieldsVisibility;
+	updateApimFieldsVisibility();
+}
+/**
  * Populate a multi-select element with available plugins
  * @param {HTMLElement} selectEl - The select element
  * @param {Array} plugins - Array of plugin objects (must have .name)

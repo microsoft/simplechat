@@ -381,39 +381,49 @@
         role="tabpanel"
         aria-labelledby="agents-tab-btn"
       >
-      <div class="tab-pane-inner">
-        <div class="card p-3 my-3">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0 d-flex align-items-center gap-2">
-              Your Agents
-              <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
-            </h5>
-            <button class="btn btn-success btn-sm" id="create-agent-btn">New Agent</button>
-          </div>
-          <div class="mb-3 row align-items-center">
-            <label for="active-agent-select" class="col-sm-3 col-form-label">Selected Agent:</label>
-            <div class="col-sm-5">
-              <select id="active-agent-select" class="form-select form-select-sm"></select>
+        {% if settings.allow_user_agents %}
+          <div class="tab-pane-inner">
+            <div class="card p-3 my-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0 d-flex align-items-center gap-2">
+                  Your Agents
+                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+                </h5>
+                <button class="btn btn-success btn-sm" id="create-agent-btn">New Agent</button>
+              </div>
+              <div class="mb-3 row align-items-center">
+                <label for="active-agent-select" class="col-sm-3 col-form-label">Selected Agent:</label>
+                <div class="col-sm-5">
+                  <select id="active-agent-select" class="form-select form-select-sm"></select>
+                </div>
+                <div class="col-sm-4">
+                  <span id="active-agent-select-msg" class="text-muted small"></span>
+                </div>
+              </div>
+              <table class="table table-striped" id="agents-table">
+                <thead><tr><th>Name</th><th>Display Name</th><th>Selected</th><th>Actions</th></tr></thead>
+                <tbody id="agents-table-body">
+                  <tr class="table-loading-row">
+                    <td colspan="4">
+                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                      Loading agents...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <div class="col-sm-4">
-              <span id="active-agent-select-msg" class="text-muted small"></span>
-            </div>
+            <div id="workspace-agents-error"></div>
           </div>
-          <table class="table table-striped" id="agents-table">
-            <thead><tr><th>Name</th><th>Display Name</th><th>Selected</th><th>Actions</th></tr></thead>
-            <tbody id="agents-table-body">
-              <tr class="table-loading-row">
-                <td colspan="4">
-                  <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
-                  Loading agents...
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div id="workspace-agents-error"></div>
+        {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Custom User Agents are currently disabled. Please ask your admin to enable agents for your workspace.
+          </div>
+        {% endif %}
       </div>
-      </div>
+      <!-- End AGENTS TAB -->
+      {% endif %}
+
+      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
       <!-- ============= PLUGINS TAB ============= -->
       <div
         class="tab-pane fade"
@@ -421,26 +431,32 @@
         role="tabpanel"
         aria-labelledby="plugins-tab-btn"
       >
-        <div id="workspace-plugins-root"></div>
-      <!-- Plugins Table Template (hidden) -->
-      <template id="plugins-table-template">
-        <div class="card p-3 my-3">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="mb-0 d-flex align-items-center gap-2">
-              Your Plugins
-              <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
-            </h5>
-            <button class="btn btn-success btn-sm" id="create-plugin-btn">New Plugin</button>
+        {% if settings.allow_user_plugins %}
+          <div id="workspace-plugins-root"></div>
+          <!-- Plugins Table Template (hidden) -->
+          <template id="plugins-table-template">
+            <div class="card p-3 my-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0 d-flex align-items-center gap-2">
+                  Your Plugins
+                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+                </h5>
+                <button class="btn btn-success btn-sm" id="create-plugin-btn">New Plugin</button>
+              </div>
+              <table class="table table-striped" id="plugins-table">
+                <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Actions</th></tr></thead>
+                <tbody id="plugins-table-body">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </template>
           </div>
-          <table class="table table-striped" id="plugins-table">
-            <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Actions</th></tr></thead>
-            <tbody id="plugins-table-body">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-      </template>
-      </div>
+        {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Custom User Plugins are currently disabled. Please ask your admin to enable plugins for your workspace.
+          </div>
+        {% endif %}
       {% endif %}
     </div>
     <!-- End Tab Content -->

@@ -1,7 +1,7 @@
 // admin_agents.js
 // Handles CRUD operations and modal logic for Agents in the admin UI
 import { showToast } from "../chat/chat-toast.js";
-import { shouldEnableCustomConnection, toggleCustomConnectionUI, shouldExpandAdvanced, toggleAdvancedUI, populateGlobalModelDropdown, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins } from '../agents_common.js';
+import { shouldEnableCustomConnection, toggleCustomConnectionUI, shouldExpandAdvanced, toggleAdvancedUI, populateGlobalModelDropdown, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins, setupApimToggle } from '../agents_common.js';
 
 document.addEventListener('DOMContentLoaded', function () {
     // Elements
@@ -70,20 +70,35 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('agent-apim-subscription-key').value = agent.azure_agent_apim_gpt_subscription_key || '';
         document.getElementById('agent-apim-deployment').value = agent.azure_agent_apim_gpt_deployment || '';
         document.getElementById('agent-apim-api-version').value = agent.azure_agent_apim_gpt_api_version || '';
-        document.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
-        // Show/hide APIM fields
-        // (apimToggle, gptFields, apimFields) are already declared elsewhere, so don't redeclare them here.
-        function updateApimVisibility() {
-            if (document.getElementById('agent-enable-apim').checked) {
-                document.getElementById('agent-apim-fields').style.display = '';
-                document.getElementById('agent-gpt-fields').style.display = 'none';
-            } else {
-                document.getElementById('agent-apim-fields').style.display = 'none';
-                document.getElementById('agent-gpt-fields').style.display = '';
-            }
+        const apimToggle = document.getElementById('agent-enable-apim');
+        const gptFields = document.getElementById('agent-gpt-fields');
+        const apimFields = document.getElementById('agent-apim-fields');
+        apimToggle.checked = !!agent.enable_agent_gpt_apim;
+        // Use the new callback to reload models after visibility update
+        async function loadGlobalModels() {
+            const endpoint = '/api/admin/agent/settings';
+            const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
+            populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+            globalModelSelect.onchange = function () {
+                const selected = models.find(m => m.deployment === this.value || m.name === this.value || m.id === this.value);
+                if (selected) {
+                    if (apimEnabled) {
+                        document.getElementById('agent-apim-deployment').value = selected.deployment || '';
+                        document.getElementById('agent-gpt-endpoint').value = '';
+                        document.getElementById('agent-gpt-key').value = '';
+                        document.getElementById('agent-gpt-deployment').value = '';
+                        document.getElementById('agent-gpt-api-version').value = '';
+                    } else {
+                        document.getElementById('agent-gpt-endpoint').value = selected.endpoint || '';
+                        document.getElementById('agent-gpt-key').value = selected.key || '';
+                        document.getElementById('agent-gpt-deployment').value = selected.deployment || selected.name || '';
+                        document.getElementById('agent-gpt-api-version').value = selected.api_version || '';
+                        document.getElementById('agent-apim-deployment').value = '';
+                    }
+                }
+            };
         }
-        document.getElementById('agent-enable-apim').onchange = updateApimVisibility;
-        updateApimVisibility();
+        setupApimToggle(apimToggle, apimFields, gptFields, loadGlobalModels);
 
         document.getElementById('agent-instructions').value = agent.instructions || '';
         document.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
@@ -159,12 +174,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             };
         }
-        // Listen for APIM toggle changes to reload models
-        if (apimToggle) {
-            apimToggle.onchange = function () {
-                loadGlobalModels();
-            };
-        }
+        // Initial model load if not using custom connection
         if (!customEnabled) {
             loadGlobalModels();
         }

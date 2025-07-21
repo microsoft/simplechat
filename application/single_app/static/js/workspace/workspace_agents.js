@@ -1,7 +1,7 @@
 // workspace_agents.js
 // Handles user agent CRUD in the workspace UI
 
-import { shouldEnableCustomConnection, toggleCustomConnectionUI, toggleAdvancedUI, populateGlobalModelDropdown, getAvailableModels, shouldExpandAdvanced, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins } from '../agents_common.js';
+import { shouldEnableCustomConnection, toggleCustomConnectionUI, toggleAdvancedUI, populateGlobalModelDropdown, getAvailableModels, shouldExpandAdvanced, fetchAndGetAvailableModels, populatePluginMultiSelect, getSelectedPlugins, setSelectedPlugins, setupApimToggle } from '../agents_common.js';
 
 // DOM elements
 const agentSelect = document.getElementById('active-agent-select'); // Renamed for clarity
@@ -94,6 +94,16 @@ function renderAgentsTable(agents) {
       }
       renderAgentSelectDropdown(agents);
       attachAgentTableEvents(agents);
+    // Add permanent div below the custom connection toggle for disabled message
+    let customConnMsgDiv = document.getElementById('custom-connection-disabled-msg');
+    if (!customConnMsgDiv && customConnectionToggle) {
+      customConnMsgDiv = document.createElement('div');
+      customConnMsgDiv.id = 'custom-connection-disabled-msg';
+      customConnMsgDiv.className = 'alert alert-warning mt-2 py-1 px-2';
+      customConnMsgDiv.style.display = 'none';
+      // Insert after the toggle
+      customConnectionToggle.parentElement.parentElement.insertAdjacentElement('afterend', customConnMsgDiv);
+    }
     });
   }
 }
@@ -254,9 +264,48 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
     advancedSection: advancedSection
   };
 
+
   // --- Custom Connection Toggle Logic ---
   let customEnabled = shouldEnableCustomConnection(agent);
   customConnectionToggle.checked = customEnabled;
+  // Add permanent div below the custom connection toggle for disabled message
+  let customConnMsgDiv = document.getElementById('custom-connection-disabled-msg');
+  const customConnToggleContainer = document.getElementById('agent-custom-connection-toggle');
+  if (!customConnMsgDiv && customConnToggleContainer) {
+    customConnMsgDiv = document.createElement('div');
+    customConnMsgDiv.id = 'custom-connection-disabled-msg';
+    customConnMsgDiv.className = 'alert alert-warning mt-2 py-1 px-2';
+    customConnMsgDiv.style.display = 'none';
+    // Insert after the toggle container
+    customConnToggleContainer.insertAdjacentElement('afterend', customConnMsgDiv);
+  }
+  // Fetch allow_user_custom_agent_endpoints and disable toggle/message if needed
+  if (customConnectionToggle) {
+    try {
+      const settingsResp = await fetch('/api/user/agent/settings');
+      if (settingsResp.ok) {
+        const settings = await settingsResp.json();
+        console.log('[DEBUG] /api/user/agent/settings response:', settings);
+        if (settings && settings.allow_user_custom_agent_endpoints === false) {
+          customConnectionToggle.disabled = true;
+          if (customConnMsgDiv) {
+            customConnMsgDiv.textContent = 'Custom connection disabled by admins.';
+            customConnMsgDiv.style.display = '';
+          }
+          console.log('[DEBUG] Custom Connection toggle disabled due to allow_user_custom_agent_endpoints = false');
+        } else {
+          customConnectionToggle.disabled = false;
+          if (customConnMsgDiv) {
+            customConnMsgDiv.style.display = 'none';
+          }
+          console.log('[DEBUG] Custom Connection toggle enabled (allow_user_custom_agent_endpoints is true or missing)');
+        }
+        console.log('[DEBUG] Custom Connection toggle .disabled state:', customConnectionToggle.disabled);
+      }
+    } catch (e) {
+      console.warn('[DEBUG] Could not fetch allow_user_custom_agent_endpoints for custom connection toggle:', e);
+    }
+  }
   toggleCustomConnectionUI(customEnabled, modalElements);
   customConnectionToggle.onchange = function () {
     toggleCustomConnectionUI(this.checked, modalElements);
@@ -264,6 +313,44 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
       loadGlobalModels();
     }
   };
+
+  // --- APIM Toggle Logic ---
+  // Debug logging to verify elements and setup
+  console.log('[DEBUG] APIM Toggle:', apimToggle);
+  console.log('[DEBUG] APIM Fields:', apimFields);
+  console.log('[DEBUG] GPT Fields:', gptFields);
+  if (!apimToggle) {
+    console.warn('[DEBUG] apimToggle not found!');
+  }
+  if (!apimFields) {
+    console.warn('[DEBUG] apimFields not found!');
+  }
+  if (!gptFields) {
+    console.warn('[DEBUG] gptFields not found!');
+  }
+  // Fetch allow_user_agents and disable toggle if needed
+  if (apimToggle) {
+    try {
+      const settingsResp = await fetch('/api/user/agent/settings');
+      if (settingsResp.ok) {
+        const settings = await settingsResp.json();
+        if (settings && settings.allow_user_agents === false) {
+          apimToggle.disabled = true;
+          console.log('[DEBUG] APIM toggle disabled due to allow_user_agents = false');
+        } else {
+          apimToggle.disabled = false;
+        }
+      }
+    } catch (e) {
+      console.warn('[DEBUG] Could not fetch allow_user_agents:', e);
+    }
+  }
+  if (apimToggle && apimFields && gptFields) {
+    setupApimToggle(apimToggle, apimFields, gptFields, loadGlobalModels);
+    console.log('[DEBUG] setupApimToggle called successfully.');
+  } else {
+    console.warn('[DEBUG] setupApimToggle NOT called due to missing elements.');
+  }
 
   // --- Advanced Toggle Logic ---
   let expandAdvanced = shouldExpandAdvanced(agent);
@@ -297,11 +384,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
       }
     };
   }
-  if (apimToggle) {
-    apimToggle.onchange = function () {
-      loadGlobalModels();
-    };
-  }
+  // apimToggle.onchange is now managed by setupApimToggle; do not overwrite it here.
   if (!customEnabled) {
     loadGlobalModels();
   }

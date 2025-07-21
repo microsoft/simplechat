@@ -497,25 +497,41 @@
                             <h4>Global  Plugins</h4>
                             <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Plugin</button>
                         </div>
+                        {% if settings.per_user_semantic_kernel %}
+                        <!-- Plugin Feature Flags -->
+                            <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                <h6 class="mb-2">Workspace Plugin Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Plugins</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Plugins</label>
+                                </div>
+                            </div>
+                        {% endif %}
+                        
                         <!-- Core Plugin Toggles -->
-                        <div class="mb-3" id="core-plugin-toggles">
-                            <div class="form-check form-switch d-inline-block me-4">
+                        <div class="card p-3 mb-3" id="core-plugin-toggles">
+                            <h6 class="mb-2">Core Plugin Toggles</h6>
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block me-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block me-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block ms-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Plugin</label>
                             </div>
@@ -560,11 +576,33 @@
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
                         </div>
                         {% if settings.per_user_semantic_kernel %}
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
-                            <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
-                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
-                        </div>
+                            <!-- Agent Feature Flags -->
+                            <div class="card p-3 mb-3" id="agent-toggles-card">
+                                <h6 class="mb-2">Workspace Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                                </div>
+                            </div>
+                            <!-- End Agent Feature Flags -->
+                            
                         {% endif %}
                         <!-- Orchestration Settings Card -->
                         <div class="d-flex justify-content-between align-items-center mb-3">
