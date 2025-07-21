@@ -6,6 +6,7 @@ import { loadAllDocs, populateDocumentSelectScope, handleDocumentSelectChange } 
 import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter is in chat-utils.js now
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
 import { loadUserSettings } from "./chat-layout.js";
+import { showToast } from "./chat-toast.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -80,12 +81,61 @@ window.addEventListener('DOMContentLoaded', () => {
       const localSearchDocsParam = getUrlParameter("search_documents") === "true";
       const localDocScopeParam = getUrlParameter("doc_scope") || "";
       const localDocumentIdParam = getUrlParameter("document_id") || "";
+      const workspaceParam = getUrlParameter("workspace") || "";
+      const openSearchParam = getUrlParameter("openSearch") === "1";
+      const scopeParam = getUrlParameter("scope") || "";
       const localSearchDocsBtn = document.getElementById("search-documents-btn");
       const localDocScopeSel = document.getElementById("doc-scope-select");
       const localDocSelectEl = document.getElementById("document-select");
       const searchDocumentsContainer = document.getElementById("search-documents-container");
 
-      if (localSearchDocsParam && localSearchDocsBtn && localDocScopeSel && localDocSelectEl && searchDocumentsContainer) {
+      // Handle workspace parameter from public directory
+      if (workspaceParam && localSearchDocsBtn && localDocScopeSel && localDocSelectEl && searchDocumentsContainer) {
+          console.log(`Handling workspace parameter: ${workspaceParam}`);
+          
+          // Set the active public workspace
+          fetch('/api/public_workspaces/setActive', {
+              method: 'PATCH',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                  workspaceId: workspaceParam
+              })
+          })
+          .then(response => response.json())
+          .then(data => {
+              if (data.message) {
+                  console.log('Active public workspace set successfully');
+                  
+                  // Auto-open search documents section
+                  localSearchDocsBtn.classList.add("active");
+                  searchDocumentsContainer.style.display = "block";
+                  
+                  // Set scope to public
+                  localDocScopeSel.value = "public";
+                  
+                  // Populate documents for public scope
+                  populateDocumentSelectScope();
+                  
+                  // Trigger change to update UI
+                  handleDocumentSelectChange();
+                  
+                  showToast('Public workspace activated for chat', 'success');
+              } else {
+                  console.error('Failed to set active public workspace:', data.error || data.message);
+                  showToast('Failed to activate public workspace', 'error');
+                  // Fall back to normal document handling
+                  populateDocumentSelectScope();
+              }
+          })
+          .catch(error => {
+              console.error('Error setting active public workspace:', error);
+              showToast('Error activating public workspace', 'error');
+              // Fall back to normal document handling
+              populateDocumentSelectScope();
+          });
+      } else if (localSearchDocsParam && localSearchDocsBtn && localDocScopeSel && localDocSelectEl && searchDocumentsContainer) {
           console.log("Handling document URL parameters."); // Log
           localSearchDocsBtn.classList.add("active");
           searchDocumentsContainer.style.display = "block";
@@ -95,9 +145,9 @@ window.addEventListener('DOMContentLoaded', () => {
           populateDocumentSelectScope(); // Populate based on scope (might be default or from URL)
 
           if (localDocumentIdParam) {
-               // Wait a tiny moment for populateDocumentSelectScope potentially async operations (less ideal, but sometimes needed)
-               // A better approach would be if populateDocumentSelectScope returned a promise
-               // setTimeout(() => {
+               // Wait a tiny moment for populateDocumentSelectScope potentially async operations
+               // This delay is necessary to ensure the document options are fully populated
+               setTimeout(() => {
                    if ([...localDocSelectEl.options].some(option => option.value === localDocumentIdParam)) {
                        localDocSelectEl.value = localDocumentIdParam;
                    } else {
@@ -105,11 +155,18 @@ window.addEventListener('DOMContentLoaded', () => {
                    }
                    // Ensure classification updates after setting document
                    handleDocumentSelectChange();
-               // }, 0); // Tiny delay
+               }, 100); // Small delay to ensure options are populated
           } else {
               // If no specific doc ID, still might need to trigger change if scope changed
                handleDocumentSelectChange();
           }
+      } else if (openSearchParam && scopeParam === "public" && localSearchDocsBtn && localDocScopeSel && searchDocumentsContainer) {
+          // Handle openSearch=1&scope=public from public directory chat button
+          localSearchDocsBtn.classList.add("active");
+          searchDocumentsContainer.style.display = "block";
+          localDocScopeSel.value = "public";
+          populateDocumentSelectScope();
+          handleDocumentSelectChange();
       } else {
           // If not loading from URL params, maybe still populate default scope?
           populateDocumentSelectScope();

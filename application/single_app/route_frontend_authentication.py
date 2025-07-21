@@ -13,9 +13,22 @@ def register_route_frontend_authentication(app):
 
         # Use helper to build app (cache not strictly needed here, but consistent)
         msal_app = _build_msal_app()
+        
+        # Get settings from database, with environment variable fallback
+        from functions_settings import get_settings
+        settings = get_settings()
+        login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
+        
+        # Use database login_redirect_url if set, otherwise fall back to url_for
+        redirect_uri = login_redirect_url if login_redirect_url else url_for('authorized', _external=True, _scheme='https')
+        
+        print(f"LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
+        print(f"login_redirect_url (db): {settings.get('login_redirect_url')}")
+        print(f"Using redirect_uri for Azure AD: {redirect_uri}")
+        
         auth_url = msal_app.get_authorization_request_url(
             scopes=SCOPE, # Use SCOPE from config (includes offline_access)
-            redirect_uri=url_for('authorized', _external=True, _scheme='https') # Ensure scheme is https if deployed
+            redirect_uri=redirect_uri
         )
         print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
@@ -38,10 +51,20 @@ def register_route_frontend_authentication(app):
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
         msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
 
+        # Get settings from database, with environment variable fallback
+        from functions_settings import get_settings
+        settings = get_settings()
+        login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
+        
+        # Use database login_redirect_url if set, otherwise fall back to url_for
+        redirect_uri = login_redirect_url if login_redirect_url else url_for('authorized', _external=True, _scheme='https')
+        
+        print(f"Token exchange using redirect_uri: {redirect_uri}")
+
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=SCOPE, # Request the same scopes again
-            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+            redirect_uri=redirect_uri
         )
 
         if "error" in result:
@@ -65,7 +88,19 @@ def register_route_frontend_authentication(app):
         print(f"User {session['user'].get('name')} logged in successfully.")
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
-        return redirect(url_for('index')) # Or another appropriate page
+        # Get settings from database, with environment variable fallback
+        from functions_settings import get_settings
+        settings = get_settings()
+        home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
+        
+        print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
+        print(f"home_redirect_url (db): {settings.get('home_redirect_url')}")
+        if home_redirect_url:
+            print(f"Redirecting to configured URL: {home_redirect_url}")
+            return redirect(home_redirect_url)
+        else:
+            print("HOME_REDIRECT_URL not set, falling back to url_for('index')")
+            return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path
@@ -107,7 +142,15 @@ def register_route_frontend_authentication(app):
         session.clear()
         # Redirect user to Azure AD logout endpoint
         # MSAL provides a helper for this too, but constructing manually is fine
-        logout_uri = url_for('index', _external=True, _scheme='https') # Where to land after logout
+        # Get settings from database, with environment variable fallback
+        from functions_settings import get_settings
+        settings = get_settings()
+        home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
+        
+        logout_uri = home_redirect_url if home_redirect_url else url_for('index', _external=True, _scheme='https') # Where to land after logout
+        
+        print(f"Logout redirect URI: {logout_uri}")
+        
         logout_url = (
             f"{AUTHORITY}/oauth2/v2.0/logout"
             f"?post_logout_redirect_uri={quote(logout_uri)}"

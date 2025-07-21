@@ -268,6 +268,10 @@ def get_settings():
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
 
+        # Authentication & Redirect Settings
+        'home_redirect_url': '',
+        'login_redirect_url': '',
+
         # Other
         'max_file_size_mb': 150,
         'conversation_history_limit': 10,

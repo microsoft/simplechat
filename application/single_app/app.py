@@ -1,4 +1,12 @@
 # app.py
+import builtins
+import logging
+import pickle
+import json
+
+from semantic_kernel import Kernel
+from semantic_kernel_loader import initialize_semantic_kernel 
+
 from config import *
 
 from functions_authentication import *
@@ -16,6 +24,7 @@ from route_frontend_chats import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
+from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
 
@@ -33,6 +42,9 @@ from route_backend_prompts import *
 from route_backend_group_prompts import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
+from route_backend_public_workspaces import *
+from route_backend_public_documents import *
+from route_backend_public_prompts import *
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -42,22 +54,12 @@ from flask_session import Session
 from redis import Redis
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
-import pickle
-import json
-
 
 from route_external_health import *
-from route_external_group_documents import *
-from route_external_documents import *
-from route_external_groups import *
-from route_external_admin_settings import *
-
-
-# Semantic Kernel integration
-from semantic_kernel import Kernel
-from semantic_kernel_loader import initialize_semantic_kernel 
-import builtins
-import logging
+# from route_external_group_documents import *
+# from route_external_documents import *
+# from route_external_groups import *
+# from route_external_admin_settings import *
 
 
 # =================== Helper Functions ===================
@@ -270,6 +272,7 @@ register_route_frontend_groups(app)
 
 # ------------------- Group Documents Routes -------------
 register_route_frontend_group_workspaces(app)
+register_route_frontend_public_workspaces(app)
 
 # ------------------- Safety Routes ----------------------
 register_route_frontend_safety(app)
@@ -313,6 +316,15 @@ register_route_backend_prompts(app)
 
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
+
+# ------------------- API Public Workspaces Routes -------
+register_route_backend_public_workspaces(app)
+
+# ------------------- API Public Documents Routes --------
+register_route_backend_public_documents(app)
+
+# ------------------- API Public Prompts Routes ----------
+register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
 #register_route_external_health(app)

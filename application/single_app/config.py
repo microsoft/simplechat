@@ -24,6 +24,7 @@ ffmpeg_bin.init()
 import ffmpeg as ffmpeg_py
 import glob
 import jwt
+import pandas
 
 from flask import (
     Flask, 
@@ -85,7 +86,8 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.016'
+app.config['VERSION'] = '0.216.089'
+
 
 Session(app)
 
@@ -113,7 +115,9 @@ APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
-MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
+MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
+LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
+HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 
 OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
@@ -147,6 +151,7 @@ bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
+storage_account_public_documents_container_name = "public-documents"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -172,11 +177,6 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
-cosmos_user_documents_container_name = "documents"
-cosmos_user_documents_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_user_documents_container_name,
-    partition_key=PartitionKey(path="/id")
-)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -190,9 +190,27 @@ cosmos_groups_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_workspaces_container_name = "public_workspaces"
+cosmos_public_workspaces_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspaces_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_user_documents_container_name = "documents"
+cosmos_user_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_user_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_group_documents_container_name = "group_documents"
 cosmos_group_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
 )
 
@@ -235,6 +253,12 @@ cosmos_user_prompts_container = cosmos_database.create_container_if_not_exists(
 cosmos_group_prompts_container_name = "group_prompts"
 cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_prompts_container_name = "public_prompts"
+cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_prompts_container_name,
     partition_key=PartitionKey(path="/id")
 )
 
@@ -405,6 +429,11 @@ def initialize_clients(settings):
                     index_name="simplechat-group-index",
                     credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
                 )
+                search_client_public = SearchClient(
+                    endpoint=azure_apim_ai_search_endpoint,
+                    index_name="simplechat-public-index",
+                    credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
+                )
             else:
                 if settings.get("azure_ai_search_authentication_type") == "managed_identity":
                     search_client_user = SearchClient(
@@ -415,6 +444,11 @@ def initialize_clients(settings):
                     search_client_group = SearchClient(
                         endpoint=azure_ai_search_endpoint,
                         index_name="simplechat-group-index",
+                        credential=DefaultAzureCredential()
+                    )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
                         credential=DefaultAzureCredential()
                     )
                 else:
@@ -428,8 +462,14 @@ def initialize_clients(settings):
                         index_name="simplechat-group-index",
                         credential=AzureKeyCredential(azure_ai_search_key)
                     )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
+                        credential=AzureKeyCredential(azure_ai_search_key)
+                    )
             CLIENTS["search_client_user"] = search_client_user
             CLIENTS["search_client_group"] = search_client_group
+            CLIENTS["search_client_public"] = search_client_public
         except Exception as e:
             print(f"Failed to initialize Search clients: {e}")
 
@@ -476,7 +516,11 @@ def initialize_clients(settings):
                 
                 # Create containers if they don't exist
                 # This addresses the issue where the application assumes containers exist
-                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                for container_name in [
+                    storage_account_user_documents_container_name, 
+                    storage_account_group_documents_container_name, 
+                    storage_account_public_documents_container_name
+                    ]:
                     try:
                         container_client = blob_service_client.get_container_client(container_name)
                         if not container_client.exists():
@@ -487,16 +531,5 @@ def initialize_clients(settings):
                             print(f"Container '{container_name}' already exists.")
                     except Exception as container_error:
                         print(f"Error creating container {container_name}: {str(container_error)}")
-                
-                # Handle video and audio support when enabled
-                # if enable_video_file_support:
-                #     video_client = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
-                #     CLIENTS["storage_account_video_files_client"] = video_client
-                #     # Create video containers if needed
-                #
-                # if enable_audio_file_support:
-                #     audio_client = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
-                #     CLIENTS["storage_account_audio_files_client"] = audio_client
-                #     # Create audio containers if needed
         except Exception as e:
             print(f"Failed to initialize Blob Storage clients: {e}")

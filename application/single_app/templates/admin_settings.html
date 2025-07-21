@@ -712,6 +712,8 @@
                     ></div>
                 </div>
 
+
+
                 <!-- Dark Mode Card -->
                 <div class="card p-3 mb-3">
                     <h5>Appearance</h5>
@@ -1261,6 +1263,32 @@
                         <div id="test_redis_result" class="mt-2"></div>
                     </div>
                 </div>
+
+                <!-- Authentication & Redirect Settings Card -->
+                <div class="card p-3 mb-3">
+                    <h5>Authentication & Redirect Settings</h5>
+                    <p class="text-muted mb-1">Configure redirect URLs for home page and login authentication.</p>
+                    
+                    <div class="mb-3">
+                        <label for="home_redirect_url" class="form-label">Home Redirect URL</label>
+                        <input type="url" class="form-control" id="home_redirect_url" name="home_redirect_url" 
+                               value="{{ settings.home_redirect_url or '' }}" 
+                               placeholder="https://your-frontdoor.azurefd.net">
+                        <small class="form-text text-muted">
+                            Optional: Redirect users to this URL when accessing the home page. Useful for Front Door or load balancer configurations. Leave blank to use default behavior.
+                        </small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="login_redirect_url" class="form-label">Login Redirect URL</label>
+                        <input type="url" class="form-control" id="login_redirect_url" name="login_redirect_url" 
+                               value="{{ settings.login_redirect_url or '' }}" 
+                               placeholder="https://your-frontdoor.azurefd.net/getAToken">
+                        <small class="form-text text-muted">
+                            Optional: Override the OAuth2 redirect URI for login authentication. Useful for Front Door or custom authentication flows. Leave blank to use auto-generated redirect URI.
+                        </small>
+                    </div>
+                </div>
             </div>
 
 
@@ -1321,6 +1349,42 @@
                         </div>
                         <p class="text-muted small mb-0">
                             If enabled, only users who are members of the 'CreateGroups' role (defined in your App registration) can create new groups. If disabled, any authenticated user can create groups (provided 'Enable My Groups' is active).
+                        </p>
+                    </div>
+                    
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable Public Workspaces</h5>
+                    <p class="text-muted">
+                        Turn this on to enable public workspaces that are visible to everyone in the organization.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                    </div>
+
+                    <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
+                        <hr> 
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_public_workspace"
+                                name="require_member_of_create_public_workspace"
+                                {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
+                                Require Membership to Create Public Workspaces
+                            </label>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only users who are members of the 'CreatePublicWorkspaces' role (defined in your App registration) can create public workspaces. If disabled, any authenticated user can create public workspaces (provided 'Enable Public Workspaces' is active).
                         </p>
                     </div>
                     

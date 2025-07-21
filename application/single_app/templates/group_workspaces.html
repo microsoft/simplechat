@@ -115,7 +115,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endblock %} {% block content %}
 <div class="container">
   <h2>Group Workspace</h2>
-  <h3 id="active-group-name" style="display: none"></h3>
+  <h3 id="active-group-name" class="mb-3" style="display: none"></h3>
   <!-- Populated by JS -->
 
   <!-- Group Selector and Role Display -->
@@ -217,6 +217,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
             Upload Document(s)
           </button>
           <span id="upload-status" class="ms-2 text-muted small"></span>
+          <!-- Per-file upload progress bars -->
+          <div id="group-upload-progress-container" class="mt-2"></div>
         </div>
         <hr id="upload-hr" style="display: none" />
         <!-- Also controlled by JS -->
@@ -696,7 +698,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
 </script>
 
-<!-- Main JS Logic for Group Workspace -->
 <script>
   // --- Global State ---
   let userRoleInActiveGroup = null;
@@ -1918,8 +1919,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // --- Upload Group Document ---
   async function onGroupUploadClick() {
-    // Renamed function
-    // --- Existing file selection and validation ---
+    // --- File selection and validation ---
     const files = groupFileInput.files;
     if (!files || files.length === 0) {
       alert("Please select file(s) to upload.");
@@ -1927,88 +1927,120 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     groupUploadBtn.disabled = true;
-    // --- CHANGE: Update button text like workspace.html ---
     groupUploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
     groupUploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
 
-    const formData = new FormData();
-    const filesToUpload = [];
-    let filesProcessed = 0; // Added for better status during preparation
+    // Per-file progress container
+    const progressContainer = document.getElementById("group-upload-progress-container");
+    if (progressContainer) progressContainer.innerHTML = "";
 
-    for (const file of files) {
-      filesProcessed++;
-      // --- CHANGE: Add preparation status update ---
-      groupUploadStatusSpan.textContent = `Preparing file: ${escapeHtml(
-        file.name
-      )} (${filesProcessed}/${files.length})...`;
-      filesToUpload.push(file);
+    let completed = 0;
+    let failed = 0;
+
+    // Helper to create a unique ID for each file
+    function makeId(file) {
+      return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
     }
 
-    if (filesToUpload.length === 0) {
-      groupUploadStatusSpan.textContent =
-        "No valid files selected or processed.";
-      groupUploadBtn.disabled = false;
-      groupUploadBtn.innerHTML = "Upload Document(s)";
-      groupFileInput.value = "";
-      return;
+    // Helper to create progress bar/status for a file
+    function createProgressBar(file, id) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'mb-2';
+      wrapper.id = id + '-wrapper';
+      wrapper.innerHTML = `
+        <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
+          <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
+      `;
+      return wrapper;
     }
 
-    filesToUpload.forEach((file) => formData.append("file", file, file.name));
+    // Upload each file individually with progress
+    Array.from(files).forEach(file => {
+      const id = makeId(file);
+      if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
 
-    // --- CHANGE: Update status/button text like workspace.html ---
-    groupUploadStatusSpan.textContent = `Uploading ${filesToUpload.length} file(s)...`;
-    groupUploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Uploading...`;
+      const progressBar = document.getElementById(id);
+      const statusText = document.getElementById(id + '-text');
 
-    // --- REMOVE Modal Usage ---
-    // document.getElementById("loadingModalText").textContent = `Uploading ${filesToUpload.length} document(s) to group '${activeGroupName}'...`;
-    // loadingModal.show(); // << REMOVE THIS LINE
+      const formData = new FormData();
+      formData.append("file", file, file.name);
 
-    try {
-      // --- Backend call remains the same ---
-      const response = await fetch("/api/group_documents/upload", {
-        method: "POST",
-        body: formData,
-      }); // Use group upload endpoint
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(
-          data.error || `Server responded with status ${response.status}`
-        );
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/group_documents/upload", true);
 
-      const docIds = data.document_ids || [];
-      const successCount = docIds.length;
-      const totalUploaded = filesToUpload.length; // Use the count of files attempted
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          if (progressBar) {
+            progressBar.style.width = percent + '%';
+            progressBar.setAttribute('aria-valuenow', percent);
+          }
+          if (statusText) {
+            statusText.textContent = `Uploading ${file.name} (${percent}%)`;
+          }
+        }
+      };
 
-      if (successCount > 0) {
-        // Clear filters and fetch first page - This part is good
-        if (groupDocsClearFiltersBtn) groupDocsClearFiltersBtn.click();
-        else fetchGroupDocuments();
-        docIds.forEach((docId) => pollGroupDocumentStatus(docId)); // Poll new docs
-      }
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-success');
+            progressBar.classList.remove('progress-bar-animated');
+          }
+          if (statusText) {
+            statusText.textContent = `Uploaded ${file.name} (100%)`;
+          }
+          completed++;
+        } else {
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-danger');
+            progressBar.classList.remove('progress-bar-animated');
+          }
+          if (statusText) {
+            statusText.textContent = `Failed to upload ${file.name}`;
+          }
+          failed++;
+        }
+        // Update summary status
+        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        if (completed + failed === files.length) {
+          groupFileInput.value = '';
+          groupDocsCurrentPage = 1;
+          fetchGroupDocuments();
+          groupUploadBtn.disabled = false;
+          groupUploadBtn.innerHTML = "Upload Document(s)";
+          // Clear upload progress bars after all uploads and table refresh
+          if (progressContainer) progressContainer.innerHTML = '';
+        }
+      };
 
-      // --- CHANGE: Update final status message like workspace.html ---
-      let finalMessage = "";
-      if (successCount === totalUploaded)
-        finalMessage += `Uploaded ${successCount} file(s) for processing. `;
-      else if (successCount < totalUploaded)
-        finalMessage += `Server accepted ${successCount}/${totalUploaded} uploaded file(s). `;
-      if (data.errors && data.errors.length > 0)
-        finalMessage += ` Server errors: ${data.errors.join(", ")}`;
+      xhr.onerror = function () {
+        if (progressBar) {
+          progressBar.classList.remove('bg-info');
+          progressBar.classList.add('bg-danger');
+          progressBar.classList.remove('progress-bar-animated');
+        }
+        if (statusText) {
+          statusText.textContent = `Failed to upload ${file.name}`;
+        }
+        failed++;
+        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        if (completed + failed === files.length) {
+          groupFileInput.value = '';
+          groupDocsCurrentPage = 1;
+          fetchGroupDocuments();
+          groupUploadBtn.disabled = false;
+          groupUploadBtn.innerHTML = "Upload Document(s)";
+          if (progressContainer) progressContainer.innerHTML = '';
+        }
+      };
 
-      groupUploadStatusSpan.textContent =
-        finalMessage.trim() || "Upload processed."; // Update inline status
-      groupFileInput.value = ""; // Clear input
-    } catch (err) {
-      const errorMsg = `Upload failed: ${err.message || "Unknown error"}`;
-      alert(errorMsg);
-      groupUploadStatusSpan.textContent = errorMsg; // Show error inline
-    } finally {
-      // --- Reset button text ---
-      groupUploadBtn.disabled = false;
-      groupUploadBtn.innerHTML = "Upload Document(s)";
-      // --- REMOVE Modal Usage ---
-      // loadingModal.hide(); // << REMOVE THIS LINE
-    }
+      xhr.send(formData);
+    });
   }
 
   function showGroupLegacyUpdatePrompt() {
@@ -2420,3 +2452,4 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
 </script>
 {% endblock %}
+

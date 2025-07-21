@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Simple Chat APIs
-  version: 0.216.016
+  version: 0.216.050
   description: API for the Simple Chat, handling chats, conversations, documents, user settings, groups, feedback, prompts, models, safety, and admin functions.
 
 servers:
@@ -10,6 +10,7 @@ servers:
 
 tags:
   - name: Chat
+    description: Chat interaction endpoints
   - name: Agents
     description: Agent management and orchestration endpoints
   - name: External Documents
@@ -32,7 +33,6 @@ tags:
     description: External health and diagnostics endpoints
   - name: External Admin Settings
     description: External application settings management endpoints
-    description: Chat interaction endpoints
   - name: Conversations
     description: Managing conversations and messages
   - name: Documents

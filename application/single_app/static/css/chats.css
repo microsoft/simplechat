@@ -455,7 +455,7 @@ body.layout-split .gutter {
 }
 
 [data-bs-theme="dark"] #chatbox {
-  background-color: #2b3035; /* Darker background for chat area in dark mode */
+  background-color: #212529; /* Match container main-content in dark mode */
 }
 
 .chat-container {

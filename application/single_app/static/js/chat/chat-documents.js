@@ -42,10 +42,13 @@ try {
 }
 // ----------------------------------
 
-// We'll store personalDocs/groupDocs in memory once loaded:
+// We'll store personalDocs/groupDocs/publicDocs in memory once loaded:
 let personalDocs = [];
 let groupDocs = [];
+let publicDocs = [];
 let activeGroupName = "";
+let activePublicWorkspaceName = "";
+let publicWorkspaceIdToName = {};
 
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
@@ -98,7 +101,12 @@ export function populateDocumentSelectScope() {
       label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
       classification: d.document_classification, // Store classification
     }));
-    finalDocs = pDocs.concat(gDocs);
+    const pubDocs = publicDocs.map((d) => ({
+      id: d.id,
+      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
+      classification: d.document_classification, // Store classification
+    }));
+    finalDocs = pDocs.concat(gDocs).concat(pubDocs);
   } else if (scopeVal === "personal") {
     finalDocs = personalDocs.map((d) => ({
       id: d.id,
@@ -109,6 +117,12 @@ export function populateDocumentSelectScope() {
     finalDocs = groupDocs.map((d) => ({
       id: d.id,
       label: `[Group: ${activeGroupName}] ${d.title || d.file_name}`,
+      classification: d.document_classification,
+    }));
+  } else if (scopeVal === "public") {
+    finalDocs = publicDocs.map((d) => ({
+      id: d.id,
+      label: `[Public: ${publicWorkspaceIdToName[d.public_workspace_id] || "Unknown"}] ${d.title || d.file_name}`,
       classification: d.document_classification,
     }));
   }
@@ -205,8 +219,14 @@ export function getDocumentMetadata(docId) {
     // console.log(`Metadata found in groupDocs for ${docId}`);
     return groupMatch;
   }
+  // Finally search public docs
+  const publicMatch = publicDocs.find(doc => doc.id === docId || doc.document_id === docId);
+  if (publicMatch) {
+    // console.log(`Metadata found in publicDocs for ${docId}`);
+    return publicMatch;
+  }
   // console.log(`Metadata NOT found for ${docId}`);
-  return null; // Not found in either list
+  return null; // Not found in any list
 }
 
 /* ---------------------------------------------------------------------------
@@ -250,6 +270,71 @@ export function loadGroupDocs() {
     });
 }
 
+export function loadPublicDocs() {
+  // Use a large page_size to load all documents at once, without pagination
+  return fetch("/api/public_workspace_documents?page_size=1000")
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.error) {
+        console.warn("Error fetching public workspace docs:", data.error);
+        publicDocs = [];
+        activePublicWorkspaceName = "";
+        publicWorkspaceIdToName = {};
+        return;
+      }
+      // Fetch user settings to determine visible workspaces
+      return fetch("/api/user/settings")
+        .then((r) => r.json())
+        .then((settingsData) => {
+          const userSettings = settingsData && settingsData.settings ? settingsData.settings : {};
+          const publicDirectorySettings = userSettings.publicDirectorySettings || {};
+          // Only include documents from visible public workspaces
+          publicDocs = (data.documents || []).filter(
+            (doc) => publicDirectorySettings[doc.public_workspace_id] !== false
+          );
+          // Now fetch the workspace list to build the ID->name mapping
+          return fetch("/api/public_workspaces/discover")
+            .then((r) => r.json())
+            .then((workspaces) => {
+              publicWorkspaceIdToName = {};
+              (workspaces || []).forEach(ws => {
+                publicWorkspaceIdToName[ws.id] = ws.name;
+              });
+              // Determine if only one public workspace is visible
+              const visibleWorkspaceIds = Object.keys(publicDirectorySettings).filter(
+                id => publicDirectorySettings[id] !== false
+              );
+              if (visibleWorkspaceIds.length === 1) {
+                activePublicWorkspaceName = publicWorkspaceIdToName[visibleWorkspaceIds[0]] || "Unknown";
+              } else {
+                activePublicWorkspaceName = "All Public Workspaces";
+              }
+              console.log(
+                `Loaded ${publicDocs.length} public workspace documents from user-visible public workspaces`
+              );
+            })
+            .catch((err) => {
+              // If workspace list can't be loaded, fallback to generic label
+              publicWorkspaceIdToName = {};
+              activePublicWorkspaceName = "All Public Workspaces";
+              console.warn("Could not load public workspace names:", err);
+            });
+        })
+        .catch((err) => {
+          // If user settings can't be loaded, default to showing all documents
+          console.warn("Could not load user settings, showing all public workspace documents:", err);
+          publicDocs = data.documents || [];
+          publicWorkspaceIdToName = {};
+          activePublicWorkspaceName = "All Public Workspaces";
+        });
+    })
+    .catch((err) => {
+      console.error("Error loading public workspace docs:", err);
+      publicDocs = [];
+      publicWorkspaceIdToName = {};
+      activePublicWorkspaceName = "";
+    });
+}
 
 export function loadAllDocs() {
   const hasDocControls = searchDocumentsBtn || docScopeSelect || docSelectEl;
@@ -329,9 +414,9 @@ export function loadAllDocs() {
     }
   }
 
-  return Promise.all([loadPersonalDocs(), loadGroupDocs()])
+  return Promise.all([loadPersonalDocs(), loadGroupDocs(), loadPublicDocs()])
     .then(() => {
-      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length);
+      console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length, "Public:", publicDocs.length);
       // After loading, populate the select and set initial classification state
       populateDocumentSelectScope();
       // handleDocumentSelectChange(); // Called within populateDocumentSelectScope now
@@ -642,6 +727,24 @@ export function handleDocumentSelectChange() {
   if (!docSelectEl) {
       console.error("Document select element not found, cannot update UI.");
       return;
+  }
+
+  // Update custom dropdown button text to match selected document
+  if (docDropdownButton) {
+    const selectedOption = docSelectEl.options[docSelectEl.selectedIndex];
+    if (selectedOption) {
+      docDropdownButton.querySelector(".selected-document-text").textContent = selectedOption.textContent;
+      
+      // Update active state in dropdown
+      if (docDropdownItems) {
+        document.querySelectorAll("#document-dropdown-items .dropdown-item").forEach(item => {
+          item.classList.remove("active");
+          if (item.getAttribute("data-document-id") === selectedOption.value) {
+            item.classList.add("active");
+          }
+        });
+      }
+    }
   }
 
   // Classification UI logic (optional, only if elements exist)

@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+import re
 
 
 def register_route_backend_models(app):
@@ -54,9 +55,8 @@ def register_route_backend_models(app):
             for d in deployments:
                 model_name = d.properties.model.name
                 if model_name and (
-                    "gpt" in model_name.lower() or 
-                    "o1" in model_name.lower() or 
-                    "o3" in model_name.lower()
+                    "gpt" in model_name.lower() or
+                    re.search(r"o\d+", model_name.lower())
                 ):
                     models.append({
                         "deploymentName": d.name,
