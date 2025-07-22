@@ -149,11 +149,14 @@ The server logs important events and errors. Set `SIMPLECHAT_MCP_LOG_LEVEL=DEBUG
 The server interacts with these SimpleChat external API endpoints:
 
 - `POST /external/chat` - Send chat messages
-- `GET /external/documents` - List documents
+- `GET /external/documents?user_id=<id>` - List documents
 - `POST /external/documents/upload` - Upload documents
-- `GET /external/groups` - List groups
-- `GET /external/settings` - Get settings
+- `GET /external/groups?user_id=<id>` - List groups
+- `GET /external/applicationsettings/get` - Get settings
+- `POST /external/applicationsettings/set` - Update settings
 - `GET /external/healthcheck` - Health check
+
+**Note**: Most endpoints require a `user_id` parameter since they use bearer token authentication rather than session-based authentication.
 
 ## Troubleshooting
 

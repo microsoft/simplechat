@@ -15,15 +15,12 @@ from datetime import datetime
 import httpx
 from mcp.server import Server
 from mcp.types import (
-    CallToolRequestParams,
     CallToolResult,
-    GetToolRequestParams,
-    GetToolResult,
     ListToolsResult,
     Tool,
     TextContent,
     JSONRPCError,
-    ErrorCode,
+    INTERNAL_ERROR,
     INVALID_REQUEST
 )
 from pydantic import BaseModel
@@ -262,7 +259,7 @@ class SimpleChatMCPServer:
             except Exception as e:
                 self.logger.error(f"Error calling tool {name}: {e}")
                 raise JSONRPCError(
-                    code=ErrorCode.INTERNAL_ERROR,
+                    code=INTERNAL_ERROR,
                     message=f"Tool execution failed: {str(e)}"
                 )
     
@@ -381,9 +378,8 @@ class SimpleChatMCPServer:
     async def _list_groups(self, arguments: Dict[str, Any]) -> CallToolResult:
         """List user groups"""
         try:
-            # Since the external groups endpoint expects user_id from auth,
-            # we need to pass it properly  
-            params = {k: v for k, v in arguments.items() if k != "user_id"}
+            # Pass user_id as query parameter
+            params = {k: v for k, v in arguments.items()}
             
             response = await self.http_client.get(
                 "/external/groups",
