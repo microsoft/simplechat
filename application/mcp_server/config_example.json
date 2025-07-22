@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "simplechat": {
+      "command": "python",
+      "args": [
+        "/path/to/simplechat/application/mcp_server/simplechat_mcp_server.py"
+      ],
+      "env": {
+        "SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL": "https://your-simplechat-domain.com",
+        "SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN": "your-bearer-token-here",
+        "SIMPLECHAT_MCP_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
