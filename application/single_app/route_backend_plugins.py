@@ -209,13 +209,17 @@ def update_core_plugin_settings():
         'allow_group_plugins'
     ]
     updates = {}
+    # Check for unexpected keys in the data payload
+    for key in data:
+        if key not in expected_keys:
+            return jsonify({'error': f"Unexpected field: {key}"}), 400
+
+    # Validate required fields and their types
     for key in expected_keys:
         if key not in data:
             return jsonify({'error': f"Missing required field: {key}"}), 400
         if not isinstance(data[key], bool):
             return jsonify({'error': f"Field '{key}' must be a boolean."}), 400
-        if key not in expected_keys:
-            return jsonify({'error': f"Unexpected field: {key}"}), 400
         updates[key] = data[key]
     logging.info("Validated plugin settings: %s", updates)
     # Update settings
