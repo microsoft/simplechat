@@ -16,6 +16,7 @@ def register_route_frontend_group_workspaces(app):
         public_settings = sanitize_settings_for_user(settings)
         active_group_id = settings.get("activeGroupOid")
         enable_document_classification = settings.get('enable_document_classification', False)
+        enable_file_sharing = settings.get('enable_file_sharing', False)
         enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
@@ -49,5 +50,6 @@ def register_route_frontend_group_workspaces(app):
             enable_extract_meta_data=enable_extract_meta_data,
             enable_video_file_support=enable_video_file_support,
             enable_audio_file_support=enable_audio_file_support,
+            enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count
         )
