@@ -746,7 +746,7 @@ function setupToggles() {
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
                 if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
-                if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins
+                if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
             } catch (err) {
                 showFeedback('Error loading plugin toggle states: ' + err.message, 'danger');
             }
