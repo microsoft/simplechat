@@ -197,7 +197,7 @@ def get_core_plugin_settings():
 @admin_required
 def update_core_plugin_settings():
     data = request.get_json(force=True)
-    print("Received plugin settings update request:", data)
+    logging.info("Received plugin settings update request: %s", data)
     # Validate input
     expected_keys = [
         'enable_time_plugin',
