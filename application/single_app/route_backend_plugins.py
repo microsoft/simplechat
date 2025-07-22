@@ -217,7 +217,7 @@ def update_core_plugin_settings():
         if key not in expected_keys:
             return jsonify({'error': f"Unexpected field: {key}"}), 400
         updates[key] = data[key]
-    print("Validated plugin settings:", updates)
+    logging.info("Validated plugin settings: %s", updates)
     # Update settings
     success = update_settings(updates)
     if success:
