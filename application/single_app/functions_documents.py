@@ -103,7 +103,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "percentage_complete": 0,
                 "document_classification": "Pending",
                 "type": "document_metadata",
-                "group_id": group_id
+                "group_id": group_id,
+                "shared_group_ids": []
             }
         else:
             document_metadata = {
@@ -120,7 +121,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "percentage_complete": 0,
                 "document_classification": "Pending",
                 "type": "document_metadata",
-                "user_id": user_id
+                "user_id": user_id,
+                "shared_user_ids": []
             }
 
         cosmos_container.upsert_item(document_metadata)
@@ -160,10 +162,10 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
         ]
     elif is_group:
         query = """
-            SELECT * 
+            SELECT *
             FROM c
-            WHERE c.id = @document_id 
-                AND c.group_id = @group_id
+            WHERE c.id = @document_id
+                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -172,10 +174,10 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
         ]
     else:
         query = """
-            SELECT * 
+            SELECT *
             FROM c
-            WHERE c.id = @document_id 
-                AND c.user_id = @user_id
+            WHERE c.id = @document_id
+                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -933,13 +935,25 @@ def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
+    # For personal documents, first check if user has access (owner or shared)
+    if not is_group and not is_public_workspace:
+        # Check if user has access to this document
+        if not is_document_shared_with_user(document_id, user_id):
+            print(f"User {user_id} does not have access to document {document_id}")
+            return []
+    elif is_group:
+        # For group documents, check if group has access (owner or shared)
+        if not is_document_shared_with_group(document_id, group_id):
+            print(f"Group {group_id} does not have access to document {document_id}")
+            return []
+
     search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
     filter_expr = (
         f"document_id eq '{document_id}' and public_workspace_id eq '{public_workspace_id}'"
         if is_public_workspace else
         f"document_id eq '{document_id}' and group_id eq '{group_id}'"
         if is_group else
-        f"document_id eq '{document_id}' and user_id eq '{user_id}'"
+        f"document_id eq '{document_id}'"  # For personal documents, just filter by document_id since access is already verified
     )
 
     select_fields = [
@@ -1079,18 +1093,18 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
         ]
     elif is_group:
         query = """
-            SELECT * 
+            SELECT *
             FROM c
-            WHERE c.group_id = @group_id
+            WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
         """
         parameters = [
             {"name": "@group_id", "value": group_id}
         ]
     else:
         query = """
-            SELECT * 
+            SELECT *
             FROM c
-            WHERE c.user_id = @user_id
+            WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
         """
         parameters = [
             {"name": "@user_id", "value": user_id}
@@ -1142,10 +1156,10 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         ]
     elif is_group:
         query = """
-            SELECT TOP 1 * 
+            SELECT TOP 1 *
             FROM c
-            WHERE c.id = @document_id 
-                AND c.group_id = @group_id
+            WHERE c.id = @document_id
+                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1154,10 +1168,10 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         ]
     else:
         query = """
-            SELECT TOP 1 * 
+            SELECT TOP 1 *
             FROM c
-            WHERE c.id = @document_id 
-                AND c.user_id = @user_id
+            WHERE c.id = @document_id
+                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1208,10 +1222,10 @@ def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=
         ]
     elif is_group:
         query = """
-            SELECT c.version 
+            SELECT c.version
             FROM c
-            WHERE c.id = @document_id 
-                AND c.group_id = @group_id
+            WHERE c.id = @document_id
+                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1222,8 +1236,8 @@ def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=
         query = """
             SELECT c.version
             FROM c
-            WHERE c.id = @document_id 
-                AND c.user_id = @user_id
+            WHERE c.id = @document_id
+                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1275,11 +1289,11 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         ]
     elif is_group:
         query = """
-            SELECT * 
+            SELECT *
             FROM c
             WHERE c.id = @document_id
                 AND c.version = @version
-                AND c.group_id = @group_id
+                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1291,9 +1305,9 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         query = """
             SELECT *
             FROM c
-            WHERE c.id = @document_id 
+            WHERE c.id = @document_id
                 AND c.version = @version
-                AND c.user_id = @user_id
+                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1391,11 +1405,13 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             if document_item.get('public_workspace_id') != public_workspace_id:
                 raise Exception("Unauthorized access to document")
         elif is_group:
+            # For group documents, only the owning group can delete (not shared groups)
             if document_item.get('group_id') != group_id:
-                raise Exception("Unauthorized access to document")
+                raise Exception("Unauthorized access to document - only document owning group can delete")
         else:
+            # For personal documents, only the owner can delete (not shared users)
             if document_item.get('user_id') != user_id:
-                raise Exception("Unauthorized access to document")
+                raise Exception("Unauthorized access to document - only document owner can delete")
             
         # Get the file name from the document to use for blob deletion
         file_name = document_item.get('file_name')
@@ -1492,7 +1508,7 @@ def get_document_versions(user_id, document_id, group_id=None, public_workspace_
             SELECT c.id, c.file_name, c.version, c.upload_date
             FROM c
             WHERE c.id = @document_id
-                AND c.group_id = @group_id
+                AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -1503,8 +1519,8 @@ def get_document_versions(user_id, document_id, group_id=None, public_workspace_
         query = """
             SELECT c.id, c.file_name, c.version, c.upload_date
             FROM c
-            WHERE c.id = @document_id 
-                AND c.user_id = @user_id
+            WHERE c.id = @document_id
+                AND (c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))
             ORDER BY c.version DESC
         """
         parameters = [
@@ -3532,7 +3548,8 @@ def upgrade_legacy_documents(user_id, group_id=None, public_workspace_id=None):
                 organization="",
                 publication_date="",
                 keywords=[],
-                abstract=""
+                abstract="",
+                shared_group_ids=[]
             )
         else:
             # Personal document
@@ -3552,7 +3569,334 @@ def upgrade_legacy_documents(user_id, group_id=None, public_workspace_id=None):
                 organization="",
                 publication_date="",
                 keywords=[],
-                abstract=""
+                abstract="",
+                shared_user_ids=[]
             )
 
     return len(legacy_docs)
+
+def share_document_with_user(document_id, owner_user_id, target_user_id):
+    """
+    Share a personal document with another user by adding them to shared_user_ids.
+    Only the document owner can share documents.
+    Returns True if successful, False if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership and current state
+        document_item = cosmos_user_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting user is the owner
+        if document_item.get('user_id') != owner_user_id:
+            raise Exception("Only document owner can share documents")
+        
+        # Initialize shared_user_ids if it doesn't exist
+        shared_user_ids = document_item.get('shared_user_ids', [])
+        
+        # Add target user if not already shared
+        if target_user_id not in shared_user_ids:
+            shared_user_ids.append(target_user_id)
+            document_item['shared_user_ids'] = shared_user_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            # Update the document
+            cosmos_user_documents_container.upsert_item(document_item)
+            return True
+        
+        return True  # Already shared
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error sharing document {document_id}: {e}")
+        return False
+
+def unshare_document_from_user(document_id, owner_user_id, target_user_id):
+    """
+    Remove a user from a document's shared_user_ids list.
+    Only the document owner can unshare documents.
+    Returns True if successful, False if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership and current state
+        document_item = cosmos_user_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting user is the owner
+        if document_item.get('user_id') != owner_user_id:
+            raise Exception("Only document owner can unshare documents")
+        
+        # Get current shared_user_ids
+        shared_user_ids = document_item.get('shared_user_ids', [])
+        
+        # Remove target user if they are in the list
+        if target_user_id in shared_user_ids:
+            shared_user_ids.remove(target_user_id)
+            document_item['shared_user_ids'] = shared_user_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            # Update the document
+            cosmos_user_documents_container.upsert_item(document_item)
+        
+        return True
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error unsharing document {document_id}: {e}")
+        return False
+
+def get_shared_users_for_document(document_id, owner_user_id):
+    """
+    Get the list of users a document is shared with.
+    Only the document owner can view this information.
+    Returns list of user IDs or None if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership
+        document_item = cosmos_user_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting user is the owner
+        if document_item.get('user_id') != owner_user_id:
+            return None
+        
+        return document_item.get('shared_user_ids', [])
+        
+    except CosmosResourceNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error getting shared users for document {document_id}: {e}")
+        return None
+
+def is_document_shared_with_user(document_id, user_id):
+    """
+    Check if a document is shared with a specific user.
+    Returns True if the user has access (owner or shared), False otherwise.
+    """
+    try:
+        # Get the document
+        document_item = cosmos_user_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Check if user is owner
+        if document_item.get('user_id') == user_id:
+            return True
+        
+        # Check if user is in shared list
+        shared_user_ids = document_item.get('shared_user_ids', [])
+        return user_id in shared_user_ids
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error checking document access for {document_id}: {e}")
+        return False
+
+def get_documents_shared_with_user(user_id):
+    """
+    Get all documents that are shared with a specific user (not owned by them).
+    Returns list of document metadata or empty list.
+    """
+    try:
+        query = """
+            SELECT *
+            FROM c
+            WHERE ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                AND c.user_id != @user_id
+        """
+        parameters = [
+            {"name": "@user_id", "value": user_id}
+        ]
+        
+        documents = list(
+            cosmos_user_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            )
+        )
+        
+        # Get latest versions only
+        latest_documents = {}
+        for doc in documents:
+            file_name = doc['file_name']
+            if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                latest_documents[file_name] = doc
+                
+        return list(latest_documents.values())
+        
+    except Exception as e:
+        print(f"Error getting documents shared with user {user_id}: {e}")
+        return []
+
+def share_document_with_group(document_id, owner_group_id, target_group_id):
+    """
+    Share a group document with another group by adding them to shared_group_ids.
+    Only the document owning group can share documents.
+    Returns True if successful, False if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership and current state
+        document_item = cosmos_group_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting group is the owner
+        if document_item.get('group_id') != owner_group_id:
+            raise Exception("Only document owning group can share documents")
+        
+        # Initialize shared_group_ids if it doesn't exist
+        shared_group_ids = document_item.get('shared_group_ids', [])
+        
+        # Add target group if not already shared
+        if target_group_id not in shared_group_ids:
+            shared_group_ids.append(target_group_id)
+            document_item['shared_group_ids'] = shared_group_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            # Update the document
+            cosmos_group_documents_container.upsert_item(document_item)
+            return True
+        
+        return True  # Already shared
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error sharing document {document_id} with group: {e}")
+        return False
+
+def unshare_document_from_group(document_id, owner_group_id, target_group_id):
+    """
+    Remove a group from a document's shared_group_ids list.
+    Only the document owning group can unshare documents.
+    Returns True if successful, False if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership and current state
+        document_item = cosmos_group_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting group is the owner
+        if document_item.get('group_id') != owner_group_id:
+            raise Exception("Only document owning group can unshare documents")
+        
+        # Get current shared_group_ids
+        shared_group_ids = document_item.get('shared_group_ids', [])
+        
+        # Remove target group if they are in the list
+        if target_group_id in shared_group_ids:
+            shared_group_ids.remove(target_group_id)
+            document_item['shared_group_ids'] = shared_group_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            # Update the document
+            cosmos_group_documents_container.upsert_item(document_item)
+        
+        return True
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error unsharing document {document_id} from group: {e}")
+        return False
+
+def get_shared_groups_for_document(document_id, owner_group_id):
+    """
+    Get the list of groups a document is shared with.
+    Only the document owning group can view this information.
+    Returns list of group IDs or None if document not found or access denied.
+    """
+    try:
+        # Get the document to verify ownership
+        document_item = cosmos_group_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Verify the requesting group is the owner
+        if document_item.get('group_id') != owner_group_id:
+            return None
+        
+        return document_item.get('shared_group_ids', [])
+        
+    except CosmosResourceNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error getting shared groups for document {document_id}: {e}")
+        return None
+
+def is_document_shared_with_group(document_id, group_id):
+    """
+    Check if a document is shared with a specific group.
+    Returns True if the group has access (owner or shared), False otherwise.
+    """
+    try:
+        # Get the document
+        document_item = cosmos_group_documents_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Check if group is owner
+        if document_item.get('group_id') == group_id:
+            return True
+        
+        # Check if group is in shared list
+        shared_group_ids = document_item.get('shared_group_ids', [])
+        return group_id in shared_group_ids
+        
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error checking document access for group {group_id} on document {document_id}: {e}")
+        return False
+
+def get_documents_shared_with_group(group_id):
+    """
+    Get all documents that are shared with a specific group (not owned by them).
+    Returns list of document metadata or empty list.
+    """
+    try:
+        query = """
+            SELECT *
+            FROM c
+            WHERE ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                AND c.group_id != @group_id
+        """
+        parameters = [
+            {"name": "@group_id", "value": group_id}
+        ]
+        
+        documents = list(
+            cosmos_group_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            )
+        )
+        
+        # Get latest versions only
+        latest_documents = {}
+        for doc in documents:
+            file_name = doc['file_name']
+            if file_name not in latest_documents or doc['version'] > latest_documents[file_name]['version']:
+                latest_documents[file_name] = doc
+                
+        return list(latest_documents.values())
+        
+    except Exception as e:
+        print(f"Error getting documents shared with group {group_id}: {e}")
+        return []

@@ -235,7 +235,8 @@ def register_route_backend_documents(app):
         # page_size = min(page_size, 100)
 
         # --- 2) Build dynamic WHERE clause and parameters ---
-        query_conditions = ["c.user_id = @user_id"]
+        # Include documents owned by user OR shared with user via shared_user_ids
+        query_conditions = ["(c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id))"]
         query_params = [{"name": "@user_id", "value": user_id}]
         param_count = 0 # To generate unique parameter names
 
@@ -356,7 +357,6 @@ def register_route_backend_documents(app):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
-
     @app.route('/api/documents/<document_id>', methods=['GET'])
     @login_required
     @user_required
@@ -443,7 +443,6 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-
     @app.route('/api/documents/<document_id>', methods=['DELETE'])
     @login_required
     @user_required
@@ -499,11 +498,9 @@ def register_route_backend_documents(app):
             'document_id': document_id
         }), 200
 
-
     @app.route("/api/get_citation", methods=["POST"])
     @login_required
     @user_required
-    @enabled_required("enable_user_workspace")
     def get_citation():
         data = request.get_json()
         user_id = get_current_user_id()
@@ -518,7 +515,12 @@ def register_route_backend_documents(app):
         try:
             search_client_user = CLIENTS['search_client_user']
             chunk = search_client_user.get_document(key=citation_id)
-            if chunk.get("user_id") != user_id:
+            
+            # Check if user owns the document or if document is shared with user
+            chunk_user_id = chunk.get("user_id")
+            chunk_shared_user_ids = chunk.get("shared_user_ids", [])
+            
+            if chunk_user_id != user_id and user_id not in chunk_shared_user_ids:
                 return jsonify({"error": "Unauthorized access to citation"}), 403
 
             return jsonify({
@@ -541,7 +543,20 @@ def register_route_backend_documents(app):
             }), 200
 
         except ResourceNotFoundError:
-            return jsonify({"error": "Citation not found in user or group docs"}), 404
+            pass
+        
+        try:
+            search_client_public = CLIENTS['search_client_public']
+            public_chunk = search_client_public.get_document(key=citation_id)
+
+            return jsonify({
+                "cited_text": public_chunk.get("chunk_text", ""),
+                "file_name": public_chunk.get("file_name", ""),
+                "page_number": public_chunk.get("chunk_sequence", 0)
+            }), 200
+        
+        except ResourceNotFoundError:
+            return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
 
         except Exception as e:
             return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
