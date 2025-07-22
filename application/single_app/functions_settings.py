@@ -319,7 +319,6 @@ def get_settings():
         print(f"Error retrieving settings: {str(e)}")
         return None
 
-
 def update_settings(new_settings):
     try:
         # always fetch the latest settings doc, which includes your merges
@@ -625,7 +624,6 @@ def enabled_required(setting_key):
             return f(*args, **kwargs)
         return wrapper
     return decorator
-
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
     # Exclude any key containing the substring "key"
