@@ -478,16 +478,39 @@ def decrypt_key(encrypted_key):
         return None
 
 def get_user_settings(user_id):
-    """Fetches the user settings document from Cosmos DB."""
+    """Fetches the user settings document from Cosmos DB, ensuring email and display_name are present if possible."""
+    from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        # Try to update email/display_name if missing and available in session
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        updated = False
+        if email and doc.get("email") != email:
+            doc["email"] = email
+            updated = True
+        if display_name and doc.get("display_name") != display_name:
+            doc["display_name"] = display_name
+            updated = True
+        if updated:
+            cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
-        return {"id": user_id, "settings": {}}
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        doc = {"id": user_id, "settings": {}}
+        if email:
+            doc["email"] = email
+        if display_name:
+            doc["display_name"] = display_name
+        cosmos_user_settings_container.upsert_item(body=doc)
+        return doc
     except Exception as e:
         print(f"Error in get_user_settings for {user_id}: {e}")
         raise # Re-raise the exception to be handled by the route

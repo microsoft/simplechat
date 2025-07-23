@@ -33,7 +33,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 vector_queries=[vector_query],
                 filter=(
                     (
-                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
                         if enable_file_sharing else
                         f"user_id eq '{user_id}' "
                     ) +
@@ -72,7 +72,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=(
-                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
                     if enable_file_sharing else
                     f"user_id eq '{user_id}' "
                 ),
@@ -117,7 +117,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 vector_queries=[vector_query],
                 filter=(
                     (
-                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
                         if enable_file_sharing else
                         f"user_id eq '{user_id}' "
                     ) +
@@ -135,7 +135,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=(
-                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
                     if enable_file_sharing else
                     f"user_id eq '{user_id}' "
                 ),

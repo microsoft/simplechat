@@ -740,6 +740,24 @@
     </form>
   </div>
 </div>
+<!-- Approve Shared Document Modal -->
+<div class="modal fade" id="approveSharedModal" tabindex="-1" aria-labelledby="approveSharedModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="approveSharedModalLabel">Approve Shared Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="approveSharedModalBody">
+        <!-- Populated by JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="approveSharedModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-success" id="approveSharedModalApproveBtn">Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 
@@ -763,7 +781,7 @@
     window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
     window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
-    window.enable_file_sharing = {{ enable_file_sharing | tojson }};
+    window.enable_file_sharing = "{{ enable_file_sharing | tojson }}";
     
     // Pass current user ID for ownership checks
     window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";

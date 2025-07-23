@@ -421,6 +421,7 @@ function fetchUserDocuments() {
                         Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
                     );
                 }
+                window.lastFetchedDocs = docs;
                 docs.forEach(doc => renderDocumentRow(doc));
             }
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
@@ -472,7 +473,7 @@ function renderDocumentRow(doc) {
                 const isOwner = doc.user_id === currentUserId;
                 
                 let buttonsHtml = '';
-                
+                let sharedUserEntry = null;
                 if (isComplete && !hasError) {
                     if (isOwner) {
                         // Owner sees Share and Delete buttons
@@ -496,28 +497,62 @@ function renderDocumentRow(doc) {
                             <i class="bi bi-trash-fill" aria-hidden="true"></i>
                             <span class="visually-hidden">Delete</span>
                         </button>`;
-                    } else {
-                        // Non-owner with shared access sees Remove button
-                        buttonsHtml += `<button class="btn btn-sm btn-danger me-1"
-                            onclick="window.removeSelfFromDocument('${docId}', event)"
-                            title="Remove yourself from this shared document"
-                            aria-label="Remove yourself from shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                        // Owner: always show chat button
+                        buttonsHtml += `<button class="btn btn-sm btn-primary"
+                            onclick="window.redirectToChat('${docId}')"
+                            title="Open Chat for Document"
+                            aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
                         >
-                            <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
-                            <span class="visually-hidden">Remove from Shared Document</span>
+                            <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
+                            <span class="visually-hidden">Open Chat</span>
+                            Chat
                         </button>`;
+                    } else {
+                        // Non-owner with shared access: check approval status
+                        sharedUserEntry = (doc.shared_user_ids || []).find(
+                            entry => entry.startsWith(currentUserId + ",")
+                        );
+                        if (sharedUserEntry && sharedUserEntry.endsWith(",not_approved")) {
+                            // Debug: log owner_id and user_id for this doc
+                            console.log('Approve button debug:', {
+                                docId: docId,
+                                owner_id: doc.owner_id,
+                                user_id: doc.user_id
+                            });
+                            // Show Approve button
+                            buttonsHtml += `<button class="btn btn-sm btn-success me-1"
+                                onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')"
+                                title="Approve access to this shared document"
+                                aria-label="Approve access to shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-check-circle" aria-hidden="true"></i>
+                                <span class="visually-hidden">Approve Shared Document</span>
+                                Approve
+                            </button>`;
+                        } else {
+                            // Approved: show Remove button
+                            buttonsHtml += `<button class="btn btn-sm btn-danger me-1"
+                                onclick="window.removeSelfFromDocument('${docId}', event)"
+                                title="Remove yourself from this shared document"
+                                aria-label="Remove yourself from shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
+                                <span class="visually-hidden">Remove from Shared Document</span>
+                            </button>`;
+                        }
+                        // Chat button is available to everyone with access, but only if approved
+                        if (!sharedUserEntry || sharedUserEntry.endsWith(",approved")) {
+                            buttonsHtml += `<button class="btn btn-sm btn-primary"
+                                onclick="window.redirectToChat('${docId}')"
+                                title="Open Chat for Document"
+                                aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
+                                <span class="visually-hidden">Open Chat</span>
+                                Chat
+                            </button>`;
+                        }
                     }
-                    
-                    // Chat button is available to everyone with access
-                    buttonsHtml += `<button class="btn btn-sm btn-primary"
-                        onclick="window.redirectToChat('${docId}')"
-                        title="Open Chat for Document"
-                        aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
-                    >
-                        <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
-                        <span class="visually-hidden">Open Chat</span>
-                        Chat
-                    </button>`;
                 } else if (isOwner) {
                     // Only owners can delete incomplete/error documents
                     buttonsHtml += `<button class="btn btn-sm btn-danger me-1" onclick="window.deleteDocument('${docId}', event)" title="Delete Document">
@@ -529,6 +564,7 @@ function renderDocumentRow(doc) {
             })()}
         </td>
     `;
+    docRow.__docData = doc; // Attach the full doc object for modal use
     documentsTableBody.appendChild(docRow);
 
     // Only add details row if complete and no error
@@ -1114,3 +1150,67 @@ window.redirectToChat = function(documentId) {
 
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;
+
+// Approve shared document handler
+window.approveSharedDocument = async function(documentId, btn, ownerOid) {
+    let ownerInfo = { display_name: "the owner", email: "" };
+    if (ownerOid) {
+        try {
+            const resp = await fetch(`/api/user/info/${ownerOid}`);
+            if (resp.ok) {
+                const data = await resp.json();
+                ownerInfo.display_name = data.display_name || data.displayName || "the owner";
+                ownerInfo.email = data.email || "";
+            }
+        } catch (e) {}
+    }
+    let msg = `This file was shared with you by <strong>${escapeHtml(ownerInfo.display_name)}</strong>`;
+    if (ownerInfo.email) msg += ` (<span class="text-muted">${escapeHtml(ownerInfo.email)}</span>)`;
+    msg += ".<br>Do you want to approve access to this shared document?";
+
+    // Populate and show the modal
+    const modalEl = document.getElementById("approveSharedModal");
+    const modalBody = document.getElementById("approveSharedModalBody");
+    const approveBtn = document.getElementById("approveSharedModalApproveBtn");
+    const cancelBtn = document.getElementById("approveSharedModalCancelBtn");
+    if (!modalEl || !modalBody || !approveBtn) {
+        alert("Approval modal not found in the page.");
+        return;
+    }
+    modalBody.innerHTML = msg;
+    approveBtn.disabled = false;
+    approveBtn.innerHTML = "Approve";
+    // Remove previous event listeners
+    approveBtn.onclick = null;
+    cancelBtn.onclick = null;
+
+    // Approve action
+    approveBtn.onclick = async function() {
+        approveBtn.disabled = true;
+        approveBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Approving...`;
+        try {
+            const response = await fetch(`/api/documents/${documentId}/approve-share`, { method: "POST" });
+            const data = await response.json();
+            if (response.ok) {
+                if (window.showToast) window.showToast('Document access approved', 'success');
+                // Hide modal
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                fetchUserDocuments();
+            } else {
+                alert(data.error || "Failed to approve document");
+                approveBtn.disabled = false;
+                approveBtn.innerHTML = "Approve";
+            }
+        } catch (err) {
+            alert("Error approving document: " + (err.error || err.message || "Unknown error"));
+            approveBtn.disabled = false;
+            approveBtn.innerHTML = "Approve";
+        }
+    };
+    // Cancel just closes the modal
+    cancelBtn.onclick = function() {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    };
+    // Show the modal
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};

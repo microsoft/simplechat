@@ -241,6 +241,16 @@ def register_route_backend_documents(app):
         query_params = [{"name": "@user_id", "value": user_id}]
         param_count = 0 # To generate unique parameter names
 
+        # Add user_id prefix for shared_user_ids with status
+        user_id_prefix = f"{user_id},"
+        query_params.append({"name": "@user_id_prefix", "value": user_id_prefix})
+
+        # Replace the main ownership/shared condition
+        query_conditions[0] = (
+            "(c.user_id = @user_id "
+            "OR ARRAY_CONTAINS(c.shared_user_ids, @user_id) "
+            "OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix)))"
+        )
         # General Search (File Name / Title)
         if search_term:
             param_name = f"@search_term_{param_count}"
@@ -325,6 +335,20 @@ def register_route_backend_documents(app):
                 parameters=query_params,
                 enable_cross_partition_query=True # May be needed if user_id is not partition key
             ))
+
+            # Add shared_approval_status and owner_id for each doc
+            for doc in docs:
+                doc["owner_id"] = doc.get("user_id")  # Always set owner_id to the original user_id
+                if doc.get("user_id") == user_id:
+                    doc["shared_approval_status"] = "owner"
+                else:
+                    # Find entry for this user in shared_user_ids
+                    status = None
+                    for entry in doc.get("shared_user_ids", []):
+                        if entry.startswith(f"{user_id},"):
+                            status = entry.split(",", 1)[1]
+                            break
+                    doc["shared_approval_status"] = status or "none"
         except Exception as e:
             print(f"Error executing data query: {e}") # Log the error
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
@@ -521,7 +545,12 @@ def register_route_backend_documents(app):
             chunk_user_id = chunk.get("user_id")
             chunk_shared_user_ids = chunk.get("shared_user_ids", [])
             
-            if chunk_user_id != user_id and user_id not in chunk_shared_user_ids:
+            # Allow access if user is owner or in shared_user_ids (prefix match)
+            is_shared = any(
+                entry == user_id or entry.startswith(f"{user_id},")
+                for entry in chunk_shared_user_ids
+            )
+            if chunk_user_id != user_id and not is_shared:
                 return jsonify({"error": "Unauthorized access to citation"}), 403
 
             return jsonify({
@@ -644,7 +673,7 @@ def register_route_backend_documents(app):
     @user_required
     @enabled_required("enable_user_workspace")
     def api_get_shared_users(document_id):
-        """Get list of users a document is shared with"""
+        """Get list of users a document is shared with, including approval status"""
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
@@ -655,12 +684,12 @@ def register_route_backend_documents(app):
             if not doc:
                 return jsonify({'error': 'Document not found or access denied'}), 404
             
-            # Get shared users
-            shared_user_ids = get_shared_users_for_document(document_id, user_id)
+            # Get shared users (now returns [{'id': oid, 'approval_status': status}, ...])
+            shared_user_objs = get_shared_users_for_document(document_id, user_id)
             
             # Get user details from Microsoft Graph
             shared_users = []
-            if shared_user_ids:
+            if shared_user_objs:
                 access_token = get_valid_access_token()
                 
                 if access_token:
@@ -669,30 +698,35 @@ def register_route_backend_documents(app):
                         'Content-Type': 'application/json'
                     }
                     
-                    for shared_user_id in shared_user_ids:
+                    for entry in shared_user_objs:
+                        oid = entry['id']
+                        approval_status = entry.get('approval_status', 'unknown')
                         try:
                             # Get user details from Microsoft Graph
-                            graph_url = f"https://graph.microsoft.com/v1.0/users/{shared_user_id}"
+                            graph_url = f"https://graph.microsoft.com/v1.0/users/{oid}"
                             response = requests.get(graph_url, headers=headers)
                             
                             if response.status_code == 200:
                                 user_data = response.json()
                                 shared_users.append({
-                                    'id': shared_user_id,
+                                    'id': oid,
+                                    'approval_status': approval_status,
                                     'displayName': user_data.get('displayName', 'Unknown User'),
                                     'email': user_data.get('mail') or user_data.get('userPrincipalName', '')
                                 })
                             else:
                                 # If we can't get user details, still include the ID
                                 shared_users.append({
-                                    'id': shared_user_id,
+                                    'id': oid,
+                                    'approval_status': approval_status,
                                     'displayName': 'Unknown User',
                                     'email': ''
                                 })
                         except Exception as e:
-                            print(f"Error fetching user details for {shared_user_id}: {e}")
+                            print(f"Error fetching user details for {oid}: {e}")
                             shared_users.append({
-                                'id': shared_user_id,
+                                'id': oid,
+                                'approval_status': approval_status,
                                 'displayName': 'Unknown User',
                                 'email': ''
                             })
@@ -711,25 +745,97 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
-        
+    
         try:
-            # Check if document exists and user has access to it
+            # Always get the document and extract the dict robustly
             doc_response = get_document(user_id, document_id)
-            if doc_response[1] != 200:  # get_document returns (jsonify(data), status_code)
+            doc = None
+            status_code = None
+    
+            # Handle (response, status) tuple
+            if isinstance(doc_response, tuple):
+                resp, status_code = doc_response
+                if hasattr(resp, "get_json"):
+                    doc = resp.get_json()
+                else:
+                    doc = resp
+            elif hasattr(doc_response, "status_code") and hasattr(doc_response, "get_json"):
+                status_code = doc_response.status_code
+                doc = doc_response.get_json()
+            else:
+                doc = doc_response
+    
+            if status_code is not None and status_code != 200:
                 return jsonify({'error': 'Document not found or access denied'}), 404
-            
-            doc = doc_response[0].get_json()
-            
+            if not doc or not isinstance(doc, dict):
+                return jsonify({'error': 'Document not found or access denied'}), 404
+    
             # Check if user is the owner - owners cannot remove themselves
             if doc.get('user_id') == user_id:
                 return jsonify({'error': 'Document owners cannot remove themselves from their own documents'}), 400
-            
+    
             # Remove user from shared_user_ids (pass user_id as both requester and target for self-removal)
             success = unshare_document_from_user(document_id, user_id, user_id)
             if success:
                 return jsonify({'message': 'Successfully removed from shared document'}), 200
             else:
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
-                
+    
         except Exception as e:
+            print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
+
+    @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_approve_shared_document(document_id):
+        """Approve a document that was shared with the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            # Get the document
+            document_item = cosmos_user_documents_container.read_item(
+                item=document_id,
+                partition_key=document_id
+            )
+            shared_user_ids = document_item.get('shared_user_ids', [])
+            updated = False
+            new_shared_user_ids = []
+            for entry in shared_user_ids:
+                if entry.startswith(f"{user_id},"):
+                    if entry != f"{user_id},approved":
+                        new_shared_user_ids.append(f"{user_id},approved")
+                        updated = True
+                    else:
+                        new_shared_user_ids.append(entry)
+                else:
+                    new_shared_user_ids.append(entry)
+            if updated:
+                document_item['shared_user_ids'] = new_shared_user_ids
+                document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                cosmos_user_documents_container.upsert_item(document_item)
+                # Update all chunks with the new shared_user_ids
+                try:
+                    chunks = get_all_chunks(document_id, document_item.get('user_id'))
+                    for chunk in chunks:
+                        chunk_id = chunk.get('id')
+                        if chunk_id:
+                            try:
+                                update_chunk_metadata(
+                                    chunk_id=chunk_id,
+                                    user_id=document_item.get('user_id'),
+                                    group_id=None,
+                                    public_workspace_id=None,
+                                    document_id=document_id,
+                                    shared_user_ids=new_shared_user_ids
+                                )
+                            except Exception as chunk_e:
+                                print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
+                except Exception as e:
+                    print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+            return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
+        except Exception as e:
+            return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
