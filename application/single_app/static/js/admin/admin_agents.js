@@ -319,11 +319,11 @@ function handleAgentTableClick(e) {
         } else {
             availablePlugins = [];
         }
-        populatePluginMultiSelect(pluginSelect, availablePlugins);
+        agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
         if (agent && Array.isArray(agent.plugins_to_load)) {
-            setSelectedPlugins(pluginSelect, agent.plugins_to_load);
+            agentsCommon.setSelectedPlugins(pluginSelect, agent.plugins_to_load);
         } else {
-            setSelectedPlugins(pluginSelect, []);
+            agentsCommon.setSelectedPlugins(pluginSelect, []);
         }
 
         // --- Shared Modal Logic ---
