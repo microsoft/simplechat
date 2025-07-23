@@ -1,6 +1,14 @@
 # SimpleChat FastMCP Server Usage Examples
 
-This document provides comprehensive examples of using the SimpleChat FastMCP server.
+This document provides comprehensive examples of using the SimpleChat FastMCP server built with **FastMCP 2.0**.
+
+## What's New with FastMCP 2.0
+
+This server now uses FastMCP 2.0 instead of the traditional Anthropic MCP SDK, providing:
+- **47% Less Code**: Reduced from 510 to 272 lines
+- **Cleaner Architecture**: Simple decorator-based tool registration
+- **Better Maintainability**: Easier to understand and modify
+- **Modern Python**: Leverages type hints and modern patterns
 
 ## Setup
 

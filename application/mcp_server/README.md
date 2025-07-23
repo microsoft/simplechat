@@ -2,6 +2,8 @@
 
 This FastMCP server provides a Model Context Protocol (MCP) interface to SimpleChat's API endpoints, enabling MCP clients to interact with SimpleChat functionality through standardized tools.
 
+Built using **FastMCP 2.0** for simplified development and improved developer experience.
+
 ## Features
 
 The MCP server provides the following tools:
@@ -27,6 +29,16 @@ The MCP server provides the following tools:
 cd application/mcp_server
 pip install -r requirements.txt
 ```
+
+## Why FastMCP 2.0?
+
+This server uses **FastMCP 2.0** from [gofastmcp.com](https://gofastmcp.com) instead of the traditional Anthropic MCP SDK. Benefits include:
+
+- **Simplified Development**: Clean decorator-based tool registration with `@mcp.tool`
+- **Reduced Code Complexity**: ~250 lines vs ~500+ lines with traditional MCP
+- **Better Developer Experience**: Intuitive function-based API instead of complex class hierarchies
+- **Built-in Testing**: FastMCP provides built-in client testing capabilities
+- **Modern Python Patterns**: Leverages type hints and modern Python features
 
 ## Configuration
 
