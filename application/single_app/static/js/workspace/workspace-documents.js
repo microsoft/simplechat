@@ -1173,16 +1173,20 @@ window.approveSharedDocument = async function(documentId, btn, ownerOid) {
     const modalBody = document.getElementById("approveSharedModalBody");
     const approveBtn = document.getElementById("approveSharedModalApproveBtn");
     const cancelBtn = document.getElementById("approveSharedModalCancelBtn");
-    if (!modalEl || !modalBody || !approveBtn) {
+    const denyBtn = document.getElementById("approveSharedModalDenyBtn");
+    if (!modalEl || !modalBody || !approveBtn || !denyBtn) {
         alert("Approval modal not found in the page.");
         return;
     }
     modalBody.innerHTML = msg;
     approveBtn.disabled = false;
     approveBtn.innerHTML = "Approve";
+    denyBtn.disabled = false;
+    denyBtn.innerHTML = "Deny";
     // Remove previous event listeners
     approveBtn.onclick = null;
     cancelBtn.onclick = null;
+    denyBtn.onclick = null;
 
     // Approve action
     approveBtn.onclick = async function() {
@@ -1207,6 +1211,30 @@ window.approveSharedDocument = async function(documentId, btn, ownerOid) {
             approveBtn.innerHTML = "Approve";
         }
     };
+
+    // Deny action
+    denyBtn.onclick = async function() {
+        denyBtn.disabled = true;
+        denyBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Denying...`;
+        try {
+            const response = await fetch(`/api/documents/${documentId}/remove-self`, { method: "DELETE" });
+            const data = await response.json();
+            if (response.ok) {
+                if (window.showToast) window.showToast('You denied access to this shared document', 'info');
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                fetchUserDocuments();
+            } else {
+                alert(data.error || "Failed to deny access");
+                denyBtn.disabled = false;
+                denyBtn.innerHTML = "Deny";
+            }
+        } catch (err) {
+            alert("Error denying access: " + (err.error || err.message || "Unknown error"));
+            denyBtn.disabled = false;
+            denyBtn.innerHTML = "Deny";
+        }
+    };
+
     // Cancel just closes the modal
     cancelBtn.onclick = function() {
         bootstrap.Modal.getOrCreateInstance(modalEl).hide();
