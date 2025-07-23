@@ -123,6 +123,7 @@ def get_user_plugins():
 
 @bpap.route('/api/user/plugins', methods=['POST'])
 @login_required
+@enabled_required("allow_user_plugins")
 def set_user_plugins():
     user_id = get_current_user_id()
     plugins = request.json if isinstance(request.json, list) else []
