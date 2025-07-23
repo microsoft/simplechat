@@ -309,6 +309,72 @@ function handleAgentTableClick(e) {
             if (confirm(`Are you sure you want to delete agent '${agents[idx].name}'?`)) {
                 deleteAgent(idx);
             }
+        } else {
+            availablePlugins = [];
+        }
+        populatePluginMultiSelect(pluginSelect, availablePlugins);
+        if (agent && Array.isArray(agent.plugins_to_load)) {
+            setSelectedPlugins(pluginSelect, agent.plugins_to_load);
+        } else {
+            setSelectedPlugins(pluginSelect, []);
+        }
+
+        // --- Shared Modal Logic ---
+        const customConnectionToggle = document.getElementById('agent-custom-connection');
+        const customConnectionFields = document.getElementById('agent-custom-connection-fields');
+        const globalModelGroup = document.getElementById('agent-global-model-group');
+        const globalModelSelect = document.getElementById('agent-global-model-select');
+        const advancedToggle = document.getElementById('agent-advanced-toggle');
+        const advancedSection = document.getElementById('agent-advanced-section');
+        const modalElements = {
+            customFields: customConnectionFields,
+            globalModelGroup: globalModelGroup,
+            advancedSection: advancedSection
+        };
+        // Custom Connection Toggle
+        let customEnabled = shouldEnableCustomConnection(agent);
+        customConnectionToggle.checked = customEnabled;
+        toggleCustomConnectionUI(customEnabled, modalElements);
+        customConnectionToggle.onchange = function () {
+            toggleCustomConnectionUI(this.checked, modalElements);
+            if (!this.checked) {
+                loadGlobalModels();
+            }
+        };
+        // Advanced Toggle
+        let expandAdvanced = shouldExpandAdvanced(agent);
+        advancedToggle.checked = expandAdvanced;
+        toggleAdvancedUI(expandAdvanced, modalElements);
+        advancedToggle.onchange = function () {
+            toggleAdvancedUI(this.checked, modalElements);
+        };
+        // Global Model Dropdown
+        async function loadGlobalModels() {
+            const endpoint = '/api/admin/agent/settings';
+            const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
+            populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+            globalModelSelect.onchange = function () {
+                const selected = models.find(m => m.deployment === this.value || m.name === this.value || m.id === this.value);
+                if (selected) {
+                    if (apimEnabled) {
+                        document.getElementById('agent-apim-deployment').value = selected.deployment || '';
+                        document.getElementById('agent-gpt-endpoint').value = '';
+                        document.getElementById('agent-gpt-key').value = '';
+                        document.getElementById('agent-gpt-deployment').value = '';
+                        document.getElementById('agent-gpt-api-version').value = '';
+                    } else {
+                        document.getElementById('agent-gpt-endpoint').value = selected.endpoint || '';
+                        document.getElementById('agent-gpt-key').value = selected.key || '';
+                        document.getElementById('agent-gpt-deployment').value = selected.deployment || selected.name || '';
+                        document.getElementById('agent-gpt-api-version').value = selected.api_version || '';
+                        document.getElementById('agent-apim-deployment').value = '';
+                    }
+                }
+            };
+        }
+        // Initial model load if not using custom connection
+        if (!customEnabled) {
+            loadGlobalModels();
         }
     }
 }

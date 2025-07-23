@@ -174,7 +174,8 @@ def register_route_backend_group_documents(app):
         if page_size < 1: page_size = 10
 
         # --- 2) Build dynamic WHERE clause and parameters ---
-        query_conditions = ["c.group_id = @group_id"]
+        # Include documents owned by group OR shared with group via shared_group_ids
+        query_conditions = ["(c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))"]
         query_params = [{"name": "@group_id", "value": active_group_id}]
         param_count = 0
 
@@ -273,7 +274,6 @@ def register_route_backend_group_documents(app):
             "total_count": total_count,
             "needs_legacy_update_check": legacy_count > 0
         }), 200
-
 
     @app.route('/api/group_documents/<document_id>', methods=['GET'])
     @login_required
@@ -396,8 +396,6 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
    
-
-
     @app.route('/api/group_documents/<document_id>', methods=['DELETE'])
     @login_required
     @user_required
@@ -431,7 +429,6 @@ def register_route_backend_group_documents(app):
             return jsonify({'message': 'Group document deleted successfully'}), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
-
 
     @app.route('/api/group_documents/<document_id>/extract_metadata', methods=['POST'])
     @login_required

@@ -61,20 +61,45 @@ def register_route_backend_users(app):
             return jsonify(results), 200
 
         except requests.exceptions.RequestException as e:
-             print(f"Graph API request failed: {e}")
-             # Try to get more details from response if available
-             error_details = "Unknown error"
-             if e.response is not None:
-                 try:
-                     error_details = e.response.json()
-                 except ValueError: # Handle cases where response is not JSON
-                     error_details = e.response.text
-             return jsonify({
-                 "error": "Graph API request failed",
-                 "details": error_details
-             }), getattr(e.response, 'status_code', 500) # Use response status code if available
+            print(f"Graph API request failed: {e}")
+            # Try to get more details from response if available
+            error_details = "Unknown error"
+            if e.response is not None:
+                try:
+                    error_details = e.response.json()
+                except ValueError: # Handle cases where response is not JSON
+                    error_details = e.response.text
+            return jsonify({
+                "error": "Graph API request failed",
+                "details": error_details
+            }), getattr(e.response, 'status_code', 500) # Use response status code if available
 
-
+    @app.route("/api/user/info/<user_id>", methods=["GET"])
+    @login_required
+    @user_required
+    def api_get_user_info(user_id):
+        """
+        Get user info (email, display_name) by user_id (oid).
+        """
+        # Directly query Cosmos for the user document by id (oid)
+        from config import cosmos_user_settings_container
+        try:
+            user_doc = cosmos_user_settings_container.read_item(
+                item=user_id,
+                partition_key=user_id
+            )
+            print(f"[DEBUG] /api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            return jsonify({
+                "user_id": user_id,
+                "email": user_doc.get("email", ""),
+                "display_name": user_doc.get("display_name", "")
+            }), 200
+        except Exception as e:
+            print(f"[ERROR] /api/user/info/{user_id} failed: {e}", flush=True)
+            return jsonify({
+                "error": f"User not found for oid {user_id}"
+            }), 404
+    
     @app.route('/api/user/settings', methods=['GET', 'POST'])
     @login_required
     @user_required # Assuming this decorator confirms a valid user exists

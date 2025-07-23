@@ -4,12 +4,13 @@ from config import *
 from functions_content import *
 from functions_public_workspaces import get_user_visible_public_workspace_docs
 
-def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None):
+def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None, enable_file_sharing=True):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
     If document_id is None, we just search the user index for the user's docs
     OR you could unify that logic further (maybe search both).
+    enable_file_sharing: If False, do not include shared_user_ids in filters.
     """
     query_embedding = generate_embedding(query)
     if query_embedding is None:
@@ -30,7 +31,14 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}' and document_id eq '{document_id}'",
+                filter=(
+                    (
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
+                        if enable_file_sharing else
+                        f"user_id eq '{user_id}' "
+                    ) +
+                    f"and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -48,11 +56,26 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 query_answer="extractive",
                 select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
+
+            public_results = search_client_public.search(
+                search_text=query,
+                vector_queries=[vector_query],
+                filter=f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'",
+                query_type="semantic",
+                semantic_configuration_name="nexus-public-index-semantic-configuration",
+                query_caption="extractive",
+                query_answer="extractive",
+                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+            )
         else:
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
+                    if enable_file_sharing else
+                    f"user_id eq '{user_id}' "
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -71,16 +94,35 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
+            public_results = search_client_public.search(
+                search_text=query,
+                vector_queries=[vector_query],
+                filter=f"public_workspace_id eq '{active_public_workspace_id}'",
+                query_type="semantic",
+                semantic_configuration_name="nexus-public-index-semantic-configuration",
+                query_caption="extractive",
+                query_answer="extractive",
+                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+            )
+
         user_results_final = extract_search_results(user_results, top_n)
         group_results_final = extract_search_results(group_results, top_n)
-        results = user_results_final + group_results_final
-    
+        public_results_final = extract_search_results(public_results, top_n)
+        results = user_results_final + group_results_final + public_results_final
+
     elif doc_scope == "personal":
         if document_id:
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}' and document_id eq '{document_id}'",
+                filter=(
+                    (
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
+                        if enable_file_sharing else
+                        f"user_id eq '{user_id}' "
+                    ) +
+                    f"and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -92,7 +134,11 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id},approved')) "
+                    if enable_file_sharing else
+                    f"user_id eq '{user_id}' "
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -128,26 +174,23 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             results = extract_search_results(group_results, top_n)
     
     elif doc_scope == "public":
-        # Get all public workspaces the user has access to AND has marked as visible
-        user_visible_workspaces = get_user_visible_public_workspace_docs(user_id)
-        workspace_ids = [ws['id'] for ws in user_visible_workspaces]
-        
-        if not workspace_ids:
-            # User has no access to any public workspaces
-            results = []
-        else:
-            # Create filter for all accessible public workspaces
-            workspace_filter = " or ".join([f"public_workspace_id eq '{ws_id}'" for ws_id in workspace_ids])
-            
-            if document_id:
-                filter_query = f"({workspace_filter}) and document_id eq '{document_id}'"
-            else:
-                filter_query = f"({workspace_filter})"
-            
+        if document_id:
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=filter_query,
+                filter=f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'",
+                query_type="semantic",
+                semantic_configuration_name="nexus-public-index-semantic-configuration",
+                query_caption="extractive",
+                query_answer="extractive",
+                select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+            )
+            results = extract_search_results(public_results, top_n)
+        else:
+            public_results = search_client_public.search(
+                search_text=query,
+                vector_queries=[vector_query],
+                filter=f"public_workspace_id eq '{active_public_workspace_id}'",
                 query_type="semantic",
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",

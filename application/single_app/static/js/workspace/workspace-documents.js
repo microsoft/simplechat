@@ -21,6 +21,7 @@ const uploadBtn = document.getElementById("upload-btn");
 const uploadStatusSpan = document.getElementById("upload-status");
 const docMetadataModalEl = document.getElementById("docMetadataModal") ? new bootstrap.Modal(document.getElementById("docMetadataModal")) : null;
 const docMetadataForm = document.getElementById("doc-metadata-form");
+const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 
 // --- Filter elements ---
 const docsSearchInput = document.getElementById('docs-search-input');
@@ -87,6 +88,14 @@ if (docsApplyFiltersBtn) {
         docsAbstractFilter = docsAbstractFilterInput ? docsAbstractFilterInput.value.trim() : '';
 
         docsCurrentPage = 1; // Reset to first page
+        fetchUserDocuments();
+    });
+}
+
+// Listen for shared only filter change (optional: auto-apply on change)
+if (docsSharedOnlyFilter) {
+    docsSharedOnlyFilter.addEventListener('change', () => {
+        docsCurrentPage = 1;
         fetchUserDocuments();
     });
 }
@@ -338,7 +347,7 @@ function fetchUserDocuments() {
     // Show loading state
     documentsTableBody.innerHTML = `
         <tr class="table-loading-row">
-            <td colspan="4">
+            <td colspan="5">
                 <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                 Loading documents...
             </td>
@@ -366,6 +375,10 @@ function fetchUserDocuments() {
     if (docsAbstractFilter) {
         params.append('abstract', docsAbstractFilter); // Assumes backend uses 'abstract'
     }
+    // Add shared only filter
+    if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+        params.append('shared_only', 'true');
+    }
 
     console.log("Fetching documents with params:", params.toString()); // Debugging: Check params
 
@@ -382,7 +395,7 @@ function fetchUserDocuments() {
                 const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter;
                 documentsTableBody.innerHTML = `
                     <tr>
-                        <td colspan="4" class="text-center p-4 text-muted">
+                        <td colspan="5" class="text-center p-4 text-muted">
                             ${ filtersActive
                                 ? 'No documents found matching the current filters.'
                                 : 'No documents found. Upload a document to get started.'
@@ -401,7 +414,15 @@ function fetchUserDocuments() {
                      });
                  }
             } else {
-                data.documents.forEach(doc => renderDocumentRow(doc));
+                // If backend does not support shared_only, filter client-side as fallback
+                let docs = data.documents;
+                if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+                    docs = docs.filter(doc =>
+                        Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
+                    );
+                }
+                window.lastFetchedDocs = docs;
+                docs.forEach(doc => renderDocumentRow(doc));
             }
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
@@ -415,7 +436,7 @@ function fetchUserDocuments() {
             } else {
                 displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
             }
-            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
+            documentsTableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }
@@ -445,18 +466,105 @@ function renderDocumentRow(doc) {
         </td>
         <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
         <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
-        <td class="align-middle">
-            <button class="btn btn-sm btn-danger" onclick="window.deleteDocument('${docId}', event)" title="Delete Document">
-                <i class="bi bi-trash-fill"></i>
-            </button>
-            ${isComplete && !hasError ?
-                `<button class="btn btn-sm btn-primary ms-1" onclick="window.redirectToChat('${docId}')" title="Search in Chat">
-                    <i class="bi bi-chat-dots-fill"></i> Chat
-                    </button>` :
-                ''
-            }
+        <td class="align-middle text-end">
+            ${(() => {
+                // Check if current user is the owner of the document
+                const currentUserId = window.current_user_id; // This should be set in the template
+                const isOwner = doc.user_id === currentUserId;
+                
+                let buttonsHtml = '';
+                let sharedUserEntry = null;
+                if (isComplete && !hasError) {
+                    if (isOwner) {
+                        // Owner sees Share and Delete buttons
+                        const shareCount = doc.shared_user_ids && doc.shared_user_ids.length > 0 ? doc.shared_user_ids.length : 0;
+                        if (window.enable_file_sharing === true || window.enable_file_sharing === "true") {
+                            buttonsHtml += `<button class="btn btn-sm btn-info me-1 d-inline-flex align-items-center"
+                                onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}')"
+                                title="Share Document"
+                                aria-label="Share Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-share-fill me-1" aria-hidden="true"></i>
+                                <span class="badge bg-light text-dark ms-1">${shareCount}</span>
+                                <span class="visually-hidden">users shared</span>
+                            </button>`;
+                        }
+                        buttonsHtml += `<button class="btn btn-sm btn-danger me-1"
+                            onclick="window.deleteDocument('${docId}', event)"
+                            title="Delete Document"
+                            aria-label="Delete Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                        >
+                            <i class="bi bi-trash-fill" aria-hidden="true"></i>
+                            <span class="visually-hidden">Delete</span>
+                        </button>`;
+                        // Owner: always show chat button
+                        buttonsHtml += `<button class="btn btn-sm btn-primary"
+                            onclick="window.redirectToChat('${docId}')"
+                            title="Open Chat for Document"
+                            aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                        >
+                            <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
+                            <span class="visually-hidden">Open Chat</span>
+                            Chat
+                        </button>`;
+                    } else {
+                        // Non-owner with shared access: check approval status
+                        sharedUserEntry = (doc.shared_user_ids || []).find(
+                            entry => entry.startsWith(currentUserId + ",")
+                        );
+                        if (sharedUserEntry && sharedUserEntry.endsWith(",not_approved")) {
+                            // Debug: log owner_id and user_id for this doc
+                            console.log('Approve button debug:', {
+                                docId: docId,
+                                owner_id: doc.owner_id,
+                                user_id: doc.user_id
+                            });
+                            // Show Approve button
+                            buttonsHtml += `<button class="btn btn-sm btn-success me-1"
+                                onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')"
+                                title="Approve access to this shared document"
+                                aria-label="Approve access to shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-check-circle" aria-hidden="true"></i>
+                                <span class="visually-hidden">Approve Shared Document</span>
+                                Approve
+                            </button>`;
+                        } else {
+                            // Approved: show Remove button
+                            buttonsHtml += `<button class="btn btn-sm btn-danger me-1"
+                                onclick="window.removeSelfFromDocument('${docId}', event)"
+                                title="Remove yourself from this shared document"
+                                aria-label="Remove yourself from shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
+                                <span class="visually-hidden">Remove from Shared Document</span>
+                            </button>`;
+                        }
+                        // Chat button is available to everyone with access, but only if approved
+                        if (!sharedUserEntry || sharedUserEntry.endsWith(",approved")) {
+                            buttonsHtml += `<button class="btn btn-sm btn-primary"
+                                onclick="window.redirectToChat('${docId}')"
+                                title="Open Chat for Document"
+                                aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
+                                <span class="visually-hidden">Open Chat</span>
+                                Chat
+                            </button>`;
+                        }
+                    }
+                } else if (isOwner) {
+                    // Only owners can delete incomplete/error documents
+                    buttonsHtml += `<button class="btn btn-sm btn-danger me-1" onclick="window.deleteDocument('${docId}', event)" title="Delete Document">
+                        <i class="bi bi-trash-fill"></i>
+                    </button>`;
+                }
+                
+                return buttonsHtml;
+            })()}
         </td>
     `;
+    docRow.__docData = doc; // Attach the full doc object for modal use
     documentsTableBody.appendChild(docRow);
 
     // Only add details row if complete and no error
@@ -487,7 +595,7 @@ function renderDocumentRow(doc) {
             }
 
         let detailsHtml = `
-            <td colspan="4">
+            <td colspan="5">
                 <div class="bg-light p-3 border rounded small">
                     ${classificationDisplayHTML}
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
@@ -524,14 +632,14 @@ function renderDocumentRow(doc) {
         statusRow.id = `status-row-${docId}`;
         if (hasError) {
              statusRow.innerHTML = `
-                <td colspan="4">
+                <td colspan="5">
                     <div class="alert alert-danger alert-sm py-1 px-2 mb-0 small" role="alert">
                         <i class="bi bi-exclamation-triangle-fill me-1"></i> Error: ${escapeHtml(docStatus)}
                     </div>
                 </td>`;
         } else if (pct < 100) { // Still processing
              statusRow.innerHTML = `
-                <td colspan="4">
+                <td colspan="5">
                     <div class="progress" style="height: 10px;" title="Status: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)">
                         <div id="progress-bar-${docId}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%;" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div>
                     </div>
@@ -539,7 +647,7 @@ function renderDocumentRow(doc) {
                 </td>`;
         } else { // Should technically be complete now, but edge case?
              statusRow.innerHTML = `
-                <td colspan="4">
+                <td colspan="5">
                     <small class="text-muted">Status: Finalizing...</small>
                 </td>`;
         }
@@ -748,7 +856,7 @@ function pollDocumentStatus(documentId) {
                 activePolls.delete(documentId);
                 // Update UI to show polling failed
                 if (statusRow) {
-                    statusRow.innerHTML = `<td colspan="4"><div class="alert alert-warning alert-sm py-1 px-2 mb-0 small" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not retrieve status: ${escapeHtml(err.message || 'Polling failed')}</div></td>`;
+                    statusRow.innerHTML = `<td colspan="5"><div class="alert alert-warning alert-sm py-1 px-2 mb-0 small" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not retrieve status: ${escapeHtml(err.message || 'Polling failed')}</div></td>`;
                 }
                  // Maybe update the icon in the main row too if status row isn't visible
                  if (docRow && docRow.cells[0]) {
@@ -987,6 +1095,54 @@ window.deleteDocument = function(documentId, event) {
         });
 }
 
+window.removeSelfFromDocument = function(documentId, event) {
+    if (!confirm("Are you sure you want to remove yourself from this shared document? You will no longer have access to it.")) return;
+
+    const removeBtn = event ? event.target.closest('button') : null;
+    if (removeBtn) {
+        removeBtn.disabled = true;
+        removeBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+    }
+
+    fetch(`/api/documents/${documentId}/remove-self`, { method: "DELETE" })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => Promise.reject(data)).catch(() => Promise.reject({ error: `Server responded with status ${response.status}` }));
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log("Successfully removed from document:", data);
+            // Remove the document row from the table since user no longer has access
+            const docRow = document.getElementById(`doc-row-${documentId}`);
+            const detailsRow = document.getElementById(`details-row-${documentId}`);
+            const statusRow = document.getElementById(`status-row-${documentId}`);
+            if (docRow) docRow.remove();
+            if (detailsRow) detailsRow.remove();
+            if (statusRow) statusRow.remove();
+
+            // Refresh if the table body becomes empty OR to update pagination total count
+            if (documentsTableBody && documentsTableBody.childElementCount === 0) {
+                fetchUserDocuments(); // Refresh to show 'No documents' message and correct pagination
+            } else {
+                fetchUserDocuments(); // Refresh to update pagination potentially
+            }
+
+            // Show success message
+            if (window.showToast) {
+                window.showToast('Successfully removed from shared document', 'success');
+            }
+        })
+        .catch(error => {
+            console.error("Error removing self from document:", error);
+            alert("Error removing yourself from document: " + (error.error || error.message || "Unknown error"));
+            // Re-enable button only if it still exists
+            if (removeBtn && document.body.contains(removeBtn)) {
+                removeBtn.disabled = false;
+                removeBtn.innerHTML = '<i class="bi bi-x-circle"></i>';
+            }
+        });
+}
 
 window.redirectToChat = function(documentId) {
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
@@ -994,3 +1150,67 @@ window.redirectToChat = function(documentId) {
 
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;
+
+// Approve shared document handler
+window.approveSharedDocument = async function(documentId, btn, ownerOid) {
+    let ownerInfo = { display_name: "the owner", email: "" };
+    if (ownerOid) {
+        try {
+            const resp = await fetch(`/api/user/info/${ownerOid}`);
+            if (resp.ok) {
+                const data = await resp.json();
+                ownerInfo.display_name = data.display_name || data.displayName || "the owner";
+                ownerInfo.email = data.email || "";
+            }
+        } catch (e) {}
+    }
+    let msg = `This file was shared with you by <strong>${escapeHtml(ownerInfo.display_name)}</strong>`;
+    if (ownerInfo.email) msg += ` (<span class="text-muted">${escapeHtml(ownerInfo.email)}</span>)`;
+    msg += ".<br>Do you want to approve access to this shared document?";
+
+    // Populate and show the modal
+    const modalEl = document.getElementById("approveSharedModal");
+    const modalBody = document.getElementById("approveSharedModalBody");
+    const approveBtn = document.getElementById("approveSharedModalApproveBtn");
+    const cancelBtn = document.getElementById("approveSharedModalCancelBtn");
+    if (!modalEl || !modalBody || !approveBtn) {
+        alert("Approval modal not found in the page.");
+        return;
+    }
+    modalBody.innerHTML = msg;
+    approveBtn.disabled = false;
+    approveBtn.innerHTML = "Approve";
+    // Remove previous event listeners
+    approveBtn.onclick = null;
+    cancelBtn.onclick = null;
+
+    // Approve action
+    approveBtn.onclick = async function() {
+        approveBtn.disabled = true;
+        approveBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Approving...`;
+        try {
+            const response = await fetch(`/api/documents/${documentId}/approve-share`, { method: "POST" });
+            const data = await response.json();
+            if (response.ok) {
+                if (window.showToast) window.showToast('Document access approved', 'success');
+                // Hide modal
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                fetchUserDocuments();
+            } else {
+                alert(data.error || "Failed to approve document");
+                approveBtn.disabled = false;
+                approveBtn.innerHTML = "Approve";
+            }
+        } catch (err) {
+            alert("Error approving document: " + (err.error || err.message || "Unknown error"));
+            approveBtn.disabled = false;
+            approveBtn.innerHTML = "Approve";
+        }
+    };
+    // Cancel just closes the modal
+    cancelBtn.onclick = function() {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    };
+    // Show the modal
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};

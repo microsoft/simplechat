@@ -1430,6 +1430,24 @@
 
                 <div class="card mb-3 p-3">
                     
+                    <h5>Enable File Sharing</h5>
+                    <p class="text-muted">
+                        Turn this on to enable file sharing capabilities between users and workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sharing"
+                            name="enable_file_sharing"
+                            {% if settings.enable_file_sharing %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sharing">
+                            Enable File Sharing
+                        </label>
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
                     <h5>Multimedia Support</h5>
                     <p class="text-muted mb-2">
                         Support video and audio file upload for transcription, indexing, and embedding.

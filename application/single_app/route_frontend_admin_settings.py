@@ -422,6 +422,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
+                'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': form_data.get('enable_file_processing_logs') == 'on',
                 'require_member_of_create_group': require_member_of_create_group,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
