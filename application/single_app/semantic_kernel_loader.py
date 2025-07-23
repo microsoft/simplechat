@@ -346,6 +346,19 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             },
             level=logging.INFO
         )
+    else:
+        log_event(
+            f"[SK Loader] AzureChatCompletion or configuration not resolved for agent: {agent_config['name']} ({mode_label})",
+            {
+                "agent_name": agent_config["name"],
+                "aoai_endpoint": agent_config["endpoint"],
+                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                "aoai_deployment": agent_config["deployment"],
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        return None, None
     if LoggingChatCompletionAgent and chat_service:
         try:
             kwargs = {
