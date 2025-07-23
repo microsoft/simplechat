@@ -263,7 +263,10 @@ def save_video_chunk(
                 chunk["group_id"] = group_id
                 client = CLIENTS["search_client_group"]
             else:
+                # Get shared_user_ids from document metadata for personal documents
+                shared_user_ids = meta.get('shared_user_ids', []) if meta else []
                 chunk["user_id"] = user_id
+                chunk["shared_user_ids"] = shared_user_ids
                 client = CLIENTS["search_client_user"]
 
             print(f"[VideoChunk] CHUNK BUILT {chunk_id}", flush=True)
@@ -891,6 +894,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "group_id": group_id
             }
         else:
+            # Get shared_user_ids from document metadata for personal documents
+            shared_user_ids = metadata.get('shared_user_ids', []) if metadata else []
+            
             chunk_document = {
                 "id": chunk_id,
                 "document_id": document_id,
@@ -907,7 +913,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
-                "user_id": user_id
+                "user_id": user_id,
+                "shared_user_ids": shared_user_ids
             }
     except Exception as e:
         print(f"Error creating chunk document for page {page_number} of document {document_id}: {e}")
@@ -979,7 +986,7 @@ def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None
         print(f"Error retrieving chunks for document {document_id}: {e}")
         raise
 
-def update_chunk_metadata(chunk_id, user_id, group_id, public_workspace_id, document_id, **kwargs):
+def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=None, document_id=None, **kwargs):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
@@ -1009,7 +1016,9 @@ def update_chunk_metadata(chunk_id, user_id, group_id, public_workspace_id, docu
             'chunk_summary',
             'author',
             'title',
-            'document_classification'
+            'document_classification',
+            'shared_user_ids',
+            'shared_group_ids'
         ]
         for field in updatable_fields:
             if field in kwargs:
@@ -1020,6 +1029,7 @@ def update_chunk_metadata(chunk_id, user_id, group_id, public_workspace_id, docu
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
         raise
+
 
 def get_pdf_page_count(pdf_path: str) -> int:
     """
@@ -3603,6 +3613,29 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
             
             # Update the document
             cosmos_user_documents_container.upsert_item(document_item)
+            
+            # Update all chunks with the new shared_user_ids
+            try:
+                chunks = get_all_chunks(document_id, owner_user_id)
+                for chunk in chunks:
+                    chunk_id = chunk.get('id')
+                    if chunk_id:
+                        try:
+                            update_chunk_metadata(
+                                chunk_id=chunk_id,
+                                user_id=owner_user_id,
+                                group_id=None,
+                                public_workspace_id=None,
+                                document_id=document_id,
+                                shared_user_ids=shared_user_ids
+                            )
+                        except Exception as chunk_e:
+                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
+                            # Continue with other chunks
+            except Exception as e:
+                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+                # Don't fail the whole operation if chunk update fails
+            
             return True
         
         return True  # Already shared
@@ -3616,7 +3649,7 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
 def unshare_document_from_user(document_id, owner_user_id, target_user_id):
     """
     Remove a user from a document's shared_user_ids list.
-    Only the document owner can unshare documents.
+    Only the document owner can unshare documents, OR users can remove themselves.
     Returns True if successful, False if document not found or access denied.
     """
     try:
@@ -3626,9 +3659,13 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
             partition_key=document_id
         )
         
-        # Verify the requesting user is the owner
-        if document_item.get('user_id') != owner_user_id:
-            raise Exception("Only document owner can unshare documents")
+        # Verify the requesting user is the owner OR the user is removing themselves
+        actual_owner_id = document_item.get('user_id')
+        is_owner = actual_owner_id == owner_user_id
+        is_self_removal = owner_user_id == target_user_id
+        
+        if not is_owner and not is_self_removal:
+            raise Exception("Only document owner can unshare documents, or users can remove themselves")
         
         # Get current shared_user_ids
         shared_user_ids = document_item.get('shared_user_ids', [])
@@ -3638,9 +3675,31 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
             shared_user_ids.remove(target_user_id)
             document_item['shared_user_ids'] = shared_user_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            
             # Update the document
             cosmos_user_documents_container.upsert_item(document_item)
+            
+            # Update all chunks with the new shared_user_ids
+            try:
+                chunks = get_all_chunks(document_id, owner_user_id)
+                for chunk in chunks:
+                    chunk_id = chunk.get('id')
+                    if chunk_id:
+                        try:
+                            update_chunk_metadata(
+                                chunk_id=chunk_id,
+                                user_id=owner_user_id,
+                                group_id=None,
+                                public_workspace_id=None,
+                                document_id=document_id,
+                                shared_user_ids=shared_user_ids
+                            )
+                        except Exception as chunk_e:
+                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
+                            # Continue with other chunks
+            except Exception as e:
+                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+                # Don't fail the whole operation if chunk update fails
+
         
         return True
         

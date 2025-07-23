@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
 import os
+import requests
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -572,3 +573,163 @@ def register_route_backend_documents(app):
         return jsonify({
             "message": f"Upgraded {count} document(s) to the new format."
         }), 200
+
+    # Document Sharing API Endpoints
+    @app.route('/api/documents/<document_id>/share', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_share_document(document_id):
+        """Share a document with a user"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        target_user_id = data.get('user_id')
+        
+        if not target_user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        try:
+            # Check if user owns the document
+            doc = get_document(user_id, document_id)
+            if not doc:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            
+            # Share the document
+            success = share_document_with_user(document_id, user_id, target_user_id)
+            if success:
+                return jsonify({'message': 'Document shared successfully'}), 200
+            else:
+                return jsonify({'error': 'Failed to share document'}), 500
+                
+        except Exception as e:
+            return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
+
+    @app.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_unshare_document(document_id):
+        """Remove sharing of a document from a user"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        target_user_id = data.get('user_id')
+        
+        if not target_user_id:
+            return jsonify({'error': 'user_id is required'}), 400
+        
+        try:
+            # Check if user owns the document
+            doc = get_document(user_id, document_id)
+            if not doc:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            
+            # Unshare the document
+            success = unshare_document_from_user(document_id, user_id, target_user_id)
+            if success:
+                return jsonify({'message': 'Document unshared successfully'}), 200
+            else:
+                return jsonify({'error': 'Failed to unshare document'}), 500
+                
+        except Exception as e:
+            return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
+
+    @app.route('/api/documents/<document_id>/shared-users', methods=['GET'])
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_get_shared_users(document_id):
+        """Get list of users a document is shared with"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Check if user owns the document
+            doc = get_document(user_id, document_id)
+            if not doc:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            
+            # Get shared users
+            shared_user_ids = get_shared_users_for_document(document_id, user_id)
+            
+            # Get user details from Microsoft Graph
+            shared_users = []
+            if shared_user_ids:
+                access_token = get_valid_access_token()
+                
+                if access_token:
+                    headers = {
+                        'Authorization': f'Bearer {access_token}',
+                        'Content-Type': 'application/json'
+                    }
+                    
+                    for shared_user_id in shared_user_ids:
+                        try:
+                            # Get user details from Microsoft Graph
+                            graph_url = f"https://graph.microsoft.com/v1.0/users/{shared_user_id}"
+                            response = requests.get(graph_url, headers=headers)
+                            
+                            if response.status_code == 200:
+                                user_data = response.json()
+                                shared_users.append({
+                                    'id': shared_user_id,
+                                    'displayName': user_data.get('displayName', 'Unknown User'),
+                                    'email': user_data.get('mail') or user_data.get('userPrincipalName', '')
+                                })
+                            else:
+                                # If we can't get user details, still include the ID
+                                shared_users.append({
+                                    'id': shared_user_id,
+                                    'displayName': 'Unknown User',
+                                    'email': ''
+                                })
+                        except Exception as e:
+                            print(f"Error fetching user details for {shared_user_id}: {e}")
+                            shared_users.append({
+                                'id': shared_user_id,
+                                'displayName': 'Unknown User',
+                                'email': ''
+                            })
+            
+            return jsonify({'shared_users': shared_users}), 200
+                
+        except Exception as e:
+            return jsonify({'error': f'Error getting shared users: {str(e)}'}), 500
+
+    @app.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_remove_self_from_document(document_id):
+        """Remove current user from shared document"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Check if document exists and user has access to it
+            doc_response = get_document(user_id, document_id)
+            if doc_response[1] != 200:  # get_document returns (jsonify(data), status_code)
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            
+            doc = doc_response[0].get_json()
+            
+            # Check if user is the owner - owners cannot remove themselves
+            if doc.get('user_id') == user_id:
+                return jsonify({'error': 'Document owners cannot remove themselves from their own documents'}), 400
+            
+            # Remove user from shared_user_ids (pass user_id as both requester and target for self-removal)
+            success = unshare_document_from_user(document_id, user_id, user_id)
+            if success:
+                return jsonify({'message': 'Successfully removed from shared document'}), 200
+            else:
+                return jsonify({'error': 'Failed to remove from shared document'}), 500
+                
+        except Exception as e:
+            return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500

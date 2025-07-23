@@ -30,7 +30,10 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}' and document_id eq '{document_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    f"and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -63,7 +66,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -103,7 +108,10 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}' and document_id eq '{document_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    f"and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
@@ -115,7 +123,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             user_results = search_client_user.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"user_id eq '{user_id}'",
+                filter=(
+                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
                 query_caption="extractive",
