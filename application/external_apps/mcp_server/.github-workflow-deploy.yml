@@ -3,10 +3,10 @@ name: Build and Deploy SimpleChat MCP Server
 on:
   push:
     branches: [main]
-    paths: ['application/mcp_server/**']
+    paths: ['application/external_apps/mcp_server/**']
   pull_request:
     branches: [main]
-    paths: ['application/mcp_server/**']
+    paths: ['application/external_apps/mcp_server/**']
   workflow_dispatch:
     inputs:
       deploy_environment:
@@ -39,17 +39,17 @@ jobs:
         
     - name: Install dependencies
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         pip install -r requirements.txt
         
     - name: Lint code
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         python -m py_compile simplechat_mcp_server.py
         
     - name: Test server initialization (dry run)
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         # Test with dummy token to verify imports and initialization
         export SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN="test-token"
         export SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL="http://localhost:5000"
@@ -68,7 +68,7 @@ jobs:
     - name: Build and push Docker image
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         
         # Set image tag based on environment
         if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
@@ -106,7 +106,7 @@ jobs:
         
     - name: Deploy to Development
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         
         export DOCKER_REGISTRY="${{ env.REGISTRY_NAME }}.azurecr.io"
         export CONTAINER_IMAGE="${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
@@ -154,7 +154,7 @@ jobs:
         
     - name: Deploy to Staging
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         
         export DOCKER_REGISTRY="${{ env.REGISTRY_NAME }}.azurecr.io"
         export CONTAINER_IMAGE="${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:staging-${{ github.sha }}"
@@ -184,7 +184,7 @@ jobs:
         
     - name: Deploy to Production
       run: |
-        cd application/mcp_server
+        cd application/external_apps/mcp_server
         
         export DOCKER_REGISTRY="${{ env.REGISTRY_NAME }}.azurecr.io"
         export CONTAINER_IMAGE="${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:production-${{ github.sha }}"

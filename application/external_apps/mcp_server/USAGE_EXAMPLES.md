@@ -14,7 +14,7 @@ This server now uses FastMCP 2.0 instead of the traditional Anthropic MCP SDK, p
 
 1. **Install Dependencies:**
    ```bash
-   cd application/mcp_server
+   cd application/external_apps/mcp_server
    pip install -r requirements.txt
    ```
 
@@ -40,7 +40,7 @@ Add to `~/Library/Application Support/Claude/config.json` (macOS) or equivalent:
   "mcpServers": {
     "simplechat": {
       "command": "python",
-      "args": ["/absolute/path/to/simplechat/application/mcp_server/simplechat_mcp_server.py"],
+      "args": ["/absolute/path/to/simplechat/application/external_apps/mcp_server/simplechat_mcp_server.py"],
       "env": {
         "SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL": "https://your-simplechat-domain.com",
         "SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN": "your-bearer-token-here",
@@ -56,7 +56,7 @@ Add to `~/Library/Application Support/Claude/config.json` (macOS) or equivalent:
 For other MCP clients supporting stdio transport:
 
 ```bash
-python /path/to/simplechat/application/mcp_server/simplechat_mcp_server.py
+python /path/to/simplechat/application/external_apps/mcp_server/simplechat_mcp_server.py
 ```
 
 ## Tool Usage Examples

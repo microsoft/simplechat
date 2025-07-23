@@ -26,7 +26,7 @@ The MCP server provides the following tools:
 ### Install Dependencies
 
 ```bash
-cd application/mcp_server
+cd application/external_apps/mcp_server
 pip install -r requirements.txt
 ```
 
@@ -71,7 +71,7 @@ Add this to your Claude Desktop MCP settings (`config.json`):
   "mcpServers": {
     "simplechat": {
       "command": "python",
-      "args": ["/path/to/simplechat/application/mcp_server/simplechat_mcp_server.py"],
+      "args": ["/path/to/simplechat/application/external_apps/mcp_server/simplechat_mcp_server.py"],
       "env": {
         "SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL": "https://your-simplechat-domain.com",
         "SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN": "your-bearer-token-here",
@@ -142,7 +142,7 @@ The server provides detailed error messages for:
 ### Running Locally
 
 ```bash
-cd application/mcp_server
+cd application/external_apps/mcp_server
 python simplechat_mcp_server.py
 ```
 

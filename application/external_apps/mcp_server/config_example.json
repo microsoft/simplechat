@@ -3,7 +3,7 @@
     "simplechat": {
       "command": "python",
       "args": [
-        "/path/to/simplechat/application/mcp_server/simplechat_mcp_server.py"
+        "/path/to/simplechat/application/external_apps/mcp_server/simplechat_mcp_server.py"
       ],
       "env": {
         "SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL": "https://your-simplechat-domain.com",

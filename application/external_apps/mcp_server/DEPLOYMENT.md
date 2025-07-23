@@ -318,7 +318,7 @@ name: Deploy SimpleChat MCP Server
 on:
   push:
     branches: [main]
-    paths: ['application/mcp_server/**']
+    paths: ['application/external_apps/mcp_server/**']
 
 jobs:
   deploy:
@@ -333,7 +333,7 @@ jobs:
       
       - name: Build and deploy
         run: |
-          cd application/mcp_server
+          cd application/external_apps/mcp_server
           export DOCKER_REGISTRY=${{ secrets.REGISTRY_NAME }}.azurecr.io
           export SIMPLECHAT_BASE_URL=${{ secrets.SIMPLECHAT_BASE_URL }}
           export SIMPLECHAT_BEARER_TOKEN=${{ secrets.SIMPLECHAT_BEARER_TOKEN }}
