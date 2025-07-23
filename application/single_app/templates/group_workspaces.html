@@ -680,11 +680,100 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
+
+<!-- Group Share Document Modal -->
+<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="groupShareDocumentForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Share Document with Groups</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <!-- Current Document Info -->
+          <div class="mb-3">
+            <h6 id="groupShareDocumentTitle">Document: <span id="groupShareDocumentName"></span></h6>
+          </div>
+
+          <!-- Currently Shared Groups Section -->
+          <div class="mb-3">
+            <h6>Currently Shared With:</h6>
+            <div id="currentlySharedGroups" class="border rounded p-2" style="min-height: 60px; max-height: 150px; overflow-y: auto;">
+              <div id="noSharedGroups" class="text-muted">This document is not shared with any groups.</div>
+              <div id="sharedGroupsList"></div>
+            </div>
+          </div>
+
+          <hr />
+
+          <!-- Search Section -->
+          <div class="mb-3">
+            <label for="groupSearchTerm" class="form-label"
+              >Search for groups</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="groupSearchTerm"
+              placeholder="Enter group name..."
+            />
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm mt-2"
+              id="searchGroupsBtn"
+            >
+              Search
+            </button>
+            <!-- Optional: a small status label -->
+            <span id="groupSearchStatus" class="text-muted ms-2"></span>
+          </div>
+
+          <!-- Search Results Table -->
+          <div
+            class="table-responsive mb-3"
+            style="max-height: 200px; overflow: auto"
+          >
+            <table class="table table-sm" id="groupSearchResultsTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Populated by renderGroupSearchResults() -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
 {% endblock %} {% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW -->
 <script src="/static/js/simplemde/simplemde.min.js"></script>
+
+<!-- Include group document sharing JS -->
+<script src="/static/js/workspace/group-documents-sharing.js"></script>
 
 <!-- Pass backend flags to JS -->
 <script>
@@ -1381,8 +1470,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <td class="align-middle">
             ${
               canManage // Conditionally render delete button based on role
-                ? `<button class="btn btn-sm btn-danger" onclick="deleteGroupDocument('${docId}', event)" title="Delete Document">
+                ? `<button class="btn btn-sm btn-danger me-1" onclick="deleteGroupDocument('${docId}', event)" title="Delete Document">
                     <i class="bi bi-trash-fill"></i>
+                 </button>`
+                : ""
+            }
+            ${
+              canManage && isComplete && !hasError // Share button only for managers and complete documents
+                ? `<button class="btn btn-sm btn-info me-1 d-inline-flex align-items-center"
+                    onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}')"
+                    title="Share Document with Groups">
+                    <i class="bi bi-share-fill me-1"></i>
+                    <span class="badge bg-light text-dark ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
                  </button>`
                 : ""
             }

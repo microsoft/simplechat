@@ -509,3 +509,193 @@ def register_route_backend_group_documents(app):
             }), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+            
+    @app.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_get_document_shared_groups(document_id):
+        """
+        GET /api/group_documents/<document_id>/shared-groups
+        Returns a list of groups that the document is shared with.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if not role:
+            return jsonify({'error': 'You are not a member of the active group'}), 403
+
+        # Get the document
+        try:
+            document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+                
+            # Check if user has permission to view shared groups
+            if document.get('group_id') != active_group_id and active_group_id not in document.get('shared_group_ids', []):
+                return jsonify({'error': 'You do not have access to this document'}), 403
+                
+            # Get the list of shared group IDs
+            shared_group_ids = document.get('shared_group_ids', [])
+            
+            # Get details for each shared group
+            shared_groups = []
+            for group_id in shared_group_ids:
+                group = find_group_by_id(group_id)
+                if group:
+                    shared_groups.append({
+                        'id': group['id'],
+                        'name': group.get('name', 'Unknown Group'),
+                        'description': group.get('description', '')
+                    })
+            
+            return jsonify({'shared_groups': shared_groups}), 200
+        except Exception as e:
+            return jsonify({'error': f'Error retrieving shared groups: {str(e)}'}), 500
+            
+    @app.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_share_document_with_group(document_id):
+        """
+        POST /api/group_documents/<document_id>/share-with-group
+        Shares a document with a group.
+        Expects JSON: { "group_id": "<group_id>" }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to share documents in this group'}), 403
+
+        data = request.get_json()
+        if not data or 'group_id' not in data:
+            return jsonify({'error': 'Missing group_id in request'}), 400
+            
+        target_group_id = data['group_id']
+        
+        # Verify target group exists
+        target_group = find_group_by_id(target_group_id)
+        if not target_group:
+            return jsonify({'error': 'Target group not found'}), 404
+            
+        # Get the document
+        try:
+            document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+                
+            # Check if document belongs to active group
+            if document.get('group_id') != active_group_id:
+                return jsonify({'error': 'You can only share documents owned by your active group'}), 403
+                
+            # Add target group to shared_group_ids if not already there
+            shared_group_ids = document.get('shared_group_ids', [])
+            if target_group_id not in shared_group_ids:
+                shared_group_ids.append(target_group_id)
+                
+                # Update the document
+                update_document(
+                    document_id=document_id,
+                    group_id=active_group_id,
+                    user_id=user_id,
+                    shared_group_ids=shared_group_ids
+                )
+                
+            return jsonify({
+                'message': 'Document shared successfully',
+                'document_id': document_id,
+                'shared_with_group': target_group_id
+            }), 200
+        except Exception as e:
+            return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
+            
+    @app.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_unshare_document_with_group(document_id):
+        """
+        DELETE /api/group_documents/<document_id>/unshare-with-group
+        Removes sharing of a document with a group.
+        Expects JSON: { "group_id": "<group_id>" }
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        group_doc = find_group_by_id(active_group_id)
+        if not group_doc:
+            return jsonify({'error': 'Active group not found'}), 404
+
+        role = get_user_role_in_group(group_doc, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to manage document sharing in this group'}), 403
+
+        data = request.get_json()
+        if not data or 'group_id' not in data:
+            return jsonify({'error': 'Missing group_id in request'}), 400
+            
+        target_group_id = data['group_id']
+        
+        # Get the document
+        try:
+            document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+                
+            # Check if document belongs to active group
+            if document.get('group_id') != active_group_id:
+                return jsonify({'error': 'You can only manage sharing for documents owned by your active group'}), 403
+                
+            # Remove target group from shared_group_ids if present
+            shared_group_ids = document.get('shared_group_ids', [])
+            if target_group_id in shared_group_ids:
+                shared_group_ids.remove(target_group_id)
+                
+                # Update the document
+                update_document(
+                    document_id=document_id,
+                    group_id=active_group_id,
+                    user_id=user_id,
+                    shared_group_ids=shared_group_ids
+                )
+                
+            return jsonify({
+                'message': 'Document sharing removed successfully',
+                'document_id': document_id,
+                'unshared_with_group': target_group_id
+            }), 200
+        except Exception as e:
+            return jsonify({'error': f'Error removing document sharing: {str(e)}'}), 500
