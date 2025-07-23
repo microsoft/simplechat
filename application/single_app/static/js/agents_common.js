@@ -1,4 +1,158 @@
 /**
+ * Attaches a shared onchange handler to the custom connection toggle.
+ * @param {HTMLInputElement} toggleEl - The custom connection toggle element
+ * @param {Object} agent - The agent object (may be null)
+ * @param {Object} modalElements - { customFields, globalModelGroup, advancedSection }
+ * @param {Function} loadGlobalModelsCb - Callback to load global models (optional)
+ */
+export function attachCustomConnectionToggleHandler(toggleEl, agent, modalElements, loadGlobalModelsCb) {
+	if (!toggleEl) return;
+	toggleEl.onchange = function () {
+		toggleCustomConnectionUI(this.checked, modalElements);
+		if (!this.checked && typeof loadGlobalModelsCb === 'function') {
+			loadGlobalModelsCb();
+		}
+	};
+}
+
+/**
+ * Attaches a shared onchange handler to the advanced toggle.
+ * @param {HTMLInputElement} toggleEl - The advanced toggle element
+ * @param {Object} modalElements - { advancedSection }
+ */
+export function attachAdvancedToggleHandler(toggleEl, modalElements) {
+	if (!toggleEl) return;
+	toggleEl.onchange = function () {
+		toggleAdvancedUI(this.checked, modalElements);
+	};
+}
+/**
+ * Populates agent modal fields from an agent object.
+ * @param {Object} agent - The agent object (may be empty for new)
+ * @param {Object} opts - { modalRoot: HTMLElement (optional, defaults to document), context: 'user'|'admin'|'group' }
+ */
+export function setAgentModalFields(agent, opts = {}) {
+	const root = opts.modalRoot || document;
+	root.getElementById('agent-name').value = agent.name || '';
+	root.getElementById('agent-display-name').value = agent.display_name || '';
+	root.getElementById('agent-description').value = agent.description || '';
+	root.getElementById('agent-gpt-endpoint').value = agent.azure_openai_gpt_endpoint || '';
+	root.getElementById('agent-gpt-key').value = agent.azure_openai_gpt_key || '';
+	root.getElementById('agent-gpt-deployment').value = agent.azure_openai_gpt_deployment || '';
+	root.getElementById('agent-gpt-api-version').value = agent.azure_openai_gpt_api_version || '';
+	root.getElementById('agent-apim-endpoint').value = agent.azure_agent_apim_gpt_endpoint || '';
+	root.getElementById('agent-apim-subscription-key').value = agent.azure_agent_apim_gpt_subscription_key || '';
+	root.getElementById('agent-apim-deployment').value = agent.azure_agent_apim_gpt_deployment || '';
+	root.getElementById('agent-apim-api-version').value = agent.azure_agent_apim_gpt_api_version || '';
+	root.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
+	root.getElementById('agent-instructions').value = agent.instructions || '';
+	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
+	// Plugins handled separately
+}
+
+/**
+ * Extracts agent data from modal fields and returns an agent object.
+ * @param {Object} opts - { modalRoot: HTMLElement (optional, defaults to document), context: 'user'|'admin'|'group' }
+ * @returns {Object} agent object
+ */
+export function getAgentModalFields(opts = {}) {
+	const root = opts.modalRoot || document;
+	let additionalSettings = {};
+	try {
+		const settingsRaw = root.getElementById('agent-additional-settings').value.trim();
+		if (settingsRaw) additionalSettings = JSON.parse(settingsRaw);
+	} catch (e) {
+		alert('Additional Settings must be a valid JSON object.');
+		throw e;
+	}
+	// Plugins handled separately
+	return {
+		name: root.getElementById('agent-name').value.trim(),
+		display_name: root.getElementById('agent-display-name').value.trim(),
+		description: root.getElementById('agent-description').value.trim(),
+		azure_openai_gpt_endpoint: root.getElementById('agent-gpt-endpoint').value.trim(),
+		azure_openai_gpt_key: root.getElementById('agent-gpt-key').value.trim(),
+		azure_openai_gpt_deployment: root.getElementById('agent-gpt-deployment').value.trim(),
+		azure_openai_gpt_api_version: root.getElementById('agent-gpt-api-version').value.trim(),
+		azure_agent_apim_gpt_endpoint: root.getElementById('agent-apim-endpoint').value.trim(),
+		azure_agent_apim_gpt_subscription_key: root.getElementById('agent-apim-subscription-key').value.trim(),
+		azure_agent_apim_gpt_deployment: root.getElementById('agent-apim-deployment').value.trim(),
+		azure_agent_apim_gpt_api_version: root.getElementById('agent-apim-api-version').value.trim(),
+		enable_agent_gpt_apim: root.getElementById('agent-enable-apim').checked,
+		instructions: root.getElementById('agent-instructions').value.trim(),
+		actions_to_load: [], // deprecated, always empty for new UI
+		other_settings: additionalSettings
+		// plugins_to_load handled separately
+	};
+}
+/**
+ * Loads available models for the agent modal, populates the dropdown, and pre-fills deployment if not set.
+ * @param {Object} opts
+ *   - endpoint: API endpoint to fetch settings (e.g. '/api/admin/agent/settings' or '/api/user/agent/settings')
+ *   - agent: The agent object (may be empty for new)
+ *   - globalModelSelect: The <select> element for models
+ *   - isGlobal: Boolean, true for admin/global context, false for workspace/user
+ *   - customConnectionCheck: Function(agent) => boolean, to check if custom connection is enabled
+ *   - deploymentFieldIds: { gpt: string, apim: string } - DOM IDs for deployment fields
+ */
+export async function loadGlobalModelsForModal({
+	endpoint,
+	agent,
+	globalModelSelect,
+	isGlobal,
+	customConnectionCheck,
+	deploymentFieldIds
+}) {
+	const { models, selectedModel, apimEnabled } = await fetchAndGetAvailableModels(endpoint, agent);
+	populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+
+	// Pre-fill deployment if not set and not using custom connection
+	if (!customConnectionCheck(agent)) {
+		if (apimEnabled) {
+			const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
+			if (apimDeploymentInput && !apimDeploymentInput.value && models.length > 0 && models[0].deployment) {
+				apimDeploymentInput.value = models[0].deployment;
+			}
+		} else {
+			const gptDeploymentInput = document.getElementById(deploymentFieldIds.gpt);
+			if (
+				gptDeploymentInput &&
+				!gptDeploymentInput.value &&
+				models.length > 0 &&
+				(models[0].deployment || models[0].name)
+			) {
+				gptDeploymentInput.value = models[0].deployment || models[0].name;
+			}
+		}
+	}
+
+	globalModelSelect.onchange = function () {
+		const selected = models.find(
+			m => m.deployment === this.value || m.name === this.value || m.id === this.value
+		);
+		if (selected) {
+			// Admin/global context: update APIM or GPT fields accordingly
+			if ((isGlobal && apimEnabled) || (!isGlobal && agent && agent.enable_agent_gpt_apim)) {
+				const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
+				if (apimDeploymentInput) apimDeploymentInput.value = selected.deployment || '';
+				// Optionally clear GPT fields
+				['agent-gpt-endpoint', 'agent-gpt-key', 'agent-gpt-deployment', 'agent-gpt-api-version'].forEach(id => {
+					const el = document.getElementById(id);
+					if (el) el.value = '';
+				});
+			} else {
+				// User/workspace context: update GPT fields
+				['agent-gpt-endpoint', 'agent-gpt-key', 'agent-gpt-deployment', 'agent-gpt-api-version'].forEach(id => {
+					const el = document.getElementById(id);
+					if (el) el.value = selected[id.replace('agent-gpt-', '')] || selected.deployment || selected.name || '';
+				});
+				const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
+				if (apimDeploymentInput) apimDeploymentInput.value = '';
+			}
+		}
+	};
+}
+/**
  * Shared logic to show/hide APIM and GPT fields based on APIM toggle state.
  * @param {HTMLInputElement} apimToggle - The APIM toggle checkbox element
  * @param {HTMLElement} apimFields - The APIM fields container

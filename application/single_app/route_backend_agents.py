@@ -13,6 +13,13 @@ from json_schema_validation import validate_agent
 
 bpa = Blueprint('admin_agents', __name__)
 
+# === AGENT GUID GENERATION ENDPOINT ===
+@bpa.route('/api/agents/generate_id', methods=['GET'])
+@login_required
+def generate_agent_id():
+    """Generate a new GUID for agent creation (user or admin)."""
+    return jsonify({'id': str(uuid.uuid4())})
+
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])
 @login_required
@@ -65,6 +72,9 @@ def set_user_agents():
         if agent.get('is_global', False):
             continue  # Skip global agents
         agent['is_global'] = False  # Ensure user agents are not global
+        # --- Require at least one deployment field ---
+        if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
+            return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         validation_error = validate_agent(agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
@@ -299,6 +309,10 @@ def edit_agent(agent_name):
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})
             return jsonify({'error': validation_error}), 400
+        # --- Require at least one deployment field ---
+        if not (updated_agent.get('azure_openai_gpt_deployment') or updated_agent.get('azure_agent_apim_gpt_deployment')):
+            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent})
+            return jsonify({'error': 'Agent must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         for i, a in enumerate(agents):
             if a['name'] == agent_name:
                 # Preserve the existing id
