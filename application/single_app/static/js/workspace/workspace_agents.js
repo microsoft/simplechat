@@ -238,7 +238,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   saveBtn.onclick = async () => {
     let newAgent;
     try {
-      newAgent = getAgentModalFields({ context: 'user' });
+      newAgent = agentCommons.getAgentModalFields({ context: 'user' });
       // Only preserve id if editing; do not generate or strip id on create
       if (agent && agent.id) newAgent.id = agent.id;
       // If id is still not present, fetch a GUID from backend
@@ -255,7 +255,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
           newAgent.id = '';
         }
       }
-      newAgent.plugins_to_load = getSelectedPlugins(pluginSelect);
+      newAgent.plugins_to_load = agentCommons.getSelectedPlugins(pluginSelect);
       newAgent.is_global = false;
     } catch (e) {
       const msg = 'Additional Settings: ' + e.message;
