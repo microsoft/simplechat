@@ -62,7 +62,7 @@ export function getAgentModalFields(opts = {}) {
 		const settingsRaw = root.getElementById('agent-additional-settings').value.trim();
 		if (settingsRaw) additionalSettings = JSON.parse(settingsRaw);
 	} catch (e) {
-		alert('Additional Settings must be a valid JSON object.');
+		showToast('error', 'Additional Settings must be a valid JSON object.');
 		throw e;
 	}
 	// Plugins handled separately
