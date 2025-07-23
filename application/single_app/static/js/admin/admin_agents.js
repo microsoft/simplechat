@@ -126,6 +126,13 @@ async function openAgentModal(agent = null) {
     if (!modalEl) return alert('Agent modal not found.');
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
+    // Clear error div on modal open
+    const errorDiv = document.getElementById('agent-modal-error');
+    if (errorDiv) {
+        errorDiv.textContent = '';
+        errorDiv.style.display = 'none';
+    }
+
     // Populate modal fields using shared helper
     agentsCommon.setAgentModalFields(agent || {}, { context: 'admin' });
 

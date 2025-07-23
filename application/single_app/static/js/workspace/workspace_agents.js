@@ -184,6 +184,13 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   if (!modalEl) return alert('Agent modal not found.');
   const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
+  // Clear error div on modal open
+  const errorDiv = document.getElementById('agent-modal-error');
+  if (errorDiv) {
+    errorDiv.textContent = '';
+    errorDiv.classList.add('d-none');
+  }
+
   // Populate modal fields using shared helper
   agentsCommon.setAgentModalFields(agent || {}, { context: 'user' });
 
@@ -234,7 +241,6 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
 
   // Save handler
   const saveBtn = document.getElementById('agent-modal-save-btn');
-  const errorDiv = document.getElementById('agent-modal-error');
   saveBtn.onclick = async () => {
     let newAgent;
     try {
