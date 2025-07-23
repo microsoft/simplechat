@@ -148,6 +148,43 @@ python simplechat_mcp_server.py
 
 The server will start in stdio mode, ready to accept MCP protocol messages.
 
+## Deployment
+
+### Docker Deployment
+
+The MCP server can be deployed using Docker and Azure Container Apps for production usage:
+
+```bash
+# Build and test locally
+docker-compose up --build
+
+# Deploy to Azure Container Apps
+./deploy-azure.sh
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for comprehensive deployment instructions including:
+
+- 🐳 **Docker containerization** with health checks
+- ☁️ **Azure Container Apps** deployment templates (Bicep & ARM)
+- 🔐 **Security configuration** and best practices
+- 📊 **Monitoring and logging** setup
+- 🚀 **CI/CD integration** examples
+
+### Quick Azure Deployment
+
+1. **Prerequisites**: Azure CLI, Docker, Container Registry
+2. **Configuration**: Set environment variables for your SimpleChat instance
+3. **Build**: `./build-docker.sh` - builds and pushes container image
+4. **Deploy**: `./deploy-azure.sh` - deploys to Azure Container Apps
+5. **Monitor**: View logs and health status through Azure Portal or CLI
+
+The deployment includes:
+- Auto-scaling (1-3 replicas based on CPU)
+- Health probes for liveness and readiness
+- Secure secret management for bearer tokens
+- Log Analytics integration
+- Internal networking (not externally accessible)
+
 ### Testing
 
 You can test the server using an MCP client or by running integration tests against a SimpleChat instance.

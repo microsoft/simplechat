@@ -11,6 +11,9 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import httpx
 from fastmcp import FastMCP
@@ -25,6 +28,9 @@ class SimpleChatConfig(BaseSettings):
     # SimpleChat API Configuration
     simplechat_base_url: str = "http://localhost:5000"
     simplechat_bearer_token: str = ""
+    
+    # Health check server
+    health_port: int = 8080
     
     # Logging
     log_level: str = "INFO"
@@ -49,6 +55,70 @@ http_client = httpx.AsyncClient(
     },
     timeout=30.0
 )
+
+# Health check status
+_server_ready = False
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler for health checks"""
+    
+    def do_GET(self):
+        """Handle GET requests for health checks"""
+        if self.path == '/health':
+            # Liveness probe - server is running
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                "status": "healthy",
+                "timestamp": datetime.utcnow().isoformat(),
+                "service": "simplechat-mcp-server"
+            }
+            self.wfile.write(json.dumps(response).encode())
+        elif self.path == '/ready':
+            # Readiness probe - server is ready to accept requests
+            if _server_ready and config.simplechat_bearer_token:
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                response = {
+                    "status": "ready",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "service": "simplechat-mcp-server"
+                }
+                self.wfile.write(json.dumps(response).encode())
+            else:
+                self.send_response(503)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                response = {
+                    "status": "not ready",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "service": "simplechat-mcp-server",
+                    "reason": "Server not initialized or missing bearer token"
+                }
+                self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        """Override to suppress default request logging"""
+        pass
+
+
+def start_health_server():
+    """Start the health check server in a separate thread"""
+    global _server_ready
+    try:
+        server = HTTPServer(('0.0.0.0', config.health_port), HealthCheckHandler)
+        logger.info(f"Health check server starting on port {config.health_port}")
+        _server_ready = True
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Failed to start health server: {e}")
+        _server_ready = False
 
 # Initialize FastMCP server
 mcp = FastMCP("SimpleChat MCP Server")
@@ -266,6 +336,10 @@ def main():
         raise ValueError("SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN environment variable is required")
     
     logger.info(f"Starting SimpleChat MCP Server with base URL: {config.simplechat_base_url}")
+    
+    # Start health check server in a separate thread
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
 
 
 if __name__ == "__main__":
