@@ -298,6 +298,16 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     apim_enabled = settings.get("enable_gpt_apim", False)
     if AzureChatCompletion and agent_config["endpoint"] and agent_config["key"] and agent_config["deployment"]:
         if apim_enabled:
+            log_event(
+                f"[SK Loader] Initializing APIM AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "aoai_endpoint": agent_config["endpoint"],
+                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                    "aoai_deployment": agent_config["deployment"],
+                    "agent_name": agent_config["name"]
+                },
+                level=logging.INFO
+            )
             chat_service = AzureChatCompletion(
                 service_id=service_id,
                 deployment_name=agent_config["deployment"],
@@ -307,6 +317,16 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 # default_headers={"Ocp-Apim-Subscription-Key": agent_config["key"]}
             )
         else:
+            log_event(
+                f"[SK Loader] Initializing GPT Direct AzureChatCompletion for agent: {agent_config['name']} ({mode_label})",
+                {
+                    "aoai_endpoint": agent_config["endpoint"],
+                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                    "aoai_deployment": agent_config["deployment"],
+                    "agent_name": agent_config["name"]
+                },
+                level=logging.INFO
+            )
             chat_service = AzureChatCompletion(
                 service_id=service_id,
                 deployment_name=agent_config["deployment"],
@@ -316,7 +336,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             )
         kernel.add_service(chat_service)
         log_event(
-            f"[SK Loader] Azure OpenAI chat completion service registered for agent: {agent_config['name']} ({mode_label})",
+            f"[SK Loader] AOAI chat completion service registered for agent: {agent_config['name']} ({mode_label})",
             {
                 "aoai_endpoint": agent_config["endpoint"],
                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
