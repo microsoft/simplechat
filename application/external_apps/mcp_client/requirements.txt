@@ -1,0 +1,23 @@
+# FastMCP Client
+fastmcp>=0.1.0
+
+# Semantic Kernel
+semantic-kernel>=1.32.1
+
+# Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# HTTP client
+httpx>=0.25.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Logging
+structlog>=23.0.0
+
+# Testing (for development)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
