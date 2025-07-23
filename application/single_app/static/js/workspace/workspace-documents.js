@@ -477,15 +477,17 @@ function renderDocumentRow(doc) {
                     if (isOwner) {
                         // Owner sees Share and Delete buttons
                         const shareCount = doc.shared_user_ids && doc.shared_user_ids.length > 0 ? doc.shared_user_ids.length : 0;
-                        buttonsHtml += `<button class="btn btn-sm btn-info me-1 d-inline-flex align-items-center"
-                            onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}')"
-                            title="Share Document"
-                            aria-label="Share Document: ${escapeHtml(doc.file_name || 'Untitled')}"
-                        >
-                            <i class="bi bi-share-fill me-1" aria-hidden="true"></i>
-                            <span class="badge bg-light text-dark ms-1">${shareCount}</span>
-                            <span class="visually-hidden">users shared</span>
-                        </button>`;
+                        if (window.enable_file_sharing === true || window.enable_file_sharing === "true") {
+                            buttonsHtml += `<button class="btn btn-sm btn-info me-1 d-inline-flex align-items-center"
+                                onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}')"
+                                title="Share Document"
+                                aria-label="Share Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+                            >
+                                <i class="bi bi-share-fill me-1" aria-hidden="true"></i>
+                                <span class="badge bg-light text-dark ms-1">${shareCount}</span>
+                                <span class="visually-hidden">users shared</span>
+                            </button>`;
+                        }
                         buttonsHtml += `<button class="btn btn-sm btn-danger me-1"
                             onclick="window.deleteDocument('${docId}', event)"
                             title="Delete Document"

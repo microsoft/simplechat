@@ -4,12 +4,13 @@ from config import *
 from functions_content import *
 from functions_public_workspaces import get_user_visible_public_workspace_docs
 
-def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None):
+def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None, enable_file_sharing=True):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
     If document_id is None, we just search the user index for the user's docs
     OR you could unify that logic further (maybe search both).
+    enable_file_sharing: If False, do not include shared_user_ids in filters.
     """
     query_embedding = generate_embedding(query)
     if query_embedding is None:
@@ -31,7 +32,11 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=(
-                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    (
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                        if enable_file_sharing else
+                        f"user_id eq '{user_id}' "
+                    ) +
                     f"and document_id eq '{document_id}'"
                 ),
                 query_type="semantic",
@@ -68,6 +73,8 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 vector_queries=[vector_query],
                 filter=(
                     f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    if enable_file_sharing else
+                    f"user_id eq '{user_id}' "
                 ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
@@ -109,7 +116,11 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 search_text=query,
                 vector_queries=[vector_query],
                 filter=(
-                    f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    (
+                        f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                        if enable_file_sharing else
+                        f"user_id eq '{user_id}' "
+                    ) +
                     f"and document_id eq '{document_id}'"
                 ),
                 query_type="semantic",
@@ -125,6 +136,8 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 vector_queries=[vector_query],
                 filter=(
                     f"(user_id eq '{user_id}' or shared_user_ids/any(u: u eq '{user_id}')) "
+                    if enable_file_sharing else
+                    f"user_id eq '{user_id}' "
                 ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-user-index-semantic-configuration",
