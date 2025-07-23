@@ -73,8 +73,8 @@ def set_user_agents():
             continue  # Skip global agents
         agent['is_global'] = False  # Ensure user agents are not global
         # --- Require at least one deployment field ---
-        if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
-            return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
+        #if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
+        #    return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         validation_error = validate_agent(agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
