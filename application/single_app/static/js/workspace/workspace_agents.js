@@ -2,7 +2,7 @@
 // Handles user agent CRUD in the workspace UI
 
 import { showToast } from "../chat/chat-toast.js";
-import * as agentCommons from '../agents_common.js';
+import * as agentsCommon from '../agents_common.js';
 
 // --- DOM Elements & Globals ---
 const agentSelect = document.getElementById('active-agent-select');
@@ -185,7 +185,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
   // Populate modal fields using shared helper
-  agentCommons.setAgentModalFields(agent || {}, { context: 'user' });
+  agentsCommon.setAgentModalFields(agent || {}, { context: 'user' });
 
   // Setup plugin select
   const pluginSelect = document.getElementById('agent-plugins-to-load');
@@ -198,33 +198,33 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   } catch (e) {
     availablePlugins = [];
   }
-  agentCommons.populatePluginMultiSelect(pluginSelect, availablePlugins);
-  agentCommons.setSelectedPlugins(pluginSelect, agent?.plugins_to_load || []);
+  agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
+  agentsCommon.setSelectedPlugins(pluginSelect, agent?.plugins_to_load || []);
 
   // Setup toggles using shared helpers
-  agentCommons.setupApimToggle(
+  agentsCommon.setupApimToggle(
     document.getElementById('agent-enable-apim'),
     document.getElementById('agent-apim-fields'),
     document.getElementById('agent-gpt-fields'),
-    () => agentCommons.loadGlobalModelsForModal({
+    () => agentsCommon.loadGlobalModelsForModal({
       endpoint: '/api/user/agent/settings',
       agent,
       globalModelSelect: document.getElementById('agent-global-model-select'),
       isGlobal: false,
-      customConnectionCheck: agentCommons.shouldEnableCustomConnection,
+      customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
       deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
     })
   );
-  agentCommons.toggleCustomConnectionUI(
-    agentCommons.shouldEnableCustomConnection(agent),
+  agentsCommon.toggleCustomConnectionUI(
+    agentsCommon.shouldEnableCustomConnection(agent),
     {
       customFields: document.getElementById('agent-custom-connection-fields'),
       globalModelGroup: document.getElementById('agent-global-model-group'),
       advancedSection: document.getElementById('agent-advanced-section')
     }
   );
-  agentCommons.toggleAdvancedUI(
-    agentCommons.shouldExpandAdvanced(agent),
+  agentsCommon.toggleAdvancedUI(
+    agentsCommon.shouldExpandAdvanced(agent),
     {
       customFields: document.getElementById('agent-custom-connection-fields'),
       globalModelGroup: document.getElementById('agent-global-model-group'),
@@ -238,7 +238,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   saveBtn.onclick = async () => {
     let newAgent;
     try {
-      newAgent = agentCommons.getAgentModalFields({ context: 'user' });
+      newAgent = agentsCommon.getAgentModalFields({ context: 'user' });
       // Only preserve id if editing; do not generate or strip id on create
       if (agent && agent.id) newAgent.id = agent.id;
       // If id is still not present, fetch a GUID from backend
@@ -255,7 +255,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
           newAgent.id = '';
         }
       }
-      newAgent.plugins_to_load = agentCommons.getSelectedPlugins(pluginSelect);
+      newAgent.plugins_to_load = agentsCommon.getSelectedPlugins(pluginSelect);
       newAgent.is_global = false;
     } catch (e) {
       const msg = 'Additional Settings: ' + e.message;
@@ -341,20 +341,20 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
     globalModelGroup: document.getElementById('agent-global-model-group'),
     advancedSection: document.getElementById('agent-advanced-section')
   };
-  agentCommons.attachCustomConnectionToggleHandler(
+  agentsCommon.attachCustomConnectionToggleHandler(
     customConnectionToggle,
     agent,
     modalElements,
-    () => agentCommons.loadGlobalModelsForModal({
+    () => agentsCommon.loadGlobalModelsForModal({
       endpoint: '/api/user/agent/settings',
       agent,
       globalModelSelect: document.getElementById('agent-global-model-select'),
       isGlobal: false,
-      customConnectionCheck: agentCommons.shouldEnableCustomConnection,
+      customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
       deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
     })
   );
-  agentCommons.attachAdvancedToggleHandler(advancedToggle, modalElements);
+  agentsCommon.attachAdvancedToggleHandler(advancedToggle, modalElements);
   modal.show();
 }
 
