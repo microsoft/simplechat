@@ -433,9 +433,9 @@ def get_global_agent_settings(include_admin_extras=False):
         "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
         "global_selected_agent": settings.get("global_selected_agent", {}),
         "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
-        "enable_gpt_apim": settings.get("enable_gpt_apim", False),""
+        "enable_gpt_apim": settings.get("enable_gpt_apim", False),
         "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
-        "gpt_model": settings.get("gpt_model", {}).get("selected", []),
+        "gpt_model": settings.get("gpt_model", {}),
         "allow_user_agents": settings.get("allow_user_agents", False),
         "allow_user_custom_agent_endpoints": settings.get("allow_user_custom_agent_endpoints", False),
         "allow_group_agents": settings.get("allow_group_agents", False),
