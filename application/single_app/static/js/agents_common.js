@@ -324,8 +324,21 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 		selectedModel = agent && agent.azure_agent_apim_gpt_deployment ? agent.azure_agent_apim_gpt_deployment : null;
 	} else {
 		// Otherwise use gpt_model.selected (array)
-		models = (settings && settings.gpt_model && settings.gpt_model.selected) ? settings.gpt_model.selected : [];
+		let rawModels = (settings && settings.gpt_model && settings.gpt_model.selected) ? settings.gpt_model.selected : [];
+		console.log('[DEBUG] Raw models:', rawModels);
+		// Normalize: map deploymentName/modelName to deployment/name if present
+		models = rawModels.map(m => {
+			if (m.deploymentName || m.modelName) {
+				return {
+					...m,
+					deployment: m.deploymentName,
+					name: m.modelName
+				};
+			}
+			return m;
+		});
 		selectedModel = agent && agent.azure_openai_gpt_deployment ? agent.azure_openai_gpt_deployment : null;
+		console.log('[DEBUG] Available models:', selectedModel);
 	}
 	return { models, selectedModel };
 }
@@ -341,7 +354,7 @@ export async function fetchAndGetAvailableModels(endpoint, agent) {
 		if (!resp.ok) throw new Error('Failed to fetch global models');
 		const settings = await resp.json();
 		// Check APIM enabled (support both enable_gpt_apim and enable_apim)
-		const apimEnabled = settings.enable_gpt_apim || settings.enable_apim || false;
+		const apimEnabled = settings.enable_gpt_apim || false;
 		const { models, selectedModel } = getAvailableModels({ apimEnabled, settings, agent });
 		return { models, selectedModel, apimEnabled };
 	} catch (e) {
