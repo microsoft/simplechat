@@ -116,7 +116,6 @@ def get_settings():
                 'is_global': True,
                 'name': 'loganalytics',
                 'other_settings': {},
-                'plugins_to_load': []
             }
         ],
         'id': 'app_settings',
@@ -583,7 +582,6 @@ def update_user_settings(user_id, settings_to_update):
                     "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
                     "actions_to_load": [],
                     "other_settings": {},
-                    "plugins_to_load": []
                 }
             ]
         if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:

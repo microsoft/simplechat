@@ -148,7 +148,7 @@ async function openAgentModal(agent = null) {
         availablePlugins = [];
     }
     agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-    agentsCommon.setSelectedPlugins(pluginSelect, agent?.plugins_to_load || []);
+    agentsCommon.setSelectedPlugins(pluginSelect, agent?.actions_to_load || []);
 
     // Setup toggles using shared helpers
     agentsCommon.setupApimToggle(
@@ -320,8 +320,8 @@ function handleAgentTableClick(e) {
             availablePlugins = [];
         }
         agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-        if (agent && Array.isArray(agent.plugins_to_load)) {
-            agentsCommon.setSelectedPlugins(pluginSelect, agent.plugins_to_load);
+        if (agent && Array.isArray(agent.actions_to_load)) {
+            agentsCommon.setSelectedPlugins(pluginSelect, agent.actions_to_load);
         } else {
             agentsCommon.setSelectedPlugins(pluginSelect, []);
         }

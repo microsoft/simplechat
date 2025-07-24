@@ -47,7 +47,7 @@ export function setAgentModalFields(agent, opts = {}) {
 	root.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
 	root.getElementById('agent-instructions').value = agent.instructions || '';
 	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
-	// Plugins handled separately
+	// Actions handled separately
 }
 
 /**
@@ -65,7 +65,12 @@ export function getAgentModalFields(opts = {}) {
 		showToast('error', 'Additional Settings must be a valid JSON object.');
 		throw e;
 	}
-	// Plugins handled separately
+	// Actions handled here
+	const actionsSelect = root.getElementById('agent-plugins-to-load');
+	let actions_to_load = [];
+	if (actionsSelect) {
+		actions_to_load = Array.from(actionsSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
+	}
 	return {
 		name: root.getElementById('agent-name').value.trim(),
 		display_name: root.getElementById('agent-display-name').value.trim(),
@@ -80,9 +85,8 @@ export function getAgentModalFields(opts = {}) {
 		azure_agent_apim_gpt_api_version: root.getElementById('agent-apim-api-version').value.trim(),
 		enable_agent_gpt_apim: root.getElementById('agent-enable-apim').checked,
 		instructions: root.getElementById('agent-instructions').value.trim(),
-		actions_to_load: [], // deprecated, always empty for new UI
+		actions_to_load: actions_to_load,
 		other_settings: additionalSettings
-		// plugins_to_load handled separately
 	};
 }
 /**
@@ -260,10 +264,8 @@ export function shouldExpandAdvanced(agent) {
 	if (!agent) return false;
 	let actions = agent.actions_to_load;
 	let settings = agent.other_settings;
-	let plugins = agent.plugins_to_load;
 	let hasActions = false;
 	let hasSettings = false;
-	let hasPlugins = false;
 	// Check actions_to_load
 	if (Array.isArray(actions)) {
 		hasActions = actions.length > 0;
@@ -286,11 +288,7 @@ export function shouldExpandAdvanced(agent) {
 	} else if (settings && settings !== null && settings !== undefined) {
 		hasSettings = true;
 	}
-	// Check plugins_to_load
-	if (Array.isArray(plugins)) {
-		hasPlugins = plugins.length > 0;
-	}
-	return hasActions || hasSettings || hasPlugins;
+	return hasActions || hasSettings;
 }
 
 /**

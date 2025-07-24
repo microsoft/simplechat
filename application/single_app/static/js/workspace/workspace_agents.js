@@ -206,7 +206,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
     availablePlugins = [];
   }
   agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-  agentsCommon.setSelectedPlugins(pluginSelect, agent?.plugins_to_load || []);
+  agentsCommon.setSelectedPlugins(pluginSelect, agent?.actions_to_load || []);
 
   // Setup toggles using shared helpers
   agentsCommon.setupApimToggle(
@@ -261,7 +261,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
           newAgent.id = '';
         }
       }
-      newAgent.plugins_to_load = agentsCommon.getSelectedPlugins(pluginSelect);
+      newAgent.actions_to_load = agentsCommon.getSelectedPlugins(pluginSelect);
       newAgent.is_global = false;
     } catch (e) {
       const msg = 'Additional Settings: ' + e.message;
