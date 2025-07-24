@@ -213,7 +213,7 @@ function showAgentModalError(msg) {
         errDiv.textContent = msg;
         errDiv.style.display = 'block';
     } else {
-        showToast(msg);
+        showToast(msg, 'danger');
     }
 }
 
