@@ -552,19 +552,76 @@ def register_route_backend_group_documents(app):
             
             # Get details for each shared group
             shared_groups = []
-            for group_id in shared_group_ids:
-                group = find_group_by_id(group_id)
+            for entry in shared_group_ids:
+                if ',' in entry:
+                    group_oid, status = entry.split(',', 1)
+                else:
+                    group_oid, status = entry, 'unknown'
+                group = find_group_by_id(group_oid)
                 if group:
                     shared_groups.append({
                         'id': group['id'],
                         'name': group.get('name', 'Unknown Group'),
-                        'description': group.get('description', '')
+                        'description': group.get('description', ''),
+                        'approval_status': status
+                    })
+                else:
+                    shared_groups.append({
+                        'id': group_oid,
+                        'name': 'Unknown Group',
+                        'description': '',
+                        'approval_status': status
                     })
             
             return jsonify({'shared_groups': shared_groups}), 200
         except Exception as e:
             return jsonify({'error': f'Error retrieving shared groups: {str(e)}'}), 500
-            
+        
+    @app.route('/api/group_documents/<document_id>/approve-share-with-group', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_approve_shared_group_document(document_id):
+        """
+        Approve a document that was shared with the current group.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        try:
+            # Get the document
+            document_item = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
+            if not document_item:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            shared_group_ids = document_item.get('shared_group_ids', [])
+            updated = False
+            new_shared_group_ids = []
+            for entry in shared_group_ids:
+                if entry.startswith(f"{active_group_id},"):
+                    if entry != f"{active_group_id},approved":
+                        new_shared_group_ids.append(f"{active_group_id},approved")
+                        updated = True
+                    else:
+                        new_shared_group_ids.append(entry)
+                else:
+                    new_shared_group_ids.append(entry)
+            if updated:
+                update_document(
+                    document_id=document_id,
+                    group_id=document_item.get('group_id'),
+                    user_id=user_id,
+                    shared_group_ids=new_shared_group_ids
+                )
+            return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
+        except Exception as e:
+            return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
+
     @app.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
     @login_required
     @user_required
@@ -698,4 +755,48 @@ def register_route_backend_group_documents(app):
                 'unshared_with_group': target_group_id
             }), 200
         except Exception as e:
-            return jsonify({'error': f'Error removing document sharing: {str(e)}'}), 500
+            return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
+
+    @app.route('/api/group_documents/<document_id>/remove-self', methods=['DELETE'])
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_remove_self_from_group_document(document_id):
+        """
+        Remove the current group from a document's shared_group_ids.
+        Allows a group to remove itself from a document it does not own but is shared with.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        user_settings = get_user_settings(user_id)
+        active_group_id = user_settings["settings"].get("activeGroupOid")
+        if not active_group_id:
+            return jsonify({'error': 'No active group selected'}), 400
+
+        # Get the document metadata
+        try:
+            document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+
+            # If the group is the owner, do not allow removal
+            if document.get('group_id') == active_group_id:
+                return jsonify({'error': 'Owning group cannot remove itself from its own document'}), 400
+
+            shared_group_ids = document.get('shared_group_ids', [])
+            if active_group_id not in shared_group_ids:
+                return jsonify({'error': 'Group is not a shared group for this document'}), 400
+
+            # Remove the group from shared_group_ids
+            shared_group_ids = [gid for gid in shared_group_ids if gid != active_group_id]
+            update_document(
+                document_id=document_id,
+                group_id=document.get('group_id'),
+                user_id=user_id,
+                shared_group_ids=shared_group_ids
+            )
+            return jsonify({'message': 'Successfully removed group from shared document'}), 200
+        except Exception as e:
+            return jsonify({'error': f'Error removing group from shared document: {str(e)}'}), 500

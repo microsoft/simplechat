@@ -49,7 +49,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"group_id eq '{active_group_id}' and document_id eq '{document_id}'",
+                filter=(
+                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved')) and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
@@ -86,7 +88,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"group_id eq '{active_group_id}'",
+                filter=(
+                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved'))"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
@@ -152,7 +156,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"group_id eq '{active_group_id}' and document_id eq '{document_id}'",
+                filter=(
+                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved')) and document_id eq '{document_id}'"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",
@@ -164,7 +170,9 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             group_results = search_client_group.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"group_id eq '{active_group_id}'",
+                filter=(
+                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved'))"
+                ),
                 query_type="semantic",
                 semantic_configuration_name="nexus-group-index-semantic-configuration",
                 query_caption="extractive",

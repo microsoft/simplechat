@@ -685,6 +685,9 @@ def update_document(**kwargs):
                 update_occurred = True
                 if key in ['title', 'authors', 'file_name', 'document_classification']:
                     updated_fields_requiring_chunk_sync.add(key)
+                # Propagate shared_group_ids to group chunks if changed
+                if is_group and key == 'shared_group_ids':
+                    updated_fields_requiring_chunk_sync.add('shared_group_ids')
 
         # 3. If any update happened, handle timestamps and percentage
         if update_occurred:
@@ -736,7 +739,15 @@ def update_document(**kwargs):
                         chunk_updates['document_classification'] = existing_document.get('document_classification')
 
                     if chunk_updates: # Only call update if there's something to change
-                         update_chunk_metadata(chunk_id=chunk['id'], user_id=user_id, document_id=document_id, group_id=group_id, **chunk_updates)
+                         update_chunk_metadata(
+                             chunk_id=chunk['id'],
+                             user_id=user_id,
+                             document_id=document_id,
+                             group_id=group_id,
+                             **chunk_updates,
+                             # Propagate shared_group_ids if needed
+                             shared_group_ids=existing_document.get('shared_group_ids') if 'shared_group_ids' in updated_fields_requiring_chunk_sync else None
+                         )
                 add_file_task_to_file_processing_log(
                     document_id=document_id,
                     user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
@@ -875,6 +886,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "public_workspace_id": public_workspace_id
             }
         elif is_group:
+            # Get shared_group_ids from document metadata for group documents
+            shared_group_ids = metadata.get('shared_group_ids', []) if metadata else []
             chunk_document = {
                 "id": chunk_id,
                 "document_id": document_id,
@@ -891,7 +904,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
-                "group_id": group_id
+                "group_id": group_id,
+                "shared_group_ids": shared_group_ids
             }
         else:
             # Get shared_user_ids from document metadata for personal documents
@@ -958,7 +972,7 @@ def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None
     filter_expr = (
         f"document_id eq '{document_id}' and public_workspace_id eq '{public_workspace_id}'"
         if is_public_workspace else
-        f"document_id eq '{document_id}' and group_id eq '{group_id}'"
+        f"document_id eq '{document_id}' and (group_id eq '{group_id}' or shared_group_ids/any(g: g eq '{group_id}'))"
         if is_group else
         f"document_id eq '{document_id}'"  # For personal documents, just filter by document_id since access is already verified
     )
@@ -3837,16 +3851,17 @@ def share_document_with_group(document_id, owner_group_id, target_group_id):
         # Initialize shared_group_ids if it doesn't exist
         shared_group_ids = document_item.get('shared_group_ids', [])
         
-        # Add target group if not already shared
-        if target_group_id not in shared_group_ids:
-            shared_group_ids.append(target_group_id)
+        # Check if already shared (by group OID, regardless of approval status)
+        already_shared = any(entry.startswith(f"{target_group_id},") for entry in shared_group_ids)
+        if not already_shared:
+            shared_group_ids.append(f"{target_group_id},not_approved")
             document_item['shared_group_ids'] = shared_group_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             
             # Update the document
             cosmos_group_documents_container.upsert_item(document_item)
             return True
-        
+
         return True  # Already shared
         
     except CosmosResourceNotFoundError:
@@ -3876,9 +3891,10 @@ def unshare_document_from_group(document_id, owner_group_id, target_group_id):
         shared_group_ids = document_item.get('shared_group_ids', [])
         
         # Remove target group if they are in the list
-        if target_group_id in shared_group_ids:
-            shared_group_ids.remove(target_group_id)
-            document_item['shared_group_ids'] = shared_group_ids
+        # Remove all entries for the target group (by oid prefix)
+        new_shared_group_ids = [entry for entry in shared_group_ids if not entry.startswith(f"{target_group_id},")]
+        if len(new_shared_group_ids) != len(shared_group_ids):
+            document_item['shared_group_ids'] = new_shared_group_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             
             # Update the document
@@ -3935,7 +3951,8 @@ def is_document_shared_with_group(document_id, group_id):
         
         # Check if group is in shared list
         shared_group_ids = document_item.get('shared_group_ids', [])
-        return group_id in shared_group_ids
+        # Only allow access if group is owner or in shared_group_ids as approved
+        return any(entry == f"{group_id},approved" for entry in shared_group_ids)
         
     except CosmosResourceNotFoundError:
         return False
