@@ -71,6 +71,7 @@ export function getAgentModalFields(opts = {}) {
 	if (actionsSelect) {
 		actions_to_load = Array.from(actionsSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
 	}
+
 	return {
 		name: root.getElementById('agent-name').value.trim(),
 		display_name: root.getElementById('agent-display-name').value.trim(),

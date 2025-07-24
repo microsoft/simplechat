@@ -150,6 +150,7 @@ async function openAgentModal(agent = null) {
     agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
     agentsCommon.setSelectedPlugins(pluginSelect, agent?.actions_to_load || []);
 
+
     // Setup toggles using shared helpers
     agentsCommon.setupApimToggle(
         document.getElementById('agent-enable-apim'),

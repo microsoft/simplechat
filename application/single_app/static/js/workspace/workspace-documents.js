@@ -347,7 +347,7 @@ function fetchUserDocuments() {
     // Show loading state
     documentsTableBody.innerHTML = `
         <tr class="table-loading-row">
-            <td colspan="5">
+            <td colspan="4">
                 <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                 Loading documents...
             </td>
@@ -395,7 +395,7 @@ function fetchUserDocuments() {
                 const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter;
                 documentsTableBody.innerHTML = `
                     <tr>
-                        <td colspan="5" class="text-center p-4 text-muted">
+                        <td colspan="4" class="text-center p-4 text-muted">
                             ${ filtersActive
                                 ? 'No documents found matching the current filters.'
                                 : 'No documents found. Upload a document to get started.'
@@ -436,7 +436,7 @@ function fetchUserDocuments() {
             } else {
                 displayMsg = `Error loading documents: ${escapeHtml(error.error || error.message || 'Unknown error')}`;
             }
-            documentsTableBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
+            documentsTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-danger p-4">${displayMsg}</td></tr>`;
             renderDocsPaginationControls(1, docsPageSize, 0); // Show empty pagination on error
         });
 }
@@ -595,7 +595,7 @@ function renderDocumentRow(doc) {
             }
 
         let detailsHtml = `
-            <td colspan="5">
+            <td colspan="4">
                 <div class="bg-light p-3 border rounded small">
                     ${classificationDisplayHTML}
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
@@ -610,7 +610,7 @@ function renderDocumentRow(doc) {
                          <button class="btn btn-sm btn-info" onclick="window.onEditDocument('${docId}')" title="Edit Metadata">
                             <i class="bi bi-pencil-fill"></i> Edit Metadata
                          </button>
-        `;
+            `;
 
         // Check window flag before rendering extract button - CORRECTED CHECK
         if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
@@ -632,14 +632,14 @@ function renderDocumentRow(doc) {
         statusRow.id = `status-row-${docId}`;
         if (hasError) {
              statusRow.innerHTML = `
-                <td colspan="5">
+                <td colspan="4">
                     <div class="alert alert-danger alert-sm py-1 px-2 mb-0 small" role="alert">
                         <i class="bi bi-exclamation-triangle-fill me-1"></i> Error: ${escapeHtml(docStatus)}
                     </div>
                 </td>`;
         } else if (pct < 100) { // Still processing
              statusRow.innerHTML = `
-                <td colspan="5">
+                <td colspan="4">
                     <div class="progress" style="height: 10px;" title="Status: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)">
                         <div id="progress-bar-${docId}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: ${pct}%;" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"></div>
                     </div>
@@ -647,7 +647,7 @@ function renderDocumentRow(doc) {
                 </td>`;
         } else { // Should technically be complete now, but edge case?
              statusRow.innerHTML = `
-                <td colspan="5">
+                <td colspan="4">
                     <small class="text-muted">Status: Finalizing...</small>
                 </td>`;
         }
@@ -856,7 +856,7 @@ function pollDocumentStatus(documentId) {
                 activePolls.delete(documentId);
                 // Update UI to show polling failed
                 if (statusRow) {
-                    statusRow.innerHTML = `<td colspan="5"><div class="alert alert-warning alert-sm py-1 px-2 mb-0 small" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not retrieve status: ${escapeHtml(err.message || 'Polling failed')}</div></td>`;
+                    statusRow.innerHTML = `<td colspan="4"><div class="alert alert-warning alert-sm py-1 px-2 mb-0 small" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not retrieve status: ${escapeHtml(err.message || 'Polling failed')}</div></td>`;
                 }
                  // Maybe update the icon in the main row too if status row isn't visible
                  if (docRow && docRow.cells[0]) {
