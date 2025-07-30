@@ -185,19 +185,19 @@ def register_route_backend_public_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        # Get all public workspaces the user has access to AND has marked as visible
-        from functions_public_workspaces import get_user_visible_public_workspace_docs
-        user_public_workspaces = get_user_visible_public_workspace_docs(user_id)
+        # Get user settings to access publicDirectorySettings
+        settings = get_user_settings(user_id)
+        public_directory_settings = settings.get('settings', {}).get('publicDirectorySettings', {})
         
-        if not user_public_workspaces:
+        # Get IDs of workspaces marked as visible (value is true)
+        workspace_ids = [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+        
+        if not workspace_ids:
             return jsonify({
                 'documents': [],
                 'workspace_name': 'All Public Workspaces',
                 'error': 'No visible public workspaces found'
             }), 200
-
-        # Get workspace IDs
-        workspace_ids = [ws['id'] for ws in user_public_workspaces]
 
         # Get page_size parameter for pagination
         try:

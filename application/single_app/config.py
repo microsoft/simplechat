@@ -86,7 +86,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.170'
+app.config['VERSION'] = '0.216.178'
 
 
 Session(app)
@@ -100,7 +100,7 @@ ALLOWED_EXTENSIONS = {
     'dvr-ms', 'wav'
 }
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
-MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
+MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")

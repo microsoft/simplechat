@@ -375,15 +375,19 @@ def register_route_backend_chats(app):
 
             # Perform the search
             try:
-                # For search, pass group context only if chat_type is 'group'
+                # Prepare search arguments
                 search_args = {
                     "query": search_query,
                     "user_id": user_id,
                     "top_n": 12,
                     "doc_scope": document_scope,
                 }
-                if chat_type == 'group' and active_group_id:
+                
+                # Add active_group_id when document scope is 'group' or chat_type is 'group'
+                if (document_scope == 'group' or chat_type == 'group') and active_group_id:
                     search_args["active_group_id"] = active_group_id
+  
+                     
                 if selected_document_id:
                     search_args["document_id"] = selected_document_id
                 

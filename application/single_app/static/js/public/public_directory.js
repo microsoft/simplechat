@@ -150,9 +150,9 @@ function updateCuratedListStatus() {
   function getWorkspaceVisibility(workspaceId) {
     // Ensure userSettings and publicDirectorySettings exist
     if (!userSettings || !userSettings.publicDirectorySettings) {
-      return true; // default to visible if settings not loaded yet
+      return false; // default to hidden if settings not loaded yet
     }
-    return userSettings.publicDirectorySettings[workspaceId] !== false; // default to visible
+    return userSettings.publicDirectorySettings[workspaceId] === true; // default to hidden
   }
 
   // Set workspace visibility setting

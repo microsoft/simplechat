@@ -2,7 +2,7 @@
 
 from config import *
 from functions_content import *
-from functions_public_workspaces import get_user_visible_public_workspace_docs
+from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
 
 def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None, enable_file_sharing=True):
     """
@@ -59,10 +59,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
+            # Get visible public workspace IDs from user settings
+            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            
+            # Create filter for visible public workspaces
+            if visible_public_workspace_ids:
+                # Use 'or' conditions instead of 'in' operator for OData compatibility
+                workspace_conditions = " or ".join([f"public_workspace_id eq '{id}'" for id in visible_public_workspace_ids])
+                public_filter = f"({workspace_conditions}) and document_id eq '{document_id}'"
+            else:
+                # Fallback to active_public_workspace_id if no visible workspaces
+                public_filter = f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'"
+                
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'",
+                filter=public_filter,
                 query_type="semantic",
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
@@ -98,10 +110,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
+            # Get visible public workspace IDs from user settings
+            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            
+            # Create filter for visible public workspaces
+            if visible_public_workspace_ids:
+                # Use 'or' conditions instead of 'in' operator for OData compatibility
+                workspace_conditions = " or ".join([f"public_workspace_id eq '{id}'" for id in visible_public_workspace_ids])
+                public_filter = f"({workspace_conditions})"
+            else:
+                # Fallback to active_public_workspace_id if no visible workspaces
+                public_filter = f"public_workspace_id eq '{active_public_workspace_id}'"
+                
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"public_workspace_id eq '{active_public_workspace_id}'",
+                filter=public_filter,
                 query_type="semantic",
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
@@ -183,10 +207,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     
     elif doc_scope == "public":
         if document_id:
+            # Get visible public workspace IDs from user settings
+            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            
+            # Create filter for visible public workspaces
+            if visible_public_workspace_ids:
+                # Use 'or' conditions instead of 'in' operator for OData compatibility
+                workspace_conditions = " or ".join([f"public_workspace_id eq '{id}'" for id in visible_public_workspace_ids])
+                public_filter = f"({workspace_conditions}) and document_id eq '{document_id}'"
+            else:
+                # Fallback to active_public_workspace_id if no visible workspaces
+                public_filter = f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'"
+                
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"public_workspace_id eq '{active_public_workspace_id}' and document_id eq '{document_id}'",
+                filter=public_filter,
                 query_type="semantic",
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
@@ -195,10 +231,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             )
             results = extract_search_results(public_results, top_n)
         else:
+            # Get visible public workspace IDs from user settings
+            visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            
+            # Create filter for visible public workspaces
+            if visible_public_workspace_ids:
+                # Use 'or' conditions instead of 'in' operator for OData compatibility
+                workspace_conditions = " or ".join([f"public_workspace_id eq '{id}'" for id in visible_public_workspace_ids])
+                public_filter = f"({workspace_conditions})"
+            else:
+                # Fallback to active_public_workspace_id if no visible workspaces
+                public_filter = f"public_workspace_id eq '{active_public_workspace_id}'"
+                
             public_results = search_client_public.search(
                 search_text=query,
                 vector_queries=[vector_query],
-                filter=f"public_workspace_id eq '{active_public_workspace_id}'",
+                filter=public_filter,
                 query_type="semantic",
                 semantic_configuration_name="nexus-public-index-semantic-configuration",
                 query_caption="extractive",
