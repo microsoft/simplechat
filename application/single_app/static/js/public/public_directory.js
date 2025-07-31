@@ -509,7 +509,7 @@ function updateCuratedListStatus() {
   // View workspace button
   tableBody.on("click", ".view-workspace-btn", function() {
     const workspaceId = $(this).data("id");
-    window.open(`/public_workspaces?workspace=${workspaceId}`, '_blank');
+    window.location.href = `/public_workspaces?workspace=${workspaceId}`;
   });
 
   // Search functionality

@@ -13,6 +13,11 @@
       width: 100%;
     }
 
+    /* Uniform width for action buttons (Approve, Delete, Chat) */
+    .action-btn-wide {
+      min-width: 90px;
+    }
+
     /* --- Documents Table Styles --- */
     /* Example: Keep the expand-arrow column narrow */
     #documents-table th:nth-child(1),
@@ -184,16 +189,7 @@
         <div class="card p-3 my-3">
           <div id="legacy-update-prompt-placeholder"></div> 
           <h5>Your Documents</h5>
-          <p class="text-muted small">Only you can see documents you upload. Allowed extensions:
-            txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg,
-            png, bmp, tiff, tif, heif, md, json
-            {% if enable_video_file_support in [True, 'True', 'true'] %}
-                , mp4, mov, avi, wmv, mkv, webm
-            {% endif %}
-            {% if enable_audio_file_support in [True, 'True', 'true'] %}
-                , mp3, wav, ogg, aac, flac, m4a
-            {% endif %}
-          </p>
+          <p class="text-muted small">Only you can see documents you upload.</p>
 
           <!-- Document Upload Form -->
           <div class="mb-3">
@@ -205,15 +201,19 @@
                 <div class="small text-muted mt-1">Allowed: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg, png, bmp, tiff, tif, heif, md, json{% if enable_video_file_support in [True, 'True', 'true'] %}, mp4, mov, avi, wmv, mkv, webm{% endif %}{% if enable_audio_file_support in [True, 'True', 'true'] %}, mp3, wav, ogg, aac, flac, m4a{% endif %}</div>
               </div>
             </div>
-            <span id="upload-status" class="ms-2 text-muted small"></span>
+            <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
             <!-- Per-file upload progress bars -->
-            <div id="workspace-upload-progress-container" class="mt-2"></div>
+            <div id="workspace-upload-progress-container" class="mt-2" style="display:none;"></div>
           </div>
-          <hr>
+          <!-- Removed <hr> to reduce whitespace -->
 
           <!-- Document Filters -->
-           <!-- Filter Row 1: Main Search & Classification -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+          <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#docs-filters-collapse" aria-expanded="false" aria-controls="docs-filters-collapse" id="docs-filters-toggle-btn">
+            Show Search/Filters
+          </button>
+          <div class="collapse" id="docs-filters-collapse">
+            <!-- Filter Row 1: Main Search & Classification -->
+            <div class="row mb-3 align-items-end filter-controls-row">
                 {% if enable_document_classification in [True, 'True', 'true'] %}
                     <div class="col-md-4">
                         <label for="docs-search-input" class="form-label mb-1 small">Search File Name/Title:</label>
@@ -260,10 +260,9 @@
                         <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                     </div>
                 {% endif %}
-           </div>
-
-           <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+            </div>
+            <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) -->
+            <div class="row mb-3 align-items-end filter-controls-row">
                 <div class="col-md-3">
                     <label for="docs-author-filter" class="form-label mb-1 small">Search Authors:</label>
                     <input type="search" id="docs-author-filter" class="form-control form-control-sm" placeholder="Author name...">
@@ -279,8 +278,9 @@
                 <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
                     <!-- Buttons removed from metadata row -->
                 </div>
-           </div>
-           <!-- End Metadata Filters -->
+            </div>
+          </div>
+          <!-- End Metadata Filters -->
 
           <!-- Documents List -->
           <table class="table table-striped" id="documents-table">
@@ -344,7 +344,11 @@
           <hr>
 
           <!-- Prompts Filters -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+          <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#prompts-filters-collapse" aria-expanded="false" aria-controls="prompts-filters-collapse" id="prompts-filters-toggle-btn">
+            Show Search/Filters
+          </button>
+          <div class="collapse" id="prompts-filters-collapse">
+            <div class="row mb-3 align-items-end filter-controls-row">
                 <div class="col-md-6">
                     <label for="prompts-search-input" class="form-label mb-1 small">Search Prompt Name:</label>
                     <input type="search" id="prompts-search-input" class="form-control form-control-sm" placeholder="Enter search term...">
@@ -353,7 +357,8 @@
                     <button id="prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
                     <button id="prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                  </div>
-           </div>
+            </div>
+          </div>
 
           <!-- Prompts List -->
           <table class="table table-striped" id="prompts-table">
@@ -756,9 +761,9 @@
         <!-- Populated by JS -->
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-danger" id="approveSharedModalDenyBtn">Deny</button>
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="approveSharedModalCancelBtn">Cancel</button>
-        <button type="button" class="btn btn-success" id="approveSharedModalApproveBtn">Approve</button>
+        <button type="button" class="btn btn-sm btn-danger action-btn-wide me-1" id="approveSharedModalDenyBtn">Deny</button>
+        <button type="button" class="btn btn-sm btn-secondary action-btn-wide me-1" data-bs-dismiss="modal" id="approveSharedModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-sm btn-success action-btn-wide" id="approveSharedModalApproveBtn">Approve</button>
       </div>
     </div>
   </div>
@@ -791,6 +796,73 @@
     // Pass current user ID for ownership checks
     window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
 
+    // --- Filter toggle button logic ---
+    document.addEventListener("DOMContentLoaded", function() {
+      // Documents tab
+      var docsToggleBtn = document.getElementById("docs-filters-toggle-btn");
+      var docsCollapse = document.getElementById("docs-filters-collapse");
+      if (docsToggleBtn && docsCollapse) {
+        docsCollapse.addEventListener("show.bs.collapse", function() {
+          docsToggleBtn.textContent = "Hide Search/Filters";
+        });
+        docsCollapse.addEventListener("hide.bs.collapse", function() {
+          docsToggleBtn.textContent = "Show Search/Filters";
+        });
+      }
+      // Prompts tab
+      var promptsToggleBtn = document.getElementById("prompts-filters-toggle-btn");
+      var promptsCollapse = document.getElementById("prompts-filters-collapse");
+      if (promptsToggleBtn && promptsCollapse) {
+        promptsCollapse.addEventListener("show.bs.collapse", function() {
+          promptsToggleBtn.textContent = "Hide Search/Filters";
+        });
+        promptsCollapse.addEventListener("hide.bs.collapse", function() {
+          promptsToggleBtn.textContent = "Show Search/Filters";
+        });
+      }
+
+      // Hide upload status and progress container unless needed
+      var uploadStatus = document.getElementById("upload-status");
+      var uploadProgress = document.getElementById("workspace-upload-progress-container");
+      if (uploadStatus) uploadStatus.style.display = "none";
+      if (uploadProgress) uploadProgress.style.display = "none";
+
+      // Show them only when content is set (for status) or children exist (for progress)
+      function showUploadStatusIfNeeded() {
+        if (uploadStatus && uploadStatus.textContent.trim() !== "") {
+          uploadStatus.style.display = "";
+        } else if (uploadStatus) {
+          uploadStatus.style.display = "none";
+        }
+        if (uploadProgress && uploadProgress.children.length > 0) {
+          uploadProgress.style.display = "";
+        } else if (uploadProgress) {
+          uploadProgress.style.display = "none";
+        }
+      }
+
+      // Patch the upload logic to call showUploadStatusIfNeeded after updates
+      // (This is a fallback in case the main upload JS doesn't already do this)
+      var origSetStatus = uploadStatus && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(uploadStatus), 'textContent')?.set;
+      if (uploadStatus && origSetStatus) {
+        Object.defineProperty(uploadStatus, 'textContent', {
+          set: function(value) {
+            origSetStatus.call(this, value);
+            showUploadStatusIfNeeded();
+          },
+          get: function() {
+            return origSetStatus.get ? origSetStatus.get.call(this) : this.innerText;
+          }
+        });
+      }
+      // Also observe DOM changes to the progress container
+      if (uploadProgress) {
+        var observer = new MutationObserver(showUploadStatusIfNeeded);
+        observer.observe(uploadProgress, { childList: true, subtree: false });
+      }
+      // Initial call
+      showUploadStatusIfNeeded();
+    });
   </script>
 
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-utils.js') }}"></script>

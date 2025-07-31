@@ -201,12 +201,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-legacy-update-prompt-placeholder"></div>
         <h5>Group Documents</h5>
         <p class="text-muted small">
-          Documents uploaded here are visible to all group members. Allowed
-          extensions: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg,
-          png, bmp, tiff, tif, heif, md, json {% if enable_video_file_support in
-          [True, 'True', 'true'] %} , mp4, mov, avi, wmv, mkv, webm {% endif %}
-          {% if enable_audio_file_support in [True, 'True', 'true'] %} , mp3,
-          wav, ogg, aac, flac, m4a {% endif %}
+          Documents uploaded here are visible to all group members.
         </p>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
@@ -218,129 +213,133 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <div class="small text-muted mt-1">Allowed: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg, png, bmp, tiff, tif, heif, md, json{% if enable_video_file_support in [True, 'True', 'true'] %}, mp4, mov, avi, wmv, mkv, webm{% endif %}{% if enable_audio_file_support in [True, 'True', 'true'] %}, mp3, wav, ogg, aac, flac, m4a{% endif %}</div>
             </div>
           </div>
-          <span id="upload-status" class="ms-2 text-muted small"></span>
+          <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
           <!-- Per-file upload progress bars -->
-          <div id="group-upload-progress-container" class="mt-2"></div>
+          <div id="group-upload-progress-container" class="mt-2" style="display:none;"></div>
         </div>
-        <hr id="upload-hr" style="display: none" />
+        <!-- Removed <hr id="upload-hr"> to reduce whitespace -->
         <!-- Also controlled by JS -->
 
         <!-- Document Filters -->
-        <!-- Filter Row 1: Main Search & Classification -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          {% if enable_document_classification in [True, 'True', 'true'] %}
-          <div class="col-md-4">
-            <label for="group-docs-search-input" class="form-label mb-1 small"
-              >Search File Name/Title:</label
-            >
-            <input
-              type="search"
-              id="group-docs-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#group-docs-filters-collapse" aria-expanded="false" aria-controls="group-docs-filters-collapse" id="group-docs-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="group-docs-filters-collapse">
+          <!-- Filter Row 1: Main Search & Classification -->
+          <div class="row mb-3 align-items-end filter-controls-row">
+            {% if enable_document_classification in [True, 'True', 'true'] %}
+            <div class="col-md-4">
+              <label for="group-docs-search-input" class="form-label mb-1 small"
+                >Search File Name/Title:</label
+              >
+              <input
+                type="search"
+                id="group-docs-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-classification-filter"
+                class="form-label mb-1 small"
+                >Filter by Classification:</label
+              >
+              <select
+                id="group-docs-classification-filter"
+                class="form-select form-select-sm"
+              >
+                <option value="">(All Classifications)</option>
+                <option value="none">(No Classification)</option>
+                {% for cat in settings.document_classification_categories %}
+                <option value="{{ cat.label }}">{{ cat.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-docs-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-docs-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
+            {% else %}
+            <div class="col-md-7">
+              <label for="group-docs-search-input" class="form-label mb-1 small"
+                >Search File Name/Title:</label
+              >
+              <input
+                type="search"
+                id="group-docs-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-docs-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-docs-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
+            {% endif %}
           </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-classification-filter"
-              class="form-label mb-1 small"
-              >Filter by Classification:</label
-            >
-            <select
-              id="group-docs-classification-filter"
-              class="form-select form-select-sm"
-            >
-              <option value="">(All Classifications)</option>
-              <option value="none">(No Classification)</option>
-              {% for cat in settings.document_classification_categories %}
-              <option value="{{ cat.label }}">{{ cat.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-docs-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-docs-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
-          </div>
-          {% else %}
-          <div class="col-md-7">
-            <label for="group-docs-search-input" class="form-label mb-1 small"
-              >Search File Name/Title:</label
-            >
-            <input
-              type="search"
-              id="group-docs-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
-          </div>
-          <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-docs-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-docs-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
-          </div>
-          {% endif %}
-        </div>
-
-        <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) & Buttons -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          <div class="col-md-3">
-            <label for="group-docs-author-filter" class="form-label mb-1 small"
-              >Search Authors:</label
-            >
-            <input
-              type="search"
-              id="group-docs-author-filter"
-              class="form-control form-control-sm"
-              placeholder="Author name..."
-            />
-          </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-keywords-filter"
-              class="form-label mb-1 small"
-              >Search Keywords:</label
-            >
-            <input
-              type="search"
-              id="group-docs-keywords-filter"
-              class="form-control form-control-sm"
-              placeholder="Keyword..."
-            />
-          </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-abstract-filter"
-              class="form-label mb-1 small"
-              >Search Abstract:</label
-            >
-            <input
-              type="search"
-              id="group-docs-abstract-filter"
-              class="form-control form-control-sm"
-              placeholder="Abstract content..."
-            />
-          </div>
-          <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-            <!-- Buttons removed from metadata row -->
+          <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) & Buttons -->
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-3">
+              <label for="group-docs-author-filter" class="form-label mb-1 small"
+                >Search Authors:</label
+              >
+              <input
+                type="search"
+                id="group-docs-author-filter"
+                class="form-control form-control-sm"
+                placeholder="Author name..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-keywords-filter"
+                class="form-label mb-1 small"
+                >Search Keywords:</label
+              >
+              <input
+                type="search"
+                id="group-docs-keywords-filter"
+                class="form-control form-control-sm"
+                placeholder="Keyword..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-abstract-filter"
+                class="form-label mb-1 small"
+                >Search Abstract:</label
+              >
+              <input
+                type="search"
+                id="group-docs-abstract-filter"
+                class="form-control form-control-sm"
+                placeholder="Abstract content..."
+              />
+            </div>
+            <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
+              <!-- Buttons removed from metadata row -->
+            </div>
           </div>
         </div>
         <!-- End Metadata Filters -->
@@ -433,34 +432,39 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <hr />
 
         <!-- Group Prompts Filters -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          <div class="col-md-6">
-            <label
-              for="group-prompts-search-input"
-              class="form-label mb-1 small"
-            >
-              Search Prompt Name:
-            </label>
-            <input
-              type="search"
-              id="group-prompts-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
-          </div>
-          <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-prompts-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-prompts-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#group-prompts-filters-collapse" aria-expanded="false" aria-controls="group-prompts-filters-collapse" id="group-prompts-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="group-prompts-filters-collapse">
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-6">
+              <label
+                for="group-prompts-search-input"
+                class="form-label mb-1 small"
+              >
+                Search Prompt Name:
+              </label>
+              <input
+                type="search"
+                id="group-prompts-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-prompts-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-prompts-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
           </div>
         </div>
 
@@ -790,6 +794,70 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </script>
 
 <script>
+  // --- Filter toggle button logic ---
+  document.addEventListener("DOMContentLoaded", function() {
+    // Group Documents tab
+    var docsToggleBtn = document.getElementById("group-docs-filters-toggle-btn");
+    var docsCollapse = document.getElementById("group-docs-filters-collapse");
+    if (docsToggleBtn && docsCollapse) {
+      docsCollapse.addEventListener("show.bs.collapse", function() {
+        docsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      docsCollapse.addEventListener("hide.bs.collapse", function() {
+        docsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+    // Group Prompts tab
+    var promptsToggleBtn = document.getElementById("group-prompts-filters-toggle-btn");
+    var promptsCollapse = document.getElementById("group-prompts-filters-collapse");
+    if (promptsToggleBtn && promptsCollapse) {
+      promptsCollapse.addEventListener("show.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      promptsCollapse.addEventListener("hide.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+
+    // Hide upload status and progress container unless needed (Group)
+    var groupUploadStatus = document.getElementById("upload-status");
+    var groupUploadProgress = document.getElementById("group-upload-progress-container");
+    if (groupUploadStatus) groupUploadStatus.style.display = "none";
+    if (groupUploadProgress) groupUploadProgress.style.display = "none";
+
+    function showGroupUploadStatusIfNeeded() {
+      if (groupUploadStatus && groupUploadStatus.textContent.trim() !== "") {
+        groupUploadStatus.style.display = "";
+      } else if (groupUploadStatus) {
+        groupUploadStatus.style.display = "none";
+      }
+      if (groupUploadProgress && groupUploadProgress.children.length > 0) {
+        groupUploadProgress.style.display = "";
+      } else if (groupUploadProgress) {
+        groupUploadProgress.style.display = "none";
+      }
+    }
+
+    // Patch the upload logic to call showGroupUploadStatusIfNeeded after updates
+    var origSetStatus = groupUploadStatus && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(groupUploadStatus), 'textContent')?.set;
+    if (groupUploadStatus && origSetStatus) {
+      Object.defineProperty(groupUploadStatus, 'textContent', {
+        set: function(value) {
+          origSetStatus.call(this, value);
+          showGroupUploadStatusIfNeeded();
+        },
+        get: function() {
+          return origSetStatus.get ? origSetStatus.get.call(this) : this.innerText;
+        }
+      });
+    }
+    if (groupUploadProgress) {
+      var observer = new MutationObserver(showGroupUploadStatusIfNeeded);
+      observer.observe(groupUploadProgress, { childList: true, subtree: false });
+    }
+    showGroupUploadStatusIfNeeded();
+  });
+
   // --- Global State ---
   let userRoleInActiveGroup = null;
   let userGroups = [];
