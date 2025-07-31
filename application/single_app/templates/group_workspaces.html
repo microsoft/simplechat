@@ -115,8 +115,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endblock %} {% block content %}
 <div class="container">
   <h2>Group Workspace</h2>
-  <h3 id="active-group-name" class="mb-3" style="display: none"></h3>
-  <!-- Populated by JS -->
+  <!-- Removed redundant active-group-name heading -->
 
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
@@ -429,7 +428,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
             New Prompt
           </button>
         </div>
-        <hr />
 
         <!-- Group Prompts Filters -->
         <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#group-prompts-filters-collapse" aria-expanded="false" aria-controls="group-prompts-filters-collapse" id="group-prompts-filters-toggle-btn">
@@ -1276,7 +1274,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         sel.innerHTML = ""; 
         dropdownItems.innerHTML = "";
         
-        const activeGroupNameEl = document.getElementById("active-group-name");
+        // Element removed from HTML, only keep role element reference
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
         );
@@ -1369,8 +1367,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
 
         if (foundActive) {
-          activeGroupNameEl.textContent = activeGroupName;
-          activeGroupNameEl.style.display = "inline";
+          // Only update role element since heading element was removed
           activeGroupNameRoleEl.textContent = activeGroupName;
           updateRoleDisplay(); // Update role display and UI elements
         } else {
@@ -1378,9 +1375,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
           activeGroupId = null;
           userRoleInActiveGroup = null;
           activeGroupName = "";
-          activeGroupNameEl.textContent =
-            userGroups.length > 0 ? "Select a Group" : "No Groups Available";
-          activeGroupNameEl.style.display = "inline";
           document.getElementById("user-role-display").style.display = "none";
           // Clear tables or show message
           if (groupDocumentsTableBody)

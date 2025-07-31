@@ -190,10 +190,22 @@
         <h5>Public Prompts</h5>
         <div id="public-prompts-role-warning" class="alert alert-warning" style="display:none">You do not have permission to manage public prompts.</div>
         <div class="mb-3" id="create-public-prompt-section" style="display:none"><button id="create-public-prompt-btn" class="btn btn-success">New Prompt</button></div>
-        <hr />
-        <div class="row mb-3 filter-controls-row">
-          <div class="col-md-6"><input type="search" id="public-prompts-search-input" class="form-control form-control-sm" placeholder="Search prompt name..." /></div>
-          <div class="col-md-6 text-end"><button id="public-prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button><button id="public-prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button></div>
+        
+        <!-- Prompts Filters -->
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#public-prompts-filters-collapse" aria-expanded="false" aria-controls="public-prompts-filters-collapse" id="public-prompts-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="public-prompts-filters-collapse">
+          <div class="row mb-3 filter-controls-row">
+            <div class="col-md-6">
+              <label for="public-prompts-search-input" class="form-label mb-1 small">Search Prompt Name:</label>
+              <input type="search" id="public-prompts-search-input" class="form-control form-control-sm" placeholder="Search prompt name..." />
+            </div>
+            <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
+              <button id="public-prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
+              <button id="public-prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+            </div>
+          </div>
         </div>
         <table class="table table-striped" id="public-prompts-table"><thead><tr><th>Prompt Name</th><th>Actions</th></tr></thead><tbody><tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public prompts...</td></tr></tbody></table>
         <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
@@ -287,6 +299,18 @@
       });
       docsCollapse.addEventListener("hide.bs.collapse", function() {
         docsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+    
+    // Prompts tab
+    var promptsToggleBtn = document.getElementById("public-prompts-filters-toggle-btn");
+    var promptsCollapse = document.getElementById("public-prompts-filters-collapse");
+    if (promptsToggleBtn && promptsCollapse) {
+      promptsCollapse.addEventListener("show.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      promptsCollapse.addEventListener("hide.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Show Search/Filters";
       });
     }
 
