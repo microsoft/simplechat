@@ -212,130 +212,163 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
     });
 }
 
+/**
+* Upload files utility for workspace.
+* @param {FileList|File[]} files - The files to upload.
+*/
+async function uploadWorkspaceFiles(files) {
+   if (!files || files.length === 0) {
+       alert("Please select at least one file to upload.");
+       return;
+   }
+
+   uploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
+
+   // Per-file progress container
+   const progressContainer = document.getElementById("workspace-upload-progress-container");
+   if (progressContainer) progressContainer.innerHTML = "";
+
+   let completed = 0;
+   let failed = 0;
+
+   // Helper to create a unique ID for each file
+   function makeId(file) {
+       return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
+   }
+
+   // Helper to create progress bar/status for a file
+   function createProgressBar(file, id) {
+       const wrapper = document.createElement('div');
+       wrapper.className = 'mb-2';
+       wrapper.id = id + '-wrapper';
+       wrapper.innerHTML = `
+         <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
+           <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+         </div>
+         <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
+       `;
+       return wrapper;
+   }
+
+   // Upload each file individually with progress
+   Array.from(files).forEach(file => {
+       const id = makeId(file);
+       if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
+
+       const progressBar = document.getElementById(id);
+       const statusText = document.getElementById(id + '-text');
+
+       const formData = new FormData();
+       formData.append("file", file, file.name);
+
+       const xhr = new XMLHttpRequest();
+       xhr.open("POST", "/api/documents/upload", true);
+
+       xhr.upload.onprogress = function (e) {
+           if (e.lengthComputable) {
+               const percent = Math.round((e.loaded / e.total) * 100);
+               if (progressBar) {
+                   progressBar.style.width = percent + '%';
+                   progressBar.setAttribute('aria-valuenow', percent);
+               }
+               if (statusText) {
+                   statusText.textContent = `Uploading ${file.name} (${percent}%)`;
+               }
+           }
+       };
+
+       xhr.onload = function () {
+           if (xhr.status >= 200 && xhr.status < 300) {
+               if (progressBar) {
+                   progressBar.classList.remove('bg-info');
+                   progressBar.classList.add('bg-success');
+                   progressBar.classList.remove('progress-bar-animated');
+               }
+               if (statusText) {
+                   statusText.textContent = `Uploaded ${file.name} (100%)`;
+               }
+               completed++;
+           } else {
+               if (progressBar) {
+                   progressBar.classList.remove('bg-info');
+                   progressBar.classList.add('bg-danger');
+                   progressBar.classList.remove('progress-bar-animated');
+               }
+               if (statusText) {
+                   statusText.textContent = `Failed to upload ${file.name}`;
+               }
+               failed++;
+           }
+           // Update summary status
+           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           if (completed + failed === files.length) {
+               fileInput.value = '';
+               docsCurrentPage = 1;
+               fetchUserDocuments();
+               // Clear upload progress bars after all uploads and table refresh
+               if (progressContainer) progressContainer.innerHTML = '';
+           }
+       };
+
+       xhr.onerror = function () {
+           if (progressBar) {
+               progressBar.classList.remove('bg-info');
+               progressBar.classList.add('bg-danger');
+               progressBar.classList.remove('progress-bar-animated');
+           }
+           if (statusText) {
+               statusText.textContent = `Failed to upload ${file.name}`;
+           }
+           failed++;
+           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           if (completed + failed === files.length) {
+               fileInput.value = '';
+               docsCurrentPage = 1;
+               fetchUserDocuments();
+               if (progressContainer) progressContainer.innerHTML = '';
+           }
+       };
+
+       xhr.send(formData);
+   });
+}
+
 // Upload Button Handler
-if (uploadBtn && fileInput && uploadStatusSpan) {
-    uploadBtn.addEventListener("click", async () => {
-        const files = fileInput.files;
-        if (!files || files.length === 0) {
-            alert("Please select at least one file to upload.");
-            return;
+const uploadArea = document.getElementById("upload-area");
+if (fileInput && uploadArea && uploadStatusSpan) {
+    // Auto-upload on file selection
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            uploadWorkspaceFiles(fileInput.files);
         }
+    });
 
-        uploadBtn.disabled = true;
-        uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
-        uploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
-
-        // Per-file progress container
-        const progressContainer = document.getElementById("workspace-upload-progress-container");
-        if (progressContainer) progressContainer.innerHTML = "";
-
-        let completed = 0;
-        let failed = 0;
-
-        // Helper to create a unique ID for each file
-        function makeId(file) {
-            return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
+    // Click on area triggers file input
+    uploadArea.addEventListener("click", (e) => {
+        // Only trigger if not clicking the hidden input itself
+        if (e.target !== fileInput) {
+            fileInput.click();
         }
+    });
 
-        // Helper to create progress bar/status for a file
-        function createProgressBar(file, id) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'mb-2';
-            wrapper.id = id + '-wrapper';
-            wrapper.innerHTML = `
-              <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
-                <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
-              </div>
-              <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
-            `;
-            return wrapper;
+    // Drag-and-drop support
+    uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("dragover");
+        uploadArea.style.borderColor = "#0d6efd";
+    });
+    uploadArea.addEventListener("dragleave", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        uploadArea.style.borderColor = "";
+    });
+    uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        uploadArea.style.borderColor = "";
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            uploadWorkspaceFiles(e.dataTransfer.files);
         }
-
-        // Upload each file individually with progress
-        Array.from(files).forEach(file => {
-            const id = makeId(file);
-            if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
-
-            const progressBar = document.getElementById(id);
-            const statusText = document.getElementById(id + '-text');
-
-            const formData = new FormData();
-            formData.append("file", file, file.name);
-
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "/api/documents/upload", true);
-
-            xhr.upload.onprogress = function (e) {
-                if (e.lengthComputable) {
-                    const percent = Math.round((e.loaded / e.total) * 100);
-                    if (progressBar) {
-                        progressBar.style.width = percent + '%';
-                        progressBar.setAttribute('aria-valuenow', percent);
-                    }
-                    if (statusText) {
-                        statusText.textContent = `Uploading ${file.name} (${percent}%)`;
-                    }
-                }
-            };
-
-            xhr.onload = function () {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    if (progressBar) {
-                        progressBar.classList.remove('bg-info');
-                        progressBar.classList.add('bg-success');
-                        progressBar.classList.remove('progress-bar-animated');
-                    }
-                    if (statusText) {
-                        statusText.textContent = `Uploaded ${file.name} (100%)`;
-                    }
-                    completed++;
-                } else {
-                    if (progressBar) {
-                        progressBar.classList.remove('bg-info');
-                        progressBar.classList.add('bg-danger');
-                        progressBar.classList.remove('progress-bar-animated');
-                    }
-                    if (statusText) {
-                        statusText.textContent = `Failed to upload ${file.name}`;
-                    }
-                    failed++;
-                }
-                // Update summary status
-                uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
-                if (completed + failed === files.length) {
-                    fileInput.value = '';
-                    docsCurrentPage = 1;
-                    fetchUserDocuments();
-                    uploadBtn.disabled = false;
-                    uploadBtn.innerHTML = "Upload Document(s)";
-                    // Clear upload progress bars after all uploads and table refresh
-                    if (progressContainer) progressContainer.innerHTML = '';
-                }
-            };
-
-            xhr.onerror = function () {
-                if (progressBar) {
-                    progressBar.classList.remove('bg-info');
-                    progressBar.classList.add('bg-danger');
-                    progressBar.classList.remove('progress-bar-animated');
-                }
-                if (statusText) {
-                    statusText.textContent = `Failed to upload ${file.name}`;
-                }
-                failed++;
-                uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
-                if (completed + failed === files.length) {
-                    fileInput.value = '';
-                    docsCurrentPage = 1;
-                    fetchUserDocuments();
-                    uploadBtn.disabled = false;
-                    uploadBtn.innerHTML = "Upload Document(s)";
-                    if (progressContainer) progressContainer.innerHTML = '';
-                }
-            };
-
-            xhr.send(formData);
-        });
     });
 }
 
