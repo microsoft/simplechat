@@ -25,6 +25,34 @@
       width: 50px;
       text-align: Left;
     }
+    
+    /* Styles for document checkboxes */
+    .document-checkbox {
+      cursor: pointer;
+      min-width: 18px;
+      min-height: 18px;
+      display: none; /* Hide checkboxes by default */
+    }
+    
+    /* Show checkboxes when in selection mode */
+    .selection-mode .document-checkbox {
+      display: block;
+    }
+    
+    /* Ensure the delete button is properly styled */
+    #delete-selected-btn, #remove-selected-btn {
+      transition: all 0.3s ease;
+    }
+    
+    /* Add some padding to the left when in selection mode */
+    .selection-mode .document-row {
+      padding-left: 0.5rem;
+    }
+    
+    /* Dropdown menu for actions */
+    .action-dropdown .dropdown-toggle::after {
+      display: none;
+    }
     /* File Name column */
     #documents-table th:nth-child(2),
     #documents-table td:nth-child(2) {
@@ -285,10 +313,22 @@
           <table class="table table-striped" id="documents-table">
             <thead>
               <tr>
-                <th></th> <!-- Expand/Collapse -->
+                <th>
+                  <!-- Expand/Collapse Column -->
+                </th>
                 <th>File Name</th>
                 <th>Title</th>
-                <th>Actions</th>
+                <th>Actions
+                  <span id="bulk-actions" style="display: none; margin-left: 20px;">
+                    <!-- Bulk action buttons will appear here when documents are selected -->
+                    <button id="delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
+                      <i class="bi bi-trash"></i> Delete
+                    </button>
+                    <button id="remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
+                      <i class="bi bi-x-circle"></i> Remove
+                    </button>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -807,6 +847,24 @@
           docsToggleBtn.textContent = "Show Search/Filters";
         });
       }
+      
+      // Initialize document selection functionality
+      const documentsTable = document.getElementById("documents-table");
+      if (documentsTable) {
+        // Make sure selection mode is initially off
+        documentsTable.classList.remove('selection-mode');
+      }
+      
+      // Initialize event delegation for document checkboxes
+      document.addEventListener('click', function(event) {
+        // Handle clicks on document checkboxes
+        if (event.target.classList.contains('document-checkbox')) {
+          const documentId = event.target.getAttribute('data-document-id');
+          if (window.updateSelectedDocuments) {
+            window.updateSelectedDocuments(documentId, event.target.checked);
+          }
+        }
+      });
       // Prompts tab
       var promptsToggleBtn = document.getElementById("prompts-filters-toggle-btn");
       var promptsCollapse = document.getElementById("prompts-filters-collapse");

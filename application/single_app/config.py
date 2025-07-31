@@ -86,7 +86,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.192'
+app.config['VERSION'] = '0.216.198'
 
 
 Session(app)
