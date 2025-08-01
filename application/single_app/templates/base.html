@@ -30,7 +30,9 @@
   -->
   <link rel="stylesheet" href="/static/css/bootstrap-icons.css" />
 
-
+  <!-- Prism.js syntax highlighting -->
+  <link id="prism-theme-css" rel="stylesheet" href="/static/css/prism-original.css" />
+  <script id="prism-theme-js" src="/static/js/prism-original.js"></script>
   <!-- Your custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
   <!-- DataTables CSS -->
@@ -397,7 +399,47 @@
   <script>
     const appSettings = {{ app_settings|tojson|safe }};
   </script>
-  
+
+  <!-- Prism.js syntax highlighting script -->
+  <script>
+    (function() {
+      // Map theme files
+      const prismThemes = {
+        light: {
+          css: "/static/css/prism-original.css",
+          js: "/static/js/prism-original.js"
+        },
+        dark: {
+          css: "/static/css/prism-tomorrow-night.css",
+          js: "/static/js/prism-tomorrow-night.js"
+        }
+      };
+
+      function setPrismTheme(mode) {
+        const cssLink = document.getElementById('prism-theme-css');
+        const jsScript = document.getElementById('prism-theme-js');
+        if (!cssLink || !jsScript) return;
+        const theme = prismThemes[mode] || prismThemes.light;
+        if (cssLink.href !== location.origin + theme.css) cssLink.href = theme.css;
+        if (jsScript.src !== location.origin + theme.js) jsScript.src = theme.js;
+      }
+
+      // Detect current mode on load
+      function getCurrentMode() {
+        return document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light';
+      }
+      setPrismTheme(getCurrentMode());
+
+      // Listen for mode changes (if your dark mode toggler changes data-bs-theme)
+      const observer = new MutationObserver(() => {
+        setPrismTheme(getCurrentMode());
+        // Re-highlight after theme switch
+        setTimeout(() => { if (window.Prism) Prism.highlightAll(); }, 100);
+      });
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+    })();
+  </script>
+
   <!-- Dark mode script -->
   <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
   

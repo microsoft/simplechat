@@ -658,6 +658,7 @@ a.citation-link:hover {
 .message {
   display: flex;
   width: 100%;
+  min-width: 0; /* <-- This is crucial for flex children to shrink! */
   margin-bottom: 10px;
 }
 
@@ -674,7 +675,8 @@ a.citation-link:hover {
 /* Message bubble */
 .message-bubble {
   max-width: 90%;
-  width: auto;
+  min-width: 0; /* <-- This is crucial for flex children to shrink! */
+  width: 100%;
   padding: 10px;
   border-radius: 15px;
   position: relative;
@@ -745,7 +747,11 @@ a.citation-link:hover {
   white-space: normal !important;
 
   /* if wrap needed, move word to next line */
-  word-break: normal;        
+  word-break: normal;
+  /* Prevent chatbox and message containers from horizontal scrolling */       
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+  min-width: 0; /* <-- This is crucial for flex children to shrink! */
 }
 
 /* Sender label */
@@ -831,16 +837,30 @@ a.citation-link:hover {
 }
 
 /* Style code blocks */
-pre code {
-  background-color: #f8f9fa;
-  padding: 0.5em;
+
+/* Code blocks: force internal scroll, never overflow parent */
+pre,
+pre[class*="language-"] {
+  overflow-x: auto !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box;
   display: block;
-  border-radius: 4px;
-  overflow-x: auto;
+  /* Optional: prevent code from wrapping */
+  white-space: pre;
 }
 
-/* Dark mode styling for code blocks */
-[data-bs-theme="dark"] pre code {
+/* Code element inside pre: don't expand parent */
+pre code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Dark mode styling for code blocks not caught by prism.css */
+[data-bs-theme="dark"] pre code:not([class*="language-"]) {
   background-color: #343a40;
   color: #e9ecef;
 }
