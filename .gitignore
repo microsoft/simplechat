@@ -12,6 +12,7 @@ __azurite_db*__.json
 .python_packages
 __pycache__
 .venv
+venv
 
 # Azure App Service artifacts
 .env

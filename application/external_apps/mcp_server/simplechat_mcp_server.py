@@ -23,7 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class SimpleChatConfig(BaseSettings):
     """Configuration for SimpleChat MCP Server"""
     
-    model_config = SettingsConfigDict(env_prefix="SIMPLECHAT_MCP_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="SIMPLECHAT_MCP_", env_file=".env", extra="ignore")
     
     # SimpleChat API Configuration
     simplechat_base_url: str = "http://localhost:5000"
@@ -134,7 +134,6 @@ def send_message(
     document_scope: Optional[List[str]] = None
 ) -> str:
     """Send a chat message to SimpleChat"""
-    import asyncio
     
     async def _send():
         try:
@@ -169,7 +168,6 @@ def list_documents(
     search: Optional[str] = None
 ) -> str:
     """List user documents with pagination and search"""
-    import asyncio
     
     async def _list():
         try:
@@ -196,7 +194,6 @@ def upload_document(
     filename: Optional[str] = None
 ) -> str:
     """Upload a document to SimpleChat"""
-    import asyncio
     
     async def _upload():
         try:
@@ -250,7 +247,6 @@ def list_groups(
     search: Optional[str] = None
 ) -> str:
     """List user groups with pagination and search"""
-    import asyncio
     
     async def _list():
         try:
@@ -273,7 +269,6 @@ def list_groups(
 @mcp.tool
 def get_settings() -> str:
     """Get application settings"""
-    import asyncio
     
     async def _get():
         try:
@@ -292,7 +287,6 @@ def get_settings() -> str:
 @mcp.tool
 def update_settings(settings: Dict[str, Any]) -> str:
     """Update application settings"""
-    import asyncio
     
     async def _update():
         try:
@@ -314,7 +308,6 @@ def update_settings(settings: Dict[str, Any]) -> str:
 @mcp.tool
 def test_token() -> str:
     """Test bearer token validity"""
-    import asyncio
     
     async def _test():
         try:

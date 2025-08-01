@@ -2,7 +2,7 @@
 
 from unittest import result
 from config import *
-from functions_authentication import _build_msal_app, _load_cache, _save_cache
+from functions_authentication import _build_msal_app, _load_cache, _save_cache, validate_bearer_token
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
@@ -101,6 +101,35 @@ def register_route_frontend_authentication(app):
         else:
             print("HOME_REDIRECT_URL not set, falling back to url_for('index')")
             return redirect(url_for('index')) # Or another appropriate page
+
+
+    #@app.route('/external/chat', methods=['POST'])
+    @app.route('/getASession', methods=['GET']) # This is your redirect URI path GREGUNGER TODO
+    def authorized_getasession():
+
+        if "user" not in session:
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return jsonify({"message": "Authorization header missing"}), 401
+
+            if not auth_header.startswith("Bearer "):
+                return jsonify({"message": "Invalid Authorization header format"}), 401
+
+            token = auth_header.split(" ")[1]
+            is_valid, data = validate_bearer_token(token) # return true, bearer token
+
+            if not is_valid:
+                return jsonify({"message": data}), 401
+
+            session["user"] = data
+
+            # --- CRITICAL: Save the entire cache (contains tokens) to session ---
+            _save_cache(msal_app.token_cache)
+
+            print(f"User {session['user'].get('name')} logged in successfully.")
+        
+        return jsonify("Session returned as cookie", 200)
+
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path

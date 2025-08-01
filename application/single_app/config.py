@@ -25,6 +25,7 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from dotenv import load_dotenv
 
 from flask import (
     Flask, 
@@ -80,6 +81,9 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 
 
 app = Flask(__name__)
+
+# Set Flask secret key from environment variable
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fallback-development-key-only')
 
 app.config['EXECUTOR_TYPE'] = 'thread'
 app.config['EXECUTOR_MAX_WORKERS'] = 30
@@ -156,11 +160,23 @@ storage_account_public_documents_container_name = "public-documents"
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
-cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
-if cosmos_authentication_type == "managed_identity":
-    cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential())
-else:
-    cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key)
+cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key").lower().strip() #key or managed_identity
+
+try:
+    if cosmos_authentication_type == "managed_identity":
+        print("Initializing Cosmos DB client with managed identity...")
+        cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential())
+    else:
+        print("Initializing Cosmos DB client with access key...")
+        if not cosmos_key:
+            raise ValueError("AZURE_COSMOS_KEY environment variable is required when using key authentication")
+        cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key)
+    print("Cosmos DB client initialized successfully")
+except Exception as e:
+    print(f"Failed to initialize Cosmos DB client: {e}")
+    print(f"Cosmos endpoint: {cosmos_endpoint}")
+    print(f"Authentication type: {cosmos_authentication_type}")
+    raise
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)

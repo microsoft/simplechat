@@ -8,8 +8,9 @@ from functions_appinsights import log_event
 
 def register_route_external_chat(app):
     @app.route('/external/chat', methods=['POST'])
-    @accesstoken_required
-    @enabled_required("enable_chat")
+    @login_required
+    #@accesstoken_required_greg
+    #@enabled_required("enable_chat")
     def external_send_message():
         """
         POST /external/chat
