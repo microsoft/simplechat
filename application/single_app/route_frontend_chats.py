@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_documents import *
+from functions_group import find_group_by_id
 from functions_appinsights import log_event
 
 def register_route_frontend_chats(app):
@@ -21,18 +22,24 @@ def register_route_frontend_chats(app):
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         active_group_id = user_settings["settings"].get("activeGroupOid", "")
+        active_group_name = ""
+        if active_group_id:
+            group_doc = find_group_by_id(active_group_id)
+            if group_doc:
+                active_group_name = group_doc.get("name", "")
         categories_list = public_settings.get("document_classification_categories","")
 
         if not user_id:
             return redirect(url_for('login'))
         return render_template(
-            'chats.html', 
-            settings=public_settings, 
-            enable_user_feedback=enable_user_feedback, 
-            active_group_id=active_group_id, 
-            enable_enhanced_citations=enable_enhanced_citations, 
-            enable_document_classification=enable_document_classification, 
-            document_classification_categories=categories_list, 
+            'chats.html',
+            settings=public_settings,
+            enable_user_feedback=enable_user_feedback,
+            active_group_id=active_group_id,
+            active_group_name=active_group_name,
+            enable_enhanced_citations=enable_enhanced_citations,
+            enable_document_classification=enable_document_classification,
+            document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
         )
     

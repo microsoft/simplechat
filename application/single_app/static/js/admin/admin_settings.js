@@ -22,7 +22,7 @@ const classificationTbody = document.getElementById('classification-categories-t
 const addClassificationBtn = document.getElementById('add-classification-btn');
 const classificationJsonInput = document.getElementById('document_classification_categories_json');
 const adminForm = document.getElementById('admin-settings-form');
-const saveButton = adminForm ? adminForm.querySelector('button[type="submit"]') : null;
+const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
@@ -2619,12 +2619,12 @@ function updateSaveButtonState() {
         saveButton.disabled = false;
         saveButton.classList.remove('btn-secondary');
         saveButton.classList.add('btn-primary');
-        saveButton.textContent = 'Save Pending';
+        saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Pending';
     } else {
         // Disable button, make it grey, and reset text
         saveButton.disabled = true;
         saveButton.classList.remove('btn-primary');
         saveButton.classList.add('btn-secondary');
-        saveButton.textContent = 'Save Settings';
+        saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Settings';
     }
 }

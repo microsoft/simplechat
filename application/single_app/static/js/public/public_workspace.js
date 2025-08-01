@@ -80,7 +80,52 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if (btnMyPublics) btnMyPublics.onclick = ()=> window.location.href = '/my_public_workspaces';
   if (btnChangePublic) btnChangePublic.onclick = onChangeActivePublic;
 
+  // Upload functionality - handle both button click and drag-and-drop
   if (uploadBtn) uploadBtn.onclick = onPublicUploadClick;
+  
+  // Add upload area functionality (drag-and-drop and click-to-browse)
+  const uploadArea = document.getElementById('upload-area');
+  if (fileInput && uploadArea) {
+    // Auto-upload on file selection
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files.length > 0) {
+        onPublicUploadClick();
+      }
+    });
+
+    // Click on area triggers file input
+    uploadArea.addEventListener('click', (e) => {
+      // Only trigger if not clicking the hidden input itself
+      if (e.target !== fileInput) {
+        fileInput.click();
+      }
+    });
+
+    // Drag-and-drop support
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+      uploadArea.style.borderColor = '#0d6efd';
+    });
+    
+    uploadArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      uploadArea.style.borderColor = '';
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      uploadArea.style.borderColor = '';
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        // Set the files to the file input and trigger upload
+        fileInput.files = e.dataTransfer.files;
+        onPublicUploadClick();
+      }
+    });
+  }
+  
   if (publicDocsPageSizeSelect) publicDocsPageSizeSelect.onchange = (e)=>{ publicDocsPageSize = +e.target.value; publicDocsCurrentPage=1; fetchPublicDocs(); };
   if (docsApplyBtn) docsApplyBtn.onclick = ()=>{ publicDocsSearchTerm = publicDocsSearchInput.value.trim(); publicDocsCurrentPage=1; fetchPublicDocs(); };
   if (docsClearBtn) docsClearBtn.onclick = ()=>{ publicDocsSearchInput.value=''; publicDocsSearchTerm=''; publicDocsCurrentPage=1; fetchPublicDocs(); };
@@ -373,10 +418,14 @@ async function onPublicUploadClick() {
   if (!fileInput) return alert('File input not found');
   const files = fileInput.files;
   if (!files || !files.length) return alert('Select files');
+  
+  // Disable upload button if it exists
   if (uploadBtn) {
     uploadBtn.disabled = true;
     uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
   }
+  
+  // Show upload status
   if (uploadStatus) uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
 
   // Progress container for per-file status
@@ -460,10 +509,13 @@ async function onPublicUploadClick() {
         fileInput.value = '';
         publicDocsCurrentPage = 1;
         fetchPublicDocs();
+        
+        // Re-enable upload button if it exists
         if (uploadBtn) {
           uploadBtn.disabled = false;
           uploadBtn.textContent = 'Upload Document(s)';
         }
+        
         // Clear upload progress bars after all uploads and table refresh
         const progressContainer = document.getElementById('public-upload-progress-container');
         if (progressContainer) progressContainer.innerHTML = '';
@@ -485,10 +537,16 @@ async function onPublicUploadClick() {
         fileInput.value = '';
         publicDocsCurrentPage = 1;
         fetchPublicDocs();
+        
+        // Re-enable upload button if it exists
         if (uploadBtn) {
           uploadBtn.disabled = false;
           uploadBtn.textContent = 'Upload Document(s)';
         }
+        
+        // Clear upload progress bars after all uploads and table refresh
+        const progressContainer = document.getElementById('public-upload-progress-container');
+        if (progressContainer) progressContainer.innerHTML = '';
       }
     };
 

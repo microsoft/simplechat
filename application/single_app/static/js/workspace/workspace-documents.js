@@ -552,6 +552,26 @@ function renderDocumentRow(doc) {
                 <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
                     <i class="bi bi-check-square me-2"></i>Select
                 </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
+                    <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+                </a></li>
+        `;
+        
+        // Add Extract Metadata option if enabled
+        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            actionsDropdown += `
+                <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
+                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                </a></li>
+            `;
+        }
+        
+        // Add Search in Chat option
+        actionsDropdown += `
+            <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
+                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+            </a></li>
         `;
         
         if (isOwner) {
@@ -559,6 +579,7 @@ function renderDocumentRow(doc) {
             if (window.enable_file_sharing === true || window.enable_file_sharing === "true") {
                 const shareCount = doc.shared_user_ids && doc.shared_user_ids.length > 0 ? doc.shared_user_ids.length : 0;
                 actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item" href="#" onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
                     <i class="bi bi-share-fill me-2"></i>Share
                     <span class="badge bg-secondary ms-1">${shareCount}</span>
@@ -567,6 +588,7 @@ function renderDocumentRow(doc) {
             }
             
             actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
                     <i class="bi bi-trash-fill me-2"></i>Delete
                 </a></li>
@@ -574,6 +596,7 @@ function renderDocumentRow(doc) {
         } else if (sharedUserEntry && !sharedUserEntry.endsWith(",not_approved")) {
             // Non-owner with approved access: show Remove option
             actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item text-danger" href="#" onclick="window.removeSelfFromDocument('${docId}', event); return false;">
                     <i class="bi bi-x-circle-fill me-2"></i>Remove
                 </a></li>

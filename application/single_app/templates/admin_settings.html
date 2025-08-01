@@ -38,6 +38,46 @@
         #classification-categories-tbody td {
             vertical-align: middle;
         }
+        
+        /* Floating Save Button */
+        .floating-save-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 50px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+        
+        .floating-save-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .floating-save-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Ensure the button is visible above other content */
+        .floating-save-btn {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .floating-save-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: 140px;
+            }
+        }
     </style>
 {% endblock %}
 
@@ -80,8 +120,7 @@
             {% endif %}
         </p>
         <div class="d-flex align-items-center mb-3">
-            <button type="submit" class="btn btn-primary mt-3">Save Settings</button>
-            <button type="button" class="btn btn-outline-secondary mt-3 ms-2" id="launch-walkthrough-btn">
+            <button type="button" class="btn btn-outline-secondary mt-3" id="launch-walkthrough-btn">
                 <i class="bi bi-signpost-split"></i> Start Setup Walkthrough
             </button>
         </div>
@@ -2409,6 +2448,12 @@
             </div>
         </div> 
     </form>
+    
+    <!-- Floating Save Button -->
+    <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
+        <i class="bi bi-floppy"></i> Save Settings
+    </button>
+    
     <div>
         <!-- Plugin Modal (moved outside form) -->
         {% include '_plugin_modal.html' %}

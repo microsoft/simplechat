@@ -131,18 +131,18 @@
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
-                         <div class="flex-grow-1" style="min-width: 120px;">
+                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 200px;">
                              <label for="doc-scope-select" class="form-label mb-1 small text-muted">Scope</label>
                              <select class="form-select form-select-sm" id="doc-scope-select">
                                  <option value="all" selected>All</option>
                                  <option value="personal">Personal</option>
-                                 <option value="group">Group</option>
+                                 <option value="group">Group{% if active_group_name %}: {{ active_group_name }}{% endif %}</option>
                                  {% if settings.enable_public_workspaces %}
                                  <option value="public">Public</option>
                                  {% endif %}
                              </select>
                          </div>
-                             <div class="flex-grow-1" style="min-width: 200px;">
+                             <div class="flex-grow-1" style="min-width: 250px;">
                              <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
                              <div class="dropdown" id="document-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center" 
