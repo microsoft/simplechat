@@ -1,0 +1,89 @@
+/* Top Navigation Styles */
+
+/* Base body padding for top navigation */
+body {
+  /* Default: navbar height only */
+  padding-top: 56px;
+  overflow-x: hidden;
+  height: 100%;
+}
+
+/* Navigation layout toggle styles */
+.nav-layout-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.nav-layout-toggle:hover {
+  opacity: 0.8;
+}
+
+/* Ensure nav-link containing nav layout toggle is aligned with other nav links */
+.nav-item .nav-link.nav-layout-toggle {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* Ensure dropdown nav layout toggle aligns with other dropdown items */
+.dropdown-item.nav-layout-toggle {
+  display: flex;
+  align-items: center;
+  text-align: left;
+}
+
+/* Dark mode toggle styles within navigation */
+.dark-mode-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.dark-mode-toggle:hover {
+  opacity: 0.8;
+}
+
+/* Ensure nav-link containing dark mode toggle is aligned with other nav links */
+.nav-item .nav-link.dark-mode-toggle {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* Ensure dropdown dark mode toggle aligns with other dropdown items */
+.dropdown-item.dark-mode-toggle {
+  display: flex;
+  align-items: center;
+  text-align: left;
+}
+
+/* Classification banner adjustments */
+#classification-banner + nav.navbar.fixed-top {
+  top: 40px; /* Height of the banner */
+}
+
+#classification-banner {
+  height: 40px;
+  line-height: 40px;
+}
+
+/* Dark mode navbar styling */
+[data-bs-theme="dark"] .navbar-light {
+  background-color: #343a40 !important;
+}
+
+[data-bs-theme="dark"] .navbar-light .navbar-brand,
+[data-bs-theme="dark"] .navbar-light .nav-link {
+  color: #e9ecef;
+}

@@ -1,5 +1,9 @@
 {# Sidebar Navigation Partial #}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040;">
+  <!-- Mobile close button (only visible on small screens) -->
+  <button type="button" class="btn-close position-absolute d-sm-none" aria-label="Close sidebar" 
+          style="top: 1rem; right: 1rem; z-index: 1041;" onclick="toggleMobileSidebar()"></button>
+  
   <div class="p-3 border-bottom flex-shrink-0">
     {% if app_settings.show_logo %}
       <a class="navbar-brand d-flex align-items-center mb-2" href="{{ url_for('index') }}">

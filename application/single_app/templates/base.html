@@ -33,6 +33,9 @@
 
   <!-- Your custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <!-- Navigation and Sidebar CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/navigation.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}" />
   <!-- DataTables CSS -->
   <!-- <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
   LOCAL VERSION BELOW
@@ -40,25 +43,6 @@
   <link rel="stylesheet" href="/static/css/jquery.dataTables.min.css" />
 
   <style>
-    body {
-      /* Default: navbar height only */
-      padding-top: 56px;
-      overflow-x: hidden;
-      height: 100%;
-    }
-    body.sidebar-nav-enabled {
-      padding-left: 260px !important;
-      padding-top: 0 !important;
-    }
-    #sidebar-nav {
-      display: none;
-    }
-    body.sidebar-nav-enabled #sidebar-nav {
-      display: flex !important;
-    }
-    body.sidebar-nav-enabled nav.navbar {
-      display: none !important;
-    }
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
       top: 40px; /* Height of the banner */
@@ -189,6 +173,12 @@
 
   <!-- Main Content Area -->
   <div class="container main-content" id="main-content">
+    <!-- Mobile sidebar toggle button (only visible on small screens when sidebar nav is enabled) -->
+    <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only" 
+            onclick="toggleMobileSidebar()" style="display: none;">
+      <i class="bi bi-list"></i> Menu
+    </button>
+    
     {% block content %}{% endblock %}
   </div>
 
@@ -244,6 +234,9 @@
   
   <!-- Dark mode script -->
   <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
+  <!-- Navigation and Sidebar JavaScript -->
+  <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 

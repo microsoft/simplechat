@@ -1,4 +1,4 @@
-// Dark mode functionality
+// Dark Mode Functionality
 const USER_SETTINGS_KEY_DARK_MODE = 'darkModeEnabled';
 const LOCAL_STORAGE_THEME_KEY = 'simplechat-theme';
 
@@ -9,6 +9,7 @@ const htmlRoot = document.getElementById('htmlRoot');
 function getAllDarkModeToggles() {
   return Array.from(document.querySelectorAll('.dark-mode-toggle'));
 }
+
 function getToggleParts(toggle) {
   return {
     lightText: toggle.querySelector('#topNavSwitchToLightText, #sidebarSwitchToLightText'),
@@ -16,8 +17,8 @@ function getToggleParts(toggle) {
   };
 }
 
-// Save user setting to API
-async function saveUserSetting(settingsToUpdate) {
+// Save dark mode setting to API
+async function saveDarkModeSetting(settingsToUpdate) {
     try {
         const response = await fetch('/api/user/settings', {
             method: 'POST',
@@ -51,7 +52,7 @@ function toggleDarkMode(e) {
 
     // Save the preference to localStorage and API
     localStorage.setItem(LOCAL_STORAGE_THEME_KEY, newMode);
-    saveUserSetting({ [USER_SETTINGS_KEY_DARK_MODE]: newMode === 'dark' });
+    saveDarkModeSetting({ [USER_SETTINGS_KEY_DARK_MODE]: newMode === 'dark' });
 }
 
 // Apply theme mode and update UI
@@ -118,63 +119,28 @@ async function loadDarkModePreference() {
 
 // Initialize dark mode
 document.addEventListener('DOMContentLoaded', () => {
-    // Add click event listeners to all toggles
+    // Add click event listeners to all dark mode toggles
     getAllDarkModeToggles().forEach(toggle => {
         toggle.addEventListener('click', toggleDarkMode);
     });
+    
     // Load user preference (to sync with server)
     loadDarkModePreference();
+    
     // Ensure UI is in sync on load
-    const currentTheme = localStorage.getItem(LOCAL_STORAGE_THEME_KEY) || (typeof appSettings !== 'undefined' && appSettings.enable_dark_mode_default ? 'dark' : 'light');
+    const currentTheme = localStorage.getItem(LOCAL_STORAGE_THEME_KEY) || 
+                        (typeof appSettings !== 'undefined' && appSettings.enable_dark_mode_default ? 'dark' : 'light');
     setThemeMode(currentTheme);
 });
-/**
- * Nav layout toggle (top nav <-> sidebar nav)
- * - Persists in user settings via /api/user/settings
- * - On page load, fetches user settings to update toggle text
- */
-async function getUserSettings() {
-  try {
-    const resp = await fetch('/api/user/settings');
-    if (!resp.ok) return {};
-    const data = await resp.json();
-    return data.settings || {};
-  } catch (e) {
-    return {};
-  }
+
+// Export functions for use in other modules if needed
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        toggleDarkMode,
+        setThemeMode,
+        loadDarkModePreference,
+        getAllDarkModeToggles,
+        getToggleParts,
+        saveDarkModeSetting
+    };
 }
-async function setUserNavLayout(navLayout) {
-  try {
-    await fetch('/api/user/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: { navLayout } })
-    });
-  } catch (e) {}
-}
-function updateNavLayoutToggleText(navLayout) {
-  document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
-    if (navLayout === 'sidebar') {
-      btn.textContent = 'Switch to Top Nav';
-    } else {
-      btn.textContent = 'Switch to Left Nav';
-    }
-  });
-}
-document.addEventListener('DOMContentLoaded', () => {
-  // On click, toggle nav layout in user settings and reload
-  document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
-    btn.addEventListener('click', async function(e) {
-      e.preventDefault();
-      const settings = await getUserSettings();
-      const current = settings.navLayout === 'sidebar' ? 'sidebar' : 'top';
-      const next = current === 'sidebar' ? 'top' : 'sidebar';
-      await setUserNavLayout(next);
-      window.location.reload();
-    });
-  });
-  // On load, update toggle text based on user settings
-  getUserSettings().then(settings => {
-    updateNavLayoutToggleText(settings.navLayout === 'sidebar' ? 'sidebar' : 'top');
-  });
-});

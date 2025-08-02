@@ -26,15 +26,6 @@ main {
     --bs-body-color: #e9ecef;
 }
 
-[data-bs-theme="dark"] .navbar-light {
-    background-color: #343a40 !important;
-}
-
-[data-bs-theme="dark"] .navbar-light .navbar-brand,
-[data-bs-theme="dark"] .navbar-light .nav-link {
-    color: #e9ecef;
-}
-
 [data-bs-theme="dark"] .card {
     background-color: #343a40;
     color: #e9ecef;
@@ -96,34 +87,4 @@ main {
 [data-bs-theme="dark"] .btn-light:hover {
     background-color: #495057 !important;
     border-color: #6c757d !important;
-}
-
-/* Dark mode toggle styles */
-.dark-mode-toggle {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    height: 100%;
-}
-
-.dark-mode-toggle:hover {
-    opacity: 0.8;
-}
-
-/* Ensure nav-link containing dark mode toggle is aligned with other nav links */
-.nav-item .nav-link.dark-mode-toggle {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding-top: 0;
-    padding-bottom: 0;
-    padding-left: 1rem;
-    padding-right: 1rem;
-}
-
-/* Ensure dropdown dark mode toggle aligns with other dropdown items */
-.dropdown-item.dark-mode-toggle {
-    display: flex;
-    align-items: center;
-    text-align: left;
 }

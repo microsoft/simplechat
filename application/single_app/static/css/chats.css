@@ -274,6 +274,23 @@ body.layout-docked .gutter {
   display: none !important;
 }
 
+/* Adjust main content containers when docked layout is active */
+body.layout-docked .container,
+body.layout-docked .container-fluid,
+body.layout-docked .main-content {
+  margin-left: 320px !important; /* Same as docked left pane width */
+  max-width: calc(100% - 320px) !important; /* Prevent overflow */
+  transition: margin-left 0.3s ease-in-out;
+}
+
+/* When docked sidebar is hidden, reset container positioning */
+body.layout-docked.left-pane-hidden .container,
+body.layout-docked.left-pane-hidden .container-fluid,
+body.layout-docked.left-pane-hidden .main-content {
+  margin-left: 0 !important;
+  max-width: 100% !important;
+}
+
 
 /* --- Styles SPECIFICALLY for Split Layout --- */
 /* Ensure split layout container is flex row and doesn't wrap */

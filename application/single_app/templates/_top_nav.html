@@ -1,12 +1,26 @@
-<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top" style="">
+<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
   <div class="container-fluid">
+    <!-- Brand/Logo -->
+    {% if app_settings.show_logo %}
+      <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
+        {% if app_settings.custom_logo_base64 %}
+          <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2" />
+        {% else %}
+          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="32" class="me-2" />
+        {% endif %}
+        {% if not app_settings.hide_app_title %}
+          <span class="fw-bold">{{ app_settings.app_title }}</span>
+        {% endif %}
+      </a>
+    {% elif not app_settings.hide_app_title %}
+      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">{{ app_settings.app_title }}</a>
+    {% else %}
+      <!-- Fallback when both logo and title are hidden -->
+      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">Home</a>
+    {% endif %}
+
     <!-- Left side nav -->
     <ul class="navbar-nav me-auto">
-      {% if not app_settings.show_logo or app_settings.hide_app_title %}
-      <li class="nav-item">
-        <a class="nav-link" href="{{ url_for('index') }}">Home</a>
-      </li>
-      {% endif %}
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         {% if app_settings.enable_user_workspace %}
         <li class="nav-item">

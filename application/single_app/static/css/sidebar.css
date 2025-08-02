@@ -1,0 +1,193 @@
+/* Sidebar Navigation Styles */
+
+/* Base body adjustments for sidebar layout */
+body.sidebar-nav-enabled {
+  padding-left: 0 !important; /* Remove body padding since we're using margin on containers */
+  padding-top: 0 !important;
+}
+
+/* Sidebar container */
+#sidebar-nav {
+  display: none;
+}
+
+body.sidebar-nav-enabled #sidebar-nav {
+  display: flex !important;
+}
+
+/* Hide top navbar when sidebar is enabled */
+body.sidebar-nav-enabled nav.navbar {
+  display: none !important;
+}
+
+/* Fix main content layout when sidebar is enabled - add left margin for sidebar width */
+body.sidebar-nav-enabled .main-content {
+  margin-left: 260px !important; /* Same as sidebar width */
+  max-width: calc(100% - 260px) !important; /* Prevent overflow */
+  margin-right: 0 !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  width: auto !important; /* Let it size naturally within the constraints */
+  transition: margin-left 0.3s ease-in-out;
+}
+
+/* Fix container positioning when sidebar is enabled - add left margin for sidebar width */
+body.sidebar-nav-enabled .container {
+  margin-left: 260px !important; /* Same as sidebar width */
+  max-width: calc(100% - 260px) !important; /* Prevent overflow */
+  margin-right: 0 !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  width: auto !important; /* Let it size naturally within the constraints */
+  transition: margin-left 0.3s ease-in-out;
+}
+
+/* Also fix container-fluid if used */
+body.sidebar-nav-enabled .container-fluid {
+  margin-left: 260px !important; /* Same as sidebar width */
+  max-width: calc(100% - 260px) !important; /* Prevent overflow */
+  margin-right: 0 !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  width: auto !important; /* Let it size naturally within the constraints */
+  transition: margin-left 0.3s ease-in-out;
+}
+
+/* Classification banner adjustments for sidebar layout */
+body.sidebar-nav-enabled.has-classification-banner #sidebar-nav {
+  top: 40px !important; /* Start below the classification banner */
+  height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
+}
+
+/* Sidebar navigation link styling */
+#sidebar-nav .nav-link {
+  color: rgba(var(--bs-emphasis-color-rgb), 0.65) !important;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+#sidebar-nav .nav-link:hover,
+#sidebar-nav .nav-link:focus {
+  color: rgba(var(--bs-emphasis-color-rgb), 0.8) !important;
+}
+
+/* Fix the indentation issue by ensuring consistent positioning */
+#sidebar-nav .nav-item {
+  margin: 0;
+}
+
+#sidebar-nav .nav {
+  margin-bottom: 0;
+}
+
+/* Light mode specific sidebar styling */
+[data-bs-theme="light"] #sidebar-nav .nav-link {
+  color: rgba(33, 37, 41, 0.65) !important;
+  font-size: 1rem;
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+[data-bs-theme="light"] #sidebar-nav .nav-link:hover,
+[data-bs-theme="light"] #sidebar-nav .nav-link:focus {
+  color: rgba(33, 37, 41, 0.8) !important;
+}
+
+/* Dark mode specific sidebar styling */
+[data-bs-theme="dark"] #sidebar-nav {
+  background-color: #343a40 !important;
+  color: #e9ecef !important;
+  border-color: #495057 !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .nav-link {
+  color: rgba(233, 236, 239, 0.65) !important;
+  font-size: 1rem;
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+[data-bs-theme="dark"] #sidebar-nav .nav-link:hover,
+[data-bs-theme="dark"] #sidebar-nav .nav-link:focus {
+  color: rgba(233, 236, 239, 0.8) !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .text-muted {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .border-bottom,
+[data-bs-theme="dark"] #sidebar-nav .border-top {
+  border-color: #495057 !important;
+}
+
+/* Fix user dropdown text color to match top nav */
+#sidebar-nav .dropdown-toggle {
+  color: inherit !important;
+}
+
+#sidebar-nav .dropdown-toggle .fw-semibold {
+  color: inherit !important;
+}
+
+/* Ensure navbar-brand font size matches top nav */
+#sidebar-nav .navbar-brand {
+  font-size: var(--bs-navbar-brand-font-size) !important;
+}
+
+/* Responsive adjustments for sidebar navigation */
+@media (max-width: 768px) {
+  body.sidebar-nav-enabled .main-content {
+    margin-left: 220px !important; /* Smaller sidebar on mobile */
+    max-width: calc(100% - 220px) !important;
+  }
+  body.sidebar-nav-enabled .container {
+    margin-left: 220px !important; /* Smaller sidebar on mobile */
+    max-width: calc(100% - 220px) !important;
+  }
+  body.sidebar-nav-enabled .container-fluid {
+    margin-left: 220px !important; /* Smaller sidebar on mobile */
+    max-width: calc(100% - 220px) !important;
+  }
+  body.sidebar-nav-enabled #sidebar-nav {
+    width: 220px !important;
+    min-width: 220px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  body.sidebar-nav-enabled .main-content {
+    margin-left: 0 !important; /* No margin on very small screens */
+    max-width: 100% !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  body.sidebar-nav-enabled .container {
+    margin-left: 0 !important; /* No margin on very small screens */
+    max-width: 100% !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  body.sidebar-nav-enabled .container-fluid {
+    margin-left: 0 !important; /* No margin on very small screens */
+    max-width: 100% !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  body.sidebar-nav-enabled #sidebar-nav {
+    width: 100% !important;
+    position: fixed !important;
+    z-index: 1050 !important; /* Higher than modals */
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  body.sidebar-nav-enabled.sidebar-open #sidebar-nav {
+    transform: translateX(0);
+  }
+  /* Show mobile menu button only when sidebar nav is enabled */
+  body.sidebar-nav-enabled .sidebar-nav-only {
+    display: block !important;
+  }
+}
