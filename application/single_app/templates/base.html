@@ -161,8 +161,10 @@
         document.documentElement.setAttribute('data-bs-theme', savedTheme);
       }
       // Sidebar nav early initialization to prevent flash
-      var navPref = localStorage.getItem('simplechat-nav-layout');
-      if (navPref === 'sidebar') {
+      // Check server-side user settings first, then fallback to localStorage
+      var userNavLayout = '{{ user_settings.get("settings", {}).get("navLayout", "") }}';
+      var navPref = userNavLayout || localStorage.getItem('simplechat-nav-layout');
+      if (navPref === 'sidebar' && document.body) {
         document.body.classList.add('sidebar-nav-enabled');
       }
     })();
@@ -174,27 +176,12 @@
 <body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
-         style="background: {{ app_settings.classification_banner_color or '#ffc107' }};
-                color: #fff;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                font-weight: bold;
-                padding: 0;
-                height: 40px;
-                font-size: 1.1em;
-                letter-spacing: 0.5px;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                z-index: 1051;">
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: #fff; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
       {{ app_settings.classification_banner_text }}
     </div>
   {% endif %}
   <!-- Navigation Bar -->
-  {% if request.cookies.get('nav_layout', '') == 'sidebar' %}
+  {% if user_settings.get('settings', {}).get('navLayout') == 'sidebar' %}
     {% include "_sidebar_nav.html" %}
   {% else %}
     {% include "_top_nav.html" %}
@@ -257,33 +244,6 @@
   
   <!-- Dark mode script -->
   <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
-  
-<script>
-    // Nav layout toggle handler
-    document.addEventListener('DOMContentLoaded', function() {
-      function updateNavToggleText() {
-        var sidebarEnabled = document.body.classList.contains('sidebar-nav-enabled');
-        var toggleLinks = document.querySelectorAll('.nav-layout-toggle');
-        toggleLinks.forEach(function(link) {
-          link.textContent = sidebarEnabled ? 'Switch to Top Nav' : 'Switch to Left Nav';
-        });
-      }
-      // Attach click handler to all nav layout toggle links
-      document.body.addEventListener('click', function(e) {
-        if (e.target.classList.contains('nav-layout-toggle')) {
-          e.preventDefault();
-          var sidebarEnabled = document.body.classList.contains('sidebar-nav-enabled');
-          if (sidebarEnabled) {
-            localStorage.setItem('simplechat-nav-layout', 'top');
-          } else {
-            localStorage.setItem('simplechat-nav-layout', 'sidebar');
-          }
-          window.location.reload();
-        }
-      });
-      updateNavToggleText();
-    });
-  </script>
   {% block scripts %}{% endblock %}
 </body>
 

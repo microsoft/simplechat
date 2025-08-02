@@ -164,8 +164,16 @@ def before_first_request():
 def inject_settings():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
-    # No change needed if you already return app_settings=public_settings
-    return dict(app_settings=public_settings)
+    # Inject per-user settings if logged in
+    user_settings = {}
+    try:
+        user_id = get_current_user_id()
+        if user_id:
+            from functions_settings import get_user_settings
+            user_settings = get_user_settings(user_id) or {}
+    except Exception as e:
+        user_settings = {}
+    return dict(app_settings=public_settings, user_settings=user_settings)
 
 @app.template_filter('to_datetime')
 def to_datetime_filter(value):

@@ -78,10 +78,12 @@
           </li>
           <li>
             <a class="dropdown-item dark-mode-toggle" id="sidebarDarkModeToggle" role="button" href="#">
-              <i class="bi bi-sun-fill me-2" id="sidebarLightModeIcon"></i>
-              <i class="bi bi-moon-fill me-2 d-none" id="sidebarDarkModeIcon"></i>
-              <span id="sidebarLightModeText">Light</span>
-              <span id="sidebarDarkModeText" class="d-none">Dark</span>
+              <span id="sidebarSwitchToDarkText">
+                <i class="bi bi-moon-fill me-2"></i>Dark Mode
+              </span>
+              <span id="sidebarSwitchToLightText" class="d-none">
+                <i class="bi bi-sun-fill me-2"></i>Light Mode
+              </span>
             </a>
           </li>
           {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
@@ -129,13 +131,7 @@
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li>
-            <a class="dropdown-item nav-layout-toggle" href="#">
-              {% if 'sidebar-nav-enabled' in (request.cookies.get('nav_layout') or '') %}
-                Switch to Top Nav
-              {% else %}
-                Switch to Left Nav
-              {% endif %}
-            </a>
+            <a class="dropdown-item nav-layout-toggle" href="#">Switch to Top Nav</a>
           </li>
           <li>
             <a class="dropdown-item" href="{{ url_for('logout') }}">

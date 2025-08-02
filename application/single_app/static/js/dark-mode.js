@@ -11,10 +11,8 @@ function getAllDarkModeToggles() {
 }
 function getToggleParts(toggle) {
   return {
-    lightIcon: toggle.querySelector('.bi-sun-fill'),
-    darkIcon: toggle.querySelector('.bi-moon-fill'),
-    lightText: toggle.querySelector('#lightModeText, #topNavLightModeText, #sidebarLightModeText'),
-    darkText: toggle.querySelector('#darkModeText, #topNavDarkModeText, #sidebarDarkModeText')
+    lightText: toggle.querySelector('#topNavSwitchToLightText, #sidebarSwitchToLightText'),
+    darkText: toggle.querySelector('#topNavSwitchToDarkText, #sidebarSwitchToDarkText')
   };
 }
 
@@ -65,17 +63,15 @@ function setThemeMode(mode) {
 
     // Update all toggles' icons and text
     getAllDarkModeToggles().forEach(toggle => {
-        const { lightIcon, darkIcon, lightText, darkText } = getToggleParts(toggle);
+        const { lightText, darkText } = getToggleParts(toggle);
         if (mode === 'dark') {
-            if (lightIcon) lightIcon.classList.add('d-none');
-            if (darkIcon) darkIcon.classList.remove('d-none');
-            if (lightText) lightText.classList.add('d-none');
-            if (darkText) darkText.classList.remove('d-none');
-        } else {
-            if (lightIcon) lightIcon.classList.remove('d-none');
-            if (darkIcon) darkIcon.classList.add('d-none');
+            // In dark mode, show "Light Mode" (to switch back to light), hide "Dark Mode"
             if (lightText) lightText.classList.remove('d-none');
             if (darkText) darkText.classList.add('d-none');
+        } else {
+            // In light mode, show "Dark Mode" (to switch to dark), hide "Light Mode"
+            if (lightText) lightText.classList.add('d-none');
+            if (darkText) darkText.classList.remove('d-none');
         }
         // Always ensure the toggle itself is visible
         if (toggle && toggle.classList) toggle.classList.remove('d-none');
@@ -131,4 +127,54 @@ document.addEventListener('DOMContentLoaded', () => {
     // Ensure UI is in sync on load
     const currentTheme = localStorage.getItem(LOCAL_STORAGE_THEME_KEY) || (typeof appSettings !== 'undefined' && appSettings.enable_dark_mode_default ? 'dark' : 'light');
     setThemeMode(currentTheme);
+});
+/**
+ * Nav layout toggle (top nav <-> sidebar nav)
+ * - Persists in user settings via /api/user/settings
+ * - On page load, fetches user settings to update toggle text
+ */
+async function getUserSettings() {
+  try {
+    const resp = await fetch('/api/user/settings');
+    if (!resp.ok) return {};
+    const data = await resp.json();
+    return data.settings || {};
+  } catch (e) {
+    return {};
+  }
+}
+async function setUserNavLayout(navLayout) {
+  try {
+    await fetch('/api/user/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { navLayout } })
+    });
+  } catch (e) {}
+}
+function updateNavLayoutToggleText(navLayout) {
+  document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
+    if (navLayout === 'sidebar') {
+      btn.textContent = 'Switch to Top Nav';
+    } else {
+      btn.textContent = 'Switch to Left Nav';
+    }
+  });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  // On click, toggle nav layout in user settings and reload
+  document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      const settings = await getUserSettings();
+      const current = settings.navLayout === 'sidebar' ? 'sidebar' : 'top';
+      const next = current === 'sidebar' ? 'top' : 'sidebar';
+      await setUserNavLayout(next);
+      window.location.reload();
+    });
+  });
+  // On load, update toggle text based on user settings
+  getUserSettings().then(settings => {
+    updateNavLayoutToggleText(settings.navLayout === 'sidebar' ? 'sidebar' : 'top');
+  });
 });

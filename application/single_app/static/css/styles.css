@@ -101,10 +101,8 @@ main {
 /* Dark mode toggle styles */
 .dark-mode-toggle {
     cursor: pointer;
-    padding: 0.25rem;
     display: flex;
     align-items: center;
-    justify-content: center;
     height: 100%;
 }
 
@@ -119,4 +117,13 @@ main {
     height: 100%;
     padding-top: 0;
     padding-bottom: 0;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+/* Ensure dropdown dark mode toggle aligns with other dropdown items */
+.dropdown-item.dark-mode-toggle {
+    display: flex;
+    align-items: center;
+    text-align: left;
 }

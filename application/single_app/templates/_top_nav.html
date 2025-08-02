@@ -57,10 +57,12 @@
             </li>
             <li>
               <a class="dropdown-item dark-mode-toggle" id="topNavDarkModeToggle" role="button" href="#">
-                <i class="bi bi-sun-fill me-2" id="topNavLightModeIcon"></i>
-                <i class="bi bi-moon-fill me-2 d-none" id="topNavDarkModeIcon"></i>
-                <span id="topNavLightModeText">Light</span>
-                <span id="topNavDarkModeText" class="d-none">Dark</span>
+                <span id="topNavSwitchToDarkText">
+                  <i class="bi bi-moon-fill me-2"></i>Dark Mode
+                </span>
+                <span id="topNavSwitchToLightText" class="d-none">
+                  <i class="bi bi-sun-fill me-2"></i>Light Mode
+                </span>
               </a>
             </li>
             {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
