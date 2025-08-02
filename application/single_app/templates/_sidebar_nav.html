@@ -1,0 +1,151 @@
+{# Sidebar Navigation Partial #}
+<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040;">
+  <div class="p-3 border-bottom flex-shrink-0">
+    {% if app_settings.show_logo %}
+      <a class="navbar-brand d-flex align-items-center mb-2" href="{{ url_for('index') }}">
+        {% if app_settings.custom_logo_base64 %}
+          <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2" />
+        {% else %}
+          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="32" class="me-2" />
+        {% endif %}
+        {% if not app_settings.hide_app_title %}
+          <span class="fw-bold">{{ app_settings.app_title }}</span>
+        {% endif %}
+      </a>
+    {% elif not app_settings.hide_app_title %}
+      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">{{ app_settings.app_title }}</a>
+    {% endif %}
+  </div>
+  <div class="flex-grow-1 overflow-auto">
+    <div class="mt-2 mb-1 ps-3 pe-2 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
+      Workspaces
+    </div>
+    <ul class="nav flex-column mb-2">
+      {% if app_settings.enable_user_workspace %}
+      <li class="nav-item">
+        <a class="nav-link d-flex align-items-center" href="{{ url_for('workspace') }}">
+          <i class="bi bi-folder me-2"></i> Personal
+        </a>
+      </li>
+      {% endif %}
+      {% if app_settings.enable_group_workspaces %}
+      <li class="nav-item">
+        <a class="nav-link d-flex align-items-center" href="{{ url_for('group_workspaces') }}">
+          <i class="bi bi-folder me-2"></i> Groups
+        </a>
+      </li>
+      {% endif %}
+      {% if app_settings.enable_public_workspaces %}
+      <li class="nav-item">
+        <a class="nav-link d-flex align-items-center" href="{{ url_for('public_directory') }}">
+          <i class="bi bi-folder me-2"></i> Public Directory
+        </a>
+      </li>
+      {% endif %}
+    </ul>
+    <ul class="nav flex-column">
+      {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
+        </li>
+      {% endif %}
+    </ul>
+  </div>
+  <div class="border-top p-3">
+    {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+      <div class="dropdown mb-2">
+        <a class="d-flex align-items-center text-decoration-none dropdown-toggle" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="gap: 0.5rem;">
+          <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
+            <span class="text-white fw-bold">{{ session['user'].get('name', '')[:2] }}</span>
+          </div>
+          <div>
+            <div class="fw-semibold">{{ session['user'].get('name', 'User') }}</div>
+            <div class="text-muted small">
+              {% if 'Admin' in session['user']['roles'] %}
+                Admin account
+              {% else %}
+                Personal Account
+              {% endif %}
+            </div>
+          </div>
+          <span class="ms-2"></span>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sidebarUserDropdown">
+          <li>
+            <a class="dropdown-item" href="{{ url_for('profile') }}">
+              <i class="bi bi-person-circle me-2"></i> My Account
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item dark-mode-toggle" id="sidebarDarkModeToggle" role="button" href="#">
+              <i class="bi bi-sun-fill me-2" id="sidebarLightModeIcon"></i>
+              <i class="bi bi-moon-fill me-2 d-none" id="sidebarDarkModeIcon"></i>
+              <span id="sidebarLightModeText">Light</span>
+              <span id="sidebarDarkModeText" class="d-none">Dark</span>
+            </a>
+          </li>
+          {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_public_workspaces and (not app_settings.require_member_of_create_public_workspace or (session.get('user') and session['user'].get('roles') and 'CreatePublicWorkspaces' in session['user']['roles'])) %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_user_feedback %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_content_safety %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+          </li>
+          {% endif %}
+          {% if 'Admin' in session['user']['roles'] %}
+          <li><hr class="dropdown-divider"></li>
+          <div class="px-3 pt-2 pb-1 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
+            Admin
+          </div>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
+          </li>
+          {% if app_settings.enable_content_safety %}
+            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
+            </li>
+            {% endif %}
+          {% endif %}
+          {% if app_settings.enable_user_feedback %}
+            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
+            </li>
+            {% endif %}
+          {% endif %}
+          {% endif %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <a class="dropdown-item nav-layout-toggle" href="#">
+              {% if 'sidebar-nav-enabled' in (request.cookies.get('nav_layout') or '') %}
+                Switch to Top Nav
+              {% else %}
+                Switch to Left Nav
+              {% endif %}
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('logout') }}">
+              <i class="bi bi-box-arrow-right me-2"></i> Logout
+            </a>
+          </li>
+        </ul>
+      </div>
+    {% else %}
+      <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
+    {% endif %}
+  </div>
+</div>
