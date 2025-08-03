@@ -226,11 +226,11 @@
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Your Workspace (Personal Workspace)</span>
+                                <span>Personal Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>My Groups (Group Workspaces)</span>
+                                <span>Group Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -1339,7 +1339,7 @@
                 
                 <div class="card mb-3 p-3">
                     
-                    <h5>Enable Your Workspace</h5>
+                    <h5>Enable Personal Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of your personal workspace.
                     </p>
@@ -1350,7 +1350,7 @@
                             name="enable_user_workspace"
                             {% if settings.enable_user_workspace %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_user_workspace">
-                            Enable Your Workspace
+                            Enable Personal Workspaces
                         </label>
                     </div>
                 </div>
@@ -1358,7 +1358,7 @@
                
                <div class="card mb-3 p-3">
                     
-                    <h5>Enable My Groups (includes Group Workspaces)</h5>
+                    <h5>Enable Group Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of group workspaces, as well as group collaboration features.
                     </p>
@@ -1369,7 +1369,7 @@
                             name="enable_group_workspaces"
                             {% if settings.enable_group_workspaces %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_group_workspaces">
-                            Enable My Groups (includes Group Workspaces)
+                            Enable Group Workspaces
                         </label>
                     </div>
 

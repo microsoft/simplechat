@@ -1,83 +1,99 @@
 {# Sidebar Navigation Partial #}
-<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040;">
+<div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
   <!-- Mobile close button (only visible on small screens) -->
-  <button type="button" class="btn-close position-absolute d-sm-none" aria-label="Close sidebar" 
+  <button type="button" class="btn-close position-absolute d-sm-none" aria-label="Close sidebar"
           style="top: 1rem; right: 1rem; z-index: 1041;" onclick="toggleMobileSidebar()"></button>
+  
+  <!-- Collapse/Expand button -->
+  <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
+          aria-label="Toggle sidebar" title="Hide sidebar"
+          style="top: 0.75rem; right: 0.75rem; z-index: 1041; width: 28px; height: 28px; padding: 0; border-radius: 4px;"
+          onclick="toggleSidebar()">
+    <i id="sidebar-toggle-icon" class="bi bi-chevron-left" style="font-size: 0.875rem;"></i>
+  </button>
   
   <div class="p-3 border-bottom flex-shrink-0">
     {% if app_settings.show_logo %}
       <a class="navbar-brand d-flex align-items-center mb-2" href="{{ url_for('index') }}">
         {% if app_settings.custom_logo_base64 %}
-          <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2" />
+          <img id="sidebar-logo" src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="32" class="me-2" />
         {% else %}
-          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="32" class="me-2" />
+          <img id="sidebar-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="32" class="me-2" />
         {% endif %}
         {% if not app_settings.hide_app_title %}
-          <span class="fw-bold">{{ app_settings.app_title }}</span>
+          <span id="sidebar-app-title" class="fw-bold">{{ app_settings.app_title }}</span>
         {% endif %}
       </a>
     {% elif not app_settings.hide_app_title %}
-      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">{{ app_settings.app_title }}</a>
+      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
+        <span id="sidebar-app-title">{{ app_settings.app_title }}</span>
+      </a>
     {% endif %}
   </div>
-  <div class="flex-grow-1 overflow-auto">
-    <div class="mt-2 mb-1 ps-3 pe-2 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
-      Workspaces
-    </div>
-    <ul class="nav flex-column mb-2">
-      {% if app_settings.enable_user_workspace %}
-      <li class="nav-item">
-        <a class="nav-link d-flex align-items-center" href="{{ url_for('workspace') }}">
-          <i class="bi bi-folder me-2"></i> Personal
-        </a>
-      </li>
-      {% endif %}
-      {% if app_settings.enable_group_workspaces %}
-      <li class="nav-item">
-        <a class="nav-link d-flex align-items-center" href="{{ url_for('group_workspaces') }}">
-          <i class="bi bi-folder me-2"></i> Groups
-        </a>
-      </li>
-      {% endif %}
-      {% if app_settings.enable_public_workspaces %}
-      <li class="nav-item">
-        <a class="nav-link d-flex align-items-center" href="{{ url_for('public_directory') }}">
-          <i class="bi bi-folder me-2"></i> Public Directory
-        </a>
-      </li>
-      {% endif %}
-    </ul>
+  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column">
     <ul class="nav flex-column">
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
+          <a class="nav-link" href="{{ url_for('chats') }}">
+            <i class="bi bi-chat-square-text me-2"></i><span class="nav-text">Chat</span>
+          </a>
         </li>
       {% endif %}
     </ul>
+    <div class="flex-grow-1 overflow-auto">
+      <div id="workspaces-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">Workspaces</span>
+        <i id="workspaces-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="workspaces-section">
+        <ul class="nav flex-column mb-2">
+          {% if app_settings.enable_user_workspace %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('workspace') }}">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
+            </a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_group_workspaces %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('group_workspaces') }}">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
+            </a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_public_workspaces %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('public_directory') }}">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> Public</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
   </div>
   <div class="border-top p-3">
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-      <div class="dropdown mb-2">
-        <a class="d-flex align-items-center text-decoration-none dropdown-toggle" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="gap: 0.5rem;">
-          <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
-            <span class="text-white fw-bold">{{ session['user'].get('name', '')[:2] }}</span>
+      <div class="dropdown">
+        <a class="nav-link dropdown-toggle p-0 d-flex align-items-center" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
+          <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+            <span class="text-white fw-bold" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
           </div>
-          <div>
-            <div class="fw-semibold">{{ session['user'].get('name', 'User') }}</div>
-            <div class="text-muted small">
+          <div class="d-flex flex-column justify-content-center" style="line-height: 1;">
+            <span class="fw-semibold" style="font-size: 1rem;">{{ session['user'].get('name', 'User') }}</span>
+            <span class="text-muted" style="font-size: 0.75rem;">
               {% if 'Admin' in session['user']['roles'] %}
                 Admin account
               {% else %}
                 Personal Account
               {% endif %}
-            </div>
+            </span>
           </div>
-          <span class="ms-2"></span>
         </a>
         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sidebarUserDropdown">
           <li>
             <a class="dropdown-item" href="{{ url_for('profile') }}">
-              <i class="bi bi-person-circle me-2"></i> My Account
+              <i class="bi bi-person-circle me-2"></i> {{ session['user'].get('name') }}
             </a>
           </li>
           <li>
@@ -111,7 +127,6 @@
           </li>
           {% endif %}
           {% if 'Admin' in session['user']['roles'] %}
-          <li><hr class="dropdown-divider"></li>
           <div class="px-3 pt-2 pb-1 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
             Admin
           </div>
@@ -133,7 +148,6 @@
             {% endif %}
           {% endif %}
           {% endif %}
-          <li><hr class="dropdown-divider"></li>
           <li>
             <a class="dropdown-item nav-layout-toggle" href="#">Switch to Top Nav</a>
           </li>
@@ -148,4 +162,106 @@
       <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
     {% endif %}
   </div>
+  <script>
+    // Collapsible Workspaces Section
+    document.addEventListener('DOMContentLoaded', function() {
+      var toggle = document.getElementById('workspaces-toggle');
+      var section = document.getElementById('workspaces-section');
+      var caret = document.getElementById('workspaces-caret');
+      var collapsed = false;
+      if (toggle && section && caret) {
+        toggle.addEventListener('click', function() {
+          collapsed = !collapsed;
+          section.style.display = collapsed ? 'none' : '';
+          caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+    });
+
+    // Sidebar Toggle Functionality
+    function toggleSidebar() {
+      var sidebar = document.getElementById('sidebar-nav');
+      var toggleBtn = document.getElementById('sidebar-toggle-btn');
+      var toggleIcon = document.getElementById('sidebar-toggle-icon');
+      var floatingBtn = document.getElementById('floating-expand-btn');
+      var body = document.body;
+      
+      // Get all main content containers - using more comprehensive selectors
+      var allContentElements = document.querySelectorAll('.main-content, .container, .container-fluid, #main-content');
+      var mainContent = document.getElementById('main-content');
+      
+      if (sidebar.classList.contains('sidebar-expanded')) {
+        // Hide sidebar completely
+        sidebar.classList.remove('sidebar-expanded');
+        sidebar.classList.add('sidebar-collapsed');
+        body.classList.add('sidebar-collapsed');
+        
+        // Update all content areas - remove left margin when sidebar is hidden
+        allContentElements.forEach(function(element) {
+          element.style.marginLeft = '0px';
+          element.style.maxWidth = '100%';
+        });
+        // Remove sidebar-padding class from main content
+        if (mainContent) mainContent.classList.remove('sidebar-padding');
+        
+        // Hide the sidebar toggle button and show the floating button
+        toggleBtn.style.display = 'none';
+        floatingBtn.classList.remove('d-none');
+        floatingBtn.classList.add('d-block');
+        
+      } else {
+        // Show sidebar
+        sidebar.classList.remove('sidebar-collapsed');
+        sidebar.classList.add('sidebar-expanded');
+        body.classList.remove('sidebar-collapsed');
+        
+        // Remove any inline margin/maxWidth and add sidebar-padding class
+        allContentElements.forEach(function(element) {
+          element.style.marginLeft = '';
+          element.style.maxWidth = '';
+        });
+        if (mainContent) mainContent.classList.add('sidebar-padding');
+        
+        // Show the sidebar toggle button and hide the floating button
+        toggleBtn.style.display = 'block';
+        floatingBtn.classList.remove('d-block');
+        floatingBtn.classList.add('d-none');
+      }
+    }
+    
+    // Add CSS for collapsed state
+    var style = document.createElement('style');
+    style.textContent = `
+      #sidebar-nav {
+        transition: transform 0.3s ease;
+      }
+      
+      #sidebar-nav.sidebar-collapsed {
+        transform: translateX(-100%);
+      }
+      
+      /* Smooth transitions for content area adjustments */
+      .main-content,
+      .container,
+      .container-fluid,
+      #main-content {
+        transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out !important;
+      }
+      
+      /* Floating expand button hover effect */
+      #floating-expand-btn:hover {
+        background-color: #f8f9fa !important;
+        transform: scale(1.05);
+        transition: all 0.2s ease;
+      }
+    `;
+    document.head.appendChild(style);
+  </script>
 </div>
+<!-- Floating expand button (shown when sidebar is collapsed) -->
+<button type="button" id="floating-expand-btn" class="btn btn-sm btn-outline-secondary d-none"
+        aria-label="Show sidebar" title="Show sidebar"
+        style="position: fixed; left: 1rem; top: 1rem; z-index: 1050; width: 40px; height: 40px; padding: 0; border-radius: 6px; background-color: #fff; border: 1px solid #dee2e6; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"
+        onclick="toggleSidebar()">
+  <i class="bi bi-list" style="font-size: 1.2rem;"></i>
+</button>

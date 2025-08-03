@@ -59,6 +59,11 @@
     .main-content {
       margin-top: 10px;
     }
+    /* Sidebar padding for main content when sidebar is enabled */
+    .sidebar-padding {
+      padding-left: 260px;
+      padding-top: 16px !important;
+    }
 
     .modal-body {
       overflow: auto;
@@ -172,9 +177,9 @@
   {% endif %}
 
   <!-- Main Content Area -->
-  <div class="container main-content" id="main-content">
+  <div class="container main-content{% if user_settings.get('settings', {}).get('navLayout') == 'sidebar' %} sidebar-padding{% endif %}" id="main-content">
     <!-- Mobile sidebar toggle button (only visible on small screens when sidebar nav is enabled) -->
-    <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only" 
+    <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only"
             onclick="toggleMobileSidebar()" style="display: none;">
       <i class="bi bi-list"></i> Menu
     </button>

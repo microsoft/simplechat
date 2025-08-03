@@ -24,17 +24,17 @@
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         {% if app_settings.enable_user_workspace %}
         <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('workspace') }}">Your Workspace</a>
+          <a class="nav-link" href="{{ url_for('workspace') }}">Personal</a>
         </li>
         {% endif %}
         {% if app_settings.enable_group_workspaces %}
         <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('group_workspaces') }}">Group Workspaces</a>
+          <a class="nav-link" href="{{ url_for('group_workspaces') }}">Groups</a>
         </li>
         {% endif %}
         {% if app_settings.enable_public_workspaces %}
         <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('public_directory') }}">Public Directory</a>
+          <a class="nav-link" href="{{ url_for('public_directory') }}">Public</a>
         </li>
         {% endif %}
         <li class="nav-item">

@@ -53,3 +53,17 @@ def register_route_frontend_group_workspaces(app):
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count
         )
+
+        @app.route('/set_active_group', methods=['POST'])
+        @login_required
+        @user_required
+        @enabled_required("enable_group_workspaces")
+        def set_active_group():
+            user_id = get_current_user_id()
+            group_id = request.form.get("group_id")
+            if not user_id or not group_id:
+                return "Missing user or group id", 400
+            success = update_user_settings(user_id, {"activeGroupOid": group_id})
+            if not success:
+                return "Failed to update user settings", 500
+            return redirect(url_for('group_workspaces'))

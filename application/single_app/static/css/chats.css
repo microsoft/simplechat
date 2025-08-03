@@ -1,3 +1,7 @@
+/* Remove all margin from sidebar navigation */
+.nav.flex-column {
+    margin: 0 !important;
+}
 /* Fix for document dropdown visibility */
 #document-dropdown .dropdown-menu.show {
   display: block !important;
@@ -1032,4 +1036,9 @@ ol {
   border-bottom: 1px solid #e0e0e0;
   box-shadow: 0 2px 4px rgba(0,0,0,0.02);
   z-index: 1050;
+}
+
+/* Remove left margin from navbar-nav.me-auto in top nav */
+.navbar-nav.me-auto {
+    margin-left: 0 !important;
 }
