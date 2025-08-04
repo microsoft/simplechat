@@ -62,8 +62,8 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo ✅ Container started successfully
-echo MCP Server URL: http://localhost:8084/mcp/
-echo OAuth Callback URL: http://localhost:8080/auth/callback
+echo MCP Server URL: http://127.0.0.1:8084/mcp/
+echo OAuth Callback URL: http://127.0.0.1:8080/auth/callback
 goto :end
 
 :start
@@ -93,7 +93,7 @@ echo 🔍 Health check:
 docker ps --filter "name=mcp-entra-auth-server" --filter "status=running" | findstr mcp-entra-auth-server >nul
 if %ERRORLEVEL% equ 0 (
     REM Test if server is responding
-    curl -s http://localhost:8084 >nul 2>&1
+    curl -s http://127.0.0.1:8084 >nul 2>&1
     if !ERRORLEVEL! equ 0 (
         echo ✅ Server is healthy and responding
     ) else (
