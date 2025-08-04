@@ -1,44 +1,157 @@
 import requests
+import os
 import json
 from auth_manager import AuthenticationManager
 from config import SCOPES
 
+from dotenv import load_dotenv
 from fastmcp import FastMCP
 from datetime import datetime
 
 SESSION_ID = None
 BEARER_TOKEN_OBJECT = None
 ACCESS_TOKEN_VALUE = None
-BACKEND_URL = "https://127.0.0.1:5443"
+BACKEND_URL = os.getenv("FLASK_API_BASE_URL")
+MCPSERVER_NAME = os.getenv("MCP_SERVER_NAME")
+AUTHENTICATED = False
+USER_INFO = None
 
-mcp = FastMCP(name="SimpleChat MCP Server")
+load_dotenv()
+mcp = FastMCP(name=MCPSERVER_NAME)
+
+def check_authentication():
+    """Check if user is authenticated and return error message if not"""
+    global AUTHENTICATED, SESSION_ID
+    if not AUTHENTICATED or SESSION_ID is None:
+        return "Authentication required. Please run the 'login' tool first."
+    return None
+
+def require_authentication(func):
+    """Decorator to ensure user is authenticated before calling MCP tools"""
+    def wrapper(*args, **kwargs):
+        global AUTHENTICATED, SESSION_ID
+        if not AUTHENTICATED or SESSION_ID is None:
+            return "Authentication required. Please run the 'login' tool first."
+        return func(*args, **kwargs)
+    return wrapper
+
+def validate_session():
+    """Validate current session with backend"""
+    global SESSION_ID, BACKEND_URL, ACCESS_TOKEN_VALUE
+    
+    if not SESSION_ID:
+        return False
+        
+    try:
+        url = f"{BACKEND_URL}/api/user_info"  # or any authenticated endpoint
+        headers = {'Content-Type': 'application/json'}
+        cookies = {"session": SESSION_ID}
+        
+        response = requests.get(url, headers=headers, cookies=cookies, verify=False, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Session validation failed: {e}")
+        return False
 
 @mcp.tool()
 def health() -> str:
-    """Health check."""
+    """Health check with authentication status."""
+    global AUTHENTICATED, SESSION_ID
+    
     current_datetime = datetime.now()
-    print("Current date and time (raw datetime object):", current_datetime)
     formatted_datetime = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
-    print("Current date and time (formatted):", formatted_datetime)
-    return f"MCP Server is up {formatted_datetime}."
+    
+    auth_status = "Authenticated" if AUTHENTICATED and SESSION_ID else "Not authenticated"
+    session_info = f" (Session: {SESSION_ID[:8]}...)" if SESSION_ID else ""
+    
+    # Test backend connectivity
+    try:
+        url = f"{BACKEND_URL}/api/chat/conversations"
+        response = requests.get(url, verify=False, timeout=5)
+        backend_status = f"Backend: {'OK' if response.status_code in [200, 401, 403] else f'HTTP {response.status_code}'}"
+    except Exception as e:
+        backend_status = f"Backend: Error - {str(e)[:50]}"
+    
+    return f"MCP Server is up {formatted_datetime}. {auth_status}{session_info}. {backend_status}"
+
+@mcp.tool()
+def logout() -> str:
+    """Logout from SimpleChat and clear authentication session."""
+    global AUTHENTICATED, SESSION_ID
+    
+    if AUTHENTICATED and SESSION_ID:
+        # Optionally call backend logout endpoint
+        try:
+            url = f"{BACKEND_URL}/api/logout"
+            headers = {'Content-Type': 'application/json'}
+            cookies = {"session": SESSION_ID}
+            requests.post(url, headers=headers, cookies=cookies, verify=False, timeout=5)
+        except Exception:
+            pass  # Ignore logout errors, clear local state anyway
+    
+    AUTHENTICATED = False
+    SESSION_ID = None
+    return "Successfully logged out from SimpleChat"
 
 @mcp.tool()
 def login() -> str:
-    """Login to SimpleChat."""
-    get_session()
-    return f"You are logged in to SimpleChat with session ID: {SESSION_ID}!"
+    """Login to SimpleChat and establish authentication session."""
+    global AUTHENTICATED, SESSION_ID
+    
+    try:
+        get_session()
+        
+        # Validate the session was established successfully
+        if SESSION_ID and validate_session():
+            AUTHENTICATED = True
+            return f"Successfully logged in to SimpleChat with session ID: {SESSION_ID}"
+        else:
+            AUTHENTICATED = False
+            SESSION_ID = None
+            return "Login failed - could not establish valid session"
+            
+    except Exception as e:
+        AUTHENTICATED = False
+        SESSION_ID = None
+        return f"Login failed: {str(e)}"
 
 @mcp.tool()
 def get_conversations() -> str:
-    """Get conversations from SimpleChat."""
+    """Get conversations from SimpleChat (requires authentication)."""
+    global AUTHENTICATED, SESSION_ID
+    
+    # Check authentication first
+    auth_error = check_authentication()
+    if auth_error:
+        return auth_error
+    
+    # Validate session before proceeding
+    if not validate_session():
+        AUTHENTICATED = False
+        SESSION_ID = None
+        return "Session expired. Please login again using the 'login' tool."
+    
     response = private_get_conversations()
     return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
 
 @mcp.tool()
 def send_chat_message(message: str) -> str:
-    """Send chat message to SimpleChat."""
+    """Send chat message to SimpleChat (requires authentication)."""
+    global AUTHENTICATED, SESSION_ID
+    
+    # Check authentication first
+    auth_error = check_authentication()
+    if auth_error:
+        return auth_error
+    
+    # Validate session before proceeding
+    if not validate_session():
+        AUTHENTICATED = False
+        SESSION_ID = None
+        return "Session expired. Please login again using the 'login' tool."
+    
     response = private_send_chat_message(message)
-    return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
+    return f"Send chat message called with session ID: {SESSION_ID}, has response: [{response}]."
 
 
 @mcp.resource("data://example/message")
@@ -105,8 +218,9 @@ def get_session():
         try:
             response_data = response.json()
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
-        except:
+        except Exception as e:
             print(f"Response Text: {response.text}")
+            print(f"JSON parse error: {e}")
             
         if response.status_code == 200:
             print("SUCCESS! Session established!")
@@ -162,8 +276,9 @@ def private_get_conversations():
         try:
             response_data = response.json()
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
-        except:
+        except Exception as e:
             print(f"Response Text: {response.text}")
+            print(f"JSON parse error: {e}")
             
         # if response.status_code == 200:
         #     print("SUCCESS! Get Conversations is working!")
@@ -247,8 +362,9 @@ def private_send_chat_message(message: str):
             response_data = response.json()
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
             return response_data
-        except:
+        except Exception as e:
             print(f"Response Text: {response.text}")
+            print(f"JSON parse error: {e}")
             
         # if response.status_code == 200:
         #     print("SUCCESS! Internal chat call is working!")
@@ -259,13 +375,13 @@ def private_send_chat_message(message: str):
         print(f"Request failed: {e}")
 
 if __name__ == "__main__":
-    #mcp.run()
+    mcp.run()
     #mcp.run(transport="stdio")
-    mcp.run(
-        transport="streamable-http",  # Specify the transport type
-        host="127.0.0.1",            # Host address (default: localhost)
-        port=8080,                   # Port number (default: 8000)
-        path="/mcp"
-        # ,                 # Path for the MCP endpoint
-        # debug=True                   # Enable debug mode (optional)
-    )
+    # mcp.run(
+    #     transport="streamable-http",  # Specify the transport type
+    #     host="127.0.0.1",            # Host address (default: localhost)
+    #     port=8080,                   # Port number (default: 8000)
+    #     path="/mcp"
+    #     # ,                 # Path for the MCP endpoint
+    #     # debug=True                   # Enable debug mode (optional)
+    # )
