@@ -26,3 +26,25 @@ fastmcp run .\server.py --transport streamable-http --port 8084 --host 127.0.0.1
 
 netstat -ano | findstr :8084
 taskkill /F /PID 27960
+
+## Deploy to Azure ACA
+
+``` cli
+az acr create --resource-group <your-resource-group> --name <your-acr-name> --sku Basic
+az acr login --name <your-acr-name>
+
+docker build -t <your-acr-name>.azurecr.io/fastmcp-server:latest .
+docker push <your-acr-name>.azurecr.io/fastmcp-server:latest
+
+az containerapp up \
+    --name <your-container-app-name> \
+    --resource-group <your-resource-group> \
+    --image <your-acr-name>.azurecr.io/fastmcp-server:latest \
+    --target-port 8000 \
+    --ingress external \
+    --environment <your-aca-environment-name> \
+    --query properties.latestRevisionFqdn
+
+az containerapp secret set --name <your-container-app-name> --resource-group <your-resource-group> --secrets my-api-key=YOUR_ACTUAL_API_KEY
+az containerapp update --name <your-container-app-name> --resource-group <your-resource-group> --set-env-vars "MY_API_KEY=secretref:my-api-key"
+```

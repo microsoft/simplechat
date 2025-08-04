@@ -55,6 +55,30 @@ def ping() -> str:
     return f"MCP Server is up {formatted_datetime}."
 
 @mcp.tool()
+def health_check() -> Dict[str, Any]:
+    """
+    Health check endpoint for monitoring and Docker health checks.
+    
+    Returns:
+        Dict containing server health status
+    """
+    try:
+        current_time = datetime.now().isoformat()
+        return {
+            "status": "healthy",
+            "timestamp": current_time,
+            "server_name": config.server_name,
+            "version": config.server_version,
+            "transport": config.transport_type
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@mcp.tool()
 def authenticate_user() -> Dict[str, Any]:
     """
     Authenticate user with Microsoft Entra ID.
