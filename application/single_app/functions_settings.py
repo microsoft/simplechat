@@ -650,5 +650,5 @@ def enabled_required(setting_key):
     return decorator
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing the substring "key"
-    return {k: v for k, v in full_settings.items() if "key" not in k}
+    # Exclude any key containing the substring "key" or specific sensitive URLs
+    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}

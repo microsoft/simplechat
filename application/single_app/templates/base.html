@@ -157,6 +157,10 @@
         document.body.classList.add('sidebar-nav-enabled');
       }
     })();
+<script>
+    // Set a global JS variable for mobile detection
+    window.isMobile = window.matchMedia("(max-width: 575.98px)").matches;
+  </script>
   </script>
   
   {% block head %}{% endblock %}

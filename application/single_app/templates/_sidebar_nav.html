@@ -1,8 +1,12 @@
 {# Sidebar Navigation Partial #}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
   <!-- Mobile close button (only visible on small screens) -->
-  <button type="button" class="btn-close position-absolute d-sm-none" aria-label="Close sidebar"
-          style="top: 1rem; right: 1rem; z-index: 1041;" onclick="toggleMobileSidebar()"></button>
+  <button type="button" id="mobile-sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-sm-none"
+          aria-label="Toggle sidebar" title="Collapse sidebar"
+          style="top: 1rem; right: 1rem; z-index: 1041; width: 28px; height: 28px; padding: 0; border-radius: 4px;"
+          onclick="toggleMobileSidebar()">
+    <i class="bi bi-chevron-left" style="font-size: 0.875rem;"></i>
+  </button>
   
   <!-- Collapse/Expand button -->
   <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
@@ -265,3 +269,38 @@
         onclick="toggleSidebar()">
   <i class="bi bi-list" style="font-size: 1.2rem;"></i>
 </button>
+<script>
+  // Mobile Sidebar Toggle Functionality
+  function toggleMobileSidebar() {
+    var sidebar = document.getElementById('sidebar-nav');
+    var floatingBtn = document.getElementById('floating-expand-btn');
+    if (!sidebar) return;
+    if (sidebar.classList.contains('mobile-sidebar-hidden')) {
+      sidebar.classList.remove('mobile-sidebar-hidden');
+      if (floatingBtn) floatingBtn.classList.add('d-none');
+    } else {
+      sidebar.classList.add('mobile-sidebar-hidden');
+      if (floatingBtn) floatingBtn.classList.remove('d-none');
+    }
+  }
+
+  // Add CSS for mobile sidebar transitions
+  var mobileStyle = document.createElement('style');
+  mobileStyle.textContent = `
+    @media (max-width: 575.98px) {
+      #sidebar-nav.mobile-sidebar-hidden {
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+      }
+      #sidebar-nav {
+        transition: transform 0.3s ease;
+      }
+      #floating-expand-btn {
+        left: 1rem !important;
+        top: 1rem !important;
+        z-index: 1051 !important;
+      }
+    }
+  `;
+  document.head.appendChild(mobileStyle);
+</script>
