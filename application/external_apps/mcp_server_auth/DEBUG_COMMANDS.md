@@ -48,3 +48,7 @@ az containerapp up \
 az containerapp secret set --name <your-container-app-name> --resource-group <your-resource-group> --secrets my-api-key=YOUR_ACTUAL_API_KEY
 az containerapp update --name <your-container-app-name> --resource-group <your-resource-group> --set-env-vars "MY_API_KEY=secretref:my-api-key"
 ```
+
+## Mcp inspector
+
+npx @modelcontextprotocol/inspector http://127.0.0.1:8084/mcp/

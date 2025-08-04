@@ -37,7 +37,7 @@ RUN mkdir -p /app/data
 # Set default environment variables to prevent startup errors
 ENV TENANT_ID="7d887458-fb0d-40bf-adb3-084d875f65db" \
     CLIENT_ID="22961fbc-e723-4a13-bd92-ddd83add0794" \
-    BACKEND_API_URL="https://127.0.0.1:5443/" \
+    BACKEND_API_URL="https://host.docker.internal:5443/" \
     API_SCOPES="22961fbc-e723-4a13-bd92-ddd83add0794/.default" \
     OAUTH_CALLBACK_PORT=8080 \
     MCP_SERVER_HOST=0.0.0.0 \
