@@ -1,3 +1,5 @@
+/* chats.css */
+
 /* Remove all margin from sidebar navigation */
 .nav.flex-column {
     margin: 0 !important;
@@ -237,9 +239,10 @@ body.layout-docked #left-pane {
   flex-basis: auto !important;
 }
 
+/* CORRECTED RULE: This rule now correctly applies margin and width to the right pane */
 body.layout-docked #right-pane {
   margin-left: 320px !important; /* Same as docked left pane width */
-  width: calc(100% - 300px) !important;
+  width: calc(100% - 320px) !important; /* Corrected width calculation */
   transition: margin-left 0.3s ease-in-out, width 0.3s ease-in-out;
    /* Override flex basis potentially set by split.js before destroy */
   flex-basis: auto !important;
@@ -268,6 +271,7 @@ body.layout-docked.left-pane-hidden #left-pane {
    transform: translateX(-100%);
    border-right: none !important;
 }
+/* CORRECTED RULE: This ensures the right pane takes up full width when the left is hidden */
 body.layout-docked.left-pane-hidden #right-pane {
    margin-left: 0 !important;
    width: 100% !important;
@@ -278,22 +282,12 @@ body.layout-docked .gutter {
   display: none !important;
 }
 
-/* Adjust main content containers when docked layout is active */
-body.layout-docked .container,
-body.layout-docked .container-fluid,
-body.layout-docked .main-content {
-  margin-left: 320px !important; /* Same as docked left pane width */
-  max-width: calc(100% - 320px) !important; /* Prevent overflow */
-  transition: margin-left 0.3s ease-in-out;
-}
-
-/* When docked sidebar is hidden, reset container positioning */
-body.layout-docked.left-pane-hidden .container,
-body.layout-docked.left-pane-hidden .container-fluid,
-body.layout-docked.left-pane-hidden .main-content {
-  margin-left: 0 !important;
-  max-width: 100% !important;
-}
+/*
+ * REMOVED a set of problematic rules that were here.
+ * The rules `body.layout-docked .container`, `body.layout-docked .container-fluid`, etc.
+ * were too broad and were incorrectly applying a margin to the top navigation bar,
+ * causing the layout issue. The corrected `#right-pane` rule above now handles the layout correctly.
+ */
 
 
 /* --- Styles SPECIFICALLY for Split Layout --- */
@@ -1041,4 +1035,12 @@ ol {
 /* Remove left margin from navbar-nav.me-auto in top nav */
 .navbar-nav.me-auto {
     margin-left: 0 !important;
+}
+
+/* Ensure split-container uses full viewport width in top nav mode */
+#split-container {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }

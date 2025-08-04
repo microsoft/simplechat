@@ -3,7 +3,7 @@
 /* Base body adjustments for sidebar layout */
 body.sidebar-nav-enabled {
   padding-left: 0 !important; /* Remove body padding since we're using margin on containers */
-  padding-top: 0 !important;
+  padding-top: 15 !important;
 }
 
 /* Sidebar container */
@@ -20,44 +20,38 @@ body.sidebar-nav-enabled nav.navbar {
   display: none !important;
 }
 
-/* Fix main content layout when sidebar is enabled - add left margin for sidebar width */
-body.sidebar-nav-enabled .main-content {
-  margin-left: 260px !important; /* Same as sidebar width */
-  max-width: calc(100% - 260px) !important; /* Prevent overflow */
-  margin-right: 0 !important;
-  padding-left: 1rem !important;
-  padding-right: 1rem !important;
-  width: auto !important; /* Let it size naturally within the constraints */
-  transition: margin-left 0.3s ease-in-out;
-}
-
-/* Fix container positioning when sidebar is enabled - add left margin for sidebar width */
-body.sidebar-nav-enabled .container {
-  margin-left: 260px !important; /* Same as sidebar width */
-  max-width: calc(100% - 260px) !important; /* Prevent overflow */
-  margin-right: 0 !important;
-  padding-left: 1rem !important;
-  padding-right: 1rem !important;
-  width: auto !important; /* Let it size naturally within the constraints */
-  transition: margin-left 0.3s ease-in-out;
-}
-
-/* Also fix container-fluid if used */
+/* 
+  CORRECTED RULE:
+  This single, consolidated rule fixes the layout for all main content containers.
+  It removes the conflicting top margin and applies a consistent top padding.
+*/
+body.sidebar-nav-enabled .main-content,
+body.sidebar-nav-enabled .container,
 body.sidebar-nav-enabled .container-fluid {
   margin-left: 260px !important; /* Same as sidebar width */
   max-width: calc(100% - 260px) !important; /* Prevent overflow */
   margin-right: 0 !important;
-  padding-left: 1rem !important;
-  padding-right: 1rem !important;
-  width: auto !important; /* Let it size naturally within the constraints */
+  width: auto !important;
   transition: margin-left 0.3s ease-in-out;
+  /* FIX: Remove top margin and set a consistent top padding */
+  margin-top: 0 !important;
+  padding-top: 1.5rem !important; /* Provides consistent spacing from the top */
 }
+
 
 /* Classification banner adjustments for sidebar layout */
 body.sidebar-nav-enabled.has-classification-banner #sidebar-nav {
   top: 40px !important; /* Start below the classification banner */
   height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
 }
+
+/* When the banner is present, add padding to the top of the main content */
+body.sidebar-nav-enabled.has-classification-banner .main-content,
+body.sidebar-nav-enabled.has-classification-banner .container,
+body.sidebar-nav-enabled.has-classification-banner .container-fluid {
+    padding-top: calc(1.5rem + 40px) !important;
+}
+
 
 /* Sidebar navigation link styling */
 #sidebar-nav .nav-link {
@@ -139,14 +133,8 @@ body.sidebar-nav-enabled.has-classification-banner #sidebar-nav {
 
 /* Responsive adjustments for sidebar navigation */
 @media (max-width: 768px) {
-  body.sidebar-nav-enabled .main-content {
-    margin-left: 220px !important; /* Smaller sidebar on mobile */
-    max-width: calc(100% - 220px) !important;
-  }
-  body.sidebar-nav-enabled .container {
-    margin-left: 220px !important; /* Smaller sidebar on mobile */
-    max-width: calc(100% - 220px) !important;
-  }
+  body.sidebar-nav-enabled .main-content,
+  body.sidebar-nav-enabled .container,
   body.sidebar-nav-enabled .container-fluid {
     margin-left: 220px !important; /* Smaller sidebar on mobile */
     max-width: calc(100% - 220px) !important;
@@ -158,18 +146,8 @@ body.sidebar-nav-enabled.has-classification-banner #sidebar-nav {
 }
 
 @media (max-width: 576px) {
-  body.sidebar-nav-enabled .main-content {
-    margin-left: 0 !important; /* No margin on very small screens */
-    max-width: 100% !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-  }
-  body.sidebar-nav-enabled .container {
-    margin-left: 0 !important; /* No margin on very small screens */
-    max-width: 100% !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-  }
+  body.sidebar-nav-enabled .main-content,
+  body.sidebar-nav-enabled .container,
   body.sidebar-nav-enabled .container-fluid {
     margin-left: 0 !important; /* No margin on very small screens */
     max-width: 100% !important;

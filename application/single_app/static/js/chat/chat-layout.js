@@ -211,3 +211,18 @@ if (dockToggleButton) {
 document.addEventListener('DOMContentLoaded', () => {
     loadUserSettings(); // Load settings and apply initial layout
 });
+// Ensure correct container class for split/docked layout in top nav mode
+export function setSplitContainerMode(isSplit) {
+  const mainContent = document.getElementById('main-content');
+  if (!mainContent) return;
+  if (isSplit) {
+    mainContent.classList.remove('container');
+    mainContent.classList.add('container-fluid');
+  } else {
+    mainContent.classList.remove('container-fluid');
+    mainContent.classList.add('container');
+  }
+}
+
+// Example usage: call setSplitContainerMode(true) when docking, setSplitContainerMode(false) when undocking
+// Integrate this with your split/dock toggle logic as needed.
