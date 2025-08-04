@@ -10,8 +10,8 @@ class Config(BaseSettings):
     """Configuration settings for the MCP server with Entra ID authentication."""
     
     # Microsoft Entra ID settings
-    tenant_id: str = Field(..., env="TENANT_ID")
-    client_id: str = Field(..., env="CLIENT_ID")
+    tenant_id: str = Field(default="", env="TENANT_ID")
+    client_id: str = Field(default="", env="CLIENT_ID")
     client_secret: str = Field(default="", env="CLIENT_SECRET")  # Made optional for public clients
     
     # OAuth callback configuration - separate from MCP server port
@@ -28,7 +28,7 @@ class Config(BaseSettings):
     )
     
     # Backend API configuration
-    backend_api_url: str = Field(..., env="BACKEND_API_URL")
+    backend_api_url: str = Field(default="", env="BACKEND_API_URL")
     
     # Token storage
     token_cache_path: str = Field(default="./token_cache.json", env="TOKEN_CACHE_PATH")
@@ -83,11 +83,14 @@ class Config(BaseSettings):
             self.backend_api_url
         ]
         
+        # Check that required fields are not empty
+        valid_fields = [field for field in required_fields if field and field.strip()]
+        
         # For confidential clients, client_secret is also required
-        if self.app_type == "confidential" and not self.client_secret:
+        if self.app_type == "confidential" and (not self.client_secret or not self.client_secret.strip()):
             return False
             
-        return all(field for field in required_fields)
+        return len(valid_fields) == len(required_fields)
 
 # Global config instance
 config = Config()
