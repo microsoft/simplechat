@@ -30,23 +30,51 @@ taskkill /F /PID 27960
 ## Deploy to Azure ACA
 
 ``` cli
-az acr create --resource-group <your-resource-group> --name <your-acr-name> --sku Basic
-az acr login --name <your-acr-name>
+cls
+az config set defaults.group=GREGU2
+az config set defaults.location=eastus
+az acr create --resource-group GREGU2 --name gregsacr2 --sku Basic
+az acr login --name gregsacr2
+az acr update -n gregsacr2 --admin-enabled true
+az acr credential show --name gregsacr2 --query username --output tsv
+az acr credential show --name gregsacr2 --query passwords[0].value --output tsv
 
-docker build -t <your-acr-name>.azurecr.io/fastmcp-server:latest .
-docker push <your-acr-name>.azurecr.io/fastmcp-server:latest
+docker build -t gregsacr2.azurecr.io/simplechat-mc-server:latest .
+docker push gregsacr2.azurecr.io/simplechat-mc-server:latest
 
-az containerapp up \
-    --name <your-container-app-name> \
-    --resource-group <your-resource-group> \
-    --image <your-acr-name>.azurecr.io/fastmcp-server:latest \
-    --target-port 8000 \
-    --ingress external \
-    --environment <your-aca-environment-name> \
+az containerapp up `
+    --name gregscontainerapp2 `
+    --resource-group GREGU2 `
+    --image gregsacr2.azurecr.io/simplechat-mc-server:latest `
+    --target-port 8000 `
+    --ingress external `
+    --environment development `
     --query properties.latestRevisionFqdn
 
-az containerapp secret set --name <your-container-app-name> --resource-group <your-resource-group> --secrets my-api-key=YOUR_ACTUAL_API_KEY
-az containerapp update --name <your-container-app-name> --resource-group <your-resource-group> --set-env-vars "MY_API_KEY=secretref:my-api-key"
+#not needed
+#az containerapp secret set --name gregscontainerapp2 --resource-group GREGU2 --secrets my-api-key=YOUR_ACTUAL_API_KEY
+#az containerapp update --name gregscontainerapp2 --resource-group GREGU2 --set-env-vars "MY_API_KEY=secretref:my-api-key"
+
+#output
+Using resource group 'GREGU2'
+Creating ContainerAppEnvironment 'development' in resource group GREGU2
+No Log Analytics workspace provided.
+Generating a Log Analytics workspace with name "workspace-2iXJt"
+Creating Containerapp gregscontainerapp2 in resource group GREGU2
+Adding registry password as a secret with name "gregsacr2azurecrio-gregsacr2"
+
+Container app created. Access your app at:
+https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io/
+https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io/mcp/
+https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io:8000/mcp/
+
+Your container app gregscontainerapp2 has been created and deployed! Congrats!
+
+Browse to your container app at: http://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io 
+
+Stream logs for your container with: az containerapp logs show -n gregscontainerapp2 -g GREGU2
+
+See full output using: az containerapp show -n gregscontainerapp2 -g GREGU2
 ```
 
 ## Mcp inspector
