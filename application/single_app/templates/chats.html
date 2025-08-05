@@ -36,6 +36,25 @@
             width: 100% !important;
             max-width: 1000px !important;
         }
+        {% else %}
+        /* Sidebar navigation layout - hide left pane and expand right pane */
+        #left-pane {
+            display: none !important;
+        }
+        
+        #right-pane {
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+        }
+        
+        /* Center and limit width of right pane content when using sidebar */
+        #right-pane > div {
+            width: 100% !important;
+            max-width: 1000px !important;
+        }
         {% endif %}
         
         /* Styles for conversation checkboxes */

@@ -30,7 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // Function to enter selection mode
 function enterSelectionMode() {
   selectionModeActive = true;
-  conversationsList.classList.add('selection-mode');
+  if (conversationsList) {
+    conversationsList.classList.add('selection-mode');
+  }
   
   // Show delete button
   if (deleteSelectedBtn) {
@@ -49,7 +51,9 @@ function enterSelectionMode() {
 // Function to exit selection mode
 function exitSelectionMode() {
   selectionModeActive = false;
-  conversationsList.classList.remove('selection-mode');
+  if (conversationsList) {
+    conversationsList.classList.remove('selection-mode');
+  }
   
   // Hide delete button
   if (deleteSelectedBtn) {
@@ -745,6 +749,15 @@ window.chatConversations = {
   exitSelectionMode,
   isSelectionModeActive: () => selectionModeActive,
   getSelectedConversations: () => Array.from(selectedConversations),
+  getCurrentConversationId: () => currentConversationId,
+  updateConversationHeader: (conversationId, newTitle) => {
+    // Update header if this is the currently active conversation
+    if (currentConversationId === conversationId) {
+      if (currentConversationTitleEl) {
+        currentConversationTitleEl.textContent = newTitle;
+      }
+    }
+  },
   editConversationTitle: (conversationId, currentTitle) => {
     // First try to find the conversation in the main list
     const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);

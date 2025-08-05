@@ -332,6 +332,11 @@ export function updateSidebarConversationTitle(conversationId, newTitle) {
       titleElement.title = `${newTitle} (Double-click to edit)`;
     }
   }
+  
+  // Update conversation header in right pane if this is the currently active conversation
+  if (window.chatConversations && window.chatConversations.updateConversationHeader) {
+    window.chatConversations.updateConversationHeader(conversationId, newTitle);
+  }
 }
 
 // Enable inline editing for a conversation title in the sidebar
@@ -406,17 +411,9 @@ export function enableSidebarTitleEdit(conversationId) {
       // Show success toast
       showToast('Conversation title updated.', 'success');
       
-      // Update main conversation list if visible
-      if (window.chatConversations && window.chatConversations.loadConversations) {
-        window.chatConversations.loadConversations();
-      }
-      
-      // If this is the currently selected conversation, update the header
-      if (window.chatConversations && window.chatConversations.getCurrentConversationId && 
-          window.chatConversations.getCurrentConversationId() === conversationId) {
-        if (window.chatConversations.selectConversation) {
-          window.chatConversations.selectConversation(conversationId);
-        }
+      // Update conversation header in right pane if this is the currently active conversation
+      if (window.chatConversations && window.chatConversations.updateConversationHeader) {
+        window.chatConversations.updateConversationHeader(conversationId, newTitle);
       }
       
     } catch (error) {
