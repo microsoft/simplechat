@@ -3,6 +3,7 @@
 import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
+import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
@@ -36,6 +37,11 @@ function enterSelectionMode() {
     deleteSelectedBtn.style.display = "block";
   }
   
+  // Update sidebar to show selection mode hints
+  if (window.chatSidebarConversations && window.chatSidebarConversations.setSidebarSelectionMode) {
+    window.chatSidebarConversations.setSidebarSelectionMode(true);
+  }
+  
   // Start timer to exit selection mode if no selections are made
   resetSelectionModeTimer();
 }
@@ -58,6 +64,21 @@ function exitSelectionMode() {
   checkboxes.forEach(checkbox => {
     checkbox.checked = false;
   });
+  
+  // Clear sidebar selections if available
+  if (window.chatSidebarConversations && window.chatSidebarConversations.clearSidebarSelections) {
+    window.chatSidebarConversations.clearSidebarSelections();
+  }
+  
+  // Update sidebar to remove selection mode hints
+  if (window.chatSidebarConversations && window.chatSidebarConversations.setSidebarSelectionMode) {
+    window.chatSidebarConversations.setSidebarSelectionMode(false);
+  }
+  
+  // Update sidebar delete button
+  if (window.chatSidebarConversations && window.chatSidebarConversations.updateSidebarDeleteButton) {
+    window.chatSidebarConversations.updateSidebarDeleteButton(0);
+  }
   
   // Clear timer
   if (selectionModeTimer) {
@@ -96,6 +117,12 @@ export function loadConversations() {
       data.conversations.forEach(convo => {
         conversationsList.appendChild(createConversationItem(convo));
       });
+      
+      // Also load sidebar conversations if the sidebar exists
+      if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+        window.chatSidebarConversations.loadSidebarConversations();
+      }
+      
       // Optionally, select the first conversation or highlight the active one if ID is known
     })
     .catch(error => {
@@ -308,6 +335,11 @@ export function enterEditMode(convoItem, convo, dropdownBtn, rightDiv) {
 
       exitEditMode(convoItem, convo, dropdownBtn, rightDiv, dateSpan, saveBtn, cancelBtn);
 
+      // *** Update sidebar conversation title if sidebar is available ***
+      if (window.chatSidebarConversations && window.chatSidebarConversations.updateSidebarConversationTitle) {
+        window.chatSidebarConversations.updateSidebarConversationTitle(convo.id, convo.title);
+      }
+
       // *** If this is the currently selected convo, refresh the header ***
       if (currentConversationId === convo.id) {
           selectConversation(convo.id); // Re-run selection logic to update header
@@ -398,6 +430,11 @@ export function addConversationToList(conversationId, title = null, classificati
   const convoItem = createConversationItem(convo);
   convoItem.classList.add("active"); // Mark the new one as active
   conversationsList.prepend(convoItem); // Add to the top
+  
+  // Also reload sidebar conversations if the sidebar exists
+  if (document.getElementById("sidebar-conversations-list")) {
+    loadSidebarConversations();
+  }
 }
 
 // Select a conversation, load messages, update UI
@@ -477,6 +514,11 @@ export function selectConversation(conversationId) {
 
   loadMessages(conversationId);
   highlightSelectedConversation(conversationId);
+  
+  // Update sidebar active conversation if sidebar exists
+  if (setSidebarActiveConversation) {
+    setSidebarActiveConversation(conversationId);
+  }
 
   // Clear any "edit mode" state if switching conversations
   if (currentlyEditingId && currentlyEditingId !== conversationId) {
@@ -525,6 +567,12 @@ export function deleteConversation(conversationId) {
           if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Select a conversation to view messages.</div>'; // Reset chatbox
           highlightSelectedConversation(null); // Deselect all
         }
+        
+        // Also reload sidebar conversations if the sidebar exists
+        if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+          window.chatSidebarConversations.loadSidebarConversations();
+        }
+        
          showToast("Conversation deleted.", "success");
       } else {
          return response.json().then(err => Promise.reject(err)); // Pass error details
@@ -595,6 +643,16 @@ function updateSelectedConversations(conversationId, isSelected) {
     }
   }
   
+  // Update sidebar selection state if available
+  if (window.chatSidebarConversations && window.chatSidebarConversations.updateSidebarConversationSelection) {
+    window.chatSidebarConversations.updateSidebarConversationSelection(conversationId, isSelected);
+  }
+  
+  // Update sidebar delete button if available
+  if (window.chatSidebarConversations && window.chatSidebarConversations.updateSidebarDeleteButton) {
+    window.chatSidebarConversations.updateSidebarDeleteButton(selectedConversations.size);
+  }
+  
   // Show/hide the delete button based on selection
   if (selectedConversations.size > 0) {
     deleteSelectedBtn.style.display = "block";
@@ -647,6 +705,11 @@ async function deleteSelectedConversations() {
     deleteSelectedBtn.style.display = "none";
     exitSelectionMode();
     
+    // Also reload sidebar conversations if the sidebar exists
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
     showToast(`${conversationIds.length} conversation(s) deleted.`, "success");
   } catch (error) {
     console.error("Error deleting conversations:", error);
@@ -668,4 +731,79 @@ if (newConversationBtn) {
 
 if (deleteSelectedBtn) {
   deleteSelectedBtn.addEventListener("click", deleteSelectedConversations);
+}
+
+// Expose functions globally for sidebar integration
+window.chatConversations = {
+  selectConversation,
+  loadConversations,
+  highlightSelectedConversation,
+  addConversationToList,
+  deleteConversation,
+  toggleConversationSelection,
+  deleteSelectedConversations,
+  exitSelectionMode,
+  isSelectionModeActive: () => selectionModeActive,
+  getSelectedConversations: () => Array.from(selectedConversations),
+  editConversationTitle: (conversationId, currentTitle) => {
+    // First try to find the conversation in the main list
+    const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+    if (convoItem) {
+      const convo = { id: conversationId, title: currentTitle };
+      const dropdownBtn = convoItem.querySelector('.btn[data-bs-toggle="dropdown"]');
+      const rightDiv = convoItem.querySelector('.dropdown').parentElement;
+      enterEditMode(convoItem, convo, dropdownBtn, rightDiv);
+    } else {
+      // If not found in main list, handle it as a simple title edit via API
+      editConversationTitleSimple(conversationId, currentTitle);
+    }
+  }
+};
+
+// Simple edit function for conversations not in the main list (e.g., from sidebar)
+async function editConversationTitleSimple(conversationId, currentTitle) {
+  const newTitle = prompt("Enter new conversation title:", currentTitle);
+  if (newTitle === null || newTitle.trim() === "") {
+    return; // User cancelled or entered empty title
+  }
+  
+  if (newTitle.trim() === currentTitle.trim()) {
+    return; // No change
+  }
+  
+  try {
+    const updatedConvoData = await updateConversationTitle(conversationId, newTitle.trim());
+    
+    // Update the sidebar conversations list
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
+    // Update the main conversations list if it exists
+    if (conversationsList) {
+      loadConversations();
+    }
+    
+    // If this is the currently selected conversation, update the header
+    if (currentConversationId === conversationId) {
+      selectConversation(conversationId);
+    }
+    
+    showToast("Conversation title updated.", "success");
+  } catch (error) {
+    console.error("Error updating conversation title:", error);
+    showToast(`Failed to update title: ${error.message}`, "danger");
+  }
+}
+
+// Function to toggle conversation selection (called from sidebar)
+export function toggleConversationSelection(conversationId) {
+  enterSelectionMode();
+  
+  // Find the checkbox for this conversation and toggle it
+  const checkbox = document.querySelector(`.conversation-checkbox[data-conversation-id="${conversationId}"]`);
+  if (checkbox) {
+    checkbox.checked = !checkbox.checked;
+    updateSelectedConversations(conversationId, checkbox.checked);
+  }
 }

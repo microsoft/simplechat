@@ -156,6 +156,25 @@
       if (navPref === 'sidebar' && document.body) {
         document.body.classList.add('sidebar-nav-enabled');
       }
+      
+      // Chat layout early initialization to prevent jarring shifting
+      // Apply layout-docked class immediately for chats page when using top nav
+      if (window.location.pathname === '/chats' && navPref !== 'sidebar') {
+        // Add no-transitions class to body to prevent initial shifting
+        if (document.body) {
+          document.body.classList.add('no-transitions', 'layout-docked');
+          document.body.classList.remove('layout-split', 'left-pane-hidden');
+        }
+        
+        // Re-enable transitions after layout is applied and page is fully loaded
+        window.addEventListener('load', function() {
+          setTimeout(function() {
+            if (document.body) {
+              document.body.classList.remove('no-transitions');
+            }
+          }, 100);
+        });
+      }
     })();
     // Set a global JS variable for mobile detection
     window.isMobile = window.matchMedia("(max-width: 575.98px)").matches;

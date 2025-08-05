@@ -1,5 +1,13 @@
 /* chats.css */
 
+/* Prevent initial layout shift by disabling transitions on page load */
+.no-transitions *,
+.no-transitions #left-pane,
+.no-transitions #right-pane {
+    transition: none !important;
+    animation: none !important;
+}
+
 /* Remove all margin from sidebar navigation */
 .nav.flex-column {
     margin: 0 !important;
@@ -149,6 +157,16 @@
   overflow: hidden; /* Prevent panes themselves from scrolling */
   margin-left: 30px; /* Optional: space between left and right panes */
   /* d-flex and flex-column are already on the elements via HTML classes for internal layout */
+  /* Center the content within the right pane by default */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+/* Center and constrain the width of right pane content by default */
+#right-pane > div {
+  width: 100% !important;
+  max-width: 1000px !important; /* Constrain maximum width for better readability */
 }
 
 
@@ -223,58 +241,43 @@
   background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeAPTBAPAXJmw1AAAAAElFTkSuQmCC');
   cursor: col-resize;
 }
-/* Style when docked */
+/* Style when docked - CLEAN SIMPLE IMPLEMENTATION */
 body.layout-docked #left-pane {
-  position: fixed !important; /* Force override */
-  top: 66px !important; /* Matches calc(100vh - 66px) - ADJUST IF HEADER HEIGHT CHANGES */
+  position: fixed !important;
+  top: 66px !important; /* Below navbar */
   left: 0 !important;
-  width: 320px !important; /* Default docked width - ADJUST AS NEEDED */
-  height: calc(100vh - 66px) !important; /* Full height minus header */
+  width: 320px !important;
+  height: calc(100vh - 66px) !important;
   z-index: 1031 !important;
   background: var(--bs-body-bg, white) !important;
   border-right: 1px solid var(--bs-border-color, #dee2e6) !important;
-  transform: translateX(0); /* Ensure it's visible initially */
-  transition: transform 0.3s ease-in-out, width 0.3s ease-in-out;
-  /* Override flex basis potentially set by split.js before destroy */
-  flex-basis: auto !important;
 }
 
-/* CORRECTED RULE: This rule now correctly applies margin and width to the right pane */
 body.layout-docked #right-pane {
-  margin-left: 320px !important; /* Same as docked left pane width */
-  width: calc(100% - 320px) !important; /* Corrected width calculation */
-  transition: margin-left 0.3s ease-in-out, width 0.3s ease-in-out;
-   /* Override flex basis potentially set by split.js before destroy */
-  flex-basis: auto !important;
-  height: 100% !important; /* Ensure it still takes full height */
-  overflow: hidden !important; /* Ensure inner content scrolls */
-  /* Reset any potentially conflicting positioning */
+  margin-left: 320px !important;
+  width: calc(100% - 320px) !important;
+  height: calc(100vh - 66px) !important;
   position: relative !important;
-  top: auto !important;
-  left: auto !important;
-  transform: none !important;
+  /* Center content horizontally */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
 }
 
-/* When banner is present, adjust docked left-pane position */
+/* Center and limit width of right pane content */
+body.layout-docked #right-pane > div {
+  width: 100% !important;
+  max-width: 1000px !important;
+}
+
+/* When classification banner is present */
 body.has-classification-banner.layout-docked #left-pane {
-  top: 106px !important; /* 66px (original) + 40px (banner) */
-  height: calc(100vh - 106px) !important; /* Adjusted height */
+  top: 106px !important;
+  height: calc(100vh - 106px) !important;
 }
 
-/* When banner is present, adjust docked right-pane height */
 body.has-classification-banner.layout-docked #right-pane {
-  height: calc(100vh - 106px) !important; /* Adjusted height */
-}
-
-/* Style when docked AND hidden */
-body.layout-docked.left-pane-hidden #left-pane {
-   transform: translateX(-100%);
-   border-right: none !important;
-}
-/* CORRECTED RULE: This ensures the right pane takes up full width when the left is hidden */
-body.layout-docked.left-pane-hidden #right-pane {
-   margin-left: 0 !important;
-   width: 100% !important;
+  height: calc(100vh - 106px) !important;
 }
 
 /* Hide Split.js gutter when docked */
@@ -324,6 +327,16 @@ body.layout-split #right-pane {
     transform: none !important; /* Reset transform */
     /* flex-basis will be set by Split.js */
     overflow: hidden; /* Keep inner scroll */
+    /* Center the content within the right pane */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+}
+
+/* Center and constrain the width of right pane content in split mode */
+body.layout-split #right-pane > div {
+    width: 100% !important;
+    max-width: 1000px !important; /* Constrain maximum width for better readability */
 }
 
 /* Ensure gutter is visible and sized correctly in split mode */

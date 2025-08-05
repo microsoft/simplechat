@@ -11,7 +11,7 @@
   <!-- Collapse/Expand button -->
   <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
           aria-label="Toggle sidebar" title="Hide sidebar"
-          style="top: 0.75rem; right: 0.75rem; z-index: 1041; width: 28px; height: 28px; padding: 0; border-radius: 4px;"
+          style="top: 1rem; right: 0.75rem; z-index: 1041; width: 28px; height: 28px; padding: 0; border-radius: 4px;"
           onclick="toggleSidebar()">
     <i id="sidebar-toggle-icon" class="bi bi-chevron-left" style="font-size: 0.875rem;"></i>
   </button>
@@ -38,13 +38,21 @@
     <ul class="nav flex-column">
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         <li class="nav-item">
+          {% if request.endpoint == 'chats' %}
+          <button class="nav-link" id="sidebar-new-chat-btn" title="Start a new chat" style="background: none; border: none; text-align: left; width: 100%;">
+            <i class="bi bi-chat-right-text me-2"></i><span class="nav-text">New Chat</span>
+          </button>
+          {% else %}
           <a class="nav-link" href="{{ url_for('chats') }}">
             <i class="bi bi-chat-square-text me-2"></i><span class="nav-text">Chat</span>
           </a>
+          {% endif %}
         </li>
       {% endif %}
     </ul>
-    <div class="flex-grow-1 overflow-auto">
+
+    <!-- Workspaces Section - Always show -->
+    <div class="overflow-auto">
       <div id="workspaces-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
         <span class="nav-text">Workspaces</span>
         <i id="workspaces-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
@@ -75,6 +83,28 @@
         </ul>
       </div>
     </div>
+
+    <!-- Conversations Section - Only show on chats page -->
+    {% if request.endpoint == 'chats' %}
+    <div id="conversations-section" class="flex-grow-1 overflow-auto">
+      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div class="d-flex align-items-center">
+          <span class="nav-text">Conversations</span>
+          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+          <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
+            <i class="bi bi-trash-fill"></i>
+          </button>
+        </div>
+      </div>
+      <div id="conversations-list-container" class="px-2">
+        <div id="sidebar-conversations-list" class="list-group list-group-flush">
+          <div class="text-center p-2 text-muted small">Loading conversations...</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
   <div class="border-top p-3">
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
@@ -157,6 +187,7 @@
             {% endif %}
           {% endif %}
           {% endif %}
+          <li><hr class="dropdown-divider"></li>
           <li>
             <a class="dropdown-item" href="{{ url_for('logout') }}">
               <i class="bi bi-box-arrow-right me-2"></i> Logout
@@ -180,6 +211,19 @@
           collapsed = !collapsed;
           section.style.display = collapsed ? 'none' : '';
           caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+
+      // Collapsible Conversations Section (for chats page)
+      var conversationsToggle = document.getElementById('conversations-toggle');
+      var conversationsContainer = document.getElementById('conversations-list-container');
+      var conversationsCaret = document.getElementById('conversations-caret');
+      var conversationsCollapsed = false;
+      if (conversationsToggle && conversationsContainer && conversationsCaret) {
+        conversationsToggle.addEventListener('click', function() {
+          conversationsCollapsed = !conversationsCollapsed;
+          conversationsContainer.style.display = conversationsCollapsed ? 'none' : '';
+          conversationsCaret.style.transform = conversationsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
         });
       }
     });
@@ -254,11 +298,32 @@
         transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out !important;
       }
       
+      /* Floating expand button styles */
+      #floating-expand-btn {
+        background-color: var(--bs-body-bg, #fff) !important;
+        border: 1px solid var(--bs-border-color, #dee2e6) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+        color: var(--bs-body-color, #212529) !important;
+      }
+      
+      /* Dark mode styles for floating expand button */
+      [data-bs-theme="dark"] #floating-expand-btn {
+        background-color: var(--bs-dark, #212529) !important;
+        border: 1px solid var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+        color: var(--bs-body-color, #fff) !important;
+      }
+      
       /* Floating expand button hover effect */
       #floating-expand-btn:hover {
-        background-color: #f8f9fa !important;
+        background-color: var(--bs-gray-100, #f8f9fa) !important;
         transform: scale(1.05);
         transition: all 0.2s ease;
+      }
+      
+      /* Dark mode hover effect */
+      [data-bs-theme="dark"] #floating-expand-btn:hover {
+        background-color: var(--bs-gray-800, #343a40) !important;
       }
     `;
     document.head.appendChild(style);
@@ -267,7 +332,7 @@
 <!-- Floating expand button (shown when sidebar is collapsed) -->
 <button type="button" id="floating-expand-btn" class="btn btn-sm btn-outline-secondary d-none"
         aria-label="Show sidebar" title="Show sidebar"
-        style="position: fixed; left: 0.5rem; top: 0.5rem; z-index: 1050; width: 30px; height: 30px; padding: 0; border-radius: 1px; background-color: #fff; border: 1px solid #dee2e6; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"
+        style="position: fixed; left: 0.5rem; top: 0.5rem; z-index: 1050; width: 30px; height: 30px; padding: 0; border-radius: 1px;"
         onclick="toggleSidebar()">
   {% if app_settings.custom_logo_base64 %}
     <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="24" />
