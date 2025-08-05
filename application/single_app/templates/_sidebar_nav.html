@@ -110,6 +110,10 @@
               </span>
             </a>
           </li>
+          <li>
+            <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
+          </li>
+          <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
           <li>
             <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
@@ -131,6 +135,7 @@
           </li>
           {% endif %}
           {% if 'Admin' in session['user']['roles'] %}
+          <li><hr class="dropdown-divider"></li>
           <div class="px-3 pt-2 pb-1 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
             Admin
           </div>
@@ -152,9 +157,6 @@
             {% endif %}
           {% endif %}
           {% endif %}
-          <li>
-            <a class="dropdown-item nav-layout-toggle" href="#">Switch to Top Nav</a>
-          </li>
           <li>
             <a class="dropdown-item" href="{{ url_for('logout') }}">
               <i class="bi bi-box-arrow-right me-2"></i> Logout
@@ -267,7 +269,11 @@
         aria-label="Show sidebar" title="Show sidebar"
         style="position: fixed; left: 0.5rem; top: 0.5rem; z-index: 1050; width: 30px; height: 30px; padding: 0; border-radius: 1px; background-color: #fff; border: 1px solid #dee2e6; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"
         onclick="toggleSidebar()">
-  <i class="bi bi-list" style="font-size: 1.2rem;"></i>
+  {% if app_settings.custom_logo_base64 %}
+    <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="24" />
+  {% else %}
+    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="24" />
+  {% endif %}
 </button>
 <script>
   // Mobile Sidebar Toggle Functionality

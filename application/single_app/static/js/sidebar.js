@@ -36,9 +36,9 @@ async function setUserNavLayout(navLayout) {
 function updateNavLayoutToggleText(navLayout) {
   document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
     if (navLayout === 'sidebar') {
-      btn.textContent = 'Switch to Top Nav';
+      btn.textContent = 'Top Nav';
     } else {
-      btn.textContent = 'Switch to Left Nav';
+      btn.textContent = 'Left Nav';
     }
   });
 }
