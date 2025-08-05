@@ -28,7 +28,6 @@ authenticator = EntraAuthenticator()
 # RESOURCES
 #
 #########################################
-
 @mcp.resource("data://example/message")
 def get_example_message() -> str:
     """Provides an example message."""
@@ -40,12 +39,6 @@ def get_example_message() -> str:
 #
 #########################################
 @mcp.tool()
-def get_conversations() -> str:
-    """Get conversations from SimpleChat."""
-    response = private_get_conversations()
-    return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
-
-@mcp.tool()
 def ping() -> str:
     """ping."""
     current_datetime = datetime.now()
@@ -55,12 +48,12 @@ def ping() -> str:
     return f"MCP Server is up {formatted_datetime}."
 
 @mcp.tool()
-def health_check() -> Dict[str, Any]:
+def get_server_info() -> Dict[str, Any]:
     """
-    Health check endpoint for monitoring and Docker health checks.
+    Get information about the MCP server configuration.
     
     Returns:
-        Dict containing server health status
+        Dict containing server configuration information
     """
     try:
         current_time = datetime.now().isoformat()
@@ -68,8 +61,14 @@ def health_check() -> Dict[str, Any]:
             "status": "healthy",
             "timestamp": current_time,
             "server_name": config.server_name,
-            "version": config.server_version,
-            "transport": config.transport_type
+            "server_version": config.server_version,
+            "tenant_id": config.tenant_id,
+            "client_id": config.client_id,
+            "backend_api_url": config.backend_api_url,
+            "scopes": config.api_scopes_list,
+            "redirect_uri": config.redirect_uri_computed,
+            "oauth_callback_port": config.oauth_callback_port,
+            "mcp_server_port": config.server_port
         }
     except Exception as e:
         return {
@@ -156,63 +155,6 @@ def get_access_token() -> Dict[str, Any]:
         }
 
 @mcp.tool()
-def make_api_request(
-    method: str,
-    endpoint: str,
-    headers: Dict[str, str] = None,
-    data: Dict[str, Any] = None,
-    params: Dict[str, str] = None
-) -> Dict[str, Any]:
-    """
-    Make an authenticated request to the custom website/API.
-    
-    Args:
-        method: HTTP method (GET, POST, PUT, DELETE, etc.)
-        endpoint: API endpoint path (will be appended to the configured base URL)
-        headers: Optional additional headers to include
-        data: Optional JSON data for POST/PUT requests
-        params: Optional query parameters
-    
-    Returns:
-        Dict containing the API response or error message
-    """
-    try:
-        # Construct full URL
-        if endpoint.startswith('http'):
-            url = endpoint
-        else:
-            # Remove leading slash if present
-            endpoint = endpoint.lstrip('/')
-            url = f"{config.backend_api_url.rstrip('/')}/{endpoint}"
-        
-        # Prepare request arguments
-        kwargs = {}
-        
-        if headers:
-            kwargs['headers'] = headers
-        
-        if data:
-            kwargs['json'] = data
-        
-        if params:
-            kwargs['params'] = params
-        
-        # Make the authenticated request
-        result = authenticator.make_authenticated_request_sync(
-            method=method.upper(),
-            url=url,
-            **kwargs
-        )
-        
-        return result
-    
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"API request failed: {str(e)}"
-        }
-
-@mcp.tool()
 def get_user_profile() -> Dict[str, Any]:
     """
     Get the authenticated user's profile information from Microsoft Graph.
@@ -289,26 +231,6 @@ def logout_user() -> Dict[str, Any]:
         }
 
 @mcp.tool()
-def get_server_info() -> Dict[str, Any]:
-    """
-    Get information about the MCP server configuration.
-    
-    Returns:
-        Dict containing server configuration information
-    """
-    return {
-        "server_name": config.server_name,
-        "server_version": config.server_version,
-        "tenant_id": config.tenant_id,
-        "client_id": config.client_id,
-        "backend_api_url": config.backend_api_url,
-        "scopes": config.api_scopes_list,
-        "redirect_uri": config.redirect_uri_computed,
-        "oauth_callback_port": config.oauth_callback_port,
-        "mcp_server_port": config.server_port
-    }
-
-@mcp.tool()
 def view_sessionid() -> str:
     """
     View session id
@@ -318,7 +240,6 @@ def view_sessionid() -> str:
     """
     global SESSION_ID
     return SESSION_ID or ""
-
 
 @mcp.tool()
 def get_session() -> str:
@@ -334,11 +255,79 @@ def get_session() -> str:
     return result
 
 @mcp.tool()
+def get_conversations() -> str:
+    """Get conversations from SimpleChat."""
+    response = private_get_conversations()
+    return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
+
+@mcp.tool()
 def send_chat_message(conversation_id: str, message: str) -> str:
     """Send chat message to SimpleChat."""
     response = private_send_chat_message(conversation_id, message)
     return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
 
+# @mcp.tool()
+# def make_api_request(
+#     method: str,
+#     endpoint: str,
+#     headers: Dict[str, str] = None,
+#     data: Dict[str, Any] = None,
+#     params: Dict[str, str] = None
+# ) -> Dict[str, Any]:
+#     """
+#     Make an authenticated request to the custom website/API.
+    
+#     Args:
+#         method: HTTP method (GET, POST, PUT, DELETE, etc.)
+#         endpoint: API endpoint path (will be appended to the configured base URL)
+#         headers: Optional additional headers to include
+#         data: Optional JSON data for POST/PUT requests
+#         params: Optional query parameters
+    
+#     Returns:
+#         Dict containing the API response or error message
+#     """
+#     try:
+#         # Construct full URL
+#         if endpoint.startswith('http'):
+#             url = endpoint
+#         else:
+#             # Remove leading slash if present
+#             endpoint = endpoint.lstrip('/')
+#             url = f"{config.backend_api_url.rstrip('/')}/{endpoint}"
+        
+#         # Prepare request arguments
+#         kwargs = {}
+        
+#         if headers:
+#             kwargs['headers'] = headers
+        
+#         if data:
+#             kwargs['json'] = data
+        
+#         if params:
+#             kwargs['params'] = params
+        
+#         # Make the authenticated request
+#         result = authenticator.make_authenticated_request_sync(
+#             method=method.upper(),
+#             url=url,
+#             **kwargs
+#         )
+        
+#         return result
+    
+#     except Exception as e:
+#         return {
+#             "success": False,
+#             "message": f"API request failed: {str(e)}"
+#         }
+
+#########################################
+#
+# PRIVATE FUNCTIONS
+#
+#########################################
 def private_send_chat_message(conversation_id: str, message: str):
     global SESSION_ID
 
@@ -424,10 +413,6 @@ def private_get_session():
             return (f"The value of cookie '{cookie_name}' is: {SESSION_ID}")
         else:
             return ("Session cookie not found.")
-
-        # print("\nAll cookies returned:")
-        # for name, value in response.cookies.items():
-        #     print(f"  {name}: {value}")
 
     except Exception as e:
         return (f"Request failed: {e}")

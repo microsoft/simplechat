@@ -21,19 +21,28 @@ docker push gregsacr2.azurecr.io/simplechat-mcp-server:latest
 ## Step 4: Deploy to Container Apps with HTTPS and proper port configuration
 
 az containerapp up `
-    --name gregscontainerapp2 `
-    --resource-group GREGU2 `
-    --image gregsacr2.azurecr.io/simplechat-mcp-server:latest `
-    --target-port 8084 `
-    --ingress external `
-    --environment development `
-    --env-vars `
-        "MCP_SERVER_HOST=0.0.0.0" `
-        "MCP_SERVER_PORT=8084" `
-        "OAUTH_CALLBACK_PORT=8080" `
-        "MCP_TRANSPORT_TYPE=http" `
-        "REDIRECT_URI=https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io/auth/callback" `
-    --query properties.latestRevisionFqdn
+--name gregscontainerapp2 `
+--resource-group GREGU2 `
+--image gregsacr2.azurecr.io/simplechat-mcp-server:latest `
+--target-port 8084 `
+--ingress external `
+--environment development `
+--env-vars `
+    "TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
+    "CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
+    "REDIRECT_URI=https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io/auth/callback" `
+    "CLIENT_SECRET=bogus" `
+    "API_SCOPES=22961fbc-e723-4a13-bd92-ddd83add0794/.default" `
+    "BACKEND_API_URL=https://127.0.0.1:5443/" `
+    "TOKEN_CACHE_PATH=/app/token_cache.json" `
+    "MCP_SERVER_NAME=SimpleChat MCP Server ACA" `
+    "MCP_SERVER_VERSION=1.0.99" `
+    "MCP_SERVER_HOST=0.0.0.0" `
+    "MCP_SERVER_PORT=8084" `
+    "OAUTH_CALLBACK_PORT=8080" `
+    "MCP_TRANSPORT_TYPE=http" `
+    "APP_TYPE=public" `
+--query properties.latestRevisionFqdn
 
 ## Step 5: Enable Managed Identity for ACA and then assign ACRPULL IAM to Managed Identity
 
@@ -44,13 +53,24 @@ Enable managed identity and assign iam to ACR from ACA
 az containerapp update `
     --name gregscontainerapp2 `
     --resource-group GREGU2 `
+    --image gregsacr2.azurecr.io/simplechat-mcp-server:latest `
     --set-env-vars `
-        "TENANT_ID=your-tenant-id" `
-        "CLIENT_ID=your-client-id" `
-        "CLIENT_SECRET=your-client-secret" `
-        "BACKEND_API_URL=your-backend-api-url" `
-        "API_SCOPES=your-api-scopes" `
-        "APP_TYPE=confidential" `
-        "MCP_SERVER_NAME=SimpleChat MCP Server" `
-        "MCP_SERVER_VERSION=1.0.0" `
-        "TOKEN_CACHE_PATH=/app/token_cache.json"
+        "TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
+        "CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
+        "REDIRECT_URI=https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io/auth/callback" `
+        "CLIENT_SECRET=bogus" `
+        "API_SCOPES=22961fbc-e723-4a13-bd92-ddd83add0794/.default" `
+        "BACKEND_API_URL=https://127.0.0.1:5443/" `
+        "TOKEN_CACHE_PATH=/app/token_cache.json" `
+        "MCP_SERVER_NAME=SimpleChat MCP Server ACA" `
+        "MCP_SERVER_VERSION=1.0.99" `
+        "MCP_SERVER_HOST=0.0.0.0" `
+        "MCP_SERVER_PORT=8084" `
+        "OAUTH_CALLBACK_PORT=8080" `
+        "MCP_TRANSPORT_TYPE=http" `
+        "APP_TYPE=public"
+
+## additional commands
+
+az containerapp list --output table
+az containerapp list --resource-group <RESOURCE_GROUP_NAME> --output table
