@@ -35,7 +35,7 @@ az containerapp up `
 --env-vars `
     "AZURE_CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
     "AZURE_TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
-    "REDIRECT_URI=http://0.0.0.0/auth/callback" `
+    "REDIRECT_URI=https://gregscontainerapp1.grayforest-fd321039.eastus.azurecontainerapps.io/auth/callback" `
     "SERVER_HOST=0.0.0.0" `
     "SERVER_PORT=8084" `
     "BACKEND_API_BASE_URL=https://127.0.0.1:5443/" `
@@ -54,22 +54,22 @@ az containerapp update `
     --resource-group GREGU `
     --image gregsacr1.azurecr.io/simplechat-mcp-server:latest `
     --set-env-vars `
-        "TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
-        "CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
-        "REDIRECT_URI=https://gregscontainerapp1.jollystone-4d8e996b.eastus.azurecontainerapps.io:444/auth/callback" `
-        "CLIENT_SECRET=bogus" `
-        "API_SCOPES=22961fbc-e723-4a13-bd92-ddd83add0794/.default" `
-        "BACKEND_API_URL=https://127.0.0.1:5443/" `
-        "TOKEN_CACHE_PATH=/app/token_cache.json" `
-        "MCP_SERVER_NAME=SimpleChat MCP Server ACA" `
-        "MCP_SERVER_VERSION=1.0.99" `
-        "MCP_SERVER_HOST=0.0.0.0" `
-        "MCP_SERVER_PORT=8084" `
-        "OAUTH_CALLBACK_PORT=8080" `
-        "MCP_TRANSPORT_TYPE=http" `
-        "APP_TYPE=public"
+        "AZURE_CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
+        "AZURE_TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
+        "REDIRECT_URI=https://gregscontainerapp1.grayforest-fd321039.eastus.azurecontainerapps.io/auth/callback" `
+        "SERVER_HOST=0.0.0.0" `
+        "SERVER_PORT=8084" `
+        "BACKEND_API_BASE_URL=https://127.0.0.1:5443/" `
+        "CUSTOM_API_SCOPE=22961fbc-e723-4a13-bd92-ddd83add0794/.default" `
+        "TOKEN_CACHE_FILE=token_cache.json"
 
 ## additional commands
 
 az containerapp list --output table
 az containerapp list --resource-group <RESOURCE_GROUP_NAME> --output table
+
+Browse to your container app at: http://gregscontainerapp1.grayforest-fd321039.eastus.azurecontainerapps.io/mcp/
+
+Stream logs for your container with: az containerapp logs show -n gregscontainerapp1 -g GREGU
+
+See full output using: az containerapp show -n gregscontainerapp1 -g GREGU
