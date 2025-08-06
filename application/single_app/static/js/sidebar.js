@@ -59,16 +59,30 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', async function(e) {
       e.preventDefault();
       const settings = await getUserSettings();
-      const current = settings.navLayout === 'sidebar' ? 'sidebar' : 'top';
-      const next = current === 'sidebar' ? 'top' : 'sidebar';
+      
+      // Determine current effective layout (same logic as server-side)
+      const userNavLayout = settings.navLayout;
+      const adminDefault = window.simplechatAdminNavDefault || false;
+      const currentEffectiveLayout = userNavLayout === 'sidebar' || (!userNavLayout && adminDefault) ? 'sidebar' : 'top';
+      
+      // Toggle to the opposite layout
+      const next = currentEffectiveLayout === 'sidebar' ? 'top' : 'sidebar';
       await setUserNavLayout(next);
       window.location.reload();
     });
   });
 
-  // On load, update toggle text based on user settings
+  // On load, update toggle text based on user settings and admin defaults
   getUserSettings().then(settings => {
-    updateNavLayoutToggleText(settings.navLayout === 'sidebar' ? 'sidebar' : 'top');
+    // Determine the effective nav layout considering admin defaults (same logic as server-side in base.html)
+    const userNavLayout = settings.navLayout;
+    
+    // Get admin default from the global variable set in base.html
+    const adminDefault = window.simplechatAdminNavDefault || false;
+    
+    // Apply same logic as server-side: use sidebar if user chose it OR if no user choice and admin default is true
+    const effectiveLayout = userNavLayout === 'sidebar' || (!userNavLayout && adminDefault) ? 'sidebar' : 'top';
+    updateNavLayoutToggleText(effectiveLayout);
   });
 
   // Set up mobile sidebar toggle buttons

@@ -154,6 +154,8 @@
       var userNavLayout = '{{ user_settings.get("settings", {}).get("navLayout", "") }}';
       var localNavLayout = localStorage.getItem('simplechat-nav-layout');
       var adminDefault = {{ 'true' if app_settings.enable_left_nav_default else 'false' }};
+      // Make admin default available globally for sidebar.js
+      window.simplechatAdminNavDefault = adminDefault;
       var navPref = userNavLayout || localNavLayout || (adminDefault ? 'sidebar' : 'top');
       if (navPref === 'sidebar' && document.body) {
         document.body.classList.add('sidebar-nav-enabled');

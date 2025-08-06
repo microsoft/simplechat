@@ -24,6 +24,36 @@ const promptSelectionContainer = document.getElementById(
 const chatbox = document.getElementById("chatbox");
 const modelSelect = document.getElementById("model-select");
 
+// Function to show/hide send button based on content
+export function updateSendButtonVisibility() {
+  if (!sendBtn || !userInput) return;
+  
+  const hasTextContent = userInput.value.trim().length > 0;
+  
+  // Check if prompt selection is active and has a selected value
+  const hasPromptSelected = promptSelectionContainer && 
+    promptSelectionContainer.style.display === 'block' && 
+    promptSelect && 
+    promptSelect.selectedIndex > 0; // selectedIndex > 0 means not the default option
+  
+  const shouldShow = hasTextContent || hasPromptSelected;
+  
+  if (shouldShow) {
+    sendBtn.classList.add('show');
+    userInput.classList.add('has-content');
+    // Adjust textarea padding to accommodate button
+    userInput.style.paddingRight = '50px';
+  } else {
+    sendBtn.classList.remove('show');
+    userInput.classList.remove('has-content');
+    // Reset textarea padding
+    userInput.style.paddingRight = '60px';
+  }
+}
+
+// Make function available globally for inline oninput handler
+window.handleInputChange = updateSendButtonVisibility;
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -431,6 +461,8 @@ export function sendMessage() {
   if (promptSelect) {
     promptSelect.selectedIndex = 0;
   }
+  // Update send button visibility after clearing input
+  updateSendButtonVisibility();
   // Keep focus on input
   userInput.focus();
 }
@@ -440,6 +472,8 @@ export function actuallySendMessage(finalMessageToSend) {
   appendMessage("You", finalMessageToSend);
   userInput.value = "";
   userInput.style.height = "";
+  // Update send button visibility after clearing input
+  updateSendButtonVisibility();
   showLoadingIndicatorInChatbox();
 
   const modelDeployment = modelSelect?.value;
@@ -735,7 +769,31 @@ if (userInput) {
       // If Shift key IS pressed, do nothing - allow the default behavior (inserting a newline)
     }
   });
+  
+  // Monitor input changes for send button visibility
+  userInput.addEventListener("input", updateSendButtonVisibility);
+  userInput.addEventListener("focus", updateSendButtonVisibility);
+  userInput.addEventListener("blur", updateSendButtonVisibility);
 }
+
+// Monitor prompt selection changes
+if (promptSelect) {
+  promptSelect.addEventListener("change", updateSendButtonVisibility);
+}
+
+// Monitor when prompt container is shown/hidden
+const searchPromptsBtn = document.getElementById("search-prompts-btn");
+if (searchPromptsBtn) {
+  searchPromptsBtn.addEventListener("click", function() {
+    // Small delay to allow the prompt container to update
+    setTimeout(updateSendButtonVisibility, 100);
+  });
+}
+
+// Initial check for send button visibility
+document.addEventListener('DOMContentLoaded', function() {
+  updateSendButtonVisibility();
+});
 
 // Save the selected model when it changes
 if (modelSelect) {
