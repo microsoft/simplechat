@@ -110,7 +110,7 @@
         </div>
 
         <div id="right-pane" class="d-flex flex-column h-100 chat-container">
-            <div class="p-3 border-bottom d-flex align-items-center justify-content-between flex-shrink-0">
+            <div class="p-3 border-bottom align-items-center justify-content-between flex-shrink-0">
                 <div class="d-flex flex-column">
                     <h5 id="current-conversation-title" class="mb-0">
                         Select or start a conversation
@@ -126,53 +126,104 @@
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                 <div class="d-flex align-items-center mb-2 flex-wrap gap-2">
+                 <div class="d-flex align-items-center mb-2 justify-content-between">
+                    <!-- Left side buttons -->
+                    <div class="d-flex align-items-center flex-wrap gap-2">
+                        {% if settings.enable_image_generation %}
+                        <button
+                            id="image-generate-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Generate images with AI"
+                        >
+                            <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <button
+                            id="search-documents-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search workspaces"
+                        >
+                            <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_web_search %}
+                        <button
+                            id="search-web-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
+                        >
+                            <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
+                        </button>
+                        {% endif %}
+                         <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv" style="display: none"/>
+                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation">
+                             <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
+                             <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
+                                 <i class="bi bi-x-circle-fill text-danger"></i>
+                             </span>
+                         </button>
+                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
+                            <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                        <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
+                            <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
+                        </button>
+                        {% endif %}
+                    </div>
                     
-                    {% if settings.enable_image_generation %}
-                    <button
-                        id="image-generate-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Generate images with AI"
-                    >
-                        <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                    <button
-                        id="search-documents-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Search workspaces"
-                    >
-                        <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_web_search %}
-                    <button
-                        id="search-web-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
-                    >
-                        <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
-                    </button>
-                    {% endif %}
-                     <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv" style="display: none"/>
-                     <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Add a file to this conversation">
-                         <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
-                         <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
-                             <i class="bi bi-x-circle-fill text-danger"></i>
-                         </span>
-                     </button>
-                     <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                    <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
-                        <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
-                    <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
-                        <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
-                    </button>
-                    {% endif %}
+                    <!-- Right side selectors -->
+                    <div class="d-flex align-items-center gap-2">
+
+                        <!-- Prompt Selector -->
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
+                            <select class="form-select" id="prompt-select"></select>
+                        </div>
+                        {% endif %}
+
+
+                        <!-- Agent selector -->
+                        <div id="agent-select-container" style="display: none;">
+                            <label for="agent-select" class="visually-hidden">Agent</label>
+                            <select id="agent-select" class="form-select">
+                                <!-- Agents will be populated dynamically by JS -->
+                            </select>
+                        </div>
+                        
+                        
+                        <!-- Model selector - right aligned -->
+                        <div id="model-select-container" class="flex-shrink-0">
+                            <label for="model-select" class="visually-hidden">Model</label>
+                            <select id="model-select" class="form-select">
+                            {% if settings.enable_gpt_apim %}
+                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                {% set apim_list = raw.split(',') %}
+                                {% for dep in apim_list %}
+                                {% set d = dep.strip() %}
+                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                    {{ d }}
+                                </option>
+                                {% endfor %}
+                            {% else %}
+                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
+                                {% for model in settings.gpt_model.selected %}
+                                <option
+                                    value="{{ model.deploymentName }}"
+                                    {% if loop.first %}selected{% endif %}
+                                >
+                                    {{ model.modelName }}
+                                </option>
+                                {% endfor %}
+                            {% endif %}
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 
@@ -237,50 +288,7 @@
                     <!-- Textarea takes up remaining space -->
                      <textarea id="user-input" class="form-control flex-grow-1" placeholder="Type your message..." rows="1" style="resize: none;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px';"></textarea>
 
-                    <!-- Prompt Selector Container (conditionally visible) -->
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                     <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
-                          <select class="form-select" id="prompt-select"></select>
-                          <!-- Optional: Add a small label above if needed -->
-                          <!-- <label for="prompt-select" class="form-label mb-1 small text-muted">Prompt</label> -->
-                     </div>
-                    {% endif %}
 
-                    <!-- Model selector -->
-                    <div class="flex-shrink-0">
-                        <div id="model-select-container">
-                            <label for="model-select" class="visually-hidden">Model</label>
-                            <select id="model-select" class="form-select">
-                            {% if settings.enable_gpt_apim %}
-                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
-                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                {% set apim_list = raw.split(',') %}
-                                {% for dep in apim_list %}
-                                {% set d = dep.strip() %}
-                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                    {{ d }}
-                                </option>
-                                {% endfor %}
-                            {% else %}
-                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
-                                {% for model in settings.gpt_model.selected %}
-                                <option
-                                    value="{{ model.deploymentName }}"
-                                    {% if loop.first %}selected{% endif %}
-                                >
-                                    {{ model.modelName }}
-                                </option>
-                                {% endfor %}
-                            {% endif %}
-                            </select>
-                        </div>
-                        <div id="agent-select-container" style="display: none;">
-                            <label for="agent-select" class="visually-hidden">Agent</label>
-                            <select id="agent-select" class="form-select">
-                                <!-- Agents will be populated dynamically by JS -->
-                            </select>
-                        </div>
-                    </div>
 
                      <!-- Send Button (doesn't shrink) -->
                      <button class="btn btn-primary flex-shrink-0" id="send-btn" title="Send Message">

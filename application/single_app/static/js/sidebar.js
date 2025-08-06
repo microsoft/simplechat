@@ -35,10 +35,11 @@ async function setUserNavLayout(navLayout) {
 // Update toggle text based on current layout
 function updateNavLayoutToggleText(navLayout) {
   document.querySelectorAll('.nav-layout-toggle').forEach(btn => {
+    const icon = '<i class="bi bi-window-sidebar me-2"></i>';
     if (navLayout === 'sidebar') {
-      btn.textContent = 'Top Nav';
+      btn.innerHTML = icon + 'Top Nav';
     } else {
-      btn.textContent = 'Left Nav';
+      btn.innerHTML = icon + 'Left Nav';
     }
   });
 }
