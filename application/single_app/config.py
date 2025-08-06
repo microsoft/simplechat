@@ -86,7 +86,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.318'
+app.config['VERSION'] = '0.216.319'
 
 
 Session(app)
@@ -302,12 +302,12 @@ cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
 
 def ensure_custom_logo_file_exists(app, settings):
     """
-    If custom_logo_base64 is present in settings, ensure static/images/custom_logo.png
-    exists and reflects the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, removes the file.
+    If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
+    static files exist and reflect the current base64 data. Overwrites if necessary.
+    If base64 is empty/missing, removes the corresponding file.
     """
+    # Handle light mode logo
     custom_logo_b64 = settings.get('custom_logo_base64', '')
-    # Ensure the filename is consistent
     logo_filename = 'custom_logo.png'
     logo_path = os.path.join(app.root_path, 'static', 'images', logo_filename)
     images_dir = os.path.dirname(logo_path)
@@ -321,24 +321,52 @@ def ensure_custom_logo_file_exists(app, settings):
             try:
                 os.remove(logo_path)
                 print(f"Removed existing {logo_filename} as custom logo is disabled/empty.")
-            except OSError as ex: # Use OSError for file operations
+            except OSError as ex:
                 print(f"Error removing {logo_filename}: {ex}")
-        return
+    else:
+        # Custom logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_b64)
 
-    # Custom logo exists in settings, write/overwrite the file
-    try:
-        # Decode the current base64 string
-        decoded = base64.b64decode(custom_logo_b64)
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_filename} exists and matches current settings.")
 
-        # Write the decoded data to the file, overwriting if it exists
-        with open(logo_path, 'wb') as f:
-            f.write(decoded)
-        print(f"Ensured {logo_filename} exists and matches current settings.")
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_filename}: {ex}")
 
-    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
-        print(f"Failed to write/overwrite {logo_filename}: {ex}")
-    except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during logo file write for {logo_filename}: {ex}")
+    # Handle dark mode logo
+    custom_logo_dark_b64 = settings.get('custom_logo_dark_base64', '')
+    logo_dark_filename = 'custom_logo_dark.png'
+    logo_dark_path = os.path.join(app.root_path, 'static', 'images', logo_dark_filename)
+
+    if not custom_logo_dark_b64:
+        # No custom dark logo in DB; remove the static file if it exists
+        if os.path.exists(logo_dark_path):
+            try:
+                os.remove(logo_dark_path)
+                print(f"Removed existing {logo_dark_filename} as custom dark logo is disabled/empty.")
+            except OSError as ex:
+                print(f"Error removing {logo_dark_filename}: {ex}")
+    else:
+        # Custom dark logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_dark_b64)
+
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_dark_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_dark_filename} exists and matches current settings.")
+
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_dark_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_dark_filename}: {ex}")
 
 def ensure_custom_favicon_file_exists(app, settings):
     """

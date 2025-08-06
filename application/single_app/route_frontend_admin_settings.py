@@ -352,6 +352,9 @@ def register_route_frontend_admin_settings(app):
                 'hide_app_title': form_data.get('hide_app_title') == 'on',
                 'custom_logo_base64': settings.get('custom_logo_base64', ''),
                 'logo_version': settings.get('logo_version', 1),
+                'custom_logo_dark_base64': settings.get('custom_logo_dark_base64', ''),
+                'logo_dark_version': settings.get('logo_dark_version', 1),
+                'logo_version': settings.get('logo_version', 1),
                 'custom_favicon_base64': settings.get('custom_favicon_base64', ''),
                 'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
@@ -598,6 +601,89 @@ def register_route_frontend_admin_settings(app):
                     print(f"Error processing logo file: {e}") # Log the error for debugging
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
                     # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
+
+            # Process dark mode logo file upload
+            logo_dark_file = request.files.get('logo_dark_file')
+            new_dark_logo_processed = False
+            if logo_dark_file and allowed_file(logo_dark_file.filename, ALLOWED_EXTENSIONS_IMG):
+                try:
+                    # 1) Read file fully into memory:
+                    file_bytes = logo_dark_file.read()
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Dark mode logo file uploaded: {logo_dark_file.filename}"
+                    )
+
+                    # 2) Load into Pillow from the original bytes for processing
+                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
+                    img = Image.open(in_memory_for_process)
+                    
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename}"
+                    )
+
+                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    elif img.mode != 'RGB' and img.mode != 'RGBA':
+                         img = img.convert('RGB')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image mode for processing: {logo_dark_file.filename} (mode: {img.mode})"
+                    )
+
+                    # 4) Resize to height=100
+                    w, h = img.size
+                    if h > 100:
+                        aspect = w / h
+                        new_height = 100
+                        new_width = int(aspect * new_height)
+                        # Use LANCZOS (previously ANTIALIAS) for resizing
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Resized dark mode logo image for processing: {logo_dark_file.filename} (new size: {img.size})"
+                    )
+
+                    # 5) Convert to PNG in-memory
+                    img_bytes_io = BytesIO()
+                    img.save(img_bytes_io, format='PNG')
+                    png_data = img_bytes_io.getvalue()
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image to PNG for processing: {logo_dark_file.filename}"
+                    )
+
+                    # 6) Turn to base64
+                    base64_str = base64.b64encode(png_data).decode('utf-8')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image to base64 for processing: {base64_str}"
+                    )
+
+                    # ****** CHANGE HERE: Update only on success *****
+                    new_settings['custom_logo_dark_base64'] = base64_str
+
+                    current_version = settings.get('logo_dark_version', 1) # Get version from settings loaded at start
+                    new_settings['logo_dark_version'] = current_version + 1 # Increment
+                    new_dark_logo_processed = True
+
+
+                except Exception as e:
+                    print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
+                    flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
+                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
 
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')

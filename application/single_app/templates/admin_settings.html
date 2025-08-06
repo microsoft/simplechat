@@ -154,7 +154,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Custom Logo</span>
+                                <span>Custom Logos (Light & Dark Mode)</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -694,8 +694,14 @@
                         <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
                     </div>
                     <div class="form-group mb-3">
-                        <label for="logo_file">Upload Custom Logo</label>
+                        <label for="logo_file">Upload Custom Logo (Light Mode)</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in light mode.</small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
+                        <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="favicon_file">Upload Custom Favicon</label>

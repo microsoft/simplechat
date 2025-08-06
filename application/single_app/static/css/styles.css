@@ -26,6 +26,22 @@ main {
     --bs-body-color: #e9ecef;
 }
 
+/* Theme-based logo visibility */
+[data-bs-theme="light"] .d-dark-mode-only {
+    display: none !important;
+}
+
+[data-bs-theme="dark"] .d-light-mode-only {
+    display: none !important;
+}
+
+/* Logo transition support */
+.navbar-brand img, 
+#sidebar-logo,
+#sidebar-logo-dark {
+    transition: opacity 0.2s ease-in-out;
+}
+
 [data-bs-theme="dark"] .card {
     background-color: #343a40;
     color: #e9ecef;

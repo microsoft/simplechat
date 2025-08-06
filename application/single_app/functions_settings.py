@@ -123,6 +123,8 @@ def get_settings():
         'hide_app_title': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_logo_dark_base64': '',
+        'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
         'enable_dark_mode_default': False,
