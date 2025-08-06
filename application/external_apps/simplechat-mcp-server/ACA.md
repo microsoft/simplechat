@@ -2,6 +2,11 @@
 
 ## Step 1: Set Azure defaults
 
+az cache purge
+az account clear
+az cloud set --name AzureCloud
+az login
+
 az config set defaults.group=GREGU
 az config set defaults.location=eastus
 
@@ -21,7 +26,7 @@ docker push gregsacr1.azurecr.io/simplechat-mcp-server:latest
 ## Step 4: Deploy to Container Apps with HTTPS and proper port configuration
 
 az containerapp up `
---name gregscontainerapp2 `
+--name gregscontainerapp1 `
 --resource-group GREGU `
 --image gregsacr1.azurecr.io/simplechat-mcp-server:latest `
 --target-port 8084 `
@@ -45,13 +50,13 @@ Enable managed identity and assign iam to ACR from ACA
 ## Step 6: Configure additional environment variables for Entra ID
 
 az containerapp update `
-    --name gregscontainerapp2 `
+    --name gregscontainerapp1 `
     --resource-group GREGU `
     --image gregsacr1.azurecr.io/simplechat-mcp-server:latest `
     --set-env-vars `
         "TENANT_ID=7d887458-fb0d-40bf-adb3-084d875f65db" `
         "CLIENT_ID=22961fbc-e723-4a13-bd92-ddd83add0794" `
-        "REDIRECT_URI=https://gregscontainerapp2.jollystone-4d8e996b.eastus.azurecontainerapps.io:444/auth/callback" `
+        "REDIRECT_URI=https://gregscontainerapp1.jollystone-4d8e996b.eastus.azurecontainerapps.io:444/auth/callback" `
         "CLIENT_SECRET=bogus" `
         "API_SCOPES=22961fbc-e723-4a13-bd92-ddd83add0794/.default" `
         "BACKEND_API_URL=https://127.0.0.1:5443/" `
