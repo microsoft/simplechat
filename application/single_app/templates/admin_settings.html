@@ -774,6 +774,23 @@
                         </div>
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Default Navigation</label>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_left_nav_default"
+                                name="enable_left_nav_default"
+                                {% if settings.enable_left_nav_default %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_left_nav_default">
+                                Enable Left Nav by Default
+                            </label>
+                        </div>
+                        <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
+                    </div>
                 </div>
                 <!-- Health Check Toggle -->
                 <div class="card p-3 mb-3">

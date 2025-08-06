@@ -150,9 +150,11 @@
         document.documentElement.setAttribute('data-bs-theme', savedTheme);
       }
       // Sidebar nav early initialization to prevent flash
-      // Check server-side user settings first, then fallback to localStorage
+      // Check server-side user settings first, then fallback to localStorage, then admin default
       var userNavLayout = '{{ user_settings.get("settings", {}).get("navLayout", "") }}';
-      var navPref = userNavLayout || localStorage.getItem('simplechat-nav-layout');
+      var localNavLayout = localStorage.getItem('simplechat-nav-layout');
+      var adminDefault = {{ 'true' if app_settings.enable_left_nav_default else 'false' }};
+      var navPref = userNavLayout || localNavLayout || (adminDefault ? 'sidebar' : 'top');
       if (navPref === 'sidebar' && document.body) {
         document.body.classList.add('sidebar-nav-enabled');
       }
@@ -191,14 +193,15 @@
     </div>
   {% endif %}
   <!-- Navigation Bar -->
-  {% if user_settings.get('settings', {}).get('navLayout') == 'sidebar' %}
+  {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+  {% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
     {% include "_sidebar_nav.html" %}
   {% else %}
     {% include "_top_nav.html" %}
   {% endif %}
 
   <!-- Main Content Area -->
-  <div class="container main-content{% if user_settings.get('settings', {}).get('navLayout') == 'sidebar' %} sidebar-padding{% endif %}" id="main-content">
+  <div class="container main-content{% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %} sidebar-padding{% endif %}" id="main-content">
     <!-- Mobile sidebar toggle button (only visible on small screens when sidebar nav is enabled) -->
     <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only"
             onclick="toggleMobileSidebar()" style="display: none;">

@@ -132,6 +132,7 @@
     "classification_banner_text": "Classification",
     "classification_banner_color": "#ffc107",
     "enable_dark_mode_default": false,
+    "enable_left_nav_default": true,
     "enable_redis_cache": false,
     "redis_url": "",
     "redis_key": "",

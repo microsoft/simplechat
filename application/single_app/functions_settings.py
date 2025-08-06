@@ -126,6 +126,7 @@ def get_settings():
         'custom_favicon_base64': '',
         'favicon_version': 1,
         'enable_dark_mode_default': False,
+        'enable_left_nav_default': True,
 
         # GPT Settings
         'enable_gpt_apim': False,

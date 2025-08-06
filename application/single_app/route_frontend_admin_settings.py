@@ -149,6 +149,10 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        
+        # --- Add defaults for left nav ---
+        if 'enable_left_nav_default' not in settings:
+            settings['enable_left_nav_default'] = True
 
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
@@ -353,6 +357,7 @@ def register_route_frontend_admin_settings(app):
                 'landing_page_text': form_data.get('landing_page_text', ''),
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
+                'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
                 'enable_health_check': form_data.get('enable_health_check') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
