@@ -502,6 +502,7 @@ def get_user_settings(user_id):
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        
         # Try to update email/display_name if missing and available in session
         user = session.get("user", {})
         email = user.get("preferred_username") or user.get("email")
@@ -513,6 +514,19 @@ def get_user_settings(user_id):
         if display_name and doc.get("display_name") != display_name:
             doc["display_name"] = display_name
             updated = True
+            
+        # Check if profile image needs to be fetched
+        if 'profileImage' not in doc['settings']:
+            from functions_authentication import get_user_profile_image
+            try:
+                profile_image = get_user_profile_image()
+                doc['settings']['profileImage'] = profile_image
+                updated = True
+            except Exception as e:
+                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                doc['settings']['profileImage'] = None
+                updated = True
+        
         if updated:
             cosmos_user_settings_container.upsert_item(body=doc)
         return doc
@@ -526,6 +540,16 @@ def get_user_settings(user_id):
             doc["email"] = email
         if display_name:
             doc["display_name"] = display_name
+            
+        # Try to fetch profile image for new user
+        from functions_authentication import get_user_profile_image
+        try:
+            profile_image = get_user_profile_image()
+            doc['settings']['profileImage'] = profile_image
+        except Exception as e:
+            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            doc['settings']['profileImage'] = None
+            
         cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except Exception as e:

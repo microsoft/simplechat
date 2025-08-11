@@ -98,7 +98,7 @@
         <!-- My Account Dropdown -->
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle p-0" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
-            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
               <span class="text-white fw-bold" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
             </div>
             <div class="d-flex flex-column justify-content-center" style="line-height: 1;">

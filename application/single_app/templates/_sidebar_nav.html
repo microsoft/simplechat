@@ -174,7 +174,7 @@
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
       <div class="dropdown">
         <a class="nav-link dropdown-toggle p-0 d-flex align-items-center" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
-          <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
             <span class="text-white fw-bold" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
           </div>
           <div class="d-flex flex-column justify-content-center" style="line-height: 1;">

@@ -515,3 +515,54 @@ def get_current_user_info():
         "email": user.get("preferred_username") or user.get("email"),
         "displayName": user.get("name")
     }
+
+def get_user_profile_image():
+    """
+    Fetches the user's profile image from Microsoft Graph and returns it as base64.
+    Returns None if no image is found or if there's an error.
+    """
+    token = get_valid_access_token()
+    if not token:
+        print("get_user_profile_image: Could not acquire access token")
+        return None
+
+    # Determine the correct Graph endpoint based on Azure environment
+    if AZURE_ENVIRONMENT == "usgovernment":
+        profile_image_endpoint = "https://graph.microsoft.us/v1.0/me/photo/$value"
+    elif AZURE_ENVIRONMENT == "custom":
+        profile_image_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/me/photo/$value"
+    else:
+        profile_image_endpoint = "https://graph.microsoft.com/v1.0/me/photo/$value"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "image/*"
+    }
+
+    try:
+        response = requests.get(profile_image_endpoint, headers=headers)
+        
+        if response.status_code == 200:
+            # Convert image to base64
+            import base64
+            image_data = response.content
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            
+            # Get content type for proper data URL formatting
+            content_type = response.headers.get('content-type', 'image/jpeg')
+            return f"data:{content_type};base64,{image_base64}"
+            
+        elif response.status_code == 404:
+            # User has no profile image
+            print("get_user_profile_image: User has no profile image")
+            return None
+        else:
+            print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"get_user_profile_image: Request failed: {e}")
+        return None
+    except Exception as e:
+        print(f"get_user_profile_image: Unexpected error: {e}")
+        return None

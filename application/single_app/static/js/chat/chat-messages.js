@@ -344,7 +344,15 @@ export function appendMessage(
       messageClass = "user-message";
       senderLabel = "You";
       avatarAltText = "User Avatar";
-      avatarImg = "/static/images/user-avatar.png";
+      
+      // Use profile image if available, otherwise use default
+      const userProfileImage = window.ProfileImage?.getUserImage();
+      if (userProfileImage) {
+        avatarImg = userProfileImage;
+      } else {
+        avatarImg = "/static/images/user-avatar.png";
+      }
+      
       messageContentHtml = DOMPurify.sanitize(
         marked.parse(escapeHtml(messageContent))
       );
