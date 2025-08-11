@@ -3,42 +3,96 @@
 
 let userProfileImage = null;
 let userInitials = '';
+let isLoading = false;
 
-// Initialize profile image functionality
+// Try to load cached image immediately (before DOM loads)
+(function() {
+    const cachedImage = sessionStorage.getItem('userProfileImage');
+    if (cachedImage && cachedImage !== 'null' && cachedImage !== 'undefined') {
+        userProfileImage = cachedImage;
+        
+        // Immediate DOM check and update
+        function immediateUpdate() {
+            const topNav = document.getElementById('top-nav-profile-avatar');
+            const sidebar = document.getElementById('sidebar-profile-avatar');
+            
+            if (topNav && userProfileImage) {
+                const img = document.createElement('img');
+                img.src = userProfileImage;
+                img.alt = 'Profile';
+                img.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; object-fit: cover;';
+                topNav.innerHTML = '';
+                topNav.appendChild(img);
+            }
+            
+            if (sidebar && userProfileImage) {
+                const img = document.createElement('img');
+                img.src = userProfileImage;
+                img.alt = 'Profile';
+                img.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; object-fit: cover;';
+                sidebar.innerHTML = '';
+                sidebar.appendChild(img);
+            }
+        }
+        
+        // Try immediately, then use observer for when elements appear
+        immediateUpdate();
+        
+        // Set up mutation observer to catch avatar elements as they load
+        const observer = new MutationObserver(function(mutations) {
+            let shouldUpdate = false;
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList') {
+                    // Check if any avatar elements were added
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.nodeType === 1) { // Element node
+                            if (node.id && (node.id.includes('profile-avatar') || node.id.includes('nav-profile'))) {
+                                shouldUpdate = true;
+                            }
+                            // Check children too
+                            const avatars = node.querySelectorAll && node.querySelectorAll('[id*="profile-avatar"], [id*="nav-profile"]');
+                            if (avatars && avatars.length > 0) {
+                                shouldUpdate = true;
+                            }
+                        }
+                    });
+                }
+            });
+            if (shouldUpdate) {
+                immediateUpdate();
+            }
+        });
+        
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+        
+        // Stop observing after a reasonable time
+        setTimeout(() => observer.disconnect(), 5000);
+    }
+})();
+
+// Initialize profile image functionality as early as possible
 document.addEventListener('DOMContentLoaded', function() {
-    // Small delay to ensure all elements are loaded
-    setTimeout(() => {
-        loadUserProfileImage();
-    }, 100);
+    // Immediate update with cached data, then fetch from server
+    updateAllProfileAvatars();
+    loadUserProfileImageFromServer();
 });
 
-// Also try to load when the window is fully loaded (backup)
+// Also try when window loads (backup)
 window.addEventListener('load', function() {
-    // Only reload if we haven't loaded yet
-    if (userProfileImage === null && (document.getElementById('top-nav-profile-avatar') || document.getElementById('sidebar-profile-avatar'))) {
-        setTimeout(() => {
-            loadUserProfileImage();
-        }, 200);
-    }
+    // Quick update to catch any missed elements
+    updateAllProfileAvatars();
 });
 
 /**
- * Load user profile image from settings
+ * Load user profile image from server (background update)
  */
-function loadUserProfileImage() {
-    // Check if user is logged in
-    if (!document.getElementById('top-nav-profile-avatar') && !document.getElementById('sidebar-profile-avatar')) {
-        return; // No profile avatar elements, user not logged in
-    }
+function loadUserProfileImageFromServer() {
+    if (isLoading) return; // Prevent multiple simultaneous requests
+    isLoading = true;
     
-    // First, try to load from sessionStorage for faster loading
-    const cachedImage = sessionStorage.getItem('userProfileImage');
-    if (cachedImage && cachedImage !== 'null') {
-        userProfileImage = cachedImage;
-        updateAllProfileAvatars();
-    }
-    
-    // Then fetch from server to ensure we have the latest
     fetch('/api/user/settings')
         .then(response => {
             if (!response.ok) {
@@ -49,7 +103,7 @@ function loadUserProfileImage() {
         .then(data => {
             const serverProfileImage = data.settings?.profileImage;
             
-            // Only update if different from cached version
+            // Only update if different from current version
             if (serverProfileImage !== userProfileImage) {
                 userProfileImage = serverProfileImage;
                 console.log('Profile image updated from server:', userProfileImage ? 'Image found' : 'No image found');
@@ -64,27 +118,30 @@ function loadUserProfileImage() {
             }
         })
         .catch(error => {
-            console.error('Error loading user profile image:', error);
-            // If we don't have a cached image, show initials
-            if (!userProfileImage) {
-                userProfileImage = null;
-                updateAllProfileAvatars();
-            }
+            console.error('Error loading user profile image from server:', error);
+        })
+        .finally(() => {
+            isLoading = false;
         });
+}
+
+/**
+ * Load user profile image (legacy function - now uses server function)
+ */
+function loadUserProfileImage() {
+    return loadUserProfileImageFromServer();
 }
 
 /**
  * Update all profile avatars on the page
  */
 function updateAllProfileAvatars() {
-    // Update top navigation avatar
-    updateTopNavAvatar();
-    
-    // Update sidebar avatar if present
-    updateSidebarAvatar();
-    
-    // Update any chat message avatars
-    updateChatAvatars();
+    // Use requestAnimationFrame for smooth updates
+    requestAnimationFrame(() => {
+        updateTopNavAvatar();
+        updateSidebarAvatar();
+        updateChatAvatars();
+    });
 }
 
 /**
@@ -95,15 +152,29 @@ function updateTopNavAvatar() {
     if (!avatarElement) return;
     
     if (userProfileImage) {
-        avatarElement.innerHTML = `<img src="${userProfileImage}" alt="Profile" style="width: 28px; height: 28px; border-radius: 50%; object-fit: cover;">`;
+        const img = document.createElement('img');
+        img.src = userProfileImage;
+        img.alt = 'Profile';
+        img.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; object-fit: cover;';
+        
+        // Add smooth loading
+        img.onload = function() {
+            this.classList.add('loaded');
+        };
+        
+        avatarElement.innerHTML = '';
+        avatarElement.appendChild(img);
         avatarElement.style.backgroundColor = 'transparent';
     } else {
-        // Keep the existing initials display
+        // Keep the existing initials display, but use cached name if possible
         const nameElement = avatarElement.parentElement.querySelector('.fw-semibold');
         if (nameElement) {
             const name = nameElement.textContent.trim();
             const initials = getInitials(name);
             avatarElement.innerHTML = `<span class="text-white fw-bold" style="font-size: 1rem;">${initials}</span>`;
+            avatarElement.classList.add('rounded-circle', 'bg-secondary', 'd-flex', 'align-items-center', 'justify-content-center');
+            avatarElement.style.width = '28px';
+            avatarElement.style.height = '28px';
             avatarElement.style.backgroundColor = '#6c757d';
         }
     }
@@ -117,7 +188,18 @@ function updateSidebarAvatar() {
     if (!sidebarAvatar) return;
     
     if (userProfileImage) {
-        sidebarAvatar.innerHTML = `<img src="${userProfileImage}" alt="Profile" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">`;
+        const img = document.createElement('img');
+        img.src = userProfileImage;
+        img.alt = 'Profile';
+        img.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; object-fit: cover;';
+        
+        // Add smooth loading
+        img.onload = function() {
+            this.classList.add('loaded');
+        };
+        
+        sidebarAvatar.innerHTML = '';
+        sidebarAvatar.appendChild(img);
         sidebarAvatar.style.backgroundColor = 'transparent';
     } else {
         // Get initials for sidebar
@@ -125,7 +207,10 @@ function updateSidebarAvatar() {
         if (nameElement) {
             const name = nameElement.textContent.trim();
             const initials = getInitials(name);
-            sidebarAvatar.innerHTML = `<span class="text-white fw-bold" style="font-size: 0.75rem;">${initials}</span>`;
+            sidebarAvatar.innerHTML = `<span class="text-white fw-bold" style="font-size: 1rem;">${initials}</span>`;
+            sidebarAvatar.classList.add('rounded-circle', 'bg-secondary', 'd-flex', 'align-items-center', 'justify-content-center');
+            sidebarAvatar.style.width = '28px';
+            sidebarAvatar.style.height = '28px';
             sidebarAvatar.style.backgroundColor = '#6c757d';
         }
     }

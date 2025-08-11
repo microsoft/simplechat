@@ -98,8 +98,15 @@
         <!-- My Account Dropdown -->
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle p-0" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
+            {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
             <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
-              <span class="text-white fw-bold" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
+              {% if profile_image %}
+                <!-- Render profile image directly from server data -->
+                <img src="data:image/jpeg;base64,{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
+              {% else %}
+                <!-- Fallback to initials with class for JS targeting -->
+                <span class="text-white fw-bold nav-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
+              {% endif %}
             </div>
             <div class="d-flex flex-column justify-content-center" style="line-height: 1;">
               <span class="fw-semibold" style="font-size: 1rem;">{{ session['user'].get('name', 'User') }}</span>

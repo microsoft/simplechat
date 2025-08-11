@@ -99,6 +99,18 @@
       background: #555;
     }
 
+    /* Profile image optimization - prevent flash */
+    #top-nav-profile-avatar img,
+    #sidebar-profile-avatar img {
+      opacity: 0;
+      transition: opacity 0.2s ease-in-out;
+    }
+    
+    #top-nav-profile-avatar img.loaded,
+    #sidebar-profile-avatar img.loaded {
+      opacity: 1;
+    }
+
     a.citation-link {
       color: #0d6efd;
       text-decoration: underline;
@@ -149,6 +161,19 @@
         // Apply saved theme immediately to html element before page renders
         document.documentElement.setAttribute('data-bs-theme', savedTheme);
       }
+      
+      // Profile image early initialization to prevent flash
+      {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
+      {% if profile_image %}
+      var serverProfileImage = {{ profile_image | tojson }};
+      if (serverProfileImage) {
+        // Store server profile image in sessionStorage immediately
+        sessionStorage.setItem('userProfileImage', serverProfileImage);
+        // Make profile image available globally
+        window.userProfileImage = serverProfileImage;
+      }
+      {% endif %}
+      
       // Sidebar nav early initialization to prevent flash
       // Check server-side user settings first, then fallback to localStorage, then admin default
       var userNavLayout = '{{ user_settings.get("settings", {}).get("navLayout", "") }}';
