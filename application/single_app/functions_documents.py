@@ -2932,7 +2932,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
         except Exception as e:
             print(f"Warning: Error extracting final metadata for Tabular document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
-
+            
     return total_chunks_saved
 
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
@@ -3951,6 +3951,7 @@ def is_document_shared_with_group(document_id, group_id):
         
         # Check if group is in shared list
         shared_group_ids = document_item.get('shared_group_ids', [])
+        
         # Only allow access if group is owner or in shared_group_ids as approved
         return any(entry == f"{group_id},approved" for entry in shared_group_ids)
         

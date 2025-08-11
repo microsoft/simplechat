@@ -203,6 +203,86 @@ def register_route_backend_documents(app):
         response_status = 200 if processed_docs and not upload_errors else 207 # Multi-Status if partial success/errors
         if not processed_docs and upload_errors: response_status = 400 # Bad Request if all failed
 
+        # Insert a chat message with a content preview for each successfully processed file
+        from datetime import datetime
+        import random
+        import time
+
+        for doc in processed_docs:
+            try:
+                # Try to find a conversation to attach the file message to
+                conversation_id = None
+                # Optionally, you could allow the client to pass a conversation_id in the form data
+                # For now, just use a new conversation per file if not provided
+                conversation_id = str(uuid.uuid4())
+                conversation_item = {
+                    'id': conversation_id,
+                    'user_id': user_id,
+                    'last_updated': datetime.utcnow().isoformat(),
+                    'title': doc['filename']
+                }
+                cosmos_conversations_container.upsert_item(conversation_item)
+
+                filename = doc['filename']
+                file_ext = os.path.splitext(filename)[1].lower()
+                temp_file_path = None
+
+                # Try to find the temp file again (not always possible, but try for preview)
+                # If not possible, skip preview
+                preview_content = ''
+                is_table = False
+                try:
+                    # Try to find the file in /sc-temp-files or system temp
+                    sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else ""
+                    possible_paths = [
+                        os.path.join(sc_temp_files_dir, filename),
+                        os.path.join("/tmp", filename),
+                    ]
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            temp_file_path = path
+                            break
+                except Exception:
+                    pass
+
+                try:
+                    if temp_file_path and file_ext in ['.csv', '.xls', '.xlsx']:
+                        from functions_content import extract_table_file
+                        preview_content = extract_table_file(temp_file_path, file_ext)
+                        is_table = True
+                    elif temp_file_path and file_ext == '.pdf':
+                        from functions_content import extract_content_with_azure_di
+                        preview_content = extract_content_with_azure_di(temp_file_path)
+                    elif temp_file_path and file_ext == '.txt':
+                        with open(temp_file_path, 'r', encoding='utf-8') as f:
+                            preview_content = f.read(2000)
+                    elif temp_file_path and file_ext == '.json':
+                        import json
+                        with open(temp_file_path, 'r', encoding='utf-8') as f:
+                            parsed_json = json.load(f)
+                            preview_content = json.dumps(parsed_json, indent=2)[:2000]
+                    # Add more types as needed
+                except Exception:
+                    preview_content = ''
+
+                file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
+                file_message = {
+                    'id': file_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'file',
+                    'filename': filename,
+                    'file_content': preview_content,
+                    'is_table': is_table,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None
+                }
+                cosmos_messages_container.upsert_item(file_message)
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.upsert_item(conversation_item)
+            except Exception as e:
+                # Log but do not fail the upload if preview fails
+                print(f"Warning: Failed to create chat file message for {filename}: {e}")
+
         return jsonify({
             'message': f'Processed {len(processed_docs)} file(s). Check status periodically.',
             'document_ids': [doc['document_id'] for doc in processed_docs],

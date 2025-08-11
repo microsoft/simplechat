@@ -695,7 +695,7 @@ function renderDocumentRow(doc) {
                          <button class="btn btn-sm btn-info" onclick="window.onEditDocument('${docId}')" title="Edit Metadata">
                             <i class="bi bi-pencil-fill"></i> Edit Metadata
                          </button>
-        `;
+            `;
 
         // Check window flag before rendering extract button - CORRECTED CHECK
         if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {

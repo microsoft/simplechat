@@ -67,11 +67,6 @@
         },
         "other_settings": {
           "type": "object"
-        },
-        "plugins_to_load": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Array of plugin names to load"
         }
       },
       "required": [

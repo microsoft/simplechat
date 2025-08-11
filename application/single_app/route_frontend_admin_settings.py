@@ -141,6 +141,18 @@ def register_route_frontend_admin_settings(app):
                         'name': 'default_agent',
                         'is_global': True
                     }
+        if 'allow_user_agents' not in settings:
+            settings['allow_user_agents'] = False
+        if 'allow_user_custom_agent_endpoints' not in settings:
+            settings['allow_user_custom_agent_endpoints'] = False
+        if 'allow_user_plugins' not in settings:
+            settings['allow_user_plugins'] = False
+        if 'allow_group_agents' not in settings:
+            settings['allow_group_agents'] = False
+        if 'allow_group_custom_agent_endpoints' not in settings:
+            settings['allow_group_custom_agent_endpoints'] = False
+        if 'allow_group_plugins' not in settings:
+            settings['allow_group_plugins'] = False
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:

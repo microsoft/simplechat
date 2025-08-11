@@ -4,7 +4,7 @@ name: SimpleChat Docker Image Publish (dev branch)
 on:
   push:
     branches:
-    - nadoyle
+    - Development
 
   workflow_dispatch:
 

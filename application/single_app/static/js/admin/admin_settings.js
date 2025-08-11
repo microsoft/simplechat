@@ -715,7 +715,9 @@ function setupToggles() {
         const waitToggle = document.getElementById('toggle-wait-plugin');
         const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
-        const toggles = [timeToggle, httpToggle, waitToggle, factMemoryToggle, embeddingToggle];
+        const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
+        const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
+        const toggles = [timeToggle, httpToggle, waitToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -743,6 +745,8 @@ function setupToggles() {
                 if (waitToggle) waitToggle.checked = !!settings.enable_wait_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
+                if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
             } catch (err) {
                 showFeedback('Error loading plugin toggle states: ' + err.message, 'danger');
             }
@@ -759,7 +763,9 @@ function setupToggles() {
                 enable_http_plugin: httpToggle ? httpToggle.checked : false,
                 enable_wait_plugin: waitToggle ? waitToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
-                enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false
+                enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
+                allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
+                allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
             };
             fetch('/api/admin/plugins/settings', {
                 method: 'POST',
@@ -795,8 +801,155 @@ function setupToggles() {
         });
     }
 
-    // Existing toggles...
-    // Logging toggle: mark form as modified on change
+    // --- User/Group Plugin Toggles ---
+    const allowUserPluginsToggle = document.getElementById('allow_user_plugins');
+    const allowGroupPluginsToggle = document.getElementById('allow_group_plugins');
+    let pluginSettingsFeedbackDiv = document.getElementById('plugin-settings-feedback');
+    if (!pluginSettingsFeedbackDiv) {
+        pluginSettingsFeedbackDiv = document.createElement('div');
+        pluginSettingsFeedbackDiv.id = 'plugin-settings-feedback';
+        pluginSettingsFeedbackDiv.className = 'mt-2';
+        // Try to append to plugins card
+        const pluginsCard = document.getElementById('user-group-plugin-toggles');
+        if (pluginsCard) pluginsCard.appendChild(pluginSettingsFeedbackDiv);
+    }
+
+    function showPluginSettingsFeedback(msg, type = 'info') {
+        pluginSettingsFeedbackDiv.innerHTML = `<div class="alert alert-${type} py-1 px-2 mb-0">${msg}</div>`;
+        setTimeout(() => { pluginSettingsFeedbackDiv.innerHTML = ''; }, 3000);
+    }
+
+    function saveUserGroupPluginSettings() {
+        // Disable toggles while saving
+        if (allowUserPluginsToggle) allowUserPluginsToggle.disabled = true;
+        if (allowGroupPluginsToggle) allowGroupPluginsToggle.disabled = true;
+        const payload = {
+            allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
+            allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
+        };
+        fetch('/api/admin/plugins/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(async resp => {
+            const data = await resp.json();
+            if (resp.ok) {
+                showPluginSettingsFeedback('Plugin settings updated.', 'success');
+            } else {
+                showPluginSettingsFeedback('Error: ' + (data.error || 'Failed to update plugin settings'), 'danger');
+            }
+        })
+        .catch(err => {
+            showPluginSettingsFeedback('Error: ' + err.message, 'danger');
+        })
+        .finally(() => {
+            if (allowUserPluginsToggle) allowUserPluginsToggle.disabled = false;
+            if (allowGroupPluginsToggle) allowGroupPluginsToggle.disabled = false;
+        });
+    }
+
+    if (allowUserPluginsToggle) {
+        allowUserPluginsToggle.addEventListener('change', saveUserGroupPluginSettings);
+    }
+    if (allowGroupPluginsToggle) {
+        allowGroupPluginsToggle.addEventListener('change', saveUserGroupPluginSettings);
+    }
+
+    // --- Agent Settings Toggles (corrected) ---
+    const allowUserAgentsToggle = document.getElementById('toggle-allow-user-agents');
+    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-agent-endpoints');
+    const allowGroupAgentsToggle = document.getElementById('toggle-allow-group-agents');
+    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-agent-endpoints');
+    let agentSettingsFeedbackDiv = document.getElementById('agent-settings-feedback');
+    if (!agentSettingsFeedbackDiv) {
+        agentSettingsFeedbackDiv = document.createElement('div');
+        agentSettingsFeedbackDiv.id = 'agent-settings-feedback';
+        agentSettingsFeedbackDiv.className = 'mt-2';
+        const agentTogglesCard = document.getElementById('agent-toggles-card');
+        if (agentTogglesCard) {
+            agentTogglesCard.insertAdjacentElement('afterend', agentSettingsFeedbackDiv);
+        } else {
+            // Fallback to previous behavior
+            (document.getElementById('agents-main-content') || document.body).appendChild(agentSettingsFeedbackDiv);
+        }
+    }
+
+    function showAgentSettingsFeedback(msg, type = 'info') {
+        agentSettingsFeedbackDiv.innerHTML = `<div class="alert alert-${type} py-1 px-2 mb-0">${msg}</div>`;
+        setTimeout(() => { agentSettingsFeedbackDiv.innerHTML = ''; }, 3000);
+    }
+
+    // Fetch agent settings and set toggles
+    async function loadAgentSettings() {
+        try {
+            const resp = await fetch('/api/admin/agent/settings');
+            if (!resp.ok) throw new Error('Failed to fetch agent settings');
+            const settings = await resp.json();
+            if (allowUserAgentsToggle) allowUserAgentsToggle.checked = !!settings.allow_user_agents;
+            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_agent_endpoints;
+            if (allowGroupAgentsToggle) allowGroupAgentsToggle.checked = !!settings.allow_group_agents;
+            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_agent_endpoints;
+        } catch (err) {
+            showAgentSettingsFeedback('Error loading agent settings: ' + err.message, 'danger');
+        }
+    }
+    // Initial load
+    loadAgentSettings();
+
+    // Handler for toggle changes
+    function saveAgentSetting(settingName, value) {
+        const toggleMap = {
+            'allow_user_agents': allowUserAgentsToggle,
+            'allow_user_custom_agent_endpoints': allowUserCustomAgentEndpointsToggle,
+            'allow_group_agents': allowGroupAgentsToggle,
+            'allow_group_custom_agent_endpoints': allowGroupCustomAgentEndpointsToggle
+        };
+        const toggle = toggleMap[settingName];
+        if (toggle) toggle.disabled = true;
+        fetch(`/api/admin/agents/settings/${settingName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value })
+        })
+        .then(async resp => {
+            const data = await resp.json();
+            if (resp.ok) {
+                showAgentSettingsFeedback('Agent setting updated.', 'success');
+            } else {
+                showAgentSettingsFeedback('Error: ' + (data.error || 'Failed to update agent setting'), 'danger');
+            }
+        })
+        .catch(err => {
+            showAgentSettingsFeedback('Error: ' + err.message, 'danger');
+        })
+        .finally(() => {
+            if (toggle) toggle.disabled = false;
+        });
+    }
+
+    if (allowUserAgentsToggle) {
+        allowUserAgentsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_user_agents', allowUserAgentsToggle.checked);
+        });
+    }
+    if (allowUserCustomAgentEndpointsToggle) {
+        allowUserCustomAgentEndpointsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_user_custom_agent_endpoints', allowUserCustomAgentEndpointsToggle.checked);
+        });
+    }
+    if (allowGroupAgentsToggle) {
+        allowGroupAgentsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_group_agents', allowGroupAgentsToggle.checked);
+        });
+    }
+    if (allowGroupCustomAgentEndpointsToggle) {
+        allowGroupCustomAgentEndpointsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_group_custom_agent_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
+        });
+    }
+
+    // --- Logging Toggle ---
     const enableAppInsightsLoggingToggle = document.getElementById('enable_appinsights_global_logging');
     if (enableAppInsightsLoggingToggle) {
         enableAppInsightsLoggingToggle.addEventListener('change', () => {
