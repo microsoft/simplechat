@@ -40,9 +40,14 @@ body.sidebar-nav-enabled .container-fluid {
 
 
 /* Classification banner adjustments for sidebar layout */
-body.sidebar-nav-enabled.has-classification-banner #sidebar-nav {
+body.has-classification-banner #sidebar-nav {
   top: 40px !important; /* Start below the classification banner */
   height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
+}
+
+/* Floating expand button positioning when classification banner is present */
+body.has-classification-banner #floating-expand-btn {
+  top: calc(0.5rem + 40px) !important; /* Start below the classification banner */
 }
 
 /* When the banner is present, add padding to the top of the main content */
@@ -411,9 +416,6 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   .sidebar-conversation-timestamp {
     font-size: 0.7rem;
   }
-}
-body.sidebar-nav-enabled.has-classification-banner .container-fluid {
-    padding-top: calc(1.5rem + 40px) !important;
 }
 
 
