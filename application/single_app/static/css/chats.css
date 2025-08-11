@@ -353,8 +353,14 @@ body.layout-split .gutter {
 /* Custom styles for the Conversations List */
 #conversations-list,
 #conversations-list-offcanvas {
-  max-height: 80vh;
-  overflow-y: auto;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto !important;
+}
+
+/* Ensure conversations list scrolls properly when top nav is active */
+#conversations-list {
+  height: calc(100vh - 140px);
+  min-height: 200px;
 }
 
 .conversation-item {

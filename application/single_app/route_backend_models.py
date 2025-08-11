@@ -168,7 +168,8 @@ def register_route_backend_models(app):
             for d in deployments:
                 model_name = d.properties.model.name
                 if model_name and (
-                    "dall-e" in model_name.lower()
+                    "dall-e" in model_name.lower() or
+                    "image" in model_name.lower()
                 ):
                     models.append({
                         "deploymentName": d.name,
