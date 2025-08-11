@@ -47,6 +47,19 @@ def register_route_frontend_admin_settings(app):
                 {"label": "N/A", "color": "#808080"},
                 {"label": "Pending", "color": "#0000FF"}
             ]
+
+        # Ensure external links fields exist with defaults if missing in DB
+        if 'enable_external_links' not in settings:
+            settings['enable_external_links'] = False
+        if 'external_links_menu_name' not in settings:
+            settings['external_links_menu_name'] = 'External Links'
+        if 'external_links_force_menu' not in settings:
+            settings['external_links_force_menu'] = False
+        if 'external_links' not in settings or not isinstance(settings.get('external_links'), list):
+            settings['external_links'] = [
+                {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+                {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
+            ]
         # --- End Refined Default Checks ---
 
         if 'enable_appinsights_global_logging' not in settings:
@@ -287,6 +300,44 @@ def register_route_frontend_admin_settings(app):
                 # Keep existing categories from the database instead of overwriting with bad data
                 parsed_categories = settings.get('document_classification_categories', []) # Fallback to existing
 
+            # --- Handle External Links Toggle ---
+            enable_external_links = form_data.get('enable_external_links') == 'on'
+
+            # --- Handle External Links Menu Name ---
+            external_links_menu_name = form_data.get('external_links_menu_name', 'External Links').strip()
+            if not external_links_menu_name:  # If empty, set to default
+                external_links_menu_name = 'External Links'
+
+            # --- Handle External Links Force Menu ---
+            external_links_force_menu = form_data.get('external_links_force_menu') == 'on'
+
+            # --- Handle External Links JSON ---
+            external_links_json = form_data.get("external_links_json", "[]") # Default to empty list string
+            parsed_external_links = [] # Initialize
+            try:
+                parsed_external_links_raw = json.loads(external_links_json)
+                # Validation
+                if isinstance(parsed_external_links_raw, list) and all(
+                    isinstance(item, dict) and
+                    'label' in item and isinstance(item['label'], str) and item['label'].strip() and # Ensure label is non-empty string
+                    'url' in item and isinstance(item['url'], str) and item['url'].strip() # Ensure URL is non-empty string
+                    for item in parsed_external_links_raw
+                ):
+                    # Sanitize/clean data slightly
+                    parsed_external_links = [
+                        {'label': item['label'].strip(), 'url': item['url'].strip()}
+                        for item in parsed_external_links_raw
+                    ]
+                    print(f"Successfully parsed {len(parsed_external_links)} external links.")
+                else:
+                     raise ValueError("Invalid format: Expected a list of objects with 'label' and 'url' keys.")
+
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing external_links_json: {e}")
+                flash(f'Error processing external links: {e}. Changes for external links not saved.', 'danger')
+                # Keep existing external links from the database instead of overwriting with bad data
+                parsed_external_links = settings.get('external_links', []) # Fallback to existing
+
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
             office_docs_storage_account_url = form_data.get('office_docs_storage_account_url', '').strip()
@@ -446,6 +497,12 @@ def register_route_frontend_admin_settings(app):
                 # *** Document Classification ***
                 'enable_document_classification': enable_document_classification,
                 'document_classification_categories': parsed_categories, # Store the PARSED LIST
+
+                # *** External Links ***
+                'enable_external_links': enable_external_links,
+                'external_links_menu_name': external_links_menu_name,
+                'external_links_force_menu': external_links_force_menu,
+                'external_links': parsed_external_links, # Store the PARSED LIST
 
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,

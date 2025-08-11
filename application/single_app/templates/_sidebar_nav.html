@@ -52,7 +52,7 @@
       </a>
     {% endif %}
   </div>
-  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column">
+  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
     <ul class="nav flex-column">
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         <li class="nav-item">
@@ -104,6 +104,48 @@
     </div>
     {% endif %}
 
+    <!-- External Links Section - Only show when logged in and enabled -->
+    {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) and app_settings.enable_external_links and app_settings.external_links %}
+    <div class="overflow-auto">
+      {% set should_force_menu = app_settings.external_links_force_menu %}
+      {% set link_count = app_settings.external_links|length %}
+      {% if should_force_menu or link_count >= 3 %}
+        <!-- Display as collapsible section -->
+        <div id="external-links-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+          <span class="nav-text">{{ app_settings.external_links_menu_name or 'External Links' }}</span>
+          <i id="external-links-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <div id="external-links-section">
+          <ul class="nav flex-column mb-2">
+            {% for link in app_settings.external_links %}
+            <li class="nav-item">
+              <a class="nav-link d-flex align-items-center" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                <i class="bi bi-box-arrow-up-right me-2" style="font-size: 0.8em;"></i>
+                <span class="nav-text">{{ link.label }}</span>
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% else %}
+        <!-- Display as individual nav items for 1-2 links -->
+        <div class="mt-2 mb-1 ps-3 pe-2 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
+          <span class="nav-text">{{ app_settings.external_links_menu_name or 'External Links' }}</span>
+        </div>
+        <ul class="nav flex-column mb-2">
+          {% for link in app_settings.external_links %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+              <i class="bi bi-box-arrow-up-right me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">{{ link.label }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
@@ -126,7 +168,9 @@
     </div>
     {% endif %}
   </div>
-  <div class="border-top p-3">
+  
+  <!-- Fixed User Account Section at Bottom -->
+  <div id="sidebar-user-account" class="border-top p-3 position-absolute bottom-0 start-0 end-0" style="background: inherit; z-index: 1050;">
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
       <div class="dropdown">
         <a class="nav-link dropdown-toggle p-0 d-flex align-items-center" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
@@ -246,6 +290,19 @@
           conversationsCaret.style.transform = conversationsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
         });
       }
+
+      // Collapsible External Links Section
+      var externalLinksToggle = document.getElementById('external-links-toggle');
+      var externalLinksSection = document.getElementById('external-links-section');
+      var externalLinksCaret = document.getElementById('external-links-caret');
+      var externalLinksCollapsed = false;
+      if (externalLinksToggle && externalLinksSection && externalLinksCaret) {
+        externalLinksToggle.addEventListener('click', function() {
+          externalLinksCollapsed = !externalLinksCollapsed;
+          externalLinksSection.style.display = externalLinksCollapsed ? 'none' : '';
+          externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
     });
 
     // Sidebar Toggle Functionality
@@ -304,10 +361,31 @@
     style.textContent = `
       #sidebar-nav {
         transition: transform 0.3s ease;
+        position: relative;
       }
       
       #sidebar-nav.sidebar-collapsed {
         transform: translateX(-100%);
+      }
+      
+      /* Fixed user account section */
+      #sidebar-user-account {
+        width: 260px;
+        min-width: 220px;
+        transition: inherit;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      
+      /* Ensure user account section inherits background from sidebar */
+      #sidebar-user-account {
+        background-color: var(--bs-light, #f8f9fa) !important;
+      }
+      
+      /* Dark mode support for user account section */
+      [data-bs-theme="dark"] #sidebar-user-account {
+        background-color: var(--bs-dark, #212529) !important;
+        border-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
       }
       
       /* Smooth transitions for content area adjustments */

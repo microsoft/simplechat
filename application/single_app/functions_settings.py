@@ -221,6 +221,15 @@ def get_settings():
             {"label": "Pending", "color": "#0000FF"}
         ],
 
+        # External Links
+        'enable_external_links': False,
+        'external_links_menu_name': 'External Links',
+        'external_links_force_menu': False,
+        'external_links': [
+            {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+            {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
+        ],
+
         # Enhanced Citations
         'enable_enhanced_citations': False,
         'enable_enhanced_citations_mount': False,

@@ -39,6 +39,11 @@
             vertical-align: middle;
         }
         
+        /* Ensure external links table cells have consistent vertical alignment */
+        #external-links-tbody td {
+            vertical-align: middle;
+        }
+        
         /* Floating Save Button */
         .floating-save-btn {
             position: fixed;
@@ -879,6 +884,56 @@
                               style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
+                    </div>
+                </div>
+
+                <!-- External Links Section -->
+                <div class="card p-3 mb-3">
+                    <h5>External Links</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_external_links" name="enable_external_links"
+                            {% if settings.enable_external_links %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_external_links">
+                            Enable External Links in Navigation
+                        </label>
+                    </div>
+                    <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
+                    
+                    <div id="external_links_settings" {% if not settings.enable_external_links %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="external_links_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name" 
+                                   value="{{ settings.external_links_menu_name or 'External Links' }}" placeholder="External Links">
+                            <small class="form-text text-muted">This name will appear in the navigation bar as the menu title.</small>
+                        </div>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="external_links_force_menu" name="external_links_force_menu"
+                                {% if settings.external_links_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="external_links_force_menu">
+                                Force Menu Display
+                            </label>
+                            <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
+                        </div>
+                        
+                        <h6>External Links</h6>
+                        <p class="text-muted small">Define custom links that will appear in the navigation bar for users to access external resources.</p>
+                        
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Label</th>
+                                    <th>URL</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="external-links-tbody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                        
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="add-external-link-btn">Add New Link</button>
+                        <input type="hidden" name="external_links_json" id="external_links_json">
                     </div>
                 </div>
             </div>
@@ -2635,6 +2690,25 @@
         window.classificationCategories = [];
     }
     window.enableDocumentClassification = "{{ enable_document_classification }}";
+
+    // *** NEW: External Links Data ***
+    try {
+        let externalLinksStr = '{{ settings.external_links|tojson(indent=None)|safe }}';
+        if (!externalLinksStr || externalLinksStr.trim() === '') {
+            externalLinksStr = '[]';
+        }
+        window.externalLinks = JSON.parse(externalLinksStr);
+    } catch (e) {
+        console.error("Error parsing external links:", e);
+        window.externalLinks = [];
+    }
+    // Ensure it's always an array
+    if (!Array.isArray(window.externalLinks)) {
+        window.externalLinks = [];
+    }
+    window.enableExternalLinks = "{{ enable_external_links }}";
+    window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
+    window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>

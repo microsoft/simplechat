@@ -13,6 +13,10 @@ let imageAll      = window.imageAll || [];
 let classificationCategories = window.classificationCategories || [];
 let enableDocumentClassification = window.enableDocumentClassification || false;
 
+let externalLinks = window.externalLinks || [];
+let enableExternalLinks = window.enableExternalLinks || false;
+let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
+
 // Track whether form has been modified since last save
 let formModified = false;
 
@@ -21,6 +25,13 @@ const classificationSettingsDiv = document.getElementById('document_classificati
 const classificationTbody = document.getElementById('classification-categories-tbody');
 const addClassificationBtn = document.getElementById('add-classification-btn');
 const classificationJsonInput = document.getElementById('document_classification_categories_json');
+
+const enableExternalLinksToggle = document.getElementById('enable_external_links');
+const externalLinksSettingsDiv = document.getElementById('external_links_settings');
+const externalLinksTbody = document.getElementById('external-links-tbody');
+const addExternalLinkBtn = document.getElementById('add-external-link-btn');
+const externalLinksJsonInput = document.getElementById('external_links_json');
+
 const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
@@ -55,6 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
+    
+    // --- NEW: External Links Setup ---
+    setupExternalLinks(); // Initialize external links section
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();
@@ -668,6 +682,331 @@ function updateClassificationJsonInput() {
         } catch (e) {
             console.error("Error stringifying classification categories:", e);
             classificationJsonInput.value = "[]"; // Set to empty array on error
+            return "[]";
+        }
+    }
+    return "[]";
+}
+
+// --- *** NEW: External Links Functions *** ---
+
+/**
+ * Sets up initial state and event listeners for the external links section.
+ */
+function setupExternalLinks() {
+    if (enableExternalLinksToggle) {
+        enableExternalLinksToggle.addEventListener('change', toggleExternalLinksSettingsVisibility);
+        toggleExternalLinksSettingsVisibility(); // Set initial state
+    }
+
+    if (addExternalLinkBtn) {
+        addExternalLinkBtn.addEventListener('click', handleAddExternalLink);
+    }
+
+    if (externalLinksTbody) {
+        externalLinksTbody.addEventListener('click', handleExternalLinksAction);
+    }
+
+    // Render existing external links
+    renderExternalLinks();
+    updateExternalLinksJsonInput();
+}
+
+/**
+ * Shows or hides the external links settings area based on the toggle switch.
+ */
+function toggleExternalLinksSettingsVisibility() {
+    if (externalLinksSettingsDiv && enableExternalLinksToggle) {
+        externalLinksSettingsDiv.style.display = enableExternalLinksToggle.checked ? 'block' : 'none';
+    }
+}
+
+/**
+ * Renders the external links rows in the table body.
+ */
+function renderExternalLinks() {
+    if (!externalLinksTbody) return;
+
+    // Clear existing content
+    externalLinksTbody.innerHTML = '';
+
+    // Render each external link
+    externalLinks.forEach((link, index) => {
+        const row = createExternalLinkRow(link, index);
+        externalLinksTbody.appendChild(row);
+    });
+
+    // Update hidden input
+    updateExternalLinksJsonInput();
+}
+
+/**
+ * Creates a single table row (<tr>) for an external link.
+ * @param {object} link - The link object {label, url}.
+ * @param {number} index - The index of the link in the array.
+ * @param {boolean} isNew - Optional flag if the row is newly added and editable by default.
+ * @returns {HTMLTableRowElement} The created table row element.
+ */
+function createExternalLinkRow(link, index, isNew = false) {
+    const row = document.createElement('tr');
+    row.setAttribute('data-index', index);
+
+    if (isNew) {
+        // Create an editable row for new links
+        row.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm external-link-label-input" 
+                       value="${escapeHtml(link.label)}" placeholder="Link Label">
+            </td>
+            <td>
+                <input type="url" class="form-control form-control-sm external-link-url-input" 
+                       value="${escapeHtml(link.url)}" placeholder="https://example.com">
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
+                <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
+            </td>
+        `;
+    } else {
+        // Create a read-only row for existing links
+        row.innerHTML = `
+            <td class="external-link-label">${escapeHtml(link.label)}</td>
+            <td class="external-link-url">
+                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+                    ${escapeHtml(link.url)}
+                </a>
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-outline-primary external-link-edit-btn" data-index="${index}">Edit</button>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-1 external-link-delete-btn" data-index="${index}">Delete</button>
+            </td>
+        `;
+    }
+
+    return row;
+}
+
+/**
+ * Handles clicks on the "Add New Link" button.
+ */
+function handleAddExternalLink() {
+    // Create a new temporary link for editing
+    const newLink = { label: '', url: '' };
+    const newIndex = `new-${Date.now()}`; // Use timestamp to avoid conflicts
+    
+    // Create and add the new row in edit mode
+    const newRow = createExternalLinkRow(newLink, newIndex, true);
+    newRow.setAttribute('data-index', newIndex);
+    
+    if (externalLinksTbody) {
+        externalLinksTbody.appendChild(newRow);
+    }
+    
+    // Focus on the label input
+    const labelInput = newRow.querySelector('.external-link-label-input');
+    if (labelInput) {
+        labelInput.focus();
+    }
+    
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks within the external links table body (Edit, Save, Delete, Cancel).
+ * Uses event delegation.
+ * @param {Event} event - The click event.
+ */
+function handleExternalLinksAction(event) {
+    const target = event.target;
+    if (!target.matches('button')) return;
+
+    const row = target.closest('tr');
+    if (!row) return;
+
+    const indexAttr = target.getAttribute('data-index') || row.getAttribute('data-index');
+    const isNew = typeof indexAttr === 'string' && indexAttr.startsWith('new-');
+
+    if (target.classList.contains('external-link-edit-btn')) {
+        handleEditExternalLink(row);
+    } else if (target.classList.contains('external-link-save-btn')) {
+        handleSaveExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-cancel-btn')) {
+        handleCancelExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-delete-btn')) {
+        handleDeleteExternalLink(row, indexAttr, isNew);
+    }
+}
+
+/**
+ * Handles clicks on the "Edit" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to make editable.
+ */
+function handleEditExternalLink(row) {
+    const index = parseInt(row.getAttribute('data-index'));
+    const link = externalLinks[index];
+    if (!link) return;
+
+    // Replace the row content with editable inputs
+    row.innerHTML = `
+        <td>
+            <input type="text" class="form-control form-control-sm external-link-label-input" 
+                   value="${escapeHtml(link.label)}" placeholder="Link Label">
+        </td>
+        <td>
+            <input type="url" class="form-control form-control-sm external-link-url-input" 
+                   value="${escapeHtml(link.url)}" placeholder="https://example.com">
+        </td>
+        <td>
+            <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
+            <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
+        </td>
+    `;
+
+    // Focus on the label input
+    const labelInput = row.querySelector('.external-link-label-input');
+    if (labelInput) {
+        labelInput.focus();
+    }
+
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks on the "Save" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to save.
+ * @param {string|number} indexAttr - The original index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added row.
+ */
+function handleSaveExternalLink(row, indexAttr, isNew) {
+    const labelInput = row.querySelector('.external-link-label-input');
+    const urlInput = row.querySelector('.external-link-url-input');
+
+    if (!labelInput || !urlInput) return;
+
+    const label = labelInput.value.trim();
+    const url = urlInput.value.trim();
+
+    // Validation
+    if (!label) {
+        alert('Please enter a label for the link.');
+        labelInput.focus();
+        return;
+    }
+
+    if (!url) {
+        alert('Please enter a URL for the link.');
+        urlInput.focus();
+        return;
+    }
+
+    // Basic URL validation
+    try {
+        new URL(url);
+    } catch (e) {
+        alert('Please enter a valid URL (e.g., https://example.com).');
+        urlInput.focus();
+        return;
+    }
+
+    const linkData = { label, url };
+
+    if (isNew) {
+        // Add new link to the array
+        externalLinks.push(linkData);
+        const newIndex = externalLinks.length - 1;
+        
+        // Replace the row with a read-only version
+        const newRow = createExternalLinkRow(linkData, newIndex, false);
+        row.parentNode.replaceChild(newRow, row);
+    } else {
+        // Update existing link
+        const index = parseInt(indexAttr);
+        if (index >= 0 && index < externalLinks.length) {
+            externalLinks[index] = linkData;
+            
+            // Replace the row with a read-only version
+            const updatedRow = createExternalLinkRow(linkData, index, false);
+            row.parentNode.replaceChild(updatedRow, row);
+        }
+    }
+
+    updateExternalLinksJsonInput();
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks on the "Cancel" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to cancel editing.
+ * @param {string|number} indexAttr - The index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added, unsaved row.
+ */
+function handleCancelExternalLink(row, indexAttr, isNew) {
+    if (isNew) {
+        // Remove the row entirely for new, unsaved links
+        row.remove();
+    } else {
+        // Restore the original read-only row for existing links
+        const index = parseInt(indexAttr);
+        const link = externalLinks[index];
+        if (link) {
+            const restoredRow = createExternalLinkRow(link, index, false);
+            row.parentNode.replaceChild(restoredRow, row);
+        }
+    }
+}
+
+/**
+ * Handles clicks on the "Delete" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to delete.
+ * @param {string|number} indexAttr - The index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added, unsaved row.
+ */
+function handleDeleteExternalLink(row, indexAttr, isNew) {
+    if (isNew) {
+        // Just remove the row for unsaved new links
+        row.remove();
+        return;
+    }
+
+    const index = parseInt(indexAttr);
+    const link = externalLinks[index];
+    
+    if (link && confirm(`Are you sure you want to delete the link "${link.label}"?`)) {
+        // Remove from array
+        externalLinks.splice(index, 1);
+        
+        // Re-render all links to update indices
+        renderExternalLinks();
+        
+        markFormAsModified();
+    }
+}
+
+/**
+ * Updates the hidden input field with the current external links as JSON.
+ */
+function updateExternalLinksJsonInput() {
+    if (externalLinksJsonInput) {
+        try {
+            // First make sure externalLinks is an array
+            if (!Array.isArray(externalLinks)) {
+                externalLinks = [];
+            }
+            
+            // Ensure we only stringify valid links with required properties
+            const validLinks = externalLinks.filter(link => 
+                link && 
+                typeof link === 'object' &&
+                typeof link.label === 'string' && 
+                typeof link.url === 'string'
+            );
+            
+            const jsonString = JSON.stringify(validLinks);
+            externalLinksJsonInput.value = jsonString;
+            return jsonString;
+        } catch (e) {
+            console.error("Error stringifying external links:", e);
+            externalLinksJsonInput.value = "[]"; // Set to empty array on error
             return "[]";
         }
     }

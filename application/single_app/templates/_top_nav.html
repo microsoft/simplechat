@@ -58,6 +58,38 @@
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
         </li>
+        
+        <!-- External Links -->
+        {% if app_settings.enable_external_links and app_settings.external_links %}
+          {% set should_force_menu = app_settings.external_links_force_menu %}
+          {% set link_count = app_settings.external_links|length %}
+          {% if should_force_menu or link_count >= 3 %}
+            <!-- Display as dropdown menu -->
+            <li class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" id="externalLinksDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                {{ app_settings.external_links_menu_name or 'External Links' }}
+              </a>
+              <ul class="dropdown-menu" aria-labelledby="externalLinksDropdown">
+                {% for link in app_settings.external_links %}
+                <li>
+                  <a class="dropdown-item" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                    {{ link.label }}
+                  </a>
+                </li>
+                {% endfor %}
+              </ul>
+            </li>
+          {% else %}
+            <!-- Display as individual nav items for 1-2 links -->
+            {% for link in app_settings.external_links %}
+            <li class="nav-item">
+              <a class="nav-link" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                {{ link.label }}
+              </a>
+            </li>
+            {% endfor %}
+          {% endif %}
+        {% endif %}
       {% endif %}
     </ul>
     <!-- Right side nav -->
