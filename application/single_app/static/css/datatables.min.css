@@ -7496,8 +7496,7 @@ fieldset:disabled .btn {
   border: 0 !important;
 }
 .border-top {
-  border-top: var(--bs-border-width) var(--bs-border-style)
-    var(--bs-border-color) !important;
+  border-top: 0;
 }
 .border-top-0 {
   border-top: 0 !important;

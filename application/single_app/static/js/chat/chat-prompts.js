@@ -1,6 +1,7 @@
 // chat-prompts.js
 
 import { userInput} from "./chat-messages.js";
+import { updateSendButtonVisibility } from "./chat-messages.js";
 
 const promptSelectionContainer = document.getElementById("prompt-selection-container");
 export const promptSelect = document.getElementById("prompt-select"); // Keep export if needed elsewhere
@@ -64,6 +65,8 @@ export function initializePromptInteractions() {
               populatePromptSelect();
               userInput.classList.add("with-prompt-active");
               userInput.focus();
+              // Update send button visibility when prompts are shown
+              updateSendButtonVisibility();
           } else {
               promptSelectionContainer.style.display = "none";
               if (promptSelect) {
@@ -71,6 +74,8 @@ export function initializePromptInteractions() {
               }
               userInput.classList.remove("with-prompt-active");
               userInput.focus();
+              // Update send button visibility when prompts are hidden
+              updateSendButtonVisibility();
           }
       });
   } else {

@@ -1,0 +1,33 @@
+{
+    "name": "users_table",
+    "type": "databricks_table",
+    "description": "Query the users table in Databricks.",
+    "endpoint": "https://<databricks-url>/api/2.0/sql/statements",
+    "auth": {
+        "type": "key", // Authentication type, can be 'key' or 'identity', etc.
+        "key": "<databricks-key>",
+        "managedIdentity": "<databricks-identity>" // Optional, if using identity-based auth
+    },
+    "metadata": {},
+    "additionalFields": {
+        "table": "users",
+        "warehouse_id": "",
+        "columns": [
+            {
+                "name": "id",
+                "type": "int",
+                "description": "User ID"
+            },
+            {
+                "name": "name",
+                "type": "string",
+                "description": "User's full name"
+            },
+            {
+                "name": "email",
+                "type": "string",
+                "description": "User's email address"
+            }
+        ]
+    }
+}

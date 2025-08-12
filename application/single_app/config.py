@@ -1,11 +1,10 @@
 # config.py
-
+import logging
 import os
 import requests
 import uuid
 import tempfile
 import json
-import pandas as pd
 import time
 import threading
 import random
@@ -25,6 +24,7 @@ ffmpeg_bin.init()
 import ffmpeg as ffmpeg_py
 import glob
 import jwt
+import pandas
 
 from flask import (
     Flask, 
@@ -78,16 +78,19 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
+
 app = Flask(__name__)
 
 app.config['EXECUTOR_TYPE'] = 'thread'
 app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
-
-app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.215.038'
+
+app.config['VERSION'] = '0.219.009'
+
+
+
 Session(app)
 
 CLIENTS = {}
@@ -99,7 +102,7 @@ ALLOWED_EXTENSIONS = {
     'dvr-ms', 'wav'
 }
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
-MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
+MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
@@ -114,7 +117,9 @@ APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
-MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
+MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
+LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
+HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 
 OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
@@ -148,6 +153,7 @@ bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
+storage_account_public_documents_container_name = "public-documents"
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -173,11 +179,6 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
-cosmos_user_documents_container_name = "documents"
-cosmos_user_documents_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_user_documents_container_name,
-    partition_key=PartitionKey(path="/id")
-)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -191,9 +192,27 @@ cosmos_groups_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_workspaces_container_name = "public_workspaces"
+cosmos_public_workspaces_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_workspaces_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_user_documents_container_name = "documents"
+cosmos_user_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_user_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_group_documents_container_name = "group_documents"
 cosmos_group_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_documents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_public_documents_container_name = "public_documents"
+cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
 )
 
@@ -239,20 +258,58 @@ cosmos_group_prompts_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/id")
 )
 
+cosmos_public_prompts_container_name = "public_prompts"
+cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_public_prompts_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
 cosmos_file_processing_container_name = "file_processing"
 cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_file_processing_container_name,
     partition_key=PartitionKey(path="/document_id")
 )
 
+
+# Group Chat containers fulfilling the same roles as messages and conversations
+# but for group chats. These are separate from the user chat containers.
+cosmos_file_processing_container_name = "group_messages"
+cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_file_processing_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_file_processing_container_name = "group_conversations"
+cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_file_processing_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+# agent_facts document schema:
+# {
+#   "id": "<uuid>",
+#   "agent_id": "<agent_id>",
+#   "scope_type": "user" | "group",
+#   "scope_id": "<user_id or group_id>",
+#   "conversation_id": "<conversation_id>",
+#   "value": "<fact_value>",
+#   "created_at": "<timestamp>",
+#   "updated_at": "<timestamp>"
+# }
+cosmos_agent_facts_container_name = "agent_facts"
+cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_agent_facts_container_name,
+    partition_key=PartitionKey(path="/scope_id")
+)
+
 def ensure_custom_logo_file_exists(app, settings):
     """
-    If custom_logo_base64 is present in settings, ensure static/images/custom_logo.png
-    exists and reflects the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, removes the file.
+    If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
+    static files exist and reflect the current base64 data. Overwrites if necessary.
+    If base64 is empty/missing, removes the corresponding file.
     """
+    # Handle light mode logo
     custom_logo_b64 = settings.get('custom_logo_base64', '')
-    # Ensure the filename is consistent
     logo_filename = 'custom_logo.png'
     logo_path = os.path.join(app.root_path, 'static', 'images', logo_filename)
     images_dir = os.path.dirname(logo_path)
@@ -266,24 +323,52 @@ def ensure_custom_logo_file_exists(app, settings):
             try:
                 os.remove(logo_path)
                 print(f"Removed existing {logo_filename} as custom logo is disabled/empty.")
-            except OSError as ex: # Use OSError for file operations
+            except OSError as ex:
                 print(f"Error removing {logo_filename}: {ex}")
-        return
+    else:
+        # Custom logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_b64)
 
-    # Custom logo exists in settings, write/overwrite the file
-    try:
-        # Decode the current base64 string
-        decoded = base64.b64decode(custom_logo_b64)
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_filename} exists and matches current settings.")
 
-        # Write the decoded data to the file, overwriting if it exists
-        with open(logo_path, 'wb') as f:
-            f.write(decoded)
-        print(f"Ensured {logo_filename} exists and matches current settings.")
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_filename}: {ex}")
 
-    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
-        print(f"Failed to write/overwrite {logo_filename}: {ex}")
-    except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during logo file write for {logo_filename}: {ex}")
+    # Handle dark mode logo
+    custom_logo_dark_b64 = settings.get('custom_logo_dark_base64', '')
+    logo_dark_filename = 'custom_logo_dark.png'
+    logo_dark_path = os.path.join(app.root_path, 'static', 'images', logo_dark_filename)
+
+    if not custom_logo_dark_b64:
+        # No custom dark logo in DB; remove the static file if it exists
+        if os.path.exists(logo_dark_path):
+            try:
+                os.remove(logo_dark_path)
+                print(f"Removed existing {logo_dark_filename} as custom dark logo is disabled/empty.")
+            except OSError as ex:
+                print(f"Error removing {logo_dark_filename}: {ex}")
+    else:
+        # Custom dark logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_dark_b64)
+
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_dark_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_dark_filename} exists and matches current settings.")
+
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_dark_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_dark_filename}: {ex}")
 
 def ensure_custom_favicon_file_exists(app, settings):
     """
@@ -374,6 +459,11 @@ def initialize_clients(settings):
                     index_name="simplechat-group-index",
                     credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
                 )
+                search_client_public = SearchClient(
+                    endpoint=azure_apim_ai_search_endpoint,
+                    index_name="simplechat-public-index",
+                    credential=AzureKeyCredential(azure_apim_ai_search_subscription_key)
+                )
             else:
                 if settings.get("azure_ai_search_authentication_type") == "managed_identity":
                     search_client_user = SearchClient(
@@ -384,6 +474,11 @@ def initialize_clients(settings):
                     search_client_group = SearchClient(
                         endpoint=azure_ai_search_endpoint,
                         index_name="simplechat-group-index",
+                        credential=DefaultAzureCredential()
+                    )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
                         credential=DefaultAzureCredential()
                     )
                 else:
@@ -397,8 +492,14 @@ def initialize_clients(settings):
                         index_name="simplechat-group-index",
                         credential=AzureKeyCredential(azure_ai_search_key)
                     )
+                    search_client_public = SearchClient(
+                        endpoint=azure_ai_search_endpoint,
+                        index_name="simplechat-public-index",
+                        credential=AzureKeyCredential(azure_ai_search_key)
+                    )
             CLIENTS["search_client_user"] = search_client_user
             CLIENTS["search_client_group"] = search_client_group
+            CLIENTS["search_client_public"] = search_client_public
         except Exception as e:
             print(f"Failed to initialize Search clients: {e}")
 
@@ -445,7 +546,11 @@ def initialize_clients(settings):
                 
                 # Create containers if they don't exist
                 # This addresses the issue where the application assumes containers exist
-                for container_name in [storage_account_user_documents_container_name, storage_account_group_documents_container_name]:
+                for container_name in [
+                    storage_account_user_documents_container_name, 
+                    storage_account_group_documents_container_name, 
+                    storage_account_public_documents_container_name
+                    ]:
                     try:
                         container_client = blob_service_client.get_container_client(container_name)
                         if not container_client.exists():
@@ -456,16 +561,5 @@ def initialize_clients(settings):
                             print(f"Container '{container_name}' already exists.")
                     except Exception as container_error:
                         print(f"Error creating container {container_name}: {str(container_error)}")
-                
-                # Handle video and audio support when enabled
-                # if enable_video_file_support:
-                #     video_client = BlobServiceClient.from_connection_string(settings.get("video_files_storage_account_url"))
-                #     CLIENTS["storage_account_video_files_client"] = video_client
-                #     # Create video containers if needed
-                #
-                # if enable_audio_file_support:
-                #     audio_client = BlobServiceClient.from_connection_string(settings.get("audio_files_storage_account_url"))
-                #     CLIENTS["storage_account_audio_files_client"] = audio_client
-                #     # Create audio containers if needed
         except Exception as e:
             print(f"Failed to initialize Blob Storage clients: {e}")

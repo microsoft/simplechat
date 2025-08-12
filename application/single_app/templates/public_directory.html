@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% block title %} Public Directory - {{ app_settings.app_title }} {% endblock %}
+{% block head %}
+<style>
+  /* Public Directory specific styles */
+  #public-directory-table { table-layout: fixed; width: 100%; }
+  #public-directory-table th:nth-child(1), #public-directory-table td:nth-child(1) { width: 50px; text-align: left; }
+  #public-directory-table th:nth-child(2), #public-directory-table td:nth-child(2) { min-width:200px; max-width:300px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #public-directory-table th:nth-child(3), #public-directory-table td:nth-child(3) { min-width:150px; max-width:250px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #public-directory-table th:nth-child(4), #public-directory-table td:nth-child(4) { width:200px; text-align: center; }
+  #public-directory-table td { vertical-align: middle; }
+  .table-loading-row td { text-align:center; padding:1.5rem; color:#6c757d; }
+  
+  /* Toggle switch styles */
+  .form-switch .form-check-input {
+    width: 2.5rem;
+    height: 1.5rem;
+  }
+  
+  /* Expandable details styles - Dark mode compatible */
+  .details-row {
+    background-color: var(--bs-secondary-bg, #f8f9fa);
+    border-top: none !important;
+  }
+  
+  .details-content {
+    padding: 1rem;
+    border-left: 3px solid var(--bs-primary, #0d6efd);
+    margin-left: 1rem;
+  }
+  
+  .details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  
+  .detail-item {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .detail-label {
+    font-weight: 600;
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+  }
+  
+  .detail-value {
+    color: var(--bs-body-color, #212529);
+  }
+  
+  /* Search and filter styles - Dark mode compatible */
+  .search-container {
+    background: var(--bs-secondary-bg, #f8f9fa);
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  /* Action buttons */
+  .action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  
+  .btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+  
+  /* Visibility button styles */
+  .visibility-btn {
+    min-width: 40px;
+    width: 40px;
+    height: 32px;
+    font-size: 0.875rem;
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    border: 1px solid;
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .visibility-btn.visible {
+    color: white;
+    border-color: #198754;
+    background-color: #198754;
+  }
+  
+  .visibility-btn.visible:hover {
+    background-color: #157347;
+    border-color: #146c43;
+  }
+  
+  .visibility-btn.hidden {
+    color: white;
+    border-color: #6c757d;
+    background-color: #6c757d;
+  }
+  
+  .visibility-btn.hidden:hover {
+    background-color: #5c636a;
+    border-color: #565e64;
+  }
+  
+  /* Bulk action buttons */
+  .bulk-actions {
+    margin-bottom: 1rem;
+  }
+  
+  .bulk-actions .btn {
+    margin-right: 0.5rem;
+  }
+
+  /* Dark mode compatibility for visibility buttons */
+  [data-bs-theme="dark"] .visibility-btn.visible {
+    color: white;
+    border-color: #75b798;
+    background-color: #75b798;
+  }
+  
+  [data-bs-theme="dark"] .visibility-btn.visible:hover {
+    background-color: #198754;
+    border-color: #198754;
+  }
+  
+  [data-bs-theme="dark"] .visibility-btn.hidden {
+    color: white;
+    border-color: #adb5bd;
+    background-color: #adb5bd;
+  }
+  
+  [data-bs-theme="dark"] .visibility-btn.hidden:hover {
+    background-color: #9ba2a9;
+    border-color: #9ba2a9;
+  }
+
+  /* Dark mode specific overrides */
+  [data-bs-theme="dark"] .details-row {
+    background-color: var(--bs-dark-bg-subtle, #212529);
+  }
+  
+  [data-bs-theme="dark"] .search-container {
+    background-color: var(--bs-dark-bg-subtle, #212529);
+    border-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15));
+  }
+  
+  [data-bs-theme="dark"] .detail-label {
+    color: var(--bs-secondary-color, #adb5bd);
+  }
+  
+  [data-bs-theme="dark"] .detail-value {
+    color: var(--bs-body-color, #dee2e6);
+  }
+  
+  /* Fix table headers in dark mode */
+  [data-bs-theme="dark"] .table-light {
+    --bs-table-bg: var(--bs-dark-bg-subtle, #212529);
+    --bs-table-color: var(--bs-body-color, #dee2e6);
+    background-color: var(--bs-dark-bg-subtle, #212529) !important;
+    color: var(--bs-body-color, #dee2e6) !important;
+  }
+  
+  [data-bs-theme="dark"] .table-light th {
+    background-color: var(--bs-dark-bg-subtle, #212529) !important;
+    color: var(--bs-body-color, #dee2e6) !important;
+    border-color: var(--bs-border-color, #495057) !important;
+  }
+  
+  /* Responsive adjustments */
+  @media (max-width: 768px) {
+    #public-directory-table th:nth-child(3),
+    #public-directory-table td:nth-child(3) {
+      display: none;
+    }
+    
+    .action-buttons {
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    
+    .details-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="container">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h2>Public Directory</h2>
+  </div>
+  <p class="text-muted mb-4">Browse and discover public workspaces accessible to all users. Use visibility settings to control which workspaces are shown on the chat page.</p>
+
+  <!-- Chat Action Buttons -->
+  <div class="mb-3 d-flex gap-2">
+    <button id="chatWithVisibleBtn" class="btn btn-primary">
+      <i class="bi bi-chat-dots"></i> Chat with Visible
+    </button>
+    <button id="chatWithAllBtn" class="btn btn-secondary">
+      <i class="bi bi-chat-dots-fill"></i> Chat with All
+    </button>
+  </div>
+
+  <!-- Search Section -->
+  <div class="search-container">
+    <div class="row align-items-end">
+      <div class="col-md-8">
+        <input type="search" id="directory-search-input" class="form-control"
+               placeholder="Search by name or description..." spellcheck="false">
+      </div>
+      <div class="col-md-4 mt-2 mt-md-0">
+        <button id="directory-search-btn" class="btn btn-primary me-2">
+          <i class="bi bi-search"></i> Search
+        </button>
+        <button id="directory-clear-btn" class="btn btn-secondary me-2">
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+    </div>
+  </div>
+
+<!-- Curated List Operations -->
+<div class="curated-list-container search-container mb-3" id="curatedListOps">
+  <div class="mb-2">
+    <p class="mb-2 small text-muted">
+      <strong>Curated Lists & Visibility:</strong><br>
+      Save your current set of visible public workspaces as a named list, so you can quickly switch between different workspace sets for chat and search.
+      Use <b>Save List</b> to store your current selection, <b>Load List</b> to apply a saved set.
+      Use <b>All Visible</b> or <b>All Hidden</b> to quickly show or hide all workspaces at once.
+    </p>
+  </div>
+  <div class="row align-items-end g-2">
+    <div class="col-md mb-2 mb-md-0">
+      <div class="d-flex w-100 gap-3 align-items-center">
+        <div class="d-flex align-items-center flex-grow-1 position-relative" style="min-width:220px;">
+          <div id="curatedListSaveArea" class="d-flex gap-2 align-items-center flex-grow-1">
+            <input type="text" id="saveListName" class="form-control form-control-sm flex-grow-1" placeholder="List name">
+            <button id="saveVisibleListBtn" class="btn btn-outline-success btn-sm" type="button" title="Save current visible set">
+              Save
+            </button>
+          </div>
+          <div id="curatedListStatusArea" class="d-flex align-items-center flex-grow-1 d-none">
+            <span id="curatedListStatus" class="badge bg-secondary" style="font-size:1rem;min-width:120px;display:inline-block;">No list loaded</span>
+          </div>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-grow-1">
+          <select id="loadVisibleListSelect" class="form-select form-select-sm flex-grow-1">
+            <option value=""></option>
+          </select>
+          <button id="loadVisibleListBtn" class="btn btn-outline-primary btn-sm" type="button" title="Load selected list">
+            Load
+          </button>
+          <button id="deleteVisibleListBtn" class="btn btn-outline-danger btn-sm" type="button" title="Delete selected list">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+        <div class="d-flex gap-2 align-items-center flex-grow-1">
+          <button type="button" class="btn btn-success btn-sm" id="allVisibleBtn">
+            <i class="bi bi-eye"></i> All Visible
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="allHiddenBtn">
+            <i class="bi bi-eye-slash"></i> All Hidden
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- Directory Table -->
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table table-striped mb-0" id="public-directory-table">
+        <thead class="table-light">
+          <tr>
+            <th></th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Populated by JavaScript -->
+          <tr class="table-loading-row">
+            <td colspan="4">
+              <div class="spinner-border spinner-border-sm me-2" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+              Loading public workspaces...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Pagination -->
+  <div class="d-flex align-items-center justify-content-between mt-3">
+    <div>
+      <select id="directory-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="50">50</option>
+      </select>
+      <span class="ms-1 small text-muted">items per page</span>
+    </div>
+    <div id="directory-pagination-container" class="d-flex gap-1"></div>
+  </div>
+</div>
+
+<!-- View Public Workspace Modal -->
+<div class="modal fade" id="viewWorkspaceModal" tabindex="-1" aria-labelledby="viewWorkspaceModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="viewWorkspaceModalLabel">Public Workspace Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="workspace-modal-content">
+          <!-- Content populated by JavaScript -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <a id="workspace-modal-view-btn" href="#" class="btn btn-primary">
+          <i class="bi bi-box-arrow-up-right"></i> View Workspace
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/public/public_directory.js"></script>
+{% endblock %}

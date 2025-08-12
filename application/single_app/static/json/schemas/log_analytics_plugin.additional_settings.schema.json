@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Log Analytics Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "workspaceId": {
+      "type": "string",
+      "description": "Azure Log Analytics Workspace ID (GUID)"
+    },
+    "cloud": {
+      "type": "string",
+      "enum": ["public", "usgovernment", "custom"],
+      "description": "Azure cloud environment: 'public' for commercial, 'usgovernment' for Azure US Government, 'custom' for advanced scenarios."
+    },
+    "authorityHost": {
+      "type": "string",
+      "description": "(Required if cloud is 'custom') Azure authority host URL. Only needed for custom clouds."
+    },
+    "endpointOverride": {
+      "type": "string",
+      "description": "(Required if cloud is 'custom') Override the Log Analytics API endpoint. Only needed for custom clouds."
+    },
+    "query_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  "required": ["workspaceId", "cloud", "query_history"],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "cloud": { "const": "custom" } }
+      },
+      "then": {
+        "required": ["authorityHost", "endpointOverride"]
+      },
+      "else": {
+        "not": {
+          "required": ["authorityHost", "endpointOverride"]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

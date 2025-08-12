@@ -1,0 +1,133 @@
+<!-- Dynamic Agent Modal -->
+<div class="modal fade" id="agentModal" tabindex="-1" aria-labelledby="agentModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="agentModalLabel">Add Agent</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small" role="note">
+          <strong>Note:</strong> If a value is not provided for an inheritable property, it will be inherited from the first selected model.
+        </div>
+        <div class="mb-3">
+          <label for="agent-name" class="form-label">Name <span class="text-danger" title="Required">*</span></label>
+          <input type="text" class="form-control" id="agent-name" required pattern="^[^\s]+$" name="agent_name" />
+        </div>
+        <div class="mb-3">
+          <label for="agent-display-name" class="form-label">Display Name <span class="text-danger" title="Required">*</span></label>
+          <input type="text" class="form-control" id="agent-display-name" name="agent_display_name" required />
+        </div>
+        <div class="mb-3">
+          <label for="agent-description" class="form-label">Description <span class="text-danger" title="Required">*</span></label>
+          <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear agent description enables the orchestrator (default agent) to select the right agent for the task, essential for precise, efficient delegation."></i>
+          <input type="text" class="form-control" id="agent-description" />
+        </div>
+        <div class="mb-3">
+          <label for="agent-instructions" class="form-label">Instructions <span class="text-danger" title="Required">*</span></label>
+          <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent’s behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
+          <textarea class="form-control" id="agent-instructions" rows="2"></textarea>
+        </div>
+        <!-- Custom Connection Toggle -->
+        <div class="d-flex align-items-center mb-3" id="agent-custom-connection-toggle">
+          <label for="agent-custom-connection" class="form-label mb-0 me-2">Custom Connection</label>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="agent-custom-connection" />
+            <label class="form-check-label" for="agent-custom-connection"></label>
+          </div>
+        </div>
+        <!-- Global Model Dropdown (hidden when custom connection is ON) -->
+        <div class="mb-3" id="agent-global-model-group">
+          <label for="agent-global-model-select" class="form-label">Select Global Model</label>
+          <select class="form-select" id="agent-global-model-select">
+            <option value="">Loading models...</option>
+          </select>
+        </div>
+          <!-- Custom Connection Fields (shown only when custom connection is ON) -->
+          <div id="agent-custom-connection-fields">
+            <div class="d-flex align-items-center mb-3">
+              <label for="agent-enable-apim" class="form-label mb-0 me-2">Enable APIM Integration</label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="agent-enable-apim" />
+                <label class="form-check-label" for="agent-enable-apim"></label>
+              </div>
+            </div>
+            <div id="agent-gpt-fields">
+              <div class="mb-3">
+                <label for="agent-gpt-endpoint" class="form-label">Azure OpenAI GPT Endpoint</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-endpoint" placeholder="https://" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-key" class="form-label">Azure OpenAI GPT Key</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-key" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-deployment" class="form-label">GPT Deployment</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-deployment" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-gpt-api-version" class="form-label">GPT API Version</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-gpt-api-version" />
+              </div>
+            </div>
+            <div id="agent-apim-fields" style="display:none;">
+              <div class="mb-3">
+                <label for="agent-apim-endpoint" class="form-label">APIM GPT Endpoint</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-endpoint" placeholder="https://" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-subscription-key" class="form-label">APIM Subscription Key</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-subscription-key" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-deployment" class="form-label">APIM Deployment</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-deployment" />
+              </div>
+              <div class="mb-3">
+                <label for="agent-apim-api-version" class="form-label">APIM API Version</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <input type="text" class="form-control" id="agent-apim-api-version" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Advanced Toggle -->
+          <div class="d-flex align-items-center mb-3">
+            <label for="agent-advanced-toggle" class="form-label mb-0 me-2">Advanced</label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="agent-advanced-toggle" />
+              <label class="form-check-label" for="agent-advanced-toggle"></label>
+            </div>
+          </div>
+          <!-- Advanced Section (hidden by default) -->
+          <div id="agent-advanced-section" style="display:none;">
+            <div class="mb-3">
+              <label for="agent-plugins-to-load" class="form-label">Plugins Whitelist</label>
+              <select class="form-select" id="agent-plugins-to-load" multiple size="6">
+                <!-- Options will be populated dynamically by JS -->
+              </select>
+              <div class="form-text">Hold Ctrl (Windows) or Cmd (Mac) to select multiple plugins.</div>
+            </div>
+            <div class="mb-3">
+              <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
+              <textarea class="form-control" id="agent-additional-settings" rows="2" placeholder='{}'></textarea>
+            </div>
+          </div>
+        <div id="agent-modal-error" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="agent-modal-save-btn">Save Agent</button>
+        <!-- Set as Selected Agent button is injected by JS only for edit mode -->
+        <button type="button" class="btn btn-outline-success ms-2 d-none" id="agent-modal-set-selected-btn">Set as Selected Agent</button>
+      </div>
+    </div>
+  </div>
+</div>

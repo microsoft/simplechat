@@ -1,5 +1,4 @@
 // chat-messages.js
-
 import { parseCitations } from "./chat-citations.js";
 import { renderFeedbackIcons } from "./chat-feedback.js";
 import {
@@ -24,6 +23,36 @@ const promptSelectionContainer = document.getElementById(
 );
 const chatbox = document.getElementById("chatbox");
 const modelSelect = document.getElementById("model-select");
+
+// Function to show/hide send button based on content
+export function updateSendButtonVisibility() {
+  if (!sendBtn || !userInput) return;
+  
+  const hasTextContent = userInput.value.trim().length > 0;
+  
+  // Check if prompt selection is active and has a selected value
+  const hasPromptSelected = promptSelectionContainer && 
+    promptSelectionContainer.style.display === 'block' && 
+    promptSelect && 
+    promptSelect.selectedIndex > 0; // selectedIndex > 0 means not the default option
+  
+  const shouldShow = hasTextContent || hasPromptSelected;
+  
+  if (shouldShow) {
+    sendBtn.classList.add('show');
+    userInput.classList.add('has-content');
+    // Adjust textarea padding to accommodate button
+    userInput.style.paddingRight = '50px';
+  } else {
+    sendBtn.classList.remove('show');
+    userInput.classList.remove('has-content');
+    // Reset textarea padding
+    userInput.style.paddingRight = '60px';
+  }
+}
+
+// Make function available globally for inline oninput handler
+window.handleInputChange = updateSendButtonVisibility;
 
 function createCitationsHtml(
   hybridCitations = [],
@@ -324,7 +353,15 @@ export function appendMessage(
       messageClass = "user-message";
       senderLabel = "You";
       avatarAltText = "User Avatar";
-      avatarImg = "/static/images/user-avatar.png";
+      
+      // Use profile image if available, otherwise use default
+      const userProfileImage = window.ProfileImage?.getUserImage();
+      if (userProfileImage) {
+        avatarImg = userProfileImage;
+      } else {
+        avatarImg = "/static/images/user-avatar.png";
+      }
+      
       messageContentHtml = DOMPurify.sanitize(
         marked.parse(escapeHtml(messageContent))
       );
@@ -449,16 +486,19 @@ export function sendMessage() {
   if (promptSelect) {
     promptSelect.selectedIndex = 0;
   }
+  // Update send button visibility after clearing input
+  updateSendButtonVisibility();
   // Keep focus on input
   userInput.focus();
 }
 
 export function actuallySendMessage(finalMessageToSend) {
-  // const chatbox = document.getElementById("chatbox"); // Defined above
-  // const userInput = document.getElementById("user-input"); // Defined above
-  appendMessage("You", finalMessageToSend); // Append user message first
+  // Append user message first
+  appendMessage("You", finalMessageToSend);
   userInput.value = "";
   userInput.style.height = "";
+  // Update send button visibility after clearing input
+  updateSendButtonVisibility();
   showLoadingIndicatorInChatbox();
 
   const modelDeployment = modelSelect?.value;
@@ -471,9 +511,9 @@ export function actuallySendMessage(finalMessageToSend) {
   }
 
   let selectedDocumentId = null;
-  let classificationsToSend = null; // Variable to hold classification value
+  let classificationsToSend = null;
   const docSel = document.getElementById("document-select");
-  const classificationInput = document.getElementById("classification-select"); // Get the input
+  const classificationInput = document.getElementById("classification-select");
 
   // Always set selectedDocumentId if a document is selected, regardless of hybridSearchEnabled
   if (docSel) {
@@ -503,9 +543,24 @@ export function actuallySendMessage(finalMessageToSend) {
     imageGenEnabled = true;
   }
 
+  // --- Robust chat_type/group_id logic ---
+  // Assume: window.activeChatTabType = 'user' | 'group', window.activeGroupId = group id if group tab
+  // If you add a group chat tab, set window.activeChatTabType and window.activeGroupId accordingly when switching tabs
+  let chat_type = 'user';
+  let group_id = null;
+  if (window.activeChatTabType === 'group' && window.activeGroupId) {
+    chat_type = 'group';
+    group_id = window.activeGroupId;
+  }
+
+  // Fallback: if group_id is null/empty, use window.activeGroupId
+  const finalGroupId = group_id || window.activeGroupId || null;
   fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "same-origin",
     body: JSON.stringify({
       message: finalMessageToSend,
       conversation_id: currentConversationId,
@@ -515,7 +570,8 @@ export function actuallySendMessage(finalMessageToSend) {
       bing_search: bingSearchEnabled,
       image_generation: imageGenEnabled,
       doc_scope: docScopeSelect ? docScopeSelect.value : "all",
-      active_group_id: window.activeGroupId,
+      chat_type: chat_type,
+      active_group_id: finalGroupId, // for backward compatibility
       model_deployment: modelDeployment
     }),
   })
@@ -564,6 +620,10 @@ export function actuallySendMessage(finalMessageToSend) {
           data.hybrid_citations, // Pass hybrid citations
           data.web_search_citations // Pass web citations
         );
+      }
+      // Show kernel fallback notice if present
+      if (data.kernel_fallback_notice) {
+        showToast(data.kernel_fallback_notice, 'warning');
       }
       if (data.image_url) {
         // Assuming image messages don't have citations in this flow
@@ -734,7 +794,31 @@ if (userInput) {
       // If Shift key IS pressed, do nothing - allow the default behavior (inserting a newline)
     }
   });
+  
+  // Monitor input changes for send button visibility
+  userInput.addEventListener("input", updateSendButtonVisibility);
+  userInput.addEventListener("focus", updateSendButtonVisibility);
+  userInput.addEventListener("blur", updateSendButtonVisibility);
 }
+
+// Monitor prompt selection changes
+if (promptSelect) {
+  promptSelect.addEventListener("change", updateSendButtonVisibility);
+}
+
+// Monitor when prompt container is shown/hidden
+const searchPromptsBtn = document.getElementById("search-prompts-btn");
+if (searchPromptsBtn) {
+  searchPromptsBtn.addEventListener("click", function() {
+    // Small delay to allow the prompt container to update
+    setTimeout(updateSendButtonVisibility, 100);
+  });
+}
+
+// Initial check for send button visibility
+document.addEventListener('DOMContentLoaded', function() {
+  updateSendButtonVisibility();
+});
 
 // Save the selected model when it changes
 if (modelSelect) {

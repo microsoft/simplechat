@@ -3,6 +3,10 @@
 from config import *
 from functions_settings import *
 
+# Default redirect path for OAuth consent flow (must match your Azure AD app registration)
+REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
+#REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
+
 def _load_cache():
     """Loads the MSAL token cache from the Flask session."""
     cache = SerializableTokenCache()
@@ -34,6 +38,20 @@ def _build_msal_app(cache=None):
         token_cache=cache  # Pass the cache instance here
     )
 
+
+# Helper: Generate a consent URL for user to grant permissions
+def get_consent_url(msal_app=None, scopes=None, redirect_uri=None, state=None, prompt="consent"):
+    msal_app = _build_msal_app() if msal_app is None else msal_app
+    required_scopes = scopes or SCOPE
+    # Use a default redirect URI if not provided
+    redirect_uri = redirect_uri or REDIRECT_PATH
+    auth_url = msal_app.get_authorization_request_url(
+        required_scopes,
+        redirect_uri=redirect_uri,
+        state=state,
+        prompt=prompt
+    )
+    return auth_url
 
 def get_valid_access_token(scopes=None):
     """
@@ -98,6 +116,110 @@ def get_valid_access_token(scopes=None):
         print("get_valid_access_token: No matching account found in MSAL cache.")
         # This might happen if the cache was cleared or the user logged in differently
         return None # Cannot acquire token without an account context
+
+def get_valid_access_token_for_plugins(scopes=None):
+    """
+    Gets a valid access token for the current user.
+    Tries MSAL cache first, then uses refresh token if needed.
+    Returns the access token string or None if refresh failed or user not logged in.
+    """
+    if "user" not in session:
+        print("get_valid_access_token: No user in session.")
+        return {
+            "error": "not_logged_in",
+            "message": "User is not logged in.",
+            "error_code": None,
+            "error_description": "No user in session."
+        }
+
+    required_scopes = scopes or SCOPE # Use default SCOPE if none provided
+
+    msal_app = _build_msal_app(cache=_load_cache())
+    user_info = session.get("user", {})
+    # MSAL uses home_account_id which combines oid and tid
+    # Construct it carefully based on your id_token_claims structure
+    # Assuming 'oid' is the user's object ID and 'tid' is the tenant ID in claims
+    home_account_id = f"{user_info.get('oid')}.{user_info.get('tid')}"
+
+    accounts = msal_app.get_accounts(username=user_info.get('preferred_username')) # Or use home_account_id if available reliably
+    account = None
+    if accounts:
+        # Find the correct account if multiple exist (usually only one for web apps)
+        # Prioritize matching home_account_id if available
+        for acc in accounts:
+            if acc.get('home_account_id') == home_account_id:
+                 account = acc
+                 break
+        if not account:
+             account = accounts[0] # Fallback to first account if no perfect match
+             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+
+    if not account:
+        print("get_valid_access_token: No matching account found in MSAL cache.")
+        return {
+            "error": "no_account",
+            "message": "No matching account found in MSAL cache.",
+            "error_code": None,
+            "error_description": "No account context."
+        }
+
+    result = msal_app.acquire_token_silent_with_error(required_scopes, account=account) # Ensure we handle errors properly
+    _save_cache(msal_app.token_cache)
+
+    if result and "access_token" in result:
+        print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        return {"access_token": result['access_token']}
+
+    # If we reach here, it means silent acquisition failed
+    print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
+    if result is None: # Assume invalid grants or no token
+        print("result is None: get_valid_access_token: Consent required.")
+        host_url = request.host_url.rstrip('/')
+        # Only enforce https if not localhost or 127.0.0.1
+        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
+            if not host_url.startswith('https://'):
+                host_url = 'https://' + host_url.split('://', 1)[-1]
+        redirect_url = host_url + REDIRECT_PATH
+        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
+        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
+        logging.debug(f"Consent URL: {consent_url}")
+        return {
+            "error": "consent_required",
+            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
+            "consent_url": consent_url,
+            "scopes": required_scopes,
+            "error_code": None,
+            "error_description": "No token result; interactive authentication required."
+        }
+
+    error_code = result.get('error') if result else None
+    error_desc = result.get('error_description') if result else None
+    print(f"MSAL Error: {error_code}, Description: {error_desc}")
+
+    if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
+        host_url = request.host_url.rstrip('/')
+        if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
+            if not host_url.startswith('https://'):
+                host_url = 'https://' + host_url.split('://', 1)[-1]
+        redirect_url = host_url + REDIRECT_PATH
+        logging.debug(f"Redirect URL for {user_info.get('oid')}: {redirect_url}")
+        consent_url = get_consent_url(msal_app=msal_app ,scopes=required_scopes, redirect_uri=redirect_url)
+        logging.debug(f"Consent URL: {consent_url}")
+        return {
+            "error": "consent_required",
+            "message": "User consent is required to access this resource. Present to the user so the consent url opens in a new tab.",
+            "consent_url": consent_url,
+            "scopes": required_scopes,
+            "error_code": error_code,
+            "error_description": error_desc
+        }
+    else:
+        return {
+            "error": "token_acquisition_failed",
+            "message": "Failed to acquire access token.",
+            "error_code": error_code,
+            "error_description": error_desc
+        }
     
 def get_video_indexer_account_token(settings, video_id=None):
     """
@@ -248,7 +370,12 @@ def accesstoken_required(f):
 
         if not is_valid:
             return jsonify({"message": data}), 401
-        
+
+        # Check for "ExternalApi" role in the token claims
+        roles = data.get("roles") if isinstance(data, dict) else None
+        if not roles or "ExternalApi" not in roles:
+            return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
+
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
         return f(*args, **kwargs)
@@ -268,7 +395,15 @@ def login_required(f):
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
                 print(f"Browser request to {request.path} redirected ta login. No valid session.")
-                return redirect(url_for('login'))
+                # Get settings from database, with environment variable fallback
+                from functions_settings import get_settings
+                settings = get_settings()
+                login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
+                
+                if login_redirect_url:
+                    return redirect(login_redirect_url)
+                else:
+                    return redirect(url_for('login'))
 
         return f(*args, **kwargs)
     return decorated_function
@@ -380,3 +515,54 @@ def get_current_user_info():
         "email": user.get("preferred_username") or user.get("email"),
         "displayName": user.get("name")
     }
+
+def get_user_profile_image():
+    """
+    Fetches the user's profile image from Microsoft Graph and returns it as base64.
+    Returns None if no image is found or if there's an error.
+    """
+    token = get_valid_access_token()
+    if not token:
+        print("get_user_profile_image: Could not acquire access token")
+        return None
+
+    # Determine the correct Graph endpoint based on Azure environment
+    if AZURE_ENVIRONMENT == "usgovernment":
+        profile_image_endpoint = "https://graph.microsoft.us/v1.0/me/photo/$value"
+    elif AZURE_ENVIRONMENT == "custom":
+        profile_image_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/me/photo/$value"
+    else:
+        profile_image_endpoint = "https://graph.microsoft.com/v1.0/me/photo/$value"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "image/*"
+    }
+
+    try:
+        response = requests.get(profile_image_endpoint, headers=headers)
+        
+        if response.status_code == 200:
+            # Convert image to base64
+            import base64
+            image_data = response.content
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            
+            # Get content type for proper data URL formatting
+            content_type = response.headers.get('content-type', 'image/jpeg')
+            return f"data:{content_type};base64,{image_base64}"
+            
+        elif response.status_code == 404:
+            # User has no profile image
+            print("get_user_profile_image: User has no profile image")
+            return None
+        else:
+            print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"get_user_profile_image: Request failed: {e}")
+        return None
+    except Exception as e:
+        print(f"get_user_profile_image: Unexpected error: {e}")
+        return None
