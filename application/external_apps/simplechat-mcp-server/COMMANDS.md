@@ -16,8 +16,10 @@
 #get_image_models
 #get_application_url
 #set_application_url
-#upload_file filecontent, greg.txt
+#upload_file C:\Users\gregunger\Desktop\greg-test.txt, greg.txt
 #get_conversations
-#send_chat_message("25bf1a4e-b6f8-4bb4-957d-b345d8f43c94", "this is greg and large marge")
+#send_chat_message("this is greg and large marge", "convoid")
+#send_chat_message("this is greg and large marge", "convoid", "groupid")
+#send_chat_message("this is greg and large marge", "convoid", "groupid", "model_to_use")
 #logout_user
 ```
