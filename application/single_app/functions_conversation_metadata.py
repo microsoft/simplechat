@@ -4,6 +4,9 @@ from datetime import datetime
 from config import *
 from functions_settings import get_settings
 from functions_authentication import get_current_user_info
+from functions_group import find_group_by_id
+from functions_public_workspaces import find_public_workspace_by_id
+from functions_documents import get_document_metadata
 
 
 def get_user_info_by_id(user_id):
@@ -88,16 +91,26 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     # Set primary context based on active group
     primary_context = None
     if active_group_id:
+        # Get group name
+        group_info = find_group_by_id(active_group_id)
+        group_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+        
         primary_context = {
             "type": "primary",
             "scope": "group", 
-            "id": active_group_id
+            "id": active_group_id,
+            "name": group_name
         }
     else:
+        # Get user name for personal context
+        current_user_info = get_current_user_info()
+        user_name = current_user_info.get("displayName", "Personal") if current_user_info else "Personal"
+        
         primary_context = {
             "type": "primary",
             "scope": "personal",
-            "id": user_id
+            "id": user_id,
+            "name": user_name
         }
     
     # Update or add primary context
@@ -220,14 +233,27 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                     context_key = (scope_info['scope'], scope_info['id'])
                     document_secondary_contexts.add(context_key)
     
-    # Add secondary contexts from documents
+    # Add secondary contexts from documents with names
     existing_secondary_ids = {ctx.get('id') for ctx in conversation_item['context'] if ctx.get('type') == 'secondary'}
     for scope, ctx_id in document_secondary_contexts:
         if ctx_id not in existing_secondary_ids:
+            # Get appropriate name based on scope
+            context_name = "Unknown"
+            if scope == "group":
+                group_info = find_group_by_id(ctx_id)
+                context_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+            elif scope == "public":
+                workspace_info = find_public_workspace_by_id(ctx_id)
+                context_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+            elif scope == "personal":
+                user_info = get_user_info_by_id(ctx_id)
+                context_name = user_info.get('name', 'Unknown User') if user_info else 'Unknown User'
+            
             secondary_contexts.append({
                 "type": "secondary",
                 "scope": scope,
-                "id": ctx_id
+                "id": ctx_id,
+                "name": context_name
             })
     
     # Add new secondary contexts
@@ -250,16 +276,83 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 if chunk_id not in existing_chunks:
                     existing_chunks.append(chunk_id)
             
-            # Update the existing document entry
+            # Update the existing document entry with chunk IDs
             existing_doc['chunk_ids'] = existing_chunks
+            
+            # Ensure existing document has title and scope name if missing
+            if 'title' not in existing_doc or not existing_doc.get('title'):
+                doc_scope = doc_info['scope']
+                scope_type = doc_scope['scope']
+                scope_id = doc_scope['id']
+                
+                # Get document title
+                if scope_type == "group":
+                    doc_metadata = get_document_metadata(document_id, user_id, group_id=scope_id)
+                elif scope_type == "public":
+                    doc_metadata = get_document_metadata(document_id, user_id, public_workspace_id=scope_id)
+                else:  # personal
+                    doc_metadata = get_document_metadata(document_id, user_id)
+                
+                if doc_metadata:
+                    existing_doc['title'] = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+            
+            # Ensure scope has name if missing
+            if isinstance(existing_doc.get('scope'), dict) and 'name' not in existing_doc['scope']:
+                scope_info = existing_doc['scope']
+                scope_type = scope_info['type']
+                scope_id = scope_info['id']
+                
+                scope_name = "Unknown"
+                if scope_type == "group":
+                    group_info = find_group_by_id(scope_id)
+                    scope_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+                elif scope_type == "public":
+                    workspace_info = find_public_workspace_by_id(scope_id)
+                    scope_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+                elif scope_type == "personal":
+                    user_info = get_user_info_by_id(scope_id)
+                    scope_name = user_info.get('name', 'Personal') if user_info else 'Personal'
+                
+                existing_doc['scope']['name'] = scope_name
         else:
-            # Create new document entry
+            # Create new document entry with title and scope name
+            # Get document metadata to retrieve title
+            doc_scope = doc_info['scope']
+            scope_type = doc_scope['scope']
+            scope_id = doc_scope['id']
+            
+            # Get document title
+            if scope_type == "group":
+                doc_metadata = get_document_metadata(document_id, user_id, group_id=scope_id)
+            elif scope_type == "public":
+                doc_metadata = get_document_metadata(document_id, user_id, public_workspace_id=scope_id)
+            else:  # personal
+                doc_metadata = get_document_metadata(document_id, user_id)
+            
+            doc_title = "Unknown Document"
+            if doc_metadata:
+                doc_title = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+            
+            # Get scope name
+            scope_name = "Unknown"
+            if scope_type == "group":
+                group_info = find_group_by_id(scope_id)
+                scope_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+            elif scope_type == "public":
+                workspace_info = find_public_workspace_by_id(scope_id)
+                scope_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+            elif scope_type == "personal":
+                user_info = get_user_info_by_id(scope_id)
+                scope_name = user_info.get('name', 'Personal') if user_info else 'Personal'
+            
             doc_tag = {
                 "category": "document",
                 "document_id": document_id,
+                "title": doc_title,
                 "scope": {
-                    "type": doc_info['scope']['scope'],
-                    "id": doc_info['scope']['id']
+                    "type": scope_type,
+                    "id": scope_id,
+                    "name": scope_name
                 },
                 "chunk_ids": doc_info['chunk_ids'],
                 "classification": doc_info['classification']

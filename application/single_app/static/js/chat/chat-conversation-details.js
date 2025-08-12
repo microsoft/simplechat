@@ -101,9 +101,6 @@ function renderConversationMetadata(metadata) {
           <div class="card-body">
             <div class="row g-2">
               <div class="col-sm-6">
-                <strong>ID:</strong> <code class="text-muted">${metadata.id}</code>
-              </div>
-              <div class="col-sm-6">
                 <strong>Last Updated:</strong> ${formatDate(last_updated)}
               </div>
               <div class="col-sm-6">
@@ -228,12 +225,14 @@ function renderContextSection(context) {
   const secondary = context.filter(c => c.type === 'secondary');
   
   if (primary) {
+    const displayName = primary.name || primary.id;
     html += `
       <div class="mb-3">
         <strong class="text-primary">Primary Context:</strong>
         <div class="ms-3 mt-1">
           <span class="badge bg-primary me-2">${primary.scope}</span>
-          <code class="text-muted">${primary.id}</code>
+          <span class="fw-bold">${displayName}</span>
+          ${primary.name ? `<div class="small text-muted">ID: ${primary.id}</div>` : ''}
         </div>
       </div>
     `;
@@ -247,10 +246,12 @@ function renderContextSection(context) {
     `;
     
     secondary.forEach(ctx => {
+      const displayName = ctx.name || ctx.id;
       html += `
-        <div class="mb-1">
+        <div class="mb-2">
           <span class="badge bg-secondary me-2">${ctx.scope}</span>
-          <code class="text-muted">${ctx.id}</code>
+          <span class="fw-bold">${displayName}</span>
+          ${ctx.name ? `<div class="small text-muted">ID: ${ctx.id}</div>` : ''}
         </div>
       `;
     });
@@ -268,10 +269,13 @@ function renderParticipantsSection(participants) {
   let html = '';
   
   participants.forEach(participant => {
+    const initials = (participant.name || 'U').slice(0, 2).toUpperCase();
+    const avatarId = `participant-avatar-${participant.user_id}`;
+    
     html += `
       <div class="d-flex align-items-center mb-2">
-        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px; font-size: 0.9rem;">
-          ${(participant.name || 'U').slice(0, 2).toUpperCase()}
+        <div id="${avatarId}" class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 32px; height: 32px; font-size: 0.9rem;">
+          ${initials}
         </div>
         <div>
           <div class="fw-semibold">${participant.name || 'Unknown User'}</div>
@@ -281,7 +285,56 @@ function renderParticipantsSection(participants) {
     `;
   });
   
+  // After rendering, try to load profile images for each participant
+  setTimeout(() => {
+    participants.forEach(participant => {
+      loadParticipantProfileImage(participant.user_id);
+    });
+  }, 100);
+  
   return html;
+}
+
+/**
+ * Load profile image for a participant
+ */
+async function loadParticipantProfileImage(userId) {
+  const avatarElement = document.getElementById(`participant-avatar-${userId}`);
+  if (!avatarElement) return;
+  
+  try {
+    const response = await fetch(`/api/user/profile-image/${userId}`);
+    if (!response.ok) throw new Error('Failed to load user profile image');
+    
+    const userData = await response.json();
+    const profileImage = userData.profile_image;
+    
+    if (profileImage && profileImage.trim()) {
+      // Create image element
+      const img = document.createElement('img');
+      img.src = profileImage;
+      img.className = 'rounded-circle';
+      img.style.width = '32px';
+      img.style.height = '32px';
+      img.style.objectFit = 'cover';
+      img.alt = 'Profile';
+      
+      // Replace avatar content with image when it loads successfully
+      img.onload = () => {
+        avatarElement.innerHTML = '';
+        avatarElement.appendChild(img);
+        avatarElement.classList.remove('bg-primary', 'text-white');
+      };
+      
+      // If image fails to load, keep the initials
+      img.onerror = () => {
+        // Image failed to load, keep initials (no action needed)
+      };
+    }
+  } catch (error) {
+    // Failed to load user profile image or no profile image, keep initials (no action needed)
+    console.debug('Could not load profile image for user:', userId);
+  }
 }
 
 /**
@@ -318,11 +371,13 @@ function renderDocumentsSection(documents) {
   documents.forEach(doc => {
     const chunkPages = extractPageNumbers(doc.chunk_ids || []);
     const chunkCount = doc.chunk_ids ? doc.chunk_ids.length : 0;
+    const documentTitle = doc.title || doc.document_id;
+    const scopeName = doc.scope?.name || doc.scope?.id || 'Unknown';
     
     html += `
       <div class="mb-3 p-2 border rounded">
         <div class="d-flex justify-content-between align-items-start mb-2">
-          <div class="fw-semibold text-truncate me-2">${doc.document_id}</div>
+          <div class="fw-semibold text-truncate me-2" title="${documentTitle}">${documentTitle}</div>
           <span class="badge bg-${getClassificationColor(doc.classification)}">${doc.classification}</span>
         </div>
         <div class="small text-muted mb-1">
@@ -330,10 +385,16 @@ function renderDocumentsSection(documents) {
           ${chunkCount} chunk${chunkCount !== 1 ? 's' : ''}
           ${chunkPages.length > 0 ? ` (Pages: ${chunkPages.join(', ')})` : ''}
         </div>
-        <div class="small text-muted">
+        <div class="small text-muted mb-1">
           <i class="bi bi-${getScopeIcon(doc.scope?.type)} me-1"></i>
-          ${doc.scope?.type} scope: <code>${doc.scope?.id}</code>
+          ${doc.scope?.type} scope: <strong>${scopeName}</strong>
         </div>
+        ${doc.title && doc.title !== doc.document_id ? `
+        <div class="small text-muted">
+          <i class="bi bi-hash me-1"></i>
+          ID: <code>${doc.document_id}</code>
+        </div>
+        ` : ''}
       </div>
     `;
   });
