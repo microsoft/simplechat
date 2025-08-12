@@ -212,7 +212,7 @@ Enables detailed logging for the entire file ingestion and processing pipeline, 
 
 Below is a summary of latest features and bug fixes.
 
-### **(v0.215.34)**
+### **(v0.215.38)**
 
 #### New Features
 
@@ -259,9 +259,16 @@ Below is a summary of latest features and bug fixes.
 *   **Architecture Diagram Update**
     *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.
         *   (Ref: `artifacts/architecture.vsdx`)
-
+*   **Health Check**
+    *   Provide admins ability to enable a healthcheck api.
+    *  (Ref: `route_external_health.py`)
+    
 #### Bug Fixes
 
+*   **Tactical fix applied to enable the ChainGuard container to start correctly**
+    * This resolves startup failures caused by the container defaulting to localhost.
+    * The Flask app is now explicitly bound to all interfaces and uses a fixed port:
+        *    `app.run(host="0.0.0.0", port=5000, debug=False)`
 *   **Improved Code Snippet Readability in Dark Mode**
     *   Code blocks now have better background and text color contrast, making them easier to read for all users, especially in accessibility scenarios.  
         *   (Ref: `chats.css`)

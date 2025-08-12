@@ -56,10 +56,13 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
+
 # from route_external_group_documents import *
 # from route_external_documents import *
 # from route_external_groups import *
 # from route_external_admin_settings import *
+
+
 
 
 # =================== Helper Functions ===================
@@ -337,6 +340,7 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Health Routes ----------
 #register_route_external_health(app)
 
+
 # ------------------- Extenral Groups Routes ----------
 #register_route_external_groups(app)
 
@@ -349,8 +353,11 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Admin Settings Routes ----------
 #register_route_external_admin_settings(app)
 
+
 if __name__ == '__main__':
     settings = get_settings()
     print(f"Starting Single App. Initializing clients...")
     initialize_clients(settings)
     app.run(host="0.0.0.0", port=5000, debug=False)
+
+
