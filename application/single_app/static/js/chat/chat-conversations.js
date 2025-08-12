@@ -189,6 +189,14 @@ export function createConversationItem(convo) {
   const dropdownMenu = document.createElement("ul");
   dropdownMenu.classList.add("dropdown-menu", "dropdown-menu-end");
 
+  // Add Details option
+  const detailsLi = document.createElement("li");
+  const detailsA = document.createElement("a");
+  detailsA.classList.add("dropdown-item", "details-btn");
+  detailsA.href = "#";
+  detailsA.innerHTML = '<i class="bi bi-info-circle me-2"></i>Details';
+  detailsLi.appendChild(detailsA);
+
   // Add Select option
   const selectLi = document.createElement("li");
   const selectA = document.createElement("a");
@@ -211,6 +219,7 @@ export function createConversationItem(convo) {
   deleteA.innerHTML = '<i class="bi bi-trash-fill me-2"></i>Delete';
   deleteLi.appendChild(deleteA);
 
+  dropdownMenu.appendChild(detailsLi);
   dropdownMenu.appendChild(selectLi);
   dropdownMenu.appendChild(editLi);
   dropdownMenu.appendChild(deleteLi);

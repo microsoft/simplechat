@@ -219,7 +219,10 @@ def register_route_backend_documents(app):
                     'id': conversation_id,
                     'user_id': user_id,
                     'last_updated': datetime.utcnow().isoformat(),
-                    'title': doc['filename']
+                    'title': doc['filename'],
+                    'context': [],
+                    'tags': [],
+                    'strict': False
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
 

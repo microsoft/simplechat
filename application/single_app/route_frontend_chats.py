@@ -67,7 +67,10 @@ def register_route_frontend_chats(app):
                 'id': conversation_id,
                 'user_id': user_id,
                 'last_updated': datetime.utcnow().isoformat(),
-                'title': 'New Conversation'
+                'title': 'New Conversation',
+                'context': [],
+                'tags': [],
+                'strict': False
             }
             cosmos_conversations_container.upsert_item(conversation_item)
         else:
@@ -82,7 +85,10 @@ def register_route_frontend_chats(app):
                     'id': conversation_id,
                     'user_id': user_id,
                     'last_updated': datetime.utcnow().isoformat(),
-                    'title': 'New Conversation'
+                    'title': 'New Conversation',
+                    'context': [],
+                    'tags': [],
+                    'strict': False
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
             except Exception as e:

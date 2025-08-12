@@ -119,6 +119,38 @@
         #send-btn i {
             font-size: 14px;
         }
+        
+        /* Conversation details modal styles */
+        #conversation-details-modal .modal-lg {
+            max-width: 900px;
+        }
+        
+        #conversation-details-modal .card {
+            border: 1px solid var(--bs-border-color);
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        
+        #conversation-details-modal .card-header {
+            border-bottom: 1px solid var(--bs-border-color);
+            font-weight: 600;
+        }
+        
+        #conversation-details-modal .badge {
+            font-size: 0.75em;
+        }
+        
+        #conversation-details-modal code {
+            font-size: 0.875em;
+            background-color: var(--bs-gray-100);
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+        }
+        
+        /* Dark mode support for conversation details */
+        [data-bs-theme="dark"] #conversation-details-modal code {
+            background-color: var(--bs-gray-800);
+            color: var(--bs-gray-200);
+        }
     </style>
 {% endblock %}
 
@@ -369,6 +401,34 @@
       </form>
     </div>
 </div>
+
+<!-- Modal for conversation details -->
+<div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="conversationDetailsModalLabel">
+                    <i class="bi bi-info-circle me-2"></i>Conversation Details
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="conversation-details-content">
+                    <div class="text-center p-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading conversation details...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 {% endblock %}
@@ -405,6 +465,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-feedback.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

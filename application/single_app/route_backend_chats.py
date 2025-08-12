@@ -18,6 +18,7 @@ from functions_bing_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
 from functions_chat import *
+from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from flask import current_app
 
 
@@ -180,7 +181,10 @@ def register_route_backend_chats(app):
                 'id': conversation_id,
                 'user_id': user_id,
                 'last_updated': datetime.utcnow().isoformat(),
-                'title': 'New Conversation'
+                'title': 'New Conversation',
+                'context': [],
+                'tags': [],
+                'strict': False
             }
             cosmos_conversations_container.upsert_item(conversation_item)
         else:
@@ -193,7 +197,10 @@ def register_route_backend_chats(app):
                     'id': conversation_id, # Keep the provided ID if needed for linking
                     'user_id': user_id,
                     'last_updated': datetime.utcnow().isoformat(),
-                    'title': 'New Conversation' # Or maybe fetch title differently?
+                    'title': 'New Conversation', # Or maybe fetch title differently?
+                    'context': [],
+                    'tags': [],
+                    'strict': False
                 }
                 # Optionally log that a conversation was expected but not found
                 print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
@@ -1243,6 +1250,36 @@ def register_route_backend_chats(app):
 
         # Update conversation's last_updated timestamp one last time
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
+        
+        # Collect comprehensive conversation metadata
+        try:
+            # Determine selected agent name if one was used
+            selected_agent_name = None
+            if selected_agent:
+                selected_agent_name = getattr(selected_agent, 'name', None)
+            
+            # Collect metadata for this conversation interaction
+            conversation_item = collect_conversation_metadata(
+                user_message=user_message,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                active_group_id=active_group_id,
+                document_scope=document_scope,
+                selected_document_id=selected_document_id,
+                model_deployment=final_model_used,
+                hybrid_search_enabled=hybrid_search_enabled,
+                bing_search_enabled=bing_search_enabled,
+                image_gen_enabled=image_gen_enabled,
+                selected_documents=combined_documents if 'combined_documents' in locals() else None,
+                selected_agent=selected_agent_name,
+                search_results=search_results if 'search_results' in locals() else None,
+                web_search_results=bing_results if 'bing_results' in locals() else None,
+                conversation_item=conversation_item
+            )
+        except Exception as e:
+            print(f"Error collecting conversation metadata: {e}")
+            # Continue even if metadata collection fails
+        
         # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
         cosmos_conversations_container.upsert_item(conversation_item)
 
