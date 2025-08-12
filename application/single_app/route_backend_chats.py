@@ -53,11 +53,19 @@ def register_route_backend_chats(app):
         active_group_id = data.get('active_group_id')
         frontend_gpt_model = data.get('model_deployment')
         top_n_results = data.get('top_n')  # Extract top_n parameter from request
+        classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
         chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
         
         # Validate chat_type
         if chat_type not in ('user', 'group'):
             chat_type = 'user'
+            
+        # Determine the actual chat context based on document scope and group presence
+        actual_chat_type = 'personal'  # Default
+        if document_scope == 'group' or (active_group_id and chat_type == 'group'):
+            actual_chat_type = 'group'
+        elif document_scope == 'public':
+            actual_chat_type = 'public'
 
         search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
         hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
@@ -213,6 +221,185 @@ def register_route_backend_chats(app):
 # region        # 2) Append the user message to conversation immediately
         # ---------------------------------------------------------------------
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        
+        # Collect comprehensive metadata for user message
+        user_metadata = {}
+        
+        # Get current user information
+        current_user = get_current_user_info()
+        if current_user:
+            user_metadata['user_info'] = {
+                'user_id': current_user.get('userId'),
+                'username': current_user.get('userPrincipalName'),
+                'display_name': current_user.get('displayName'),
+                'email': current_user.get('email'),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        
+        # Button states and selections
+        user_metadata['button_states'] = {
+            'image_generation': image_gen_enabled,
+            'web_search': bing_search_enabled,
+            'document_search': hybrid_search_enabled
+        }
+        
+        # Document search scope and selections
+        if hybrid_search_enabled:
+            user_metadata['workspace_search'] = {
+                'search_enabled': True,
+                'document_scope': document_scope,
+                'selected_document_id': selected_document_id,
+                'classification': classifications_to_send
+            }
+            
+            # Get document details if specific document selected
+            if selected_document_id and selected_document_id != "all":
+                try:
+                    # Use the appropriate documents container based on scope
+                    if document_scope == 'group':
+                        cosmos_container = cosmos_group_documents_container
+                    elif document_scope == 'public':
+                        cosmos_container = cosmos_public_documents_container
+                    else:
+                        cosmos_container = cosmos_user_documents_container
+                    
+                    doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
+                    doc_params = [{"name": "@doc_id", "value": selected_document_id}]
+                    doc_results = list(cosmos_container.query_items(
+                        query=doc_query, parameters=doc_params, enable_cross_partition_query=True
+                    ))
+                    if doc_results:
+                        doc_info = doc_results[0]
+                        user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
+                        user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
+                except Exception as e:
+                    print(f"Error retrieving document details: {e}")
+            
+            # Add scope-specific details
+            if document_scope == 'group' and active_group_id:
+                try:
+                    print(f"Debug: Workspace search - querying group for id: {active_group_id}")
+                    # Get group name
+                    group_query = "SELECT c.title, c.id FROM c WHERE c.id = @group_id"
+                    group_params = [{"name": "@group_id", "value": active_group_id}]
+                    group_results = list(cosmos_groups_container.query_items(
+                        query=group_query, parameters=group_params, enable_cross_partition_query=True
+                    ))
+                    print(f"Debug: Workspace search group query results: {group_results}")
+                    if group_results:
+                        group_info = group_results[0]
+                        group_name = group_info.get('title')
+                        user_metadata['workspace_search']['group_name'] = group_name
+                        print(f"Debug: Workspace search - set group_name to: {group_name}")
+                    else:
+                        print(f"Debug: Workspace search - no group found with id: {active_group_id}")
+                except Exception as e:
+                    print(f"Error retrieving group details: {e}")
+                    import traceback
+                    traceback.print_exc()
+        else:
+            user_metadata['workspace_search'] = {
+                'search_enabled': False
+            }
+        # Model/Agent selection
+        user_metadata['model_selection'] = {
+            'model_deployment': frontend_gpt_model
+        }
+        
+        # Agent selection (if available)
+        if hasattr(g, 'kernel_agents') and g.kernel_agents:
+            try:
+                # Try to get selected agent info from user settings or global settings
+                selected_agent_info = None
+                if user_id:
+                    try:
+                        user_settings_doc = cosmos_user_settings_container.read_item(
+                            item=user_id, partition_key=user_id
+                        )
+                        selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
+                    except:
+                        pass
+                
+                if not selected_agent_info:
+                    # Fallback to global selected agent
+                    selected_agent_info = settings.get('global_selected_agent')
+                
+                if selected_agent_info:
+                    user_metadata['agent_selection'] = {
+                        'selected_agent': selected_agent_info.get('name'),
+                        'agent_display_name': selected_agent_info.get('display_name'),
+                        'is_global': selected_agent_info.get('is_global', False)
+                    }
+            except Exception as e:
+                print(f"Error retrieving agent details: {e}")
+        
+        # Prompt selection (extract from message if available)
+        prompt_info = data.get('prompt_info')
+        if prompt_info:
+            user_metadata['prompt_selection'] = {
+                'selected_prompt_index': prompt_info.get('index'),
+                'selected_prompt_text': prompt_info.get('content'),
+                'prompt_name': prompt_info.get('name'),
+                'prompt_id': prompt_info.get('id')
+            }
+        
+        # Agent selection (from frontend if available, override settings-based selection)
+        agent_info = data.get('agent_info')
+        if agent_info:
+            user_metadata['agent_selection'] = {
+                'selected_agent': agent_info.get('name'),
+                'agent_display_name': agent_info.get('display_name'),
+                'is_global': agent_info.get('is_global', False)
+            }
+        
+        # Model selection information
+        user_metadata['model_selection'] = {
+            'selected_model': gpt_model,
+            'frontend_requested_model': frontend_gpt_model
+        }
+        
+        # Chat type and group context
+        user_metadata['chat_context'] = {
+            'conversation_id': conversation_id,
+            'chat_type': actual_chat_type
+        }
+        
+        # Add context-specific information based on chat type
+        if actual_chat_type == 'group' and active_group_id:
+            user_metadata['chat_context']['group_id'] = active_group_id
+            # We may have already fetched this in workspace_search section
+            if 'workspace_search' in user_metadata and 'group_name' in user_metadata['workspace_search']:
+                user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
+                print(f"Debug: Using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
+            else:
+                try:
+                    print(f"Debug: Querying cosmos_groups_container for group_id: {active_group_id}")
+                    group_query = "SELECT c.title FROM c WHERE c.id = @group_id"
+                    group_params = [{"name": "@group_id", "value": active_group_id}]
+                    group_results = list(cosmos_groups_container.query_items(
+                        query=group_query, parameters=group_params, enable_cross_partition_query=True
+                    ))
+                    print(f"Debug: Group query results: {group_results}")
+                    if group_results:
+                        group_title = group_results[0].get('title')
+                        user_metadata['chat_context']['group_name'] = group_title
+                        print(f"Debug: Set group_name to: {group_title}")
+                    else:
+                        print(f"Debug: No group found with id: {active_group_id}")
+                except Exception as e:
+                    print(f"Error retrieving group name for chat context: {e}")
+                    import traceback
+                    traceback.print_exc()
+        elif actual_chat_type == 'public':
+            # For public chat, add workspace information if available from document selection
+            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('document_name'):
+                # Use the document name as workspace context for public documents
+                user_metadata['chat_context']['workspace_context'] = f"Public Document: {user_metadata['workspace_search']['document_name']}"
+            else:
+                user_metadata['chat_context']['workspace_context'] = "Public Workspace"
+            print(f"Debug: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
+        # For personal chat type, no additional context needed beyond conversation_id
+        
         user_message_doc = {
             'id': user_message_id,
             'conversation_id': conversation_id,
@@ -220,8 +407,12 @@ def register_route_backend_chats(app):
             'content': user_message,
             'timestamp': datetime.utcnow().isoformat(),
             'model_deployment_name': None,  # Model not used for user message
-            'metadata': {}, 
+            'metadata': user_metadata, 
         }
+        
+        # Debug: Print the complete metadata being saved
+        print(f"Debug: Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+        
         cosmos_messages_container.upsert_item(user_message_doc)
 
         # Set conversation title if it's still the default
@@ -1297,6 +1488,7 @@ def register_route_backend_chats(app):
             'classification': conversation_item.get('classification', []), # Send classifications if any
             'model_deployment_name': final_model_used,
             'message_id': assistant_message_id,
+            'user_message_id': user_message_id,  # Include the user message ID
             'blocked': False, # Explicitly false if we got this far
             'augmented': bool(system_messages_for_augmentation),
             'hybrid_citations': hybrid_citations_list,
