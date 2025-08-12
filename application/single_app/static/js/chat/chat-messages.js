@@ -1096,7 +1096,7 @@ function formatMetadataForDrawer(metadata) {
     
     if (metadata.workspace_search.group_name) {
       content += `<div class="metadata-item">
-        <strong>Group:</strong> ${createInfoBadge(metadata.workspace_search.group_name, 'warning')}
+        <strong>Group:</strong> ${escapeHtml(metadata.workspace_search.group_name)}
       </div>`;
     }
     
@@ -1198,7 +1198,7 @@ function formatMetadataForDrawer(metadata) {
     if (metadata.chat_context.chat_type === 'group') {
       if (metadata.chat_context.group_name) {
         content += `<div class="metadata-item">
-          <strong>Group:</strong> ${createInfoBadge(metadata.chat_context.group_name, 'warning')}
+          <strong>Group:</strong> ${escapeHtml(metadata.chat_context.group_name)}
         </div>`;
       } else if (metadata.chat_context.group_id && metadata.chat_context.group_id !== 'None') {
         content += `<div class="metadata-item">

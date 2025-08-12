@@ -283,12 +283,12 @@ def register_route_backend_chats(app):
                     group_doc = find_group_by_id(active_group_id)
                     print(f"Debug: Workspace search group lookup result: {group_doc}")
                     
-                    if group_doc and group_doc.get('title'):
-                        group_name = group_doc.get('title')
+                    if group_doc and group_doc.get('name'):
+                        group_name = group_doc.get('name')
                         user_metadata['workspace_search']['group_name'] = group_name
                         print(f"Debug: Workspace search - set group_name to: {group_name}")
                     else:
-                        print(f"Debug: Workspace search - no group found or no title for id: {active_group_id}")
+                        print(f"Debug: Workspace search - no group found or no name for id: {active_group_id}")
                         user_metadata['workspace_search']['group_name'] = None
                         
                 except Exception as e:
@@ -372,12 +372,12 @@ def register_route_backend_chats(app):
                     group_doc = find_group_by_id(active_group_id)
                     print(f"Debug: Chat context group lookup result: {group_doc}")
                     
-                    if group_doc and group_doc.get('title'):
-                        group_title = group_doc.get('title')
+                    if group_doc and group_doc.get('name'):
+                        group_title = group_doc.get('name')
                         user_metadata['chat_context']['group_name'] = group_title
                         print(f"Debug: Chat context - set group_name to: {group_title}")
                     else:
-                        print(f"Debug: Chat context - no group found or no title for id: {active_group_id}")
+                        print(f"Debug: Chat context - no group found or no name for id: {active_group_id}")
                         user_metadata['chat_context']['group_name'] = None
                         
                 except Exception as e:
