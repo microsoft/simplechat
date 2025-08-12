@@ -476,6 +476,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Select the **Standard S0** pricing tier.
     *   Review Networking settings.
     *   If using **Managed Identity**, grant the App Service's Managed Identity the `Azure AI Developer` role on this resource.
+    *   If using **Managed Identity**, grant the App Service's Managed Identity the `Azure AI Developer` role on this resource.
 8.  **Deploy Bing Search Service (Optional)**:
     *   If using the Bing Web Search feature, create a **Bing Search v7** resource.
     *   Select the **S1** tier (or adjust based on expected query volume).
@@ -485,6 +486,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   You'll need to associate it with an Azure Media Services account (can be created during VI setup) and a Storage Account (used for temporary processing, can be new or existing).
     *   Managed Identity (System-assigned) is typically enabled by default.
     *   Note the **Account ID**, **Location**, and an **API Key** (Subscription level or Account level). These will be configured in Admin Settings.
+    * If using **Managed Identity** (required for all new VI accounts), grant the App Service's Managed Identity the `Contributor` role on this resource.
     * If using **Managed Identity** (required for all new VI accounts), grant the App Service's Managed Identity the `Contributor` role on this resource.
 10. **Deploy Azure Speech Service (Optional)**:
     *   If using the Audio Extraction feature, create an **Azure AI Speech** resource.
@@ -1093,8 +1095,10 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    | Azure Cosmos DB       | Cosmos DB Built-in Data Contributor | Allows reading/writing data. Least privilege possible via custom roles. Key auth might be simpler. |
    | Document Intelligence | Cognitive Services User             | Allows using the DI service for analysis.                    |
    | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
+   | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
    | Azure Storage Account | Storage Blob Data Contributor       | Required for Enhanced Citations if using Managed Identity. Allows reading/writing blobs. |
    | Azure Speech Service  | Cognitive Services User             | Allows using the Speech service for transcription.           |
+   | Video Indexer         | Contributor  | Allows token acquisition from VI ARM service, API call sets scope of token permissions per call. |
    | Video Indexer         | Contributor  | Allows token acquisition from VI ARM service, API call sets scope of token permissions per call. |
 
 3. **Configure Application to Use Managed Identity**:
