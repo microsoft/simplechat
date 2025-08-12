@@ -26,6 +26,9 @@ import glob
 import jwt
 import pandas
 
+# Add dotenv import
+from dotenv import load_dotenv
+
 from flask import (
     Flask, 
     flash, 
@@ -78,6 +81,8 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 
