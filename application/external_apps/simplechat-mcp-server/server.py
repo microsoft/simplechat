@@ -4,13 +4,24 @@ FastMCP Server with Microsoft Entra ID OAuth Authentication
 
 This MCP server authenticates users with Microsoft Entra ID and provides
 tools for making authenticated requests to backend APIs using bearer tokens.
+
+    # return {
+    #     "success": True,
+    #     "auth_url": auth_url,
+    #     "message": f"Please visit the following URL to authenticate: {auth_url}",
+    #     "instructions": "After authentication, you can use other tools with your user_id"
+    # }
+
 """
 import requests
 import json
 import asyncio
 import logging
 import sys
-from typing import Any, Dict, Optional
+import httpx
+
+from urllib import response
+from typing import Any, Dict, Optional, Sequence
 from contextlib import asynccontextmanager
 
 from datetime import datetime
@@ -26,6 +37,7 @@ from api_client import ApiClient
 
 SESSION_ID = ""
 USER_ID = ""
+TIMEOUT = 120  # Request timeout in seconds
 
 # Configure logging
 logging.basicConfig(
@@ -39,15 +51,15 @@ config = Config()
 token_manager = TokenManager(config.token_cache_file)
 auth_manager = AuthManager(config, token_manager)
 api_client = None
-
+BACKEND_API_BASE_URL = f"{config.backend_api_base_url}"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan"""
     # Startup
     global api_client
-    if config.backend_api_base_url:
-        api_client = ApiClient(config.backend_api_base_url)
+    if BACKEND_API_BASE_URL:
+        api_client = ApiClient(BACKEND_API_BASE_URL)
     logger.info("FastAPI server started")
     
     yield
@@ -75,12 +87,16 @@ async def combined_lifespan(app: FastAPI):
 
 # Initialize FastAPI app for OAuth callbacks with combined lifespan  
 app = FastAPI(
-    title="MCP OAuth Server", 
-    description="OAuth callback endpoints for MCP server",
+    title="SimpleChat MCP Server", 
+    description="Interact with any SimpleChat instance using OAuth authentication.",
     lifespan=combined_lifespan
 )
 
-
+#########################################
+#
+# FAST API METHODS - SHIM LAYER
+#
+#########################################
 # OAuth callback endpoints
 @app.get("/auth/login")
 async def login(user_id: str = Query(..., description="User identifier")):
@@ -91,7 +107,6 @@ async def login(user_id: str = Query(..., description="User identifier")):
     except Exception as e:
         logger.error(f"Login failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/auth/callback")
 async def auth_callback(
@@ -130,7 +145,6 @@ async def auth_callback(
             status_code=400
         )
 
-
 @app.get("/auth/logout")
 async def logout(user_id: str = Query(..., description="User identifier")):
     """Logout user"""
@@ -142,14 +156,12 @@ async def logout(user_id: str = Query(..., description="User identifier")):
         logger.error(f"Logout failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/auth/logout-complete")
 async def logout_complete():
     """Handle logout completion"""
     return HTMLResponse(
         content="<html><body><h1>Logout Complete</h1><p>You have been successfully logged out.</p></body></html>"
     )
-
 
 @app.get("/auth/status")
 async def auth_status(user_id: str = Query(..., description="User identifier")):
@@ -162,7 +174,11 @@ async def auth_status(user_id: str = Query(..., description="User identifier")):
     }
 
 
-# MCP Tools
+#########################################
+#
+# MCP SERVER - BASE TOOLS
+#
+#########################################
 @mcp.tool()
 async def authenticate_user(user_id: str) -> Dict[str, Any]:
     """
@@ -307,18 +323,6 @@ def get_session() -> str:
     return result
 
 @mcp.tool()
-def get_conversations() -> str:
-    """Get conversations from SimpleChat."""
-    response = private_get_conversations()
-    return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
-
-@mcp.tool()
-def send_chat_message(conversation_id: str, message: str) -> str:
-    """Send chat message to SimpleChat."""
-    response = private_send_chat_message(conversation_id, message)
-    return f"Get conversations called with session ID: {SESSION_ID}, has response: [{response}]."
-
-@mcp.tool()
 def ping() -> str:
     """ping."""
     current_datetime = datetime.now()
@@ -346,8 +350,7 @@ def get_server_info() -> Dict[str, Any]:
             "client_id": config.client_id,
             "authority": config.authority,
             "backend_api_base_url": config.redirect_uri,
-            "scopes": config.scopes,
-            "backend_api_base_url": config.backend_api_base_url
+            "scopes": config.scopes
         }
     except Exception as e:
         return {
@@ -358,10 +361,225 @@ def get_server_info() -> Dict[str, Any]:
 
 #########################################
 #
+# SIMPLE CHAT API TOOLS
+#
+#########################################
+@mcp.tool()
+def get_conversations() -> dict:
+    """Get conversations from SimpleChat."""
+    result = private_get_conversations()
+    return {"success": True, "message": result, "sessionid": SESSION_ID}
+
+#def send_chat_message(conversation_id: str, message: str) -> dict:
+#def private_send_chat_message(message: str, conversation_id: str, group_id: str, model_choice: str):
+@mcp.tool()
+def send_chat_message(message: str, conversation_id: str, group_id: str, model_choice: str) -> dict:
+    """Send chat message to SimpleChat."""
+    result = private_send_chat_message(message, conversation_id, group_id, model_choice)
+    return {"success": True, "message": result, "sessionid": SESSION_ID}
+
+@mcp.tool()
+def get_gpt_models() -> dict:
+    """Gets the list of gpt models available in SimpleChat."""
+    result = private_get_gpt_models()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+def get_embedding_models() -> dict:
+    """Gets the list of embedding models available in SimpleChat."""
+    result = private_get_embedding_models()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+def get_image_models() -> dict:
+    """Gets the list of image models available in SimpleChat."""
+    result = private_get_image_models()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+def set_application_url() -> dict:
+    """Sets the SimpleChat base url."""
+    result = private_set_application_url()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+def get_application_url() -> dict:
+    """Gets the SimpleChat base url."""
+    result = private_get_application_url()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+async def upload_file(file_content: str, filename: str, content_type: str = "application/octet-stream") -> dict[str, Any]:
+    """
+    Upload a file to the backend API endpoint.
+    
+    Args:
+        file_content: Base64 encoded file content
+        filename: Name of the file being uploaded
+        content_type: MIME type of the file (optional, defaults to application/octet-stream)
+    
+    Returns:
+        dict: Response from the backend API
+    """
+    global SESSION_ID
+    try:
+        import base64
+        
+        # Decode the base64 file content
+        try:
+            file_bytes = base64.b64decode(file_content)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to decode file content: {str(e)}"
+            }
+        
+        # Prepare the multipart form data
+        files = {
+            "file": (filename, file_bytes, content_type)
+        }
+        
+        url = f"{BACKEND_API_BASE_URL}upload"
+        print(f"Upload url is: {url}")
+
+        # Send the file to the backend API
+        async with httpx.AsyncClient(timeout=TIMEOUT, verify=False) as client:
+            logger.info(f"Uploading file '{filename}' to {url}")
+            
+            my_cookies = {
+                "session": SESSION_ID
+            }
+
+            response = await client.post(
+                url,
+                files=files,
+                cookies=my_cookies
+            )
+            
+            response.raise_for_status()
+            
+            # Try to parse JSON response, fallback to text
+            try:
+                result = response.json()
+            except Exception:
+                result = {"message": response.text}
+            
+            logger.info(f"File upload successful: {response.status_code}")
+            return {
+                "success": True,
+                "status_code": response.status_code,
+                "response": result
+            }
+            
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP error {e.response.status_code}: {e.response.text}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg,
+            "status_code": e.response.status_code
+        }
+        
+    except httpx.TimeoutException:
+        error_msg = f"Request timed out after {TIMEOUT} seconds"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg
+        }
+        
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg
+        }
+
+#########################################
+#
 # PRIVATE FUNCTIONS
 #
 #########################################
-def private_send_chat_message(conversation_id: str, message: str):
+def private_set_application_url(url: str) -> str:
+    print("private_set_application_url called")
+    print("=" * 40)
+    BACKEND_API_BASE_URL = url
+    return f"Set Simple Chat Application URL to: {BACKEND_API_BASE_URL}. This application instance must use the configured CLIENT_ID and TENANT_ID."
+
+def private_get_application_url() -> str:
+    print("private_get_application_url called")
+    print("=" * 40)
+    return f"Current Simple Chat Application URL to: {BACKEND_API_BASE_URL}"
+
+def private_get_api_method_void(relative_url: str) -> json:
+    global SESSION_ID
+    print("private_get_api_method_void called")
+    print("=" * 40)
+
+    if SESSION_ID is None:
+        raise Exception("Session ID is missing")
+
+    url = f"{BACKEND_API_BASE_URL}{relative_url}"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    my_cookies = {
+        "session": SESSION_ID
+    }
+
+    print(f"Making request to: {url}")
+
+    try:
+        response = requests.get(url, headers=headers, cookies=my_cookies, verify=False)
+        print(f"\nResponse Status: {response.status_code}")
+        print(f"Response Headers: {dict(response.headers)}")
+
+        try:
+            response_data = response.json()
+            print(f"Response JSON: {json.dumps(response_data, indent=2)}")
+            return response_data
+        except Exception:
+            return (f"Response Text: {response.text}")
+
+    except Exception as e:
+        return (f"Request failed: {e}")
+
+def private_get_gpt_models() -> str:
+    print("private_get_gpt_models called")
+    print("=" * 40)
+    relative_url = "api/models/gpt"
+    return private_get_api_method_void(relative_url)
+
+def private_get_embedding_models() -> str:
+    print("private_get_embedding_models called")
+    print("=" * 40)
+    relative_url = "api/models/embedding"
+    return private_get_api_method_void(relative_url)
+
+def private_get_image_models() -> str:
+    print("private_get_image_models called")
+    print("=" * 40)
+    relative_url = "api/models/image"
+    return private_get_api_method_void(relative_url)
+
+def private_send_chat_message(message: str, conversation_id: str, group_id: str, model_choice: str):
     global SESSION_ID
 
     print("private_send_chat_message called")
@@ -373,7 +591,7 @@ def private_send_chat_message(conversation_id: str, message: str):
     if SESSION_ID is None:
         raise Exception("Session ID is missing")
 
-    url = f"{config.backend_api_base_url}api/chat"
+    url = f"{BACKEND_API_BASE_URL}api/chat"
     headers = {
         'Content-Type': 'application/json'
     }
@@ -394,6 +612,55 @@ def private_send_chat_message(conversation_id: str, message: str):
         'chat_type':'user',
         'active_group_id':None,
         'model_deployment':'gpt-4.1'
+    }
+    data['message'] = message
+    data['conversation_id'] = conversation_id
+    data['model_deployment'] = model_choice
+    data['active_group_id'] = group_id
+
+    print(f"Making request to: {url}")
+    print(f"Headers: {headers}")
+    print(f"My Cookies: {my_cookies}")
+    print(f"Data: {data}")
+    
+    try:
+        response = requests.post(url, json=data, headers=headers, cookies=my_cookies, verify=False)
+        print(f"\nResponse Status: {response.status_code}")
+        print(f"Response Headers: {dict(response.headers)}")
+        
+        try:
+            response_data = response.json()
+            print(f"Response JSON: {json.dumps(response_data, indent=2)}")
+            return response_data
+        except Exception:
+            return (f"Response Text: {response.text}")
+            
+    except Exception as e:
+        return (f"Request failed: {e}")
+
+def private_file_upload(conversation_id: str, message: str):
+    global SESSION_ID
+
+    print("private_file_upload called")
+    print("=" * 40)
+
+    if not message:
+        return "Blank message received. Nothing to send."
+
+    if SESSION_ID is None:
+        raise Exception("Session ID is missing")
+
+    url = f"{BACKEND_API_BASE_URL}upload"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    my_cookies = {
+        "session": SESSION_ID
+    }
+    
+    data = {
+        'conversation_id': conversation_id,
     }
     data['message'] = message
     data['conversation_id'] = conversation_id
@@ -429,7 +696,7 @@ def private_get_session():
         return {
             "success": False,
             "error": "User not authenticated",
-            "message": f"User {USER_ID} needs to authenticate first"
+            "message": "User needs to authenticate first"
         }
 
     # bearer_token = authenticator.get_access_token_sync()
@@ -438,7 +705,7 @@ def private_get_session():
     #     raise Exception("Bearer token is missing")
     
 
-    url = f"{config.backend_api_base_url}getASession"
+    url = f"{BACKEND_API_BASE_URL}getASession"
     headers = {
         'Authorization': f'Bearer {bearer_token}',
         'Content-Type': 'application/json'
@@ -470,7 +737,7 @@ def private_get_conversations():
     if SESSION_ID is None:
         raise Exception("Session ID is missing")
 
-    url = f"{config.backend_api_base_url}api/get_conversations"
+    url = f"{BACKEND_API_BASE_URL}api/get_conversations"
     headers = {
         'Content-Type': 'application/json'
     }

@@ -30,15 +30,15 @@ class Config:
         #]
         
         # Add your custom API scope if you have one
-        custom_scope = os.getenv("CUSTOM_API_SCOPE")
+        custom_scope = os.getenv("CUSTOM_API_SCOPE", "")
         self.scopes = [custom_scope]
         # if custom_scope:
         #     self.scopes.append(custom_scope)
         
         # Server Configuration
-        self.redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8000/auth/callback")
-        self.server_host = os.getenv("SERVER_HOST", "localhost")
-        self.server_port = int(os.getenv("SERVER_PORT", "8000"))
+        self.redirect_uri = os.getenv("REDIRECT_URI", "")
+        self.server_host = os.getenv("SERVER_HOST", "")
+        self.server_port = int(os.getenv("SERVER_PORT", ""))
         
         # Backend API Configuration
         self.backend_api_base_url = os.getenv("BACKEND_API_BASE_URL", "")
