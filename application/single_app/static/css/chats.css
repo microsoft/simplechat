@@ -512,8 +512,28 @@ body.layout-split .gutter {
   padding: 12px;
 }
 
+.metadata-content {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Responsive grid layout for metadata sections */
+@media (min-width: 768px) {
+  .metadata-content {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .metadata-content {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 .metadata-section {
-  margin-bottom: 1rem;
+  margin-bottom: 0; /* Remove margin since grid gap handles spacing */
+  break-inside: avoid; /* Prevent sections from breaking across columns in some browsers */
 }
 
 .metadata-title {

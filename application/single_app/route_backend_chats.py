@@ -17,6 +17,7 @@ from functions_search import *
 from functions_bing_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
+from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from flask import current_app
@@ -278,33 +279,27 @@ def register_route_backend_chats(app):
             # Add scope-specific details
             if document_scope == 'group' and active_group_id:
                 try:
-                    print(f"Debug: Workspace search - querying group for id: {active_group_id}")
-                    # Get group name
-                    group_query = "SELECT c.title, c.id FROM c WHERE c.id = @group_id"
-                    group_params = [{"name": "@group_id", "value": active_group_id}]
-                    group_results = list(cosmos_groups_container.query_items(
-                        query=group_query, parameters=group_params, enable_cross_partition_query=True
-                    ))
-                    print(f"Debug: Workspace search group query results: {group_results}")
-                    if group_results:
-                        group_info = group_results[0]
-                        group_name = group_info.get('title')
+                    print(f"Debug: Workspace search - looking up group for id: {active_group_id}")
+                    group_doc = find_group_by_id(active_group_id)
+                    print(f"Debug: Workspace search group lookup result: {group_doc}")
+                    
+                    if group_doc and group_doc.get('title'):
+                        group_name = group_doc.get('title')
                         user_metadata['workspace_search']['group_name'] = group_name
                         print(f"Debug: Workspace search - set group_name to: {group_name}")
                     else:
-                        print(f"Debug: Workspace search - no group found with id: {active_group_id}")
+                        print(f"Debug: Workspace search - no group found or no title for id: {active_group_id}")
+                        user_metadata['workspace_search']['group_name'] = None
+                        
                 except Exception as e:
                     print(f"Error retrieving group details: {e}")
+                    user_metadata['workspace_search']['group_name'] = None
                     import traceback
                     traceback.print_exc()
         else:
             user_metadata['workspace_search'] = {
                 'search_enabled': False
             }
-        # Model/Agent selection
-        user_metadata['model_selection'] = {
-            'model_deployment': frontend_gpt_model
-        }
         
         # Agent selection (if available)
         if hasattr(g, 'kernel_agents') and g.kernel_agents:
@@ -368,26 +363,26 @@ def register_route_backend_chats(app):
         if actual_chat_type == 'group' and active_group_id:
             user_metadata['chat_context']['group_id'] = active_group_id
             # We may have already fetched this in workspace_search section
-            if 'workspace_search' in user_metadata and 'group_name' in user_metadata['workspace_search']:
+            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
                 user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
-                print(f"Debug: Using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
+                print(f"Debug: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
             else:
                 try:
-                    print(f"Debug: Querying cosmos_groups_container for group_id: {active_group_id}")
-                    group_query = "SELECT c.title FROM c WHERE c.id = @group_id"
-                    group_params = [{"name": "@group_id", "value": active_group_id}]
-                    group_results = list(cosmos_groups_container.query_items(
-                        query=group_query, parameters=group_params, enable_cross_partition_query=True
-                    ))
-                    print(f"Debug: Group query results: {group_results}")
-                    if group_results:
-                        group_title = group_results[0].get('title')
+                    print(f"Debug: Chat context - looking up group for id: {active_group_id}")
+                    group_doc = find_group_by_id(active_group_id)
+                    print(f"Debug: Chat context group lookup result: {group_doc}")
+                    
+                    if group_doc and group_doc.get('title'):
+                        group_title = group_doc.get('title')
                         user_metadata['chat_context']['group_name'] = group_title
-                        print(f"Debug: Set group_name to: {group_title}")
+                        print(f"Debug: Chat context - set group_name to: {group_title}")
                     else:
-                        print(f"Debug: No group found with id: {active_group_id}")
+                        print(f"Debug: Chat context - no group found or no title for id: {active_group_id}")
+                        user_metadata['chat_context']['group_name'] = None
+                        
                 except Exception as e:
                     print(f"Error retrieving group name for chat context: {e}")
+                    user_metadata['chat_context']['group_name'] = None
                     import traceback
                     traceback.print_exc()
         elif actual_chat_type == 'public':
