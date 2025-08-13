@@ -2560,6 +2560,24 @@
                             Enable File Processing Logs
                         </label>
                     </div>
+                    <div class="card mb-3 p-3">
+                        <h5>External Health Check</h5>
+                        <p class="text-muted mb-2">
+                            Enable or disable the /external/healthcheck endpoint for external health monitoring.
+                        </p>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_external_healthcheck"
+                                name="enable_external_healthcheck"
+                                {% if settings.enable_external_healthcheck %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                                Enable External Health Check Endpoint
+                            </label>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div> 
