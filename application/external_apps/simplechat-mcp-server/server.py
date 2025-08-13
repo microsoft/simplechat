@@ -61,9 +61,9 @@ async def lifespan(app: FastAPI):
     if BACKEND_API_BASE_URL:
         api_client = ApiClient(BACKEND_API_BASE_URL)
     logger.info("FastAPI server started")
-    
+
     yield
-    
+
     # Shutdown
     if api_client:
         await api_client.close()
@@ -85,9 +85,9 @@ async def combined_lifespan(app: FastAPI):
         async with lifespan(app) as our_lifespan:
             yield
 
-# Initialize FastAPI app for OAuth callbacks with combined lifespan  
+# Initialize FastAPI app for OAuth callbacks with combined lifespan
 app = FastAPI(
-    title="SimpleChat MCP Server", 
+    title="SimpleChat MCP Server",
     description="Interact with any SimpleChat instance using OAuth authentication.",
     lifespan=combined_lifespan
 )
@@ -121,7 +121,7 @@ async def auth_callback(
             content=f"<html><body><h1>Authentication Error</h1><p>{error}</p></body></html>",
             status_code=400
         )
-    
+
     try:
         result = auth_manager.handle_auth_callback(code, state)
         return HTMLResponse(
@@ -183,10 +183,10 @@ async def auth_status(user_id: str = Query(..., description="User identifier")):
 async def authenticate_user(user_id: str) -> Dict[str, Any]:
     """
     Start OAuth authentication flow for a user.
-    
+
     Args:
         user_id: Unique identifier for the user
-        
+
     Returns:
         Dictionary with authentication URL and instructions
     """
@@ -213,10 +213,10 @@ async def authenticate_user(user_id: str) -> Dict[str, Any]:
 async def check_auth_status() -> Dict[str, Any]:
     """
     Check if a user is authenticated and has a valid token.
-    
+
     Args:
         user_id: Unique identifier for the user
-        
+
     Returns:
         Dictionary with authentication status
     """
@@ -230,7 +230,7 @@ async def check_auth_status() -> Dict[str, Any]:
     user_id = USER_ID
     is_authenticated = auth_manager.is_authenticated(user_id)
     has_token = auth_manager.get_access_token(user_id) is not None
-    
+
     return {
         "user_id": user_id,
         "authenticated": is_authenticated,
@@ -243,10 +243,10 @@ async def check_auth_status() -> Dict[str, Any]:
 async def logout_user() -> Dict[str, Any]:
     """
     Logout a user by clearing their tokens.
-    
+
     Args:
         user_id: Unique identifier for the user
-        
+
     Returns:
         Dictionary with logout status
     """
@@ -261,7 +261,7 @@ async def logout_user() -> Dict[str, Any]:
     try:
         logout_url = auth_manager.get_logout_url(user_id)
         auth_manager.logout(user_id)
-        
+
         return {
             "success": True,
             "logout_url": logout_url,
@@ -279,7 +279,7 @@ async def logout_user() -> Dict[str, Any]:
 def view_userid() -> str:
     """
     View user id
-    
+
     Returns:
         returns current session id string.
     """
@@ -296,7 +296,7 @@ def view_userid() -> str:
 def view_sessionid() -> str:
     """
     View session id
-    
+
     Returns:
         returns current session id string.
     """
@@ -313,7 +313,7 @@ def view_sessionid() -> str:
 def get_session() -> str:
     """
     Get user session.
-    
+
     Returns:
         session id string.
     """
@@ -335,7 +335,7 @@ def ping() -> str:
 def get_server_info() -> Dict[str, Any]:
     """
     Get information about the MCP server configuration.
-    
+
     Returns:
         Dict containing server configuration information
     """
@@ -424,22 +424,58 @@ def get_application_url() -> dict:
     }
 
 @mcp.tool()
+def get_groups() -> dict:
+    """Gets the groups the user belongs to."""
+    result = private_get_groups()
+    return {
+        "success": True,
+        "message": result
+    }
+
+@mcp.tool()
+def create_group(group_name: str, group_description: str) -> dict:
+    """Creates a new group."""
+    result = private_create_group(group_name, group_description)
+    return {
+        "success": True,
+        "message": result
+    }
+
+# @mcp.tool()
+# def search_groups() -> dict:
+#     """Searches for groups by name."""
+#     result = "Not functioning yet."
+#     return {
+#         "success": True,
+#         "message": result
+#     }
+
+# @mcp.tool()
+# def findbyid_group() -> dict:
+#     """Finds a group by its ID."""
+#     result = "Not functioning yet."
+#     return {
+#         "success": True,
+#         "message": result
+#     }
+
+@mcp.tool()
 async def upload_file(file_content: str, filename: str, content_type: str = "application/octet-stream") -> dict[str, Any]:
     """
     Upload a file to the backend API endpoint.
-    
+
     Args:
         file_content: Base64 encoded file content
         filename: Name of the file being uploaded
         content_type: MIME type of the file (optional, defaults to application/octet-stream)
-    
+
     Returns:
         dict: Response from the backend API
     """
     global SESSION_ID
     try:
         import base64
-        
+
         # Decode the base64 file content
         try:
             file_bytes = base64.b64decode(file_content)
@@ -448,19 +484,19 @@ async def upload_file(file_content: str, filename: str, content_type: str = "app
                 "success": False,
                 "error": f"Failed to decode file content: {str(e)}"
             }
-        
+
         # Prepare the multipart form data
         files = {
             "file": (filename, file_bytes, content_type)
         }
-        
+
         url = f"{BACKEND_API_BASE_URL}upload"
         print(f"Upload url is: {url}")
 
         # Send the file to the backend API
         async with httpx.AsyncClient(timeout=TIMEOUT, verify=False) as client:
             logger.info(f"Uploading file '{filename}' to {url}")
-            
+
             my_cookies = {
                 "session": SESSION_ID
             }
@@ -470,22 +506,22 @@ async def upload_file(file_content: str, filename: str, content_type: str = "app
                 files=files,
                 cookies=my_cookies
             )
-            
+
             response.raise_for_status()
-            
+
             # Try to parse JSON response, fallback to text
             try:
                 result = response.json()
             except Exception:
                 result = {"message": response.text}
-            
+
             logger.info(f"File upload successful: {response.status_code}")
             return {
                 "success": True,
                 "status_code": response.status_code,
                 "response": result
             }
-            
+
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP error {e.response.status_code}: {e.response.text}"
         logger.error(error_msg)
@@ -494,7 +530,7 @@ async def upload_file(file_content: str, filename: str, content_type: str = "app
             "error": error_msg,
             "status_code": e.response.status_code
         }
-        
+
     except httpx.TimeoutException:
         error_msg = f"Request timed out after {TIMEOUT} seconds"
         logger.error(error_msg)
@@ -502,7 +538,7 @@ async def upload_file(file_content: str, filename: str, content_type: str = "app
             "success": False,
             "error": error_msg
         }
-        
+
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
         logger.error(error_msg)
@@ -599,7 +635,7 @@ def private_send_chat_message(message: str, conversation_id: str, group_id: str,
     my_cookies = {
         "session": SESSION_ID
     }
-    
+
     data = {
         'message':'',
         'conversation_id':'',
@@ -622,19 +658,19 @@ def private_send_chat_message(message: str, conversation_id: str, group_id: str,
     print(f"Headers: {headers}")
     print(f"My Cookies: {my_cookies}")
     print(f"Data: {data}")
-    
+
     try:
         response = requests.post(url, json=data, headers=headers, cookies=my_cookies, verify=False)
         print(f"\nResponse Status: {response.status_code}")
         print(f"Response Headers: {dict(response.headers)}")
-        
+
         try:
             response_data = response.json()
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
             return response_data
         except Exception:
             return (f"Response Text: {response.text}")
-            
+
     except Exception as e:
         return (f"Request failed: {e}")
 
@@ -658,7 +694,7 @@ def private_file_upload(conversation_id: str, message: str):
     my_cookies = {
         "session": SESSION_ID
     }
-    
+
     data = {
         'conversation_id': conversation_id,
     }
@@ -669,19 +705,19 @@ def private_file_upload(conversation_id: str, message: str):
     print(f"Headers: {headers}")
     print(f"My Cookies: {my_cookies}")
     print(f"Data: {data}")
-    
+
     try:
         response = requests.post(url, json=data, headers=headers, cookies=my_cookies, verify=False)
         print(f"\nResponse Status: {response.status_code}")
         print(f"Response Headers: {dict(response.headers)}")
-        
+
         try:
             response_data = response.json()
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
             return response_data
         except Exception:
             return (f"Response Text: {response.text}")
-            
+
     except Exception as e:
         return (f"Request failed: {e}")
 
@@ -703,7 +739,7 @@ def private_get_session():
     # print(f"Bearer Token: {bearer_token}")
     # if not bearer_token:
     #     raise Exception("Bearer token is missing")
-    
+
 
     url = f"{BACKEND_API_BASE_URL}getASession"
     headers = {
@@ -712,12 +748,12 @@ def private_get_session():
     }
 
     print(f"Making request to: {url}")
-    
+
     try:
         response = requests.get(url, headers=headers, verify=False)
         print(f"\nResponse Status: {response.status_code}")
         print(f"Response Headers: {dict(response.headers)}")
-        
+
         cookie_name = "session"
         if cookie_name in response.cookies:
             SESSION_ID = response.cookies[cookie_name]
@@ -745,11 +781,11 @@ def private_get_conversations():
     my_cookies = {
         "session": SESSION_ID
     }
-    
+
     print(f"Making request to: {url}")
     print(f"Headers: {headers}")
     print(f"My Cookies: {my_cookies}")
-    
+
     try:
         response = requests.get(url, headers=headers, cookies=my_cookies, verify=False)
         print(f"\nResponse Status: {response.status_code}")
@@ -760,12 +796,111 @@ def private_get_conversations():
             print(f"Response JSON: {json.dumps(response_data, indent=2)}")
         except Exception:
             print(f"Response Text: {response.text}")
-            
+
     except Exception as e:
         return f"Request failed: {e}"
 
     return response_data
 
+
+def private_get_groups():
+    global SESSION_ID
+
+    print("private_get_groups() called")
+    print("=" * 40)
+
+    if SESSION_ID is None:
+        raise Exception("Session ID is missing")
+
+    url = f"{BACKEND_API_BASE_URL}api/groups/discover"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    data = {
+        'showAll': True,
+    }
+
+    my_cookies = {
+        "session": SESSION_ID
+    }
+
+    print(f"Making request to: {url}")
+    print(f"Headers: {headers}")
+    print(f"Data: {data}")
+    print(f"My Cookies: {my_cookies}")
+
+    try:
+        response = requests.get(url, headers=headers, json=data, cookies=my_cookies, verify=False)
+        print(f"\nResponse Status: {response.status_code}")
+        print(f"Response Headers: {dict(response.headers)}")
+
+        try:
+            response_data = response.json()
+            print(f"Response JSON: {json.dumps(response_data, indent=2)}")
+        except Exception:
+            print(f"Response Text: {response.text}")
+
+    except Exception as e:
+        return f"Request failed: {e}"
+
+    return response_data
+
+
+def private_create_group(group_name: str, group_description: str) -> str:
+    global SESSION_ID
+
+    print("private_create_group() called")
+    print("=" * 40)
+
+    if SESSION_ID is None:
+        raise Exception("Session ID is missing")
+
+    url = f"{BACKEND_API_BASE_URL}api/groups"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    data = {
+        'name': group_name,
+        'description': group_description
+    }
+
+    my_cookies = {
+        "session": SESSION_ID
+    }
+
+    print(f"Making request to: {url}")
+    print(f"Headers: {headers}")
+    print(f"Data: {data}")
+    print(f"My Cookies: {my_cookies}")
+
+    try:
+        response = requests.post(url, headers=headers, json=data, cookies=my_cookies, verify=False)
+        print(f"\nResponse Status: {response.status_code}")
+        print(f"Response Headers: {dict(response.headers)}")
+
+        try:
+            response_data = response.json()
+            print(f"Response JSON: {json.dumps(response_data, indent=2)}")
+        except Exception:
+            print(f"Response Text: {response.text}")
+
+    except Exception as e:
+        return f"Request failed: {e}"
+
+    return response_data
+
+
+
+
+
+
+#########################################
+#
+# HELPER FUNCTIONS
+#
+#########################################
 def create_combined_app():
     """Create combined FastAPI app with both OAuth and MCP endpoints"""
     # Mount MCP at root since it already has /mcp path
@@ -777,13 +912,13 @@ async def run_server():
     if not config.validate():
         logger.error("Configuration validation failed")
         sys.exit(1)
-    
+
     logger.info("Starting FastMCP server with Microsoft Entra ID authentication")
     logger.info(f"Configuration: {config.to_dict()}")
-    
+
     # Create combined app
     combined_app = create_combined_app()
-    
+
     # Run with uvicorn
     config_uvicorn = uvicorn.Config(
         combined_app,
@@ -791,7 +926,7 @@ async def run_server():
         port=config.server_port,
         log_level="info"
     )
-    
+
     server = uvicorn.Server(config_uvicorn)
     await server.serve()
 
