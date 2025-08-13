@@ -4,6 +4,7 @@ import { showToast } from "./chat-toast.js";
 import { loadMessages } from "./chat-messages.js";
 import { isColorLight, toBoolean } from "./chat-utils.js";
 import { loadSidebarConversations, setActiveConversation as setSidebarActiveConversation } from "./chat-sidebar-conversations.js";
+import { toggleConversationInfoButton } from "./chat-conversation-info-button.js";
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
@@ -462,6 +463,7 @@ export function selectConversation(conversationId) {
       if (currentConversationClassificationsEl) currentConversationClassificationsEl.innerHTML = "";
       if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Conversation not found.</div>';
       highlightSelectedConversation(null); // Deselect all visually
+      toggleConversationInfoButton(false); // Hide the info button
       return;
   }
 
@@ -528,6 +530,9 @@ export function selectConversation(conversationId) {
   loadMessages(conversationId);
   highlightSelectedConversation(conversationId);
   
+  // Show the conversation info button since we have an active conversation
+  toggleConversationInfoButton(true);
+  
   // Update sidebar active conversation if sidebar exists
   if (setSidebarActiveConversation) {
     setSidebarActiveConversation(conversationId);
@@ -579,6 +584,7 @@ export function deleteConversation(conversationId) {
           if (currentConversationClassificationsEl) currentConversationClassificationsEl.innerHTML = ""; // Clear classifications
           if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Select a conversation to view messages.</div>'; // Reset chatbox
           highlightSelectedConversation(null); // Deselect all
+          toggleConversationInfoButton(false); // Hide the info button
         }
         
         // Also reload sidebar conversations if the sidebar exists
@@ -710,6 +716,7 @@ async function deleteSelectedConversations() {
         if (currentConversationClassificationsEl) currentConversationClassificationsEl.innerHTML = "";
         if (chatbox) chatbox.innerHTML = '<div class="text-center p-5 text-muted">Select a conversation to view messages.</div>';
         highlightSelectedConversation(null);
+        toggleConversationInfoButton(false); // Hide the info button
       }
     });
     
