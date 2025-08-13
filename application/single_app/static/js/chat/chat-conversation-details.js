@@ -3,6 +3,8 @@
  * Module for handling conversation details modal
  */
 
+import { isColorLight } from "./chat-utils.js";
+
 /**
  * Show conversation details in a modal
  * @param {string} conversationId - The conversation ID to show details for
@@ -374,11 +376,23 @@ function renderDocumentsSection(documents) {
     const documentTitle = doc.title || doc.document_id;
     const scopeName = doc.scope?.name || doc.scope?.id || 'Unknown';
     
+    // Format document classification with custom colors
+    const allCategories = window.classification_categories || [];
+    const category = allCategories.find(cat => cat.label === doc.classification);
+    let classificationHtml;
+    
+    if (category) {
+      const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
+      classificationHtml = `<span class="badge ${textClass}" style="background-color: ${category.color}">${doc.classification}</span>`;
+    } else {
+      classificationHtml = `<span class="badge bg-warning text-dark" title="Definition for '${doc.classification}' not found">${doc.classification}</span>`;
+    }
+    
     html += `
       <div class="mb-3 p-2 border rounded">
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div class="fw-semibold text-truncate me-2" title="${documentTitle}">${documentTitle}</div>
-          <span class="badge bg-${getClassificationColor(doc.classification)}">${doc.classification}</span>
+          ${classificationHtml}
         </div>
         <div class="small text-muted mb-1">
           <i class="bi bi-file-earmark me-1"></i>
@@ -450,18 +464,20 @@ function formatClassifications(classifications) {
     return '<span class="badge bg-light text-dark">None</span>';
   }
   
-  return classifications.map(cls => 
-    `<span class="badge bg-${getClassificationColor(cls)}">${cls}</span>`
-  ).join(' ');
-}
-
-function getClassificationColor(classification) {
-  switch (classification?.toLowerCase()) {
-    case 'cui': return 'warning';
-    case 'public': return 'success';
-    case 'pending': return 'secondary';
-    default: return 'light text-dark';
-  }
+  const allCategories = window.classification_categories || [];
+  
+  return classifications.map(label => {
+    const category = allCategories.find(cat => cat.label === label);
+    
+    if (category) {
+      // Found category definition, apply custom color
+      const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
+      return `<span class="badge ${textClass}" style="background-color: ${category.color}">${label}</span>`;
+    } else {
+      // Label exists but no definition found (maybe deleted in admin)
+      return `<span class="badge bg-warning text-dark" title="Definition for '${label}' not found">${label}</span>`;
+    }
+  }).join(' ');
 }
 
 function getScopeIcon(scope) {
