@@ -72,7 +72,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal' } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -107,6 +107,9 @@ function renderConversationMetadata(metadata) {
               </div>
               <div class="col-sm-6">
                 <strong>Strict Mode:</strong> ${strict ? '<span class="badge bg-warning">Enabled</span>' : '<span class="badge bg-success">Disabled</span>'}
+              </div>
+              <div class="col-sm-6">
+                <strong>Chat Type:</strong> ${formatChatType(chat_type, context)}
               </div>
               <div class="col-sm-6">
                 <strong>Classifications:</strong> ${formatClassifications(classification)}
@@ -228,12 +231,17 @@ function renderContextSection(context) {
   
   if (primary) {
     const displayName = primary.name || primary.id;
+    const isGroupChat = primary.scope === 'group';
+    
     html += `
       <div class="mb-3">
         <strong class="text-primary">Primary Context:</strong>
         <div class="ms-3 mt-1">
-          <span class="badge bg-primary me-2">${primary.scope}</span>
-          <span class="fw-bold">${displayName}</span>
+          <div class="d-flex align-items-center mb-2">
+            <span class="badge bg-primary me-2">${primary.scope}</span>
+            ${isGroupChat ? '<span class="badge bg-secondary me-2">single-user</span>' : ''}
+            <span class="fw-bold">${displayName}</span>
+          </div>
           ${primary.name ? `<div class="small text-muted">ID: ${primary.id}</div>` : ''}
         </div>
       </div>
@@ -478,6 +486,28 @@ function formatClassifications(classifications) {
       return `<span class="badge bg-warning text-dark" title="Definition for '${label}' not found">${label}</span>`;
     }
   }).join(' ');
+}
+
+function formatChatType(chatType, context = []) {
+  // Use the actual chat_type value from the metadata
+  if (chatType === 'personal') {
+    return '<span class="badge bg-primary">personal</span>';
+  } else if (chatType === 'group' || chatType.startsWith('group')) {
+    // For group chats, try to find the group name from context
+    const primaryContext = context.find(c => c.type === 'primary' && c.scope === 'group');
+    const groupName = primaryContext ? primaryContext.name || 'Group' : 'Group';
+    
+    // Determine if single-user or multi-user based on chat_type
+    const userType = chatType.includes('multi-user') ? 'multi-user' : 'single-user';
+    
+    return `
+      <span class="badge bg-info me-1">group - ${groupName}</span>
+      <span class="badge bg-secondary">${userType}</span>
+    `;
+  } else {
+    // Fallback for unknown types
+    return `<span class="badge bg-secondary">${chatType}</span>`;
+  }
 }
 
 function getScopeIcon(scope) {

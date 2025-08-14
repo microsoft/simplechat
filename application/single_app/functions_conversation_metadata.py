@@ -88,40 +88,171 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     if 'strict' not in conversation_item:
         conversation_item['strict'] = False
     
-    # Set primary context based on active group
-    primary_context = None
-    if active_group_id:
-        # Get group name
-        group_info = find_group_by_id(active_group_id)
-        group_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
-        
-        primary_context = {
-            "type": "primary",
-            "scope": "group", 
-            "id": active_group_id,
-            "name": group_name
-        }
-    else:
-        # Get user name for personal context
-        current_user_info = get_current_user_info()
-        user_name = current_user_info.get("displayName", "Personal") if current_user_info else "Personal"
-        
-        primary_context = {
-            "type": "primary",
-            "scope": "personal",
-            "id": user_id,
-            "name": user_name
-        }
+    # Process documents from search results first to determine primary context
+    document_map = {}  # Map of document_id -> {scope, chunks, classification}
+    workspace_used = None  # Track the first workspace used (becomes primary context)
     
-    # Update or add primary context
+    if search_results:
+        for doc in search_results:
+            chunk_id = doc.get('id')
+            doc_scope_result = _determine_document_scope(doc, user_id, active_group_id)
+            classification = doc.get('document_classification', 'Pending')
+            
+            if chunk_id:
+                # Extract document ID from chunk ID (assumes format: doc_id_chunkNumber)
+                if '_' in chunk_id:
+                    document_id = '_'.join(chunk_id.split('_')[:-1])  # Remove last part (chunk number)
+                else:
+                    document_id = chunk_id  # Use full ID if no underscore
+                
+                # Initialize document entry if not exists
+                if document_id not in document_map:
+                    document_map[document_id] = {
+                        'scope': doc_scope_result,
+                        'chunk_ids': [],
+                        'classification': classification
+                    }
+                
+                # Add chunk ID to this document
+                if chunk_id not in document_map[document_id]['chunk_ids']:
+                    document_map[document_id]['chunk_ids'].append(chunk_id)
+                
+                # Set workspace_used to the first workspace encountered (for primary context)
+                if workspace_used is None:
+                    workspace_used = doc_scope_result
+    
+    # Set primary context based on document usage
+    primary_context = None
+    if workspace_used:
+        # Documents were used - the first workspace becomes primary context
+        scope_type = workspace_used['scope']
+        scope_id = workspace_used['id']
+        
+        # Get appropriate name based on scope
+        context_name = "Unknown"
+        if scope_type == "group":
+            group_info = find_group_by_id(scope_id)
+            context_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+        elif scope_type == "public":
+            workspace_info = find_public_workspace_by_id(scope_id)
+            context_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+        elif scope_type == "personal":
+            user_info = get_user_info_by_id(scope_id)
+            context_name = user_info.get('name', 'Personal') if user_info else 'Personal'
+        
+        primary_context = {
+            "type": "primary",
+            "scope": scope_type,
+            "id": scope_id,
+            "name": context_name
+        }
+    # If no documents were used, we don't set a primary context yet
+    # This allows us to track conversations that only use model knowledge
+    
+    # Update or add primary context only if we don't already have one
+    existing_primary = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
+    if primary_context:
+        if existing_primary:
+            # Primary context already exists - check if this is the same workspace
+            if (existing_primary.get('scope') == primary_context.get('scope') and 
+                existing_primary.get('id') == primary_context.get('id')):
+                # Same workspace - update existing primary context (e.g., refresh name)
+                existing_primary.update(primary_context)
+                print(f"Debug: Updated existing primary context: {existing_primary}")
+            else:
+                # Different workspace - this should become a secondary context
+                print(f"Debug: Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "
+                      f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
+                # We'll handle this in the secondary context logic below
+                primary_context = None  # Don't set as primary, will be added as secondary
+        else:
+            # No existing primary context - set this as primary
+            conversation_item['context'].append(primary_context)
+            print(f"Debug: Set new primary context: {primary_context}")
+    elif not existing_primary:
+        # No documents used and no existing primary context - this is a model-only conversation
+        # We'll add Model context as secondary later
+        pass
+    
+    # Collect secondary contexts based on other workspaces used
+    secondary_contexts = []
+    document_secondary_contexts = set()  # Track unique secondary contexts from documents
+    
+    # Get the current primary context for comparison
+    current_primary = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
+    
+    # Process documents for secondary contexts (including the workspace_used if it wasn't set as primary)
+    if document_map:
+        for document_id, doc_info in document_map.items():
+            scope_info = doc_info['scope']
+            
+            # Check if this workspace is different from the current primary context
+            is_different_from_primary = True
+            if current_primary:
+                if (scope_info['scope'] == current_primary.get('scope') and 
+                    scope_info['id'] == current_primary.get('id')):
+                    is_different_from_primary = False
+            
+            # Add to secondary contexts if different from primary
+            if is_different_from_primary:
+                context_key = (scope_info['scope'], scope_info['id'])
+                document_secondary_contexts.add(context_key)
+                print(f"Debug: Adding workspace to secondary contexts: {scope_info['scope']}:{scope_info['id']}")
+    
+    # Add secondary contexts from other workspaces with names
+    existing_secondary_ids = {ctx.get('id') for ctx in conversation_item['context'] if ctx.get('type') == 'secondary'}
+    for scope, ctx_id in document_secondary_contexts:
+        if ctx_id not in existing_secondary_ids:
+            # Get appropriate name based on scope
+            context_name = "Unknown"
+            if scope == "group":
+                group_info = find_group_by_id(ctx_id)
+                context_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
+            elif scope == "public":
+                workspace_info = find_public_workspace_by_id(ctx_id)
+                context_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
+            elif scope == "personal":
+                user_info = get_user_info_by_id(ctx_id)
+                context_name = user_info.get('name', 'Unknown User') if user_info else 'Unknown User'
+            
+            secondary_contexts.append({
+                "type": "secondary",
+                "scope": scope,
+                "id": ctx_id,
+                "name": context_name
+            })
+    
+    # Add Model knowledge context for conversations without documents or as secondary for document conversations
+    existing_model_context = next((ctx for ctx in conversation_item['context'] 
+                                 if ctx.get('type') == 'secondary' and ctx.get('scope') == 'Model'), None)
+    
+    if not existing_model_context:
+        # Always add Model context as secondary (to track that model knowledge was used)
+        secondary_contexts.append({
+            "type": "secondary",
+            "scope": "Model",
+            "id": "N/A", 
+            "name": "Model's knowledge"
+        })
+    
+    # Add new secondary contexts
+    for ctx in secondary_contexts:
+        conversation_item['context'].append(ctx)
+    
+    # Set chat_type based on primary context
     existing_primary = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
     if existing_primary:
-        existing_primary.update(primary_context)
+        # Documents were used - set chat_type based on primary context scope
+        if existing_primary.get('scope') == 'group':
+            conversation_item['chat_type'] = 'group-single-user'  # Default to single-user for now
+        elif existing_primary.get('scope') == 'public':
+            conversation_item['chat_type'] = 'public'
+        elif existing_primary.get('scope') == 'personal':
+            conversation_item['chat_type'] = 'personal'
     else:
-        conversation_item['context'].append(primary_context)
-    
-    # Collect secondary contexts based on actual documents used (will be populated later)
-    secondary_contexts = []
+        # No documents used - model-only conversation, don't set chat_type
+        # This will result in no badges being shown
+        pass
     
     # Collect and update tags with proper deduplication
     current_tags = {}
@@ -194,71 +325,6 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                         "email": participant_info.get("email", "")
                     }
                     current_tags[('participant', participant_id)] = additional_participant_tag
-    
-    # Process documents from search results - consolidate chunks by document ID
-    document_map = {}  # Map of document_id -> {scope, chunks, classification}
-    document_secondary_contexts = set()  # Track unique secondary contexts from documents
-    
-    if search_results:
-        for doc in search_results:
-            chunk_id = doc.get('id')
-            doc_scope_result = _determine_document_scope(doc, user_id, active_group_id)
-            classification = doc.get('document_classification', 'Pending')
-            
-            if chunk_id:
-                # Extract document ID from chunk ID (assumes format: doc_id_chunkNumber)
-                if '_' in chunk_id:
-                    document_id = '_'.join(chunk_id.split('_')[:-1])  # Remove last part (chunk number)
-                else:
-                    document_id = chunk_id  # Use full ID if no underscore
-                
-                # Initialize document entry if not exists
-                if document_id not in document_map:
-                    document_map[document_id] = {
-                        'scope': doc_scope_result,
-                        'chunk_ids': [],
-                        'classification': classification
-                    }
-                
-                # Add chunk ID to this document
-                if chunk_id not in document_map[document_id]['chunk_ids']:
-                    document_map[document_id]['chunk_ids'].append(chunk_id)
-                
-                # Add to secondary contexts if different from primary
-                scope_info = doc_scope_result
-                primary_scope = primary_context.get('scope')
-                primary_id = primary_context.get('id')
-                
-                if (scope_info['scope'] != primary_scope or scope_info['id'] != primary_id):
-                    context_key = (scope_info['scope'], scope_info['id'])
-                    document_secondary_contexts.add(context_key)
-    
-    # Add secondary contexts from documents with names
-    existing_secondary_ids = {ctx.get('id') for ctx in conversation_item['context'] if ctx.get('type') == 'secondary'}
-    for scope, ctx_id in document_secondary_contexts:
-        if ctx_id not in existing_secondary_ids:
-            # Get appropriate name based on scope
-            context_name = "Unknown"
-            if scope == "group":
-                group_info = find_group_by_id(ctx_id)
-                context_name = group_info.get('name', 'Unknown Group') if group_info else 'Unknown Group'
-            elif scope == "public":
-                workspace_info = find_public_workspace_by_id(ctx_id)
-                context_name = workspace_info.get('name', 'Unknown Workspace') if workspace_info else 'Unknown Workspace'
-            elif scope == "personal":
-                user_info = get_user_info_by_id(ctx_id)
-                context_name = user_info.get('name', 'Unknown User') if user_info else 'Unknown User'
-            
-            secondary_contexts.append({
-                "type": "secondary",
-                "scope": scope,
-                "id": ctx_id,
-                "name": context_name
-            })
-    
-    # Add new secondary contexts
-    for ctx in secondary_contexts:
-        conversation_item['context'].append(ctx)
     
     # Create consolidated document tags (handle existing documents properly)
     for document_id, doc_info in document_map.items():

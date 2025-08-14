@@ -61,13 +61,6 @@ def register_route_backend_chats(app):
         if chat_type not in ('user', 'group'):
             chat_type = 'user'
             
-        # Determine the actual chat context based on document scope and group presence
-        actual_chat_type = 'personal'  # Default
-        if document_scope == 'group' or (active_group_id and chat_type == 'group'):
-            actual_chat_type = 'group'
-        elif document_scope == 'public':
-            actual_chat_type = 'public'
-
         search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
         hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
         system_messages_for_augmentation = [] # Collect system messages from search/bing
@@ -218,6 +211,39 @@ def register_route_backend_chats(app):
                 print(f"Error reading conversation {conversation_id}: {e}")
                 return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
 
+        # Determine the actual chat context based on existing conversation or document usage
+        # For existing conversations, use the chat_type from conversation metadata
+        # For new conversations, it will be determined during metadata collection
+        actual_chat_type = 'personal'  # Default
+        
+        if conversation_item.get('chat_type'):
+            # Use existing chat_type from conversation metadata
+            actual_chat_type = conversation_item['chat_type']
+            print(f"Using existing chat_type from conversation: {actual_chat_type}")
+        elif conversation_item.get('context'):
+            # Fallback: determine from existing context
+            primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
+            if primary_context:
+                if primary_context.get('scope') == 'group':
+                    actual_chat_type = 'group-single-user'  # Default to single-user for groups
+                elif primary_context.get('scope') == 'public':
+                    actual_chat_type = 'public'
+                elif primary_context.get('scope') == 'personal':
+                    actual_chat_type = 'personal'
+                print(f"Determined chat_type from existing primary context: {actual_chat_type}")
+            else:
+                # No primary context exists - model-only conversation
+                actual_chat_type = None  # This will result in no badges
+                print(f"No primary context found - model-only conversation")
+        else:
+            # New conversation - will be determined by document usage during metadata collection
+            # For now, use the legacy logic as fallback
+            if document_scope == 'group' or (active_group_id and chat_type == 'group'):
+                actual_chat_type = 'group'
+            elif document_scope == 'public':
+                actual_chat_type = 'public'
+            print(f"New conversation - using legacy logic: {actual_chat_type}")
+
         # ---------------------------------------------------------------------
 # region        # 2) Append the user message to conversation immediately
         # ---------------------------------------------------------------------
@@ -353,47 +379,12 @@ def register_route_backend_chats(app):
             'frontend_requested_model': frontend_gpt_model
         }
         
-        # Chat type and group context
+        # Chat type and group context for this specific message
         user_metadata['chat_context'] = {
-            'conversation_id': conversation_id,
-            'chat_type': actual_chat_type
+            'conversation_id': conversation_id
         }
         
-        # Add context-specific information based on chat type
-        if actual_chat_type == 'group' and active_group_id:
-            user_metadata['chat_context']['group_id'] = active_group_id
-            # We may have already fetched this in workspace_search section
-            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
-                user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
-                print(f"Debug: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
-            else:
-                try:
-                    print(f"Debug: Chat context - looking up group for id: {active_group_id}")
-                    group_doc = find_group_by_id(active_group_id)
-                    print(f"Debug: Chat context group lookup result: {group_doc}")
-                    
-                    if group_doc and group_doc.get('name'):
-                        group_title = group_doc.get('name')
-                        user_metadata['chat_context']['group_name'] = group_title
-                        print(f"Debug: Chat context - set group_name to: {group_title}")
-                    else:
-                        print(f"Debug: Chat context - no group found or no name for id: {active_group_id}")
-                        user_metadata['chat_context']['group_name'] = None
-                        
-                except Exception as e:
-                    print(f"Error retrieving group name for chat context: {e}")
-                    user_metadata['chat_context']['group_name'] = None
-                    import traceback
-                    traceback.print_exc()
-        elif actual_chat_type == 'public':
-            # For public chat, add workspace information if available from document selection
-            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('document_name'):
-                # Use the document name as workspace context for public documents
-                user_metadata['chat_context']['workspace_context'] = f"Public Document: {user_metadata['workspace_search']['document_name']}"
-            else:
-                user_metadata['chat_context']['workspace_context'] = "Public Workspace"
-            print(f"Debug: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
-        # For personal chat type, no additional context needed beyond conversation_id
+        # Note: Message-level chat_type will be determined after document search is completed
         
         user_message_doc = {
             'id': user_message_id,
@@ -407,6 +398,10 @@ def register_route_backend_chats(app):
         
         # Debug: Print the complete metadata being saved
         print(f"Debug: Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+        print(f"Debug: Final chat_context for message: {user_metadata['chat_context']}")
+        print(f"Debug: document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
+        
+        # Note: Message-level chat_type will be updated after document search
         
         cosmos_messages_container.upsert_item(user_message_doc)
 
@@ -746,6 +741,70 @@ def register_route_backend_chats(app):
                     'role': 'system',
                     'content': system_prompt_bing
                 })
+
+        # Update message-level chat_type based on actual document usage for this message
+        # This must happen after document search is completed so search_results is populated
+        message_chat_type = None
+        if hybrid_search_enabled and search_results and len(search_results) > 0:
+            # Documents were actually used for this message
+            if document_scope == 'group':
+                message_chat_type = 'group'
+            elif document_scope == 'public':
+                message_chat_type = 'public'  
+            else:
+                message_chat_type = 'personal'
+        else:
+            # No documents used for this message - only model knowledge
+            message_chat_type = 'Model'
+        
+        # Update the message-level chat_type in user_metadata
+        user_metadata['chat_context']['chat_type'] = message_chat_type
+        print(f"Debug: Set message-level chat_type to: {message_chat_type}")
+        print(f"Debug: hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
+        
+        # Add context-specific information based on message chat type
+        if message_chat_type == 'group' and active_group_id:
+            user_metadata['chat_context']['group_id'] = active_group_id
+            # We may have already fetched this in workspace_search section
+            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
+                user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
+                print(f"Debug: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
+            else:
+                try:
+                    print(f"Debug: Chat context - looking up group for id: {active_group_id}")
+                    group_doc = find_group_by_id(active_group_id)
+                    print(f"Debug: Chat context group lookup result: {group_doc}")
+                    
+                    if group_doc and group_doc.get('name'):
+                        group_title = group_doc.get('name')
+                        user_metadata['chat_context']['group_name'] = group_title
+                        print(f"Debug: Chat context - set group_name to: {group_title}")
+                    else:
+                        print(f"Debug: Chat context - no group found or no name for id: {active_group_id}")
+                        user_metadata['chat_context']['group_name'] = None
+                        
+                except Exception as e:
+                    print(f"Error retrieving group name for chat context: {e}")
+                    user_metadata['chat_context']['group_name'] = None
+                    import traceback
+                    traceback.print_exc()
+        elif message_chat_type == 'public':
+            # For public chat, add workspace information if available from document selection
+            if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('document_name'):
+                # Use the document name as workspace context for public documents
+                user_metadata['chat_context']['workspace_context'] = f"Public Document: {user_metadata['workspace_search']['document_name']}"
+            else:
+                user_metadata['chat_context']['workspace_context'] = "Public Workspace"
+            print(f"Debug: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
+        # For personal chat type or Model, no additional context needed beyond conversation_id
+        
+        # Update the user message document with the final metadata
+        user_message_doc['metadata'] = user_metadata
+        print(f"Debug: Updated message metadata with chat_type: {message_chat_type}")
+        
+        # Update the user message in Cosmos DB with the final chat_type information
+        cosmos_messages_container.upsert_item(user_message_doc)
+        print(f"Debug: User message re-saved to Cosmos DB with updated chat_context")
 
         # Image Generation
         if image_gen_enabled:

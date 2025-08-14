@@ -172,8 +172,8 @@
 
 .chat-classification-badge {
   display: inline-block;
-  padding: 0.2em 0.5em; /* Slightly smaller padding */
-  font-size: 0.75em;   /* Smaller font size */
+  padding: 0.35em 0.65em; /* Match Bootstrap badge padding */
+  font-size: 0.75em;   /* Match Bootstrap badge font size */
   font-weight: 600;
   line-height: 1;
   color: #fff; /* Default white text */
