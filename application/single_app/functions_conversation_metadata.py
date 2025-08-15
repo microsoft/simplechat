@@ -96,7 +96,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         for doc in search_results:
             chunk_id = doc.get('id')
             doc_scope_result = _determine_document_scope(doc, user_id, active_group_id)
-            classification = doc.get('document_classification', 'Pending')
+            classification = doc.get('document_classification', 'None')
             
             if chunk_id:
                 # Extract document ID from chunk ID (assumes format: doc_id_chunkNumber)
