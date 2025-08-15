@@ -941,7 +941,7 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 }
 
 // Function to load user message metadata into the drawer
-function loadUserMessageMetadata(messageId, container) {
+function loadUserMessageMetadata(messageId, container, retryCount = 0) {
   if (!messageId || messageId === "null" || messageId === "undefined") {
     container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
     return;
@@ -951,16 +951,30 @@ function loadUserMessageMetadata(messageId, container) {
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
       if (!response.ok) {
+        if (response.status === 404 && retryCount < 3) {
+          // Message might not be fully saved yet, retry after a delay
+          console.log(`Message ${messageId} not found, retrying in ${(retryCount + 1) * 500}ms (attempt ${retryCount + 1}/3)`);
+          setTimeout(() => {
+            loadUserMessageMetadata(messageId, container, retryCount + 1);
+          }, (retryCount + 1) * 500); // 500ms, 1s, 1.5s delays
+          return;
+        }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       return response.json();
     })
     .then(data => {
-      container.innerHTML = formatMetadataForDrawer(data);
+      if (data) {
+        container.innerHTML = formatMetadataForDrawer(data);
+      }
     })
     .catch(error => {
       console.error("Error fetching message metadata:", error);
-      container.innerHTML = '<div class="text-danger">Failed to load message metadata.</div>';
+      if (retryCount >= 3) {
+        container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
+      } else {
+        container.innerHTML = '<div class="text-warning">Retrying to load message metadata...</div>';
+      }
     });
 }
 
