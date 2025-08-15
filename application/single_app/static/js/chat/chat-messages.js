@@ -321,6 +321,10 @@ export function appendMessage(
         const targetId = toggleBtn.getAttribute("aria-controls");
         const citationsContainer = messageDiv.querySelector(`#${targetId}`);
         if (!citationsContainer) return;
+        
+        // Store current scroll position to maintain user's view
+        const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
+        
         const isExpanded = citationsContainer.style.display !== "none";
         citationsContainer.style.display = isExpanded ? "none" : "block";
         toggleBtn.setAttribute("aria-expanded", !isExpanded);
@@ -328,9 +332,16 @@ export function appendMessage(
         toggleBtn.innerHTML = isExpanded
           ? '<i class="bi bi-journal-text"></i>'
           : '<i class="bi bi-chevron-up"></i>';
-        if (!isExpanded) {
-          scrollChatToBottom();
-        }
+        // Note: Removed scrollChatToBottom() to prevent jumping when expanding citations
+        
+        // Restore scroll position after DOM changes
+        setTimeout(() => {
+          if (document.getElementById('chat-messages-container')) {
+            document.getElementById('chat-messages-container').scrollTop = currentScrollTop;
+          } else {
+            window.scrollTo(0, currentScrollTop);
+          }
+        }, 10);
       });
     }
 
@@ -918,6 +929,9 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
   
   const isExpanded = metadataContainer.style.display !== "none";
   
+  // Store current scroll position to maintain user's view
+  const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
+  
   if (isExpanded) {
     // Hide the metadata
     metadataContainer.style.display = "none";
@@ -936,8 +950,17 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
       loadUserMessageMetadata(messageId, metadataContainer);
     }
     
-    scrollChatToBottom();
+    // Note: Removed scrollChatToBottom() to prevent jumping when expanding metadata
   }
+  
+  // Restore scroll position after DOM changes
+  setTimeout(() => {
+    if (document.getElementById('chat-messages-container')) {
+      document.getElementById('chat-messages-container').scrollTop = currentScrollTop;
+    } else {
+      window.scrollTo(0, currentScrollTop);
+    }
+  }, 10);
 }
 
 // Function to load user message metadata into the drawer
