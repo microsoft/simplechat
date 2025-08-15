@@ -168,15 +168,7 @@ def register_route_external_documents(app):
 
                 # 3) Now run heavy-lifting in a background thread
                 # --- CHANGE: Pass original_filename ---
-                future = executor.submit(
-                    process_document_upload_background,
-                    document_id=parent_document_id,
-                    user_id=user_id,
-                    temp_file_path=temp_file_path, # Pass the actual path of the saved temp file
-                    original_filename=original_filename
-                )
-                # If you want to store the future in memory by name, you can do:
-                executor.submit_stored(
+                future = executor.submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
@@ -486,15 +478,8 @@ def register_route_external_documents(app):
         if not settings.get('enable_extract_meta_data'):
             return jsonify({'error': 'Metadata extraction not enabled'}), 403
 
-        # Queue the background task (immediately returns a future)
-        future = executor.submit(
-            process_metadata_extraction_background,
-            document_id=document_id,
-            user_id=user_id
-        )
-
-        # Optionally store or track this future:
-        executor.submit_stored(
+        # Queue the background task and store with tracking key
+        future = executor.submit_stored(
             f"{document_id}_metadata", 
             process_metadata_extraction_background, 
             document_id=document_id, 
