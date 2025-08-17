@@ -11,7 +11,7 @@ openai==1.67
 docx2txt==0.8
 Markdown==3.3.4
 bleach==6.1.0
-azure-cosmos==4.3.0
+azure-cosmos==4.9.0
 msal==1.31.0
 Flask-Session==0.8.0
 azure-ai-documentintelligence==1.0.0b4
