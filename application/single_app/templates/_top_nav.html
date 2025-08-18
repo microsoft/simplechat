@@ -1,6 +1,10 @@
 <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
-  <div class="container-fluid">
-    <!-- Brand/Logo -->
+  <div class="container-fluid            {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
+            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+              {% if profile_image %}
+                <!-- Render profile image directly from server data -->
+                <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
+              {% else %}  <!-- Brand/Logo -->
     {% if app_settings.show_logo %}
       <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
         {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
