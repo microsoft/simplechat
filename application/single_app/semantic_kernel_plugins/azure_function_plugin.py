@@ -23,6 +23,10 @@ class AzureFunctionPlugin(BasePlugin):
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
 
     @property
+    def display_name(self) -> str:
+        return "Azure Function"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": self.manifest.get("name", "azure_function_plugin"),

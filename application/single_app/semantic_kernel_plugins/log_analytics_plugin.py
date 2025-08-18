@@ -28,6 +28,7 @@ class LogAnalyticsPlugin(BasePlugin):
         if "additionalFields" not in self.manifest:
             self.manifest["additionalFields"] = {}
         self.additional_fields = self.manifest["additionalFields"]
+
         # Set cloud if not present
         if "cloud" not in self.additional_fields:
             self.additional_fields["cloud"] = None
@@ -47,6 +48,7 @@ class LogAnalyticsPlugin(BasePlugin):
         if LogsQueryClient and self.workspace_id:
             self._client = self._init_client()
 
+    
     def _init_client(self):
         # Determine authority host for the selected cloud
         if self.cloud == "custom":
@@ -150,6 +152,10 @@ class LogAnalyticsPlugin(BasePlugin):
                 return LogsQueryClient(credential)
         return None
 
+    @property
+    def display_name(self) -> str:
+        return "Log Analytics"
+    
     @property
     def metadata(self) -> Dict[str, Any]:
         return {

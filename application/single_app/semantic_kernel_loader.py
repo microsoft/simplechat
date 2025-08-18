@@ -11,6 +11,8 @@ from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.core_plugins import TimePlugin, HttpPlugin
 from semantic_kernel.core_plugins.wait_plugin import WaitPlugin
+from semantic_kernel_plugins.math_plugin import MathPlugin
+from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
@@ -219,6 +221,20 @@ def load_wait_plugin(kernel: Kernel):
         WaitPlugin(),
         plugin_name="wait",
         description="Provides wait functions for delaying execution."
+    )
+
+def load_math_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        MathPlugin(),
+        plugin_name="math",
+        description="Provides mathematical calculation functions."
+    )
+
+def load_text_plugin(kernel: Kernel):
+    kernel.add_plugin(
+        TextPlugin(),
+        plugin_name="text",
+        description="Provides text manipulation functions."
     )
 
 def load_fact_memory_plugin(kernel: Kernel):
@@ -433,6 +449,26 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     else:
         log_event("[SK Loader] Wait plugin not enabled in settings.", level=logging.INFO)
 
+    # Register Math Plugin if enabled
+    if settings.get('enable_math_plugin', True):
+        try:
+            load_math_plugin(kernel)
+            log_event("[SK Loader] Loaded Math plugin.", level=logging.INFO)
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to load Math plugin: {e}", level=logging.WARNING)
+    else:
+        log_event("[SK Loader] Math plugin not enabled in settings.", level=logging.INFO)
+
+    # Register Text Plugin if enabled
+    if settings.get('enable_text_plugin', True):
+        try:
+            load_text_plugin(kernel)
+            log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to load Text plugin: {e}", level=logging.WARNING)
+    else:
+        log_event("[SK Loader] Text plugin not enabled in settings.", level=logging.INFO)
+
     # Register Fact Memory Plugin if enabled
     if settings.get('enable_fact_memory_plugin', False):
         try:
@@ -472,7 +508,15 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
                     break
             if matched_class:
                 try:
-                    plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
+                    # Special handling for OpenAPI plugins
+                    if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
+                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+                        # Use the factory to create OpenAPI plugins from configuration
+                        plugin = OpenApiPluginFactory.create_from_config(manifest)
+                    else:
+                        # Standard plugin instantiation
+                        plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
+                    
                     kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
                     log_event(f"[SK Loader] Loaded plugin: {name} (type: {plugin_type}) [{mode_label}]", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                 except Exception as e:

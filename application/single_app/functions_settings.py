@@ -14,6 +14,8 @@ def get_settings():
         'enable_time_plugin': True,
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
+        'enable_math_plugin': True,
+        'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_multi_agent_orchestration': False,

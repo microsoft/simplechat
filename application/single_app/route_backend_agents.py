@@ -428,6 +428,8 @@ def get_global_agent_settings(include_admin_extras=False):
         "per_user_semantic_kernel": settings.get("per_user_semantic_kernel", False),
         "enable_time_plugin": settings.get("enable_time_plugin", False),
         "enable_fact_memory_plugin": settings.get("enable_fact_memory_plugin", False),
+        "enable_math_plugin": settings.get("enable_math_plugin", False),
+        "enable_text_plugin": settings.get("enable_text_plugin", False),
         "enable_http_plugin": settings.get("enable_http_plugin", False),
         "enable_wait_plugin": settings.get("enable_wait_plugin", False),
         "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),

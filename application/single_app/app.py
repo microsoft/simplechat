@@ -45,6 +45,7 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_openapi import *
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)

@@ -82,10 +82,61 @@ def get_plugin_types():
                     and obj is not BasePlugin
                 ):
                     found = True
+                    # Try to get display name from plugin instance
+                    try:
+                        # Create minimal manifest for different plugin types
+                        minimal_manifest = {}
+                        
+                        # Special handling for plugins that require specific manifest fields
+                        if 'databricks' in module_name.lower():
+                            minimal_manifest = {
+                                'endpoint': 'https://example.databricks.com/api/2.0/sql/statements',
+                                'auth': {'key': 'dummy'},
+                                'additionalFields': {'table': 'example_table', 'columns': [], 'warehouse_id': 'dummy'},
+                                'metadata': {'description': 'Example Databricks table'}
+                            }
+                        elif 'azure_function' in module_name.lower():
+                            minimal_manifest = {
+                                'endpoint': 'https://example.azurewebsites.net/api/function',
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {}
+                            }
+                        elif 'queue_storage' in module_name.lower():
+                            minimal_manifest = {
+                                'endpoint': 'https://example.queue.core.windows.net',
+                                'queue_name': 'example-queue',
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {}
+                            }
+                        elif 'blob_storage' in module_name.lower():
+                            minimal_manifest = {
+                                'endpoint': 'https://example.blob.core.windows.net',
+                                'container_name': 'example-container',
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {}
+                            }
+                        
+                        # Try with manifest first, then empty dict, then no params
+                        try:
+                            plugin_instance = obj(minimal_manifest)
+                        except (TypeError, ValueError):
+                            try:
+                                plugin_instance = obj({})
+                            except TypeError:
+                                plugin_instance = obj()
+                        
+                        display_name = plugin_instance.display_name
+                        description = plugin_instance.metadata.get("description", "")
+                    except Exception as e:
+                        # Fallback to class name formatting if instantiation fails
+                        display_name = attr.replace('Plugin', '').replace('_', ' ')
+                        description = ""
+                    
                     types.append({
                         'type': module_name.replace('_plugin', ''),
                         'class': attr,
-                        'display': attr.replace('Plugin', '').replace('_', ' ')
+                        'display': display_name,
+                        'description': description
                     })
             if not found:
                 debug_log.append(f"No valid plugin class found in {fname}")
@@ -185,6 +236,8 @@ def get_core_plugin_settings():
         'enable_time_plugin': bool(settings.get('enable_time_plugin', True)),
         'enable_http_plugin': bool(settings.get('enable_http_plugin', True)),
         'enable_wait_plugin': bool(settings.get('enable_wait_plugin', True)),
+        'enable_math_plugin': bool(settings.get('enable_math_plugin', True)),
+        'enable_text_plugin': bool(settings.get('enable_text_plugin', True)),
         'enable_default_embedding_model_plugin': bool(settings.get('enable_default_embedding_model_plugin', True)),
         'enable_fact_memory_plugin': bool(settings.get('enable_fact_memory_plugin', True)),
         'enable_semantic_kernel': bool(settings.get('enable_semantic_kernel', False)),
@@ -204,6 +257,8 @@ def update_core_plugin_settings():
         'enable_time_plugin',
         'enable_http_plugin',
         'enable_wait_plugin',
+        'enable_math_plugin',
+        'enable_text_plugin',
         'enable_default_embedding_model_plugin',
         'enable_fact_memory_plugin',
         'allow_user_plugins',

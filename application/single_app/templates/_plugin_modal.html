@@ -1,69 +1,374 @@
-<!-- Dynamic Plugin Modal -->
+<!-- Dynamic Action Modal -->
 <div class="modal fade" id="plugin-modal" tabindex="-1" aria-labelledby="plugin-modal-title" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="plugin-modal-title">Add Plugin</h5>
+        <h5 class="modal-title" id="plugin-modal-title">Add Action</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body">
-        <div class="mb-3">
-          <label for="plugin-name" class="form-label">Name</label>
-          <input type="text" class="form-control" id="plugin-name" required pattern="^[^\s]+$" name="plugin_name"/>
-          <div class="form-text">Plugin name must be unique.</div>
-        </div>
-        <div class="mb-3">
-          <label for="plugin-type" class="form-label">Type</label>
-          <select class="form-select" id="plugin-type" name="plugin_type" required>
-            <option value="">Loading...</option>
-          </select>
-        </div>
-        <div class="mb-3">
-          <label for="plugin-description" class="form-label">Description</label>
-          <input type="text" class="form-control" id="plugin-description" />
-        </div>
-        <div class="mb-3">
-          <label for="plugin-endpoint" class="form-label">Endpoint</label>
-          <input type="text" class="form-control" id="plugin-endpoint" placeholder="https://" />
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Auth</label>
-          <div class="input-group mb-2">
-            <span class="input-group-text">Type</span>
-            <select class="form-select" id="plugin-auth-type">
-              <option value="key">Key</option>
-              <option value="identity">Managed Identity</option>
-              <option value="user">User</option>
-              <option value="servicePrincipal">Service Principal</option>
-            </select>
+      
+      <!-- Progress Steps Indicator -->
+      <div class="modal-body pb-0">
+        <div class="d-flex justify-content-between mb-4">
+          <div class="step-indicator" data-step="1">
+            <div class="step-circle active">1</div>
+            <div class="step-label">Select Type</div>
           </div>
-          <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
-            <span class="input-group-text" id="auth-identity-label">Identity</span>
-            <input type="text" class="form-control" id="plugin-auth-identity" />
+          <div class="step-indicator" data-step="2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Action Details</div>
           </div>
-          <div class="input-group mb-2" id="auth-key-group" style="display:none;">
-            <span class="input-group-text" id="auth-key-label">Key</span>
-            <input type="text" class="form-control" id="plugin-auth-key" />
+          <div class="step-indicator" data-step="3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Configuration</div>
           </div>
-          <div class="input-group mb-2" id="auth-tenantid-group" style="display:none;">
-            <span class="input-group-text" id="auth-tenantid-label">Tenant Id</span>
-            <input type="text" class="form-control" id="plugin-auth-tenant-id" />
+          <div class="step-indicator" data-step="4">
+            <div class="step-circle">4</div>
+            <div class="step-label">Advanced</div>
           </div>
         </div>
-        <div class="mb-3">
-          <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
-          <textarea class="form-control" id="plugin-metadata" rows="2" placeholder="{}"></textarea>
+      </div>
+
+      <div class="modal-body pt-0">
+        <!-- Step 1: Select Action Type -->
+        <div class="plugin-step" id="plugin-step-1">
+          <h6 class="mb-3">Select Action Type</h6>
+          <div class="mb-3">
+            <input type="search" class="form-control" id="action-type-search" placeholder="Search action types...">
+          </div>
+          <div id="action-types-container" class="row g-3">
+            <!-- Action type cards will be populated by JavaScript -->
+          </div>
         </div>
-        <div class="mb-3">
-          <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
-          <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
+
+        <!-- Step 2: Action Details -->
+        <div class="plugin-step d-none" id="plugin-step-2">
+          <h6 class="mb-3">Action Details</h6>
+          <div class="mb-3">
+            <label for="plugin-name" class="form-label">Action Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="plugin-name" required pattern="^[^\s]+$" name="plugin_name"/>
+            <div class="form-text">Action name must be unique.</div>
+          </div>
+          <div class="mb-3">
+            <label for="plugin-display-name" class="form-label">Display Name</label>
+            <input type="text" class="form-control" id="plugin-display-name" />
+            <div class="form-text">Human-readable name for this action.</div>
+          </div>
+          <div class="mb-3">
+            <label for="plugin-description" class="form-label">Description</label>
+            <textarea class="form-control" id="plugin-description" rows="3" placeholder="Describe what this action does..."></textarea>
+          </div>
+          <!-- Hidden field to store selected type -->
+          <input type="hidden" id="plugin-type" name="plugin_type" />
         </div>
+
+        <!-- Step 3: Authentication & Configuration -->
+        <div class="plugin-step d-none" id="plugin-step-3">
+          <h6 class="mb-3">API Configuration</h6>
+          
+          <!-- OpenAPI specific fields (will be shown/hidden based on plugin type) -->
+          <div id="openapi-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="fas fa-file-code me-2"></i>OpenAPI Configuration
+            </div>
+            
+            <!-- OpenAPI Spec Source Selection -->
+            <div class="mb-3">
+              <label class="form-label">OpenAPI Specification Source</label>
+              <div class="btn-group w-100" role="group" aria-label="OpenAPI source selection">
+                <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-file" value="file" checked>
+                <label class="btn btn-outline-primary" for="openapi-source-file">
+                  <i class="fas fa-upload me-1"></i>Upload File
+                </label>
+                
+                <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-url" value="url">
+                <label class="btn btn-outline-primary" for="openapi-source-url">
+                  <i class="fas fa-link me-1"></i>From URL
+                </label>
+              </div>
+            </div>
+            
+            <!-- File Upload Section -->
+            <div id="openapi-file-section" class="mb-3">
+              <label for="plugin-openapi-file" class="form-label">OpenAPI Specification File <span class="text-danger">*</span></label>
+              <input type="file" class="form-control" id="plugin-openapi-file" accept=".yaml,.yml,.json" />
+              <div class="form-text">
+                Upload your OpenAPI specification file (YAML or JSON format, max 5MB).
+                <br><strong>Security:</strong> Files are automatically scanned for malicious content.
+              </div>
+              <div id="openapi-file-status" class="mt-2"></div>
+            </div>
+            
+            <!-- URL Section -->
+            <div id="openapi-url-section" class="mb-3 d-none">
+              <label for="plugin-openapi-url" class="form-label">OpenAPI Specification URL <span class="text-danger">*</span></label>
+              <div class="input-group">
+                <input type="url" class="form-control" id="plugin-openapi-url" placeholder="https://api.example.com/openapi.yaml" />
+                <button type="button" class="btn btn-outline-secondary" id="validate-openapi-url">
+                  <i class="fas fa-check me-1"></i>Validate
+                </button>
+              </div>
+              <div class="form-text">
+                Provide a URL to your OpenAPI specification. The file will be downloaded and validated.
+                <br><strong>Security:</strong> Only HTTPS URLs are recommended. Content is scanned for malicious patterns.
+              </div>
+              <div id="openapi-url-status" class="mt-2"></div>
+            </div>
+            
+            <div class="mb-3">
+              <label for="plugin-endpoint" class="form-label">Base URL <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="plugin-endpoint" placeholder="https://api.example.com" />
+              <div class="form-text">Base URL of your API (without trailing slash).</div>
+            </div>
+            
+            <!-- API Info Display -->
+            <div id="openapi-info-display" class="alert alert-info d-none">
+              <h6><i class="fas fa-info-circle me-2"></i>API Information</h6>
+              <div id="openapi-info-content"></div>
+            </div>
+            
+            <div class="auth-section">
+              <div class="config-section-label">
+                <i class="fas fa-shield-alt me-2"></i>Authentication Configuration
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Authentication Type</label>
+                <div class="input-group mb-2">
+                  <span class="input-group-text">Type</span>
+                  <select class="form-select" id="plugin-auth-type">
+                    <option value="none">No Authentication</option>
+                    <option value="api_key">API Key</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="basic">Basic Auth</option>
+                    <option value="oauth2">OAuth2</option>
+                  </select>
+                </div>
+                
+                <!-- API Key fields -->
+                <div class="input-group mb-2" id="auth-api-key-location-group" style="display:none;">
+                  <span class="input-group-text">Location</span>
+                  <select class="form-select" id="plugin-auth-api-key-location">
+                    <option value="header">Header</option>
+                    <option value="query">Query Parameter</option>
+                  </select>
+                </div>
+                <div class="input-group mb-2" id="auth-api-key-name-group" style="display:none;">
+                  <span class="input-group-text">Key Name</span>
+                  <input type="text" class="form-control" id="plugin-auth-api-key-name" placeholder="X-API-Key" />
+                </div>
+                <div class="input-group mb-2" id="auth-api-key-value-group" style="display:none;">
+                  <span class="input-group-text">API Key</span>
+                  <input type="password" class="form-control" id="plugin-auth-api-key-value" placeholder="your-api-key" />
+                </div>
+                
+                <!-- Bearer Token fields -->
+                <div class="input-group mb-2" id="auth-bearer-group" style="display:none;">
+                  <span class="input-group-text">Token</span>
+                  <input type="password" class="form-control" id="plugin-auth-bearer-token" placeholder="your-bearer-token" />
+                </div>
+                
+                <!-- Basic Auth fields -->
+                <div class="input-group mb-2" id="auth-basic-username-group" style="display:none;">
+                  <span class="input-group-text">Username</span>
+                  <input type="text" class="form-control" id="plugin-auth-basic-username" placeholder="username" />
+                </div>
+                <div class="input-group mb-2" id="auth-basic-password-group" style="display:none;">
+                  <span class="input-group-text">Password</span>
+                  <input type="password" class="form-control" id="plugin-auth-basic-password" placeholder="password" />
+                </div>
+                
+                <!-- OAuth2 fields -->
+                <div class="input-group mb-2" id="auth-oauth2-group" style="display:none;">
+                  <span class="input-group-text">Access Token</span>
+                  <input type="password" class="form-control" id="plugin-auth-oauth2-token" placeholder="your-oauth2-access-token" />
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Generic endpoint field for other plugin types -->
+          <div id="generic-config-section">
+            <div class="mb-3">
+              <label for="plugin-endpoint-generic" class="form-label">Endpoint <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="plugin-endpoint-generic" placeholder="https://" />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Authentication Type</label>
+              <div class="input-group mb-2">
+                <span class="input-group-text">Type</span>
+                <select class="form-select" id="plugin-auth-type-generic">
+                  <option value="key">Key</option>
+                  <option value="identity">Managed Identity</option>
+                  <option value="user">User</option>
+                  <option value="servicePrincipal">Service Principal</option>
+                </select>
+              </div>
+              <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
+                <span class="input-group-text" id="auth-identity-label">Identity</span>
+                <input type="text" class="form-control" id="plugin-auth-identity" />
+              </div>
+              <div class="input-group mb-2" id="auth-key-group" style="display:none;">
+                <span class="input-group-text" id="auth-key-label">Key</span>
+                <input type="text" class="form-control" id="plugin-auth-key" />
+              </div>
+              <div class="input-group mb-2" id="auth-tenantid-group" style="display:none;">
+                <span class="input-group-text" id="auth-tenantid-label">Tenant Id</span>
+                <input type="text" class="form-control" id="plugin-auth-tenant-id" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Advanced -->
+        <div class="plugin-step d-none" id="plugin-step-4">
+          <h6 class="mb-3">Advanced</h6>
+          <div class="mb-3">
+            <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
+            <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>
+            <div class="form-text">Optional metadata for this action.</div>
+          </div>
+          <div class="mb-3">
+            <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
+            <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
+            <div class="form-text">Additional configuration fields specific to this action type.</div>
+          </div>
+        </div>
+
         <div id="plugin-modal-error" class="alert alert-danger d-none"></div>
       </div>
+      
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="save-plugin-btn">Save Plugin</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="plugin-modal-prev">Previous</button>
+        <button type="button" class="btn btn-outline-primary d-none" id="plugin-modal-skip">Skip to End</button>
+        <button type="button" class="btn btn-primary" id="plugin-modal-next">Next</button>
+        <button type="button" class="btn btn-success d-none" id="save-plugin-btn">Save Action</button>
       </div>
     </div>
   </div>
 </div>
+
+<style>
+/* Step indicator styles */
+.step-indicator {
+  text-align: center;
+  flex: 1;
+  position: relative;
+}
+
+.step-indicator:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 15px;
+  right: -50%;
+  width: 100%;
+  height: 2px;
+  background-color: #e9ecef;
+  z-index: 0;
+}
+
+.step-indicator.completed:not(:last-child)::after {
+  background-color: #198754;
+}
+
+.step-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #e9ecef;
+  color: #6c757d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  margin: 0 auto 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.step-circle.active {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.step-circle.completed {
+  background-color: #198754;
+  color: white;
+}
+
+.step-label {
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.step-indicator.active .step-label {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+.step-indicator.completed .step-label {
+  color: #198754;
+}
+
+/* Action type cards */
+.action-type-card {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid #dee2e6;
+}
+
+.action-type-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.action-type-card.selected {
+  border-color: #0d6efd;
+  background-color: #e7f1ff;
+}
+
+.action-type-card .card-body {
+  padding: 1rem;
+}
+
+.action-type-card .card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.action-type-card .card-text {
+  font-size: 0.875rem;
+  color: #6c757d;
+  margin-bottom: 0;
+}
+
+/* OpenAPI configuration styling */
+#openapi-config-section {
+  border: 1px solid #e3f2fd;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
+#openapi-config-section h6 {
+  color: #1976d2;
+  border-bottom: 1px solid #e3f2fd;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.auth-section {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.config-section-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 0.5rem;
+}
+</style>

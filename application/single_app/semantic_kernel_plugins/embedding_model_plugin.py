@@ -25,6 +25,10 @@ class EmbeddingModelPlugin(BasePlugin):
             self.auth_type = settings.get('azure_openai_embedding_authentication_type', 'key')
 
     @property
+    def display_name(self) -> str:
+        return "Embedding Model"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": "embedding_model_plugin",

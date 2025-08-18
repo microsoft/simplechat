@@ -24,6 +24,10 @@ class BlobStoragePlugin(BasePlugin):
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
 
     @property
+    def display_name(self) -> str:
+        return "Blob Storage"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": self.manifest.get("name", "blob_storage_plugin"),

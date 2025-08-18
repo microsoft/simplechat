@@ -12,6 +12,10 @@ class MSGraphPlugin(BasePlugin):
         # You can add more config here if needed
 
     @property
+    def display_name(self) -> str:
+        return "Microsoft Graph"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": self.manifest.get("name", "msgraph_plugin"),

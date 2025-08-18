@@ -24,6 +24,10 @@ class QueueStoragePlugin(BasePlugin):
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
 
     @property
+    def display_name(self) -> str:
+        return "Queue Storage"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": self.manifest.get("name", "queue_storage_plugin"),
