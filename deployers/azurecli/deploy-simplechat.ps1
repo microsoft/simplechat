@@ -109,25 +109,24 @@ $ErrorActionPreference = "Continue"
 #---------------------------------------------------------------------------------------------
 # Configuration Variables - MODIFY THESE VALUES AS NEEDED
 #---------------------------------------------------------------------------------------------
-$globalWhichAzurePlatform = "AzureCloud" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
-$paramTenantId = "3f3b311f-ef2d-4b8d-a804-8d3e0e4804f8"
-$paramLocation = "EastUS" # Primary Azure Government region for deployments (e.g., usgovvirginia, usgovarizona, usgovtexas)
-$paramLocationAlt = "EastUS2" # Used when the primary region is unavailable due to sku availability, etc
-$paramResourceOwnerId = "Joe Tindale" # used for tagging resources
-$paramEnvironment = "prd"        # Environment identifier (e.g., dev, test, prod, uat)
-$paramBaseName = "vahack"         # A short base name for your organization or project (e.g., contoso1, projectx2)
-$ACR_NAME = "hacksimplechatacr" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
-$IMAGE_NAME = "simplechat:08-15-25-a" # Replace with your image name
+$globalWhichAzurePlatform = "AzureUSGovernment" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
+$paramTenantId = "" # Tenant ID
+$paramLocation = "EastUS2" # Primary Azure Government region for deployments (e.g., usgovvirginia, usgovarizona, usgovtexas)
+$paramResourceOwnerId = "" # used for tagging resources
+$paramEnvironment = "prd"  # Environment identifier (e.g., dev, test, prod, uat)
+$paramBaseName = ""  # A short base name for your organization or project (e.g., contoso1, projectx2)
+$ACR_NAME = "" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
+$IMAGE_NAME = "" # Replace with your image name
 
-$param_UseExisting_OpenAi_Instance = $false
+$param_UseExisting_OpenAi_Instance = $true
 $param_Existing_AzureOpenAi_ResourceName = "" # Azure OpenAI resource name
 $param_Existing_AzureOpenAi_ResourceGroupName = "" # Azure OpenAI resource group name
+$param_Existing_AzureOpenAi_SubscriptionId = "" # In case the resource is in another subscription
 #$param_Existing_AzureOpenAi_Deployment_Model = "gpt-4o" # Azure OpenAI deployment name
 #$param_Existing_AzureOpenAi_Deployment_Embeddings = "text-embedding-ada-002" # Azure OpenAI deployment model name
-#$param_Existing_AzureOpenAi_SubscriptionId = "4c1ccd07-9ebc-4701-b87f-c249066e0905" # MUST BE IN SAME SUBSCRIPTION!
 
 $paramCreateEntraSecurityGroups = $true # Set to true to create Entra ID security groups
-$param_Existing_ResourceGroupName = "simple-chat" # Leave empty if not using an existing resource group name, one will be dynamically generated
+$param_Existing_ResourceGroupName = "" # Leave empty if not using an existing resource group name, one will be dynamically generated
 
 
 
@@ -575,7 +574,7 @@ Write-Host "`n=====> Creating App Service Plan: $($appServicePlanName)..."
 $plan = az appservice plan show --name $appServicePlanName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
 if (-not $plan) {
     Write-Host "App Service Plan does not exist. Creating..."
-    az appservice plan create --name $appServicePlanName --resource-group $resourceGroupName --location $paramLocationAlt --sku $paramAppServicePlanSku --is-linux # Specify --is-linux for Linux plans or remove for Windows
+    az appservice plan create --name $appServicePlanName --resource-group $resourceGroupName --location $paramLocation --sku $paramAppServicePlanSku --is-linux # Specify --is-linux for Linux plans or remove for Windows
     if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create App Service Plan '$($appServicePlanName)'." }
     else { Write-Host "App Service Plan '$($appServicePlanName)' created successfully." }
 } else {
@@ -711,7 +710,7 @@ if (-not $account) {
     Write-Host "Cosmos DB account does not exist. Creating..."
     az cosmosdb create --name $cosmosDbName `
     --resource-group $resourceGroupName `
-    --locations regionName=$paramLocationAlt `
+    --locations regionName=$paramLocation `
     --kind $paramCosmosDbKind `
     --enable-multiple-write-locations false `
     --public-network-access Enabled `
@@ -880,7 +879,9 @@ Write-Host "`nGetting Cognitive Services Account Open AI"
 if ($param_UseExisting_OpenAi_Instance -eq $false) {
     $resourceId = az cognitiveservices account show --name $openAIName --resource-group $resourceGroupName --query "id" --output tsv
 } else {
-    $resourceId = az cognitiveservices account show --name $param_Existing_AzureOpenAi_ResourceName --resource-group $param_Existing_AzureOpenAi_ResourceGroupName --query "id" --output tsv
+    $resourceId = az resource show --name $param_Existing_AzureOpenAi_ResourceName --resource-group $param_Existing_AzureOpenAi_ResourceGroupName `
+        --resource-type 'Microsoft.CognitiveServices/accounts' --subscription $param_Existing_AzureOpenAi_SubscriptionId --query "id"--output tsv
+
 }
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to find Open AI resource [$openAIName]." }
 else { Write-Host "Found Open AI resource [$openAIName]." }
@@ -891,7 +892,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Getting RBAC settings for Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -900,7 +901,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -911,7 +912,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Getting RBAC settings for Cognitive Services Open AI Account"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -920,7 +921,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -931,7 +932,7 @@ $assigneeObjectId = $appRegistrationIdentity_SP_AppId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -940,7 +941,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -950,7 +951,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -959,7 +960,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -970,7 +971,7 @@ $assigneeObjectId = $appRegistrationIdentity_SP_AppId
 Write-Host "Checking RBAC on Cognitive Services Open AI User for [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -979,7 +980,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -989,7 +990,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -998,7 +999,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1008,7 +1009,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1017,7 +1018,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1037,7 +1038,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Cosmos DB Account"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1046,7 +1047,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1072,7 +1073,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Storage Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1081,7 +1082,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1090,7 +1091,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Storage Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1099,7 +1100,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }

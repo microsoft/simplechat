@@ -162,11 +162,6 @@ storage_account_public_documents_container_name = "public-documents"
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
-masked_key = f"{cosmos_key[:4]}...{cosmos_key[-4:]}"
-
-print(f"cosmos_endpoint  {cosmos_endpoint }", flush=True)
-print(f"cosmos_key  {masked_key}", flush=True)
-print(f"cosmos_authentication_type  {cosmos_authentication_type}", flush=True)
 
 if cosmos_authentication_type == "managed_identity":
     cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
