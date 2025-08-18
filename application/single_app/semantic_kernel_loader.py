@@ -344,7 +344,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                 "aoai_deployment": agent_config["deployment"],
                 "agent_name": agent_config["name"],
-                "apim_enabled": agent_config["enable_agent_gpt_apim"]
+                "apim_enabled": agent_config.get("enable_agent_gpt_apim", False)
             },
             level=logging.INFO
         )
