@@ -1,15 +1,4 @@
-# DatabaseSeeder for SimpleChat
-
-The DatabaseSeeder application is a utility designed to automate the process of initializing or updating administrative settings in the CosmosDB database used by the SimpleChat platform. By using this tool, you can reliably seed or overwrite configuration data, ensuring that your environment matches the desired settings for your version of SimpleChat.
-
-**Why use DatabaseSeeder?**
-- **Consistency:** Guarantees that your CosmosDB settings are aligned with your local configuration files, reducing the risk of misconfiguration.
-- **Automation:** Streamlines the process of setting up or resetting environments, making it easy to deploy or update settings across development, test, or production instances.
-- **Safety:** Allows you to review and control the exact settings being applied, with clear warnings about overwriting existing data.
-
-Use this tool when you need to initialize a new environment, update settings after a configuration change, or restore a known-good state for troubleshooting or testing.
-
----
+# ReadMe.md
 
 ```python
 pip freeze > requirements.txt
