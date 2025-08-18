@@ -1,31 +1,31 @@
-# route_external_group_documents.py:
+# route_external_public_documents.py:
 
 from config import *
 from functions_authentication import *
 from functions_settings import *
-from functions_group import *
+from functions_public_workspaces import *
 from functions_documents import *
 
-def register_route_external_group_documents(app):
+def register_route_external_public_documents(app):
     """
-    Provides backend routes for group-level document management:
-    - GET /external/group_documents      (list)
-    - POST /external/group_documents/upload
-    - DELETE /external/group_documents/<doc_id>
+    Provides backend routes for public-level document management:
+    - GET /external/public_documents      (list)
+    - POST /external/public_documents/upload
+    - DELETE /external/public_documents/<doc_id>
     """
-    @app.route('/external/group_documents/upload', methods=['POST'])
+    @app.route('/external/public_documents/upload', methods=['POST'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_upload_group_document():
+    @enabled_required("enable_public_workspaces")
+    def external_upload_public_document():
         """
-        Upload one or more documents to the currently active group.
-        Mirrors logic from api_user_upload_document but scoped to group context.
+        Upload one or more documents to the currently active public workspace.
+        Mirrors logic from api_user_upload_document but scoped to public context.
         """
 
-        print("Entered external_upload_group_document")
+        print("Entered external_upload_public_document")
 
         user_id = request.form.get('user_id')
-        active_group_id = request.form.get('active_group_id')
+        active_workspace_id = request.form.get('active_workspace_id')
         classification = request.form.get('classification')
 
         if 'file' not in request.files:
@@ -71,7 +71,7 @@ def register_route_external_group_documents(app):
             try:
                 create_document(
                     file_name=original_filename,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     user_id=user_id,
                     document_id=parent_document_id,
                     num_file_chunks=0,
@@ -81,7 +81,7 @@ def register_route_external_group_documents(app):
                 update_document(
                     document_id=parent_document_id,
                     user_id=user_id,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     percentage_complete=0
                 )
 
@@ -89,7 +89,7 @@ def register_route_external_group_documents(app):
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
-                    group_id=active_group_id, 
+                    public_workspace_id=active_workspace_id, 
                     user_id=user_id, 
                     temp_file_path=temp_file_path, 
                     original_filename=original_filename
@@ -114,16 +114,16 @@ def register_route_external_group_documents(app):
         }), response_status
 
         
-    @app.route('/external/group_documents', methods=['GET'])
+    @app.route('/external/public_documents', methods=['GET'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_get_group_documents():
+    @enabled_required("enable_public_workspaces")
+    def external_get_public_documents():
         """
-        Return a paginated, filtered list of documents for the user's *active* group.
+        Return a paginated, filtered list of documents for the user's *active* public.
         Mirrors logic of api_get_user_documents.
         """
         user_id = request.args.get('user_id')
-        active_group_id = request.args.get('active_group_id')
+        active_workspace_id = request.args.get('active_workspace_id')
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -138,8 +138,8 @@ def register_route_external_group_documents(app):
         if page_size < 1: page_size = 10
 
         # --- 2) Build dynamic WHERE clause and parameters ---
-        query_conditions = ["c.group_id = @group_id"]
-        query_params = [{"name": "@group_id", "value": active_group_id}]
+        query_conditions = ["c.public_workspace_id = @public_workspace_id"]
+        query_params = [{"name": "@public_workspace_id", "value": active_workspace_id}]
         param_count = 0
 
         if search_term:
@@ -180,14 +180,14 @@ def register_route_external_group_documents(app):
         # --- 3) Get total count ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            count_items = list(cosmos_group_documents_container.query_items(
+            count_items = list(cosmos_public_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
                 enable_cross_partition_query=True
             ))
             total_count = count_items[0] if count_items else 0
         except Exception as e:
-            print(f"Error executing count query for group: {e}")
+            print(f"Error executing count query for public: {e}")
             return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
 
         # --- 4) Get paginated data ---
@@ -200,13 +200,13 @@ def register_route_external_group_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
-            docs = list(cosmos_group_documents_container.query_items(
+            docs = list(cosmos_public_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
                 enable_cross_partition_query=True
             ))
         except Exception as e:
-            print(f"Error fetching group documents: {e}")
+            print(f"Error fetching public documents: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
         
@@ -215,13 +215,13 @@ def register_route_external_group_documents(app):
             legacy_q = """
                 SELECT VALUE COUNT(1)
                 FROM c
-                WHERE c.group_id = @group_id
+                WHERE c.public_workspace_id = @public_workspace_id
                     AND NOT IS_DEFINED(c.percentage_complete)
             """
             legacy_docs = list(
-                cosmos_group_documents_container.query_items(
+                cosmos_public_documents_container.query_items(
                     query=legacy_q,
-                    parameters=[{"name":"@group_id","value":active_group_id}],
+                    parameters=[{"name":"@public_workspace_id","value":active_workspace_id}],
                     enable_cross_partition_query=True
                 )
             )
@@ -239,41 +239,41 @@ def register_route_external_group_documents(app):
         }), 200
 
 
-    @app.route('/external/group_documents/<document_id>', methods=['GET'])
+    @app.route('/external/public_documents/<document_id>', methods=['GET'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_get_group_document(document_id):
+    @enabled_required("enable_public_workspaces")
+    def external_get_public_document(document_id):
         """
-        Return metadata for a specific group document, validating group membership.
+        Return metadata for a specific public document, validating public workspace membership.
         Mirrors logic of api_get_user_document.
         """
         user_id = request.args.get('user_id')
-        active_group_id = request.args.get('active_group_id')
+        active_workspace_id = request.args.get('active_workspace_id')
 
         if not user_id:
             return jsonify({'error': 'user_id not defined'}), 401
 
-        if not active_group_id:
-            return jsonify({'error': 'active_group_id not defined'}), 401
+        if not active_workspace_id:
+            return jsonify({'error': 'active_workspace_id not defined'}), 401
 
-        return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
+        return get_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
 
-    @app.route('/external/group_documents/<document_id>', methods=['PATCH'])
+    @app.route('/external/public_documents/<document_id>', methods=['PATCH'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_patch_group_document(document_id):
+    @enabled_required("enable_public_workspaces")
+    def external_patch_public_document(document_id):
         """
-        Update metadata fields for a group document. Mirrors logic from api_patch_user_document.
+        Update metadata fields for a public document. Mirrors logic from api_patch_user_document.
         """
         user_id = request.args.get('user_id')
-        active_group_id = request.args.get('active_group_id')
+        active_workspace_id = request.args.get('active_workspace_id')
 
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
+        if not active_workspace_id:
+            return jsonify({'error': 'No active public workspace selected'}), 400
 
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
+        public_doc = find_public_workspace_by_id(active_workspace_id)
+        if not public_doc:
+            return jsonify({'error': 'Active public workspace not found'}), 404
 
         data = request.get_json()
 
@@ -281,14 +281,14 @@ def register_route_external_group_documents(app):
             if 'title' in data:
                 update_document(
                     document_id=document_id,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     user_id=user_id,
                     title=data['title']
                 )
             if 'abstract' in data:
                 update_document(
                     document_id=document_id,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     user_id=user_id,
                     abstract=data['abstract']
                 )
@@ -296,28 +296,28 @@ def register_route_external_group_documents(app):
                 if isinstance(data['keywords'], list):
                     update_document(
                         document_id=document_id,
-                        group_id=active_group_id,
+                        public_workspace_id=active_workspace_id,
                         user_id=user_id,
                         keywords=data['keywords']
                     )
                 else:
                     update_document(
                         document_id=document_id,
-                        group_id=active_group_id,
+                        public_workspace_id=active_workspace_id,
                         user_id=user_id,
                         keywords=[kw.strip() for kw in data['keywords'].split(',')]
                     )
             if 'publication_date' in data:
                 update_document(
                     document_id=document_id,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     user_id=user_id,
                     publication_date=data['publication_date']
                 )
             if 'document_classification' in data:
                 update_document(
                     document_id=document_id,
-                    group_id=active_group_id,
+                    public_workspace_id=active_workspace_id,
                     user_id=user_id,
                     document_classification=data['document_classification']
                 )
@@ -325,80 +325,80 @@ def register_route_external_group_documents(app):
                 if isinstance(data['authors'], list):
                     update_document(
                         document_id=document_id,
-                        group_id=active_group_id,
+                        public_workspace_id=active_workspace_id,
                         user_id=user_id,
                         authors=data['authors']
                     )
                 else:
                     update_document(
                         document_id=document_id,
-                        group_id=active_group_id,
+                        public_workspace_id=active_workspace_id,
                         user_id=user_id,
                         authors=[data['authors']]
                     )
 
-            return jsonify({'message': 'Group document metadata updated successfully'}), 200
+            return jsonify({'message': 'Public document metadata updated successfully'}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
    
 
 
-    @app.route('/external/group_documents/<document_id>', methods=['DELETE'])
-    @enabled_required("enable_group_workspaces")
-    def external_delete_group_document(document_id):
+    @app.route('/external/public_documents/<document_id>', methods=['DELETE'])
+    @enabled_required("enable_public_workspaces")
+    def external_delete_public_document(document_id):
         """
-        Delete a group document and its associated chunks.
-        Mirrors api_delete_user_document with group context and permissions.
+        Delete a public document and its associated chunks.
+        Mirrors api_delete_user_document with public context and permissions.
         """
         user_id = request.args.get('user_id')
-        active_group_id = request.args.get('active_group_id')
+        active_workspace_id = request.args.get('active_workspace_id')
 
         try:
-            delete_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
-            delete_document_chunks(document_id=document_id, group_id=active_group_id)
-            return jsonify({'message': 'Group document deleted successfully'}), 200
+            delete_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
+            delete_document_chunks(document_id=document_id, public_workspace_id=active_workspace_id)
+            return jsonify({'message': 'Public document deleted successfully'}), 200
         except Exception as e:
-            return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
+            return jsonify({'error': f'Error deleting public document: {str(e)}'}), 500
 
 
-    @app.route('/external/group_documents/<document_id>/extract_metadata', methods=['POST'])
+    @app.route('/external/public_documents/<document_id>/extract_metadata', methods=['POST'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_extract_group_metadata(document_id):
+    @enabled_required("enable_public_workspaces")
+    def external_extract_public_metadata(document_id):
         """
-        POST /external/group_documents/<document_id>/extract_metadata
-        Queues a background job to extract metadata for a group document.
+        POST /external/public_documents/<document_id>/extract_metadata
+        Queues a background job to extract metadata for a public document.
         """
         user_id = request.form.get('user_id')
-        active_group_id = request.form.get('active_group_id')
+        active_workspace_id = request.form.get('active_workspace_id')
 
-        # Queue the group metadata extraction task
+        # Queue the public metadata extraction task
         future = executor.submit_stored(
-            f"{document_id}_group_metadata",
+            f"{document_id}_public_metadata",
             process_metadata_extraction_background,
             document_id=document_id,
             user_id=user_id,
-            group_id=active_group_id
+            public_workspace_id=active_workspace_id
         )
 
         return jsonify({
-            'message': 'Group metadata extraction has been queued. Check document status periodically.',
+            'message': 'Public metadata extraction has been queued. Check document status periodically.',
             'document_id': document_id
         }), 200
         
-    @app.route('/external/group_documents/upgrade_legacy', methods=['POST'])
+    @app.route('/external/public_documents/upgrade_legacy', methods=['POST'])
     @accesstoken_required
-    @enabled_required("enable_group_workspaces")
-    def external_upgrade_legacy_group_documents():
+    @enabled_required("enable_public_workspaces")
+    def external_upgrade_legacy_public_documents():
         user_id = request.form.get('user_id')
-        active_group_id = request.form.get('active_group_id')
+        active_workspace_id = request.form.get('active_workspace_id')
 
         # returns how many docs were updated
         try:
-            # your existing function, but pass group_id
-            count = upgrade_legacy_documents(user_id=user_id, group_id=active_group_id)
+            # your existing function, but pass public_workspace_id
+            count = upgrade_legacy_documents(user_id=user_id, public_workspace_id=active_workspace_id)
             return jsonify({
-                "message": f"Upgraded {count} group document(s) to the new format."
+                "message": f"Upgraded {count} public document(s) to the new format."
             }), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500

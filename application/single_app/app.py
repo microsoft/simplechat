@@ -45,6 +45,8 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_external_group_documents import *
+from route_external_public_documents import *
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -56,10 +58,11 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
-# from route_external_group_documents import *
-# from route_external_documents import *
-# from route_external_groups import *
-# from route_external_admin_settings import *
+from route_external_group_documents import *
+from route_external_public_documents import *
+from route_external_documents import *
+from route_external_groups import *
+from route_external_admin_settings import *
 
 
 # =================== Helper Functions ===================
@@ -335,19 +338,22 @@ register_route_backend_public_documents(app)
 register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
-#register_route_external_health(app)
+register_route_external_health(app)
 
 # ------------------- Extenral Groups Routes ----------
-#register_route_external_groups(app)
+register_route_external_groups(app)
 
 # ------------------- Extenral Group Documents Routes ----------
-#register_route_external_group_documents(app)
+register_route_external_group_documents(app)
+
+# ------------------- Extenral Public Documents Routes ----------
+register_route_external_public_documents(app)
 
 # ------------------- Extenral Documents Routes ----------
-#register_route_external_documents(app)
+register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
-#register_route_external_admin_settings(app)
+register_route_external_admin_settings(app)
 
 if __name__ == '__main__':
     settings = get_settings()
