@@ -113,6 +113,8 @@ CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
 CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
+CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+
 
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
@@ -140,11 +142,13 @@ if AZURE_ENVIRONMENT == "usgovernment":
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+    search_resource_manager = "https://search.azure.us"
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
     authority = CUSTOM_IDENTITY_URL_VALUE
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
+    search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
@@ -438,12 +442,20 @@ def initialize_clients(settings):
                 )
             else:
                 if settings.get("azure_document_intelligence_authentication_type") == "managed_identity":
-                    document_intelligence_client = DocumentIntelligenceClient(
-                        endpoint=form_recognizer_endpoint,
-                        credential=DefaultAzureCredential()
-                    )
+                    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                        document_intelligence_client = DocumentIntelligenceClient(
+                            endpoint=form_recognizer_endpoint,
+                            credential=DefaultAzureCredential(),
+                            credential_scopes=[cognitive_services_scope],
+                            api_version="2024-11-30"
+                        )
+                    else:
+                        document_intelligence_client = DocumentIntelligenceClient(
+                            endpoint=form_recognizer_endpoint,
+                            credential=DefaultAzureCredential()
+                        )
                 else:
-                    document_intelligence_client = DocumentAnalysisClient(
+                    document_intelligence_client = DocumentIntelligenceClient(
                         endpoint=form_recognizer_endpoint,
                         credential=AzureKeyCredential(form_recognizer_key)
                     )
@@ -470,21 +482,30 @@ def initialize_clients(settings):
                 )
             else:
                 if settings.get("azure_ai_search_authentication_type") == "managed_identity":
-                    search_client_user = SearchClient(
-                        endpoint=azure_ai_search_endpoint,
-                        index_name="simplechat-user-index",
-                        credential=DefaultAzureCredential()
-                    )
-                    search_client_group = SearchClient(
-                        endpoint=azure_ai_search_endpoint,
-                        index_name="simplechat-group-index",
-                        credential=DefaultAzureCredential()
-                    )
-                    search_client_public = SearchClient(
-                        endpoint=azure_ai_search_endpoint,
-                        index_name="simplechat-public-index",
-                        credential=DefaultAzureCredential()
-                    )
+                    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                        search_client_user = SearchClient(
+                            endpoint=azure_ai_search_endpoint,
+                            index_name="simplechat-user-index",
+                            credential=DefaultAzureCredential(),
+                            audience=search_resource_manager
+                        )
+                        search_client_group = SearchClient(
+                            endpoint=azure_ai_search_endpoint,
+                            index_name="simplechat-group-index",
+                            credential=DefaultAzureCredential(),
+                            audience=search_resource_manager
+                        )
+                    else:
+                        search_client_user = SearchClient(
+                            endpoint=azure_ai_search_endpoint,
+                            index_name="simplechat-user-index",
+                            credential=DefaultAzureCredential()
+                        )
+                        search_client_group = SearchClient(
+                            endpoint=azure_ai_search_endpoint,
+                            index_name="simplechat-group-index",
+                            credential=DefaultAzureCredential()
+                        )
                 else:
                     search_client_user = SearchClient(
                         endpoint=azure_ai_search_endpoint,
@@ -523,10 +544,17 @@ def initialize_clients(settings):
                         )
                     else:
                         if settings.get("content_safety_authentication_type") == "managed_identity":
-                            content_safety_client = ContentSafetyClient(
-                                endpoint=safety_endpoint,
-                                credential=DefaultAzureCredential()
-                            )
+                            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                                content_safety_client = ContentSafetyClient(
+                                    endpoint=safety_endpoint,
+                                    credential=DefaultAzureCredential(),
+                                    credential_scopes=[cognitive_services_scope]
+                                )
+                            else:
+                                content_safety_client = ContentSafetyClient(
+                                    endpoint=safety_endpoint,
+                                    credential=DefaultAzureCredential()
+                                )
                         else:
                             content_safety_client = ContentSafetyClient(
                                 endpoint=safety_endpoint,
