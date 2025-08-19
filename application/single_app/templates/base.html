@@ -33,6 +33,9 @@
 
   <!-- Your custom CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <!-- Navigation and Sidebar CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/navigation.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}" />
   <!-- DataTables CSS -->
   <!-- <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
   LOCAL VERSION BELOW
@@ -40,12 +43,6 @@
   <link rel="stylesheet" href="/static/css/jquery.dataTables.min.css" />
 
   <style>
-    body {
-      /* Default: navbar height only */
-      padding-top: 56px;
-      overflow-x: hidden;
-      height: 100%;
-    }
     /* Add this: if banner is present, increase padding-top */
     #classification-banner + nav.navbar.fixed-top {
       top: 40px; /* Height of the banner */
@@ -60,7 +57,12 @@
     }
 
     .main-content {
-      margin-top: 10px;
+      margin-top: 0px;
+    }
+    /* Sidebar padding for main content when sidebar is enabled */
+    .sidebar-padding {
+      padding-left: 260px;
+      padding-top: 0 !important;
     }
 
     .modal-body {
@@ -95,6 +97,18 @@
 
     .modal-body::-webkit-scrollbar-thumb:hover {
       background: #555;
+    }
+
+    /* Profile image optimization - prevent flash */
+    #top-nav-profile-avatar img,
+    #sidebar-profile-avatar img {
+      opacity: 0;
+      transition: opacity 0.2s ease-in-out;
+    }
+    
+    #top-nav-profile-avatar img.loaded,
+    #sidebar-profile-avatar img.loaded {
+      opacity: 1;
     }
 
     a.citation-link {
@@ -143,12 +157,56 @@
     (function() {
       // Check localStorage first for fast theme loading to prevent flash
       var savedTheme = localStorage.getItem('simplechat-theme');
-      
       if (savedTheme) {
         // Apply saved theme immediately to html element before page renders
         document.documentElement.setAttribute('data-bs-theme', savedTheme);
       }
+      
+      // Profile image early initialization to prevent flash
+      {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
+      {% if profile_image %}
+      var serverProfileImage = {{ profile_image | tojson }};
+      if (serverProfileImage) {
+        // Store server profile image in sessionStorage immediately
+        sessionStorage.setItem('userProfileImage', serverProfileImage);
+        // Make profile image available globally
+        window.userProfileImage = serverProfileImage;
+      }
+      {% endif %}
+      
+      // Sidebar nav early initialization to prevent flash
+      // Check server-side user settings first, then fallback to localStorage, then admin default
+      var userNavLayout = '{{ user_settings.get("settings", {}).get("navLayout", "") }}';
+      var localNavLayout = localStorage.getItem('simplechat-nav-layout');
+      var adminDefault = {{ 'true' if app_settings.enable_left_nav_default else 'false' }};
+      // Make admin default available globally for sidebar.js
+      window.simplechatAdminNavDefault = adminDefault;
+      var navPref = userNavLayout || localNavLayout || (adminDefault ? 'sidebar' : 'top');
+      if (navPref === 'sidebar' && document.body) {
+        document.body.classList.add('sidebar-nav-enabled');
+      }
+      
+      // Chat layout early initialization to prevent jarring shifting
+      // Apply layout-docked class immediately for chats page when using top nav
+      if (window.location.pathname === '/chats' && navPref !== 'sidebar') {
+        // Add no-transitions class to body to prevent initial shifting
+        if (document.body) {
+          document.body.classList.add('no-transitions', 'layout-docked');
+          document.body.classList.remove('layout-split', 'left-pane-hidden');
+        }
+        
+        // Re-enable transitions after layout is applied and page is fully loaded
+        window.addEventListener('load', function() {
+          setTimeout(function() {
+            if (document.body) {
+              document.body.classList.remove('no-transitions');
+            }
+          }, 100);
+        });
+      }
     })();
+    // Set a global JS variable for mobile detection
+    window.isMobile = window.matchMedia("(max-width: 575.98px)").matches;
   </script>
   
   {% block head %}{% endblock %}
@@ -157,218 +215,26 @@
 <body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
-         style="background: {{ app_settings.classification_banner_color or '#ffc107' }};
-                color: #fff;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                text-align: center;
-                font-weight: bold;
-                padding: 0;
-                height: 40px;
-                font-size: 1.1em;
-                letter-spacing: 0.5px;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                z-index: 1051;">
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: #fff; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
       {{ app_settings.classification_banner_text }}
     </div>
   {% endif %}
   <!-- Navigation Bar -->
-  <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top" style="{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}top: 40px;{% endif %}">
-    <div class="container-fluid">
-      {% if app_settings.show_logo %}
-        {% if app_settings.custom_logo_base64 %}
-          <a class="navbar-brand" href="{{ url_for('index') }}">
-            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" height="30" />
-          </a>
-        {% else %}
-          <a class="navbar-brand" href="{{ url_for('index') }}">
-            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="30" />
-          </a>
-        {% endif %}
-      {% endif %}
-      
-      {% if not app_settings.hide_app_title %}
-        <a class="navbar-brand" href="{{ url_for('index') }}">
-          {{ app_settings.app_title }}
-        </a>
-      {% endif %}
-  
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
-        aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-  
-      <div class="collapse navbar-collapse" id="navbarNav">
-        <!-- Left side nav -->
-        <ul class="navbar-nav me-auto">
-          {% if not app_settings.show_logo or app_settings.hide_app_title %}
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('index') }}">Home</a>
-          </li>
-          {% endif %}
-          
-          {% if session.get('user') and session['user'].get('roles')
-             and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-            {% if app_settings.enable_user_workspace%}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('workspace') }}">
-                Your Workspace
-              </a>
-            </li>
-            {% endif %}
-            {% if app_settings.enable_group_workspaces %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('group_workspaces') }}">
-                Group Workspaces
-              </a>
-            </li>
-            {% endif %}
-            {% if app_settings.enable_public_workspaces %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('public_directory') }}">
-                Public Directory
-              </a>
-            </li>
-            {% endif %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('chats') }}">
-                Chat
-              </a>
-            </li>
-            <!-- Future Group Chat Feature
-            <li class="nav-item">
-              <a class="nav-link" href="">
-                Active Group Chat
-              </a>
-            </li>
-            -->
-            <!-- REMOVED Admin Dropdown from here -->
-          {% endif %}
-        </ul>
-  
-        <!-- Right side nav -->
-        <ul class="navbar-nav">
-          <!-- MOVED Admin dropdown here -->
-          {% if session.get('user') and 'Admin' in session['user']['roles'] %}
-          <li class="nav-item dropdown">
-            <a class="nav-link dropdown-toggle" href="#" id="adminDropdown" role="button" data-bs-toggle="dropdown"
-               aria-expanded="false">
-              Admin
-            </a>
-            <ul class="dropdown-menu" aria-labelledby="adminDropdown">
-              <li>
-                <a class="dropdown-item" href="{{ url_for('admin_settings') }}">
-                  App Settings
-                </a>
-              </li>
-              {% if app_settings.enable_content_safety %}
-                {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) 
-                  or not app_settings.require_member_of_safety_violation_admin %}
-                  <li>
-                      <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">
-                          Safety Violations
-                      </a>
-                  </li>
-                {% endif %}
-              {% endif %}
-              {% if app_settings.enable_user_feedback %}
-                {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) 
-                  or not app_settings.require_member_of_feedback_admin %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">
-                    Feedback Review
-                  </a>
-                </li>
-                {% endif %}
-              {% endif %}
-            </ul>
-          </li>
-          {% endif %}
-  
-          {% if session.get('user') and session['user'].get('roles')
-             and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-            <!-- Dark Mode Toggle -->
-            <li class="nav-item">
-              <a class="nav-link dark-mode-toggle" id="darkModeToggle" role="button">
-                <span class="d-flex align-items-center">
-                  <i class="bi bi-sun-fill me-1" id="lightModeIcon"></i>
-                  <span id="lightModeText">Light</span>
-                </span>
-                <span class="d-flex align-items-center d-none">
-                  <i class="bi bi-moon-fill me-1" id="darkModeIcon"></i>
-                  <span id="darkModeText">Dark</span>
-                </span>
-              </a>
-            </li>
-            
-            <!-- My Account Dropdown -->
-            <li class="nav-item dropdown">
-              <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown"
-                 aria-expanded="false">
-                My Account
-              </a>
-              <ul class="dropdown-menu" aria-labelledby="userDropdown">
-                <li class="nav-item">
-                  <a class="nav-link" href="{{ url_for('profile') }}">
-                    <i class="bi bi-person-circle"></i>
-                    {{ session['user'].get('name') }}
-                  </a>
-                </li>
-                {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('my_groups') }}">
-                    My Groups
-                  </a>
-                </li>
-                {% endif %}
-                {% if app_settings.enable_public_workspaces and (not app_settings.require_member_of_create_public_workspace or (session.get('user') and session['user'].get('roles') and 'CreatePublicWorkspaces' in session['user']['roles'])) %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">
-                    My Public Workspaces
-                  </a>
-                </li>
-                {% endif %}
-                {% if app_settings.enable_user_feedback %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('my_feedback') }}">
-                    My Feedback
-                  </a>
-                </li>
-                {% endif %}
-                {% if app_settings.enable_content_safety %}
-                <li>
-                  <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">
-                    My Safety Violations
-                  </a>
-                </li>
-                {% endif %}
-              </ul>
-            </li>
-
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('logout') }}">
-                Logout
-              </a>
-            </li>
-  
-          {% else %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('login') }}">
-                Login
-              </a>
-            </li>
-          {% endif %}
-        </ul>
-      </div>
-    </div>
-  </nav>
+  {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+  {% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
+    {% include "_sidebar_nav.html" %}
+  {% else %}
+    {% include "_top_nav.html" %}
+  {% endif %}
 
   <!-- Main Content Area -->
-  <div class="container main-content" id="main-content">
+  <div class="container main-content{% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %} sidebar-padding{% endif %}" id="main-content">
+    <!-- Mobile sidebar toggle button (only visible on small screens when sidebar nav is enabled) -->
+    <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only"
+            onclick="toggleMobileSidebar()" style="display: none;">
+      <i class="bi bi-list"></i> Menu
+    </button>
+    
     {% block content %}{% endblock %}
   </div>
 
@@ -424,7 +290,11 @@
   
   <!-- Dark mode script -->
   <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
-  
+  <!-- Navigation and Sidebar JavaScript -->
+  <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
+  <!-- Profile Image JavaScript -->
+  <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 

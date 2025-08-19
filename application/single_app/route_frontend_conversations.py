@@ -78,3 +78,48 @@ def register_route_frontend_conversations(app):
                 del m['file_content']
 
         return jsonify({'messages': messages})
+
+    @app.route('/api/message/<message_id>/metadata', methods=['GET'])
+    @login_required
+    @user_required
+    def get_message_metadata(message_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Query for the message by ID and user
+            msg_query = f"""
+                SELECT * FROM c
+                WHERE c.id = '{message_id}'
+            """
+            messages = list(cosmos_messages_container.query_items(
+                query=msg_query,
+                enable_cross_partition_query=True
+            ))
+            
+            if not messages:
+                return jsonify({'error': 'Message not found'}), 404
+                
+            message = messages[0]
+            
+            # Verify the message belongs to a conversation owned by the current user
+            conversation_id = message.get('conversation_id')
+            if conversation_id:
+                try:
+                    conversation = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    if conversation.get('user_id') != user_id:
+                        return jsonify({'error': 'Unauthorized access to message'}), 403
+                except CosmosResourceNotFoundError:
+                    return jsonify({'error': 'Conversation not found'}), 404
+            
+            # Return the metadata from the message
+            metadata = message.get('metadata', {})
+            return jsonify(metadata)
+            
+        except Exception as e:
+            print(f"Error fetching message metadata: {str(e)}")
+            return jsonify({'error': 'Failed to fetch message metadata'}), 500

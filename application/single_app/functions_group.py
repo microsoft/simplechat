@@ -42,8 +42,7 @@ def create_group(name, description):
 
 def search_groups(search_query, user_id):
     """
-    Return a list of groups the user is in or (optionally)
-    you can expand to also return public groups. 
+    Return a list of groups the user is in. 
     For simplicity, this only returns groups where the user is a member.
     """
     query = query = """

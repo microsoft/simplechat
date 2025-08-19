@@ -38,6 +38,51 @@
         #classification-categories-tbody td {
             vertical-align: middle;
         }
+        
+        /* Ensure external links table cells have consistent vertical alignment */
+        #external-links-tbody td {
+            vertical-align: middle;
+        }
+        
+        /* Floating Save Button */
+        .floating-save-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 50px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+        
+        .floating-save-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .floating-save-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Ensure the button is visible above other content */
+        .floating-save-btn {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .floating-save-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: 140px;
+            }
+        }
     </style>
 {% endblock %}
 
@@ -80,8 +125,7 @@
             {% endif %}
         </p>
         <div class="d-flex align-items-center mb-3">
-            <button type="submit" class="btn btn-primary mt-3">Save Settings</button>
-            <button type="button" class="btn btn-outline-secondary mt-3 ms-2" id="launch-walkthrough-btn">
+            <button type="button" class="btn btn-outline-secondary mt-3" id="launch-walkthrough-btn">
                 <i class="bi bi-signpost-split"></i> Start Setup Walkthrough
             </button>
         </div>
@@ -115,7 +159,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Custom Logo</span>
+                                <span>Custom Logos (Light & Dark Mode)</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -187,11 +231,11 @@
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Your Workspace (Personal Workspace)</span>
+                                <span>Personal Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>My Groups (Group Workspaces)</span>
+                                <span>Group Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -497,25 +541,41 @@
                             <h4>Global  Plugins</h4>
                             <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Plugin</button>
                         </div>
+                        {% if settings.per_user_semantic_kernel %}
+                        <!-- Plugin Feature Flags -->
+                            <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                <h6 class="mb-2">Workspace Plugin Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Plugins</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Plugins</label>
+                                </div>
+                            </div>
+                        {% endif %}
+                        
                         <!-- Core Plugin Toggles -->
-                        <div class="mb-3" id="core-plugin-toggles">
-                            <div class="form-check form-switch d-inline-block me-4">
+                        <div class="card p-3 mb-3" id="core-plugin-toggles">
+                            <h6 class="mb-2">Core Plugin Toggles</h6>
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block me-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block me-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Plugin</label>
                             </div>
-                            <div class="form-check form-switch d-inline-block ms-4">
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Plugin</label>
                             </div>
@@ -560,11 +620,33 @@
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
                         </div>
                         {% if settings.per_user_semantic_kernel %}
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
-                            <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
-                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
-                        </div>
+                            <!-- Agent Feature Flags -->
+                            <div class="card p-3 mb-3" id="agent-toggles-card">
+                                <h6 class="mb-2">Workspace Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                                </div>
+                            </div>
+                            <!-- End Agent Feature Flags -->
+                            
                         {% endif %}
                         <!-- Orchestration Settings Card -->
                         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -655,8 +737,14 @@
                         <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
                     </div>
                     <div class="form-group mb-3">
-                        <label for="logo_file">Upload Custom Logo</label>
+                        <label for="logo_file">Upload Custom Logo (Light Mode)</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in light mode.</small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
+                        <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="favicon_file">Upload Custom Favicon</label>
@@ -735,6 +823,23 @@
                         </div>
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Default Navigation</label>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_left_nav_default"
+                                name="enable_left_nav_default"
+                                {% if settings.enable_left_nav_default %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_left_nav_default">
+                                Enable Left Nav by Default
+                            </label>
+                        </div>
+                        <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
+                    </div>
                 </div>
                 <!-- Health Check Toggle -->
                 <div class="card p-3 mb-3">
@@ -779,6 +884,56 @@
                               style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
+                    </div>
+                </div>
+
+                <!-- External Links Section -->
+                <div class="card p-3 mb-3">
+                    <h5>External Links</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_external_links" name="enable_external_links"
+                            {% if settings.enable_external_links %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_external_links">
+                            Enable External Links in Navigation
+                        </label>
+                    </div>
+                    <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
+                    
+                    <div id="external_links_settings" {% if not settings.enable_external_links %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="external_links_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name" 
+                                   value="{{ settings.external_links_menu_name or 'External Links' }}" placeholder="External Links">
+                            <small class="form-text text-muted">This name will appear in the navigation bar as the menu title.</small>
+                        </div>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="external_links_force_menu" name="external_links_force_menu"
+                                {% if settings.external_links_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="external_links_force_menu">
+                                Force Menu Display
+                            </label>
+                            <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
+                        </div>
+                        
+                        <h6>External Links</h6>
+                        <p class="text-muted small">Define custom links that will appear in the navigation bar for users to access external resources.</p>
+                        
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Label</th>
+                                    <th>URL</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="external-links-tbody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                        
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="add-external-link-btn">Add New Link</button>
+                        <input type="hidden" name="external_links_json" id="external_links_json">
                     </div>
                 </div>
             </div>
@@ -1300,7 +1455,7 @@
                 
                 <div class="card mb-3 p-3">
                     
-                    <h5>Enable Your Workspace</h5>
+                    <h5>Enable Personal Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of your personal workspace.
                     </p>
@@ -1311,7 +1466,7 @@
                             name="enable_user_workspace"
                             {% if settings.enable_user_workspace %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_user_workspace">
-                            Enable Your Workspace
+                            Enable Personal Workspaces
                         </label>
                     </div>
                 </div>
@@ -1319,7 +1474,7 @@
                
                <div class="card mb-3 p-3">
                     
-                    <h5>Enable My Groups (includes Group Workspaces)</h5>
+                    <h5>Enable Group Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of group workspaces, as well as group collaboration features.
                     </p>
@@ -1330,7 +1485,7 @@
                             name="enable_group_workspaces"
                             {% if settings.enable_group_workspaces %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_group_workspaces">
-                            Enable My Groups (includes Group Workspaces)
+                            Enable Group Workspaces
                         </label>
                     </div>
 
@@ -1388,6 +1543,24 @@
                         </p>
                     </div>
                     
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable File Sharing</h5>
+                    <p class="text-muted">
+                        Turn this on to enable file sharing capabilities between users and workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sharing"
+                            name="enable_file_sharing"
+                            {% if settings.enable_file_sharing %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sharing">
+                            Enable File Sharing
+                        </label>
+                    </div>
                 </div>
 
                 <div class="card mb-3 p-3">
@@ -2391,6 +2564,12 @@
             </div>
         </div> 
     </form>
+    
+    <!-- Floating Save Button -->
+    <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
+        <i class="bi bi-floppy"></i> Save Settings
+    </button>
+    
     <div>
         <!-- Plugin Modal (moved outside form) -->
         {% include '_plugin_modal.html' %}
@@ -2511,6 +2690,25 @@
         window.classificationCategories = [];
     }
     window.enableDocumentClassification = "{{ enable_document_classification }}";
+
+    // *** NEW: External Links Data ***
+    try {
+        let externalLinksStr = '{{ settings.external_links|tojson(indent=None)|safe }}';
+        if (!externalLinksStr || externalLinksStr.trim() === '') {
+            externalLinksStr = '[]';
+        }
+        window.externalLinks = JSON.parse(externalLinksStr);
+    } catch (e) {
+        console.error("Error parsing external links:", e);
+        window.externalLinks = [];
+    }
+    // Ensure it's always an array
+    if (!Array.isArray(window.externalLinks)) {
+        window.externalLinks = [];
+    }
+    window.enableExternalLinks = "{{ enable_external_links }}";
+    window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
+    window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>

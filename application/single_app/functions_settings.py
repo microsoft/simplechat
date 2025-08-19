@@ -34,6 +34,12 @@ def get_settings():
             'name': 'researcher_agent',
             'is_global': True
         },
+        'allow_user_agents': False,
+        'allow_user_custom_agent_endpoints': False,
+        'allow_user_plugins': False,
+        'allow_group_agents': False,
+        'allow_group_custom_agent_endpoints': False,
+        'allow_group_plugins': False,
         'semantic_kernel_agents': [
             {
                 'id': '15b0c92a-741d-42ff-ba0b-367c7ee0c848',
@@ -110,7 +116,6 @@ def get_settings():
                 'is_global': True,
                 'name': 'loganalytics',
                 'other_settings': {},
-                'plugins_to_load': []
             }
         ],
         'id': 'app_settings',
@@ -123,9 +128,12 @@ def get_settings():
         'hide_app_title': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_logo_dark_base64': '',
+        'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
         'enable_dark_mode_default': False,
+        'enable_left_nav_default': True,
 
         # GPT Settings
         'enable_gpt_apim': False,
@@ -192,6 +200,7 @@ def get_settings():
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
+        'enable_file_sharing': False,
 
         # Multimedia
         'enable_video_file_support': False,
@@ -210,6 +219,15 @@ def get_settings():
             {"label": "None", "color": "#808080"},
             {"label": "N/A", "color": "#808080"},
             {"label": "Pending", "color": "#0000FF"}
+        ],
+
+        # External Links
+        'enable_external_links': False,
+        'external_links_menu_name': 'External Links',
+        'external_links_force_menu': False,
+        'external_links': [
+            {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+            {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
 
         # Enhanced Citations
@@ -327,7 +345,6 @@ def get_settings():
     except Exception as e:
         print(f"Error retrieving settings: {str(e)}")
         return None
-
 
 def update_settings(new_settings):
     try:
@@ -487,16 +504,63 @@ def decrypt_key(encrypted_key):
         return None
 
 def get_user_settings(user_id):
-    """Fetches the user settings document from Cosmos DB."""
+    """Fetches the user settings document from Cosmos DB, ensuring email and display_name are present if possible."""
+    from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        
+        # Try to update email/display_name if missing and available in session
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        updated = False
+        if email and doc.get("email") != email:
+            doc["email"] = email
+            updated = True
+        if display_name and doc.get("display_name") != display_name:
+            doc["display_name"] = display_name
+            updated = True
+            
+        # Check if profile image needs to be fetched
+        if 'profileImage' not in doc['settings']:
+            from functions_authentication import get_user_profile_image
+            try:
+                profile_image = get_user_profile_image()
+                doc['settings']['profileImage'] = profile_image
+                updated = True
+            except Exception as e:
+                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                doc['settings']['profileImage'] = None
+                updated = True
+        
+        if updated:
+            cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
-        return {"id": user_id, "settings": {}}
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        doc = {"id": user_id, "settings": {}}
+        if email:
+            doc["email"] = email
+        if display_name:
+            doc["display_name"] = display_name
+            
+        # Try to fetch profile image for new user
+        from functions_authentication import get_user_profile_image
+        try:
+            profile_image = get_user_profile_image()
+            doc['settings']['profileImage'] = profile_image
+        except Exception as e:
+            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            doc['settings']['profileImage'] = None
+            
+        cosmos_user_settings_container.upsert_item(body=doc)
+        return doc
     except Exception as e:
         print(f"Error in get_user_settings for {user_id}: {e}")
         raise # Re-raise the exception to be handled by the route
@@ -563,7 +627,6 @@ def update_user_settings(user_id, settings_to_update):
                     "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
                     "actions_to_load": [],
                     "other_settings": {},
-                    "plugins_to_load": []
                 }
             ]
         if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
@@ -635,7 +698,6 @@ def enabled_required(setting_key):
         return wrapper
     return decorator
 
-
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing the substring "key"
-    return {k: v for k, v in full_settings.items() if "key" not in k}
+    # Exclude any key containing the substring "key" or specific sensitive URLs
+    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}

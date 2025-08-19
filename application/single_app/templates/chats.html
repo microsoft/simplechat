@@ -6,6 +6,58 @@
 {% block head %}
     <link rel="stylesheet" href="/static/css/chats.css">
     <style>
+        /* Initial layout styles to prevent shifting when top nav is active */
+        {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+        {% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}
+        /* Clean docked layout styles */
+        body.layout-docked #left-pane {
+            position: fixed !important;
+            top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %} !important;
+            left: 0 !important;
+            width: 320px !important;
+            height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %}) !important;
+            z-index: 1031 !important;
+            background: var(--bs-body-bg, white) !important;
+            border-right: 1px solid var(--bs-border-color, #dee2e6) !important;
+        }
+        
+        body.layout-docked #right-pane {
+            margin-left: 320px !important;
+            width: calc(100% - 320px) !important;
+            height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %}) !important;
+            position: relative !important;
+            /* Center content horizontally */
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+        }
+        
+        /* Center and limit width of right pane content */
+        body.layout-docked #right-pane > div {
+            width: 100% !important;
+            max-width: 1000px !important;
+        }
+        {% else %}
+        /* Sidebar navigation layout - hide left pane and expand right pane */
+        #left-pane {
+            display: none !important;
+        }
+        
+        #right-pane {
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+        }
+        
+        /* Center and limit width of right pane content when using sidebar */
+        #right-pane > div {
+            width: 100% !important;
+            max-width: 1000px !important;
+        }
+        {% endif %}
+        
         /* Styles for conversation checkboxes */
         .conversation-item {
             position: relative;
@@ -33,6 +85,87 @@
         .selection-mode .conversation-item {
             padding-left: 0.5rem;
         }
+        
+        /* Send button styling - initially hidden */
+        #send-btn {
+            display: none; /* Hidden by default */
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            min-width: 0;
+            padding: 8px; /* Padding for better touch target */
+            right: 6px; /* Some padding from right edge */
+            bottom: 6px; /* Some padding from bottom edge */
+            z-index: 10;
+            height: 36px; /* Square button height */
+            width: 36px; /* Square button width */
+            border-radius: 0.375rem; /* Rounded corners for square button */
+        }
+        
+        /* Show send button when there's content */
+        #send-btn.show {
+            display: block !important;
+        }
+        
+        /* Set minimum height for input field */
+        #user-input {
+            min-height: 60px !important;
+        }
+        
+        /* Adjust textarea padding when send button is visible */
+        #user-input.has-content {
+            padding-right: 50px !important; /* Space for square button + padding */
+        }
+        
+        /* Ensure the button icon is centered */
+        #send-btn i {
+            font-size: 14px;
+        }
+        
+        /* Conversation details modal styles */
+        #conversation-details-modal .modal-lg {
+            max-width: 900px;
+        }
+        
+        #conversation-details-modal .card {
+            border: 1px solid var(--bs-border-color);
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        
+        #conversation-details-modal .card-header {
+            border-bottom: 1px solid var(--bs-border-color);
+            font-weight: 600;
+        }
+        
+        #conversation-details-modal .badge {
+            font-size: 0.75em;
+        }
+        
+        #conversation-details-modal code {
+            font-size: 0.875em;
+            background-color: var(--bs-gray-100);
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+        }
+        
+        /* Dark mode support for conversation details */
+        [data-bs-theme="dark"] #conversation-details-modal code {
+            background-color: var(--bs-gray-800);
+            color: var(--bs-gray-200);
+        }
+        
+        /* Conversation info button styling */
+        #conversation-info-btn {
+            transition: color 0.2s ease;
+            font-size: 1rem;
+        }
+        
+        #conversation-info-btn:hover {
+            color: var(--bs-primary) !important;
+        }
+        
+        /* Ensure proper spacing in conversation title area */
+        #current-conversation-title {
+            min-height: 1.5rem;
+        }
     </style>
 {% endblock %}
 
@@ -47,9 +180,7 @@
                     <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
                         <i class="bi bi-trash"></i> <span class="d-none d-md-inline"></span>
                     </button>
-                    <button class="btn btn-sm btn-outline-secondary" id="dock-toggle-btn" title="Toggle Docked Sidebar">
-                        <i class="bi bi-layout-sidebar-inset"></i>
-                    </button>
+                    <!-- Dock toggle button removed: sidebar is always docked -->
                     <button class="btn btn-primary btn-sm ms-2" id="new-conversation-btn" title="Start a new chat">
                         <i class="bi bi-plus-lg"></i>
                     </button>
@@ -61,69 +192,124 @@
         </div>
 
         <div id="right-pane" class="d-flex flex-column h-100 chat-container">
-            <div class="p-3 border-bottom d-flex align-items-center justify-content-between flex-shrink-0">
+            <div class="p-3 border-bottom align-items-center justify-content-between flex-shrink-0">
                 <div class="d-flex flex-column">
-                    <h5 id="current-conversation-title" class="mb-0">
-                        Select or start a conversation
-                    </h5>
+                    <div class="d-flex align-items-center">
+                        <h5 id="current-conversation-title" class="mb-0 flex-grow-1">
+                        </h5>
+                        <button id="conversation-info-btn" class="btn btn-link p-0 ms-2" style="color: #6c757d; display: none;" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details">
+                            <i class="bi bi-info-circle"></i>
+                        </button>
+                    </div>
                     <div id="current-conversation-classifications" class="mt-1">
                     </div>
                 </div>
             </div>
 
-            <div id="chatbox" class="flex-grow-1 p-3" style="overflow-y: auto">
+            <div id="chatbox" class="flex-grow-1 p-3" style="overflow-y: auto; min-width: 1000px;">
                 <!-- Chat messages will be dynamically loaded here -->
             </div>
 
             <div class="p-3 border-top flex-shrink-0">
                 
-                 <div class="d-flex align-items-center mb-2 flex-wrap gap-2">
+                 <div class="d-flex align-items-center mb-2 justify-content-between">
+                    <!-- Left side buttons -->
+                    <div class="d-flex align-items-center flex-wrap gap-2">
+                        {% if settings.enable_image_generation %}
+                        <button
+                            id="image-generate-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Generate images with AI"
+                        >
+                            <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <button
+                            id="search-documents-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search workspaces"
+                        >
+                            <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_web_search %}
+                        <button
+                            id="search-web-btn"
+                            class="btn btn-outline-secondary btn-sm search-btn"
+                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
+                        >
+                            <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
+                        </button>
+                        {% endif %}
+                         <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv" style="display: none"/>
+                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation">
+                             <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
+                             <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
+                                 <i class="bi bi-x-circle-fill text-danger"></i>
+                             </span>
+                         </button>
+                         <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
+                            <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
+                        </button>
+                        {% endif %}
+                        {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                        <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
+                            <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
+                        </button>
+                        {% endif %}
+                    </div>
                     
-                    {% if settings.enable_image_generation %}
-                    <button
-                        id="image-generate-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Generate images with AI"
-                    >
-                        <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                    <button
-                        id="search-documents-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Search workspaces"
-                    >
-                        <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_web_search %}
-                    <button
-                        id="search-web-btn"
-                        class="btn btn-outline-secondary btn-sm search-btn"
-                        data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
-                    >
-                        <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
-                    </button>
-                    {% endif %}
-                     <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv" style="display: none"/>
-                     <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Add a file to this conversation">
-                         <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
-                         <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
-                             <i class="bi bi-x-circle-fill text-danger"></i>
-                         </span>
-                     </button>
-                     <button id="upload-btn" class="btn btn-secondary btn-sm" style="display: none">Add to Chat</button>
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                    <button id="search-prompts-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Select a saved prompt">
-                        <i class="bi bi-lightbulb"></i> <span class="search-btn-text d-none d-md-inline">Prompts</span>
-                    </button>
-                    {% endif %}
-                    {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
-                    <button id="enable-agents-btn" class="btn btn-outline-secondary btn-sm search-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable Agents">
-                        <i class="bi bi-robot"></i> <span class="search-btn-text d-none d-md-inline">Agents</span>
-                    </button>
-                    {% endif %}
+                    <!-- Right side selectors -->
+                    <div class="d-flex align-items-center gap-2">
+
+                        <!-- Prompt Selector -->
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
+                            <select class="form-select" id="prompt-select"></select>
+                        </div>
+                        {% endif %}
+
+
+                        <!-- Agent selector -->
+                        <div id="agent-select-container" style="display: none;">
+                            <label for="agent-select" class="visually-hidden">Agent</label>
+                            <select id="agent-select" class="form-select">
+                                <!-- Agents will be populated dynamically by JS -->
+                            </select>
+                        </div>
+                        
+                        
+                        <!-- Model selector - right aligned -->
+                        <div id="model-select-container" class="flex-shrink-0">
+                            <label for="model-select" class="visually-hidden">Model</label>
+                            <select id="model-select" class="form-select">
+                            {% if settings.enable_gpt_apim %}
+                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
+                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
+                                {% set apim_list = raw.split(',') %}
+                                {% for dep in apim_list %}
+                                {% set d = dep.strip() %}
+                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
+                                    {{ d }}
+                                </option>
+                                {% endfor %}
+                            {% else %}
+                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
+                                {% for model in settings.gpt_model.selected %}
+                                <option
+                                    value="{{ model.deploymentName }}"
+                                    {% if loop.first %}selected{% endif %}
+                                >
+                                    {{ model.modelName }}
+                                </option>
+                                {% endfor %}
+                            {% endif %}
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 
@@ -131,30 +317,27 @@
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">
-                         <div class="flex-grow-1" style="min-width: 120px;">
+                         <div class="flex-shrink-0" style="min-width: 120px; max-width: 200px;">
                              <label for="doc-scope-select" class="form-label mb-1 small text-muted">Scope</label>
                              <select class="form-select form-select-sm" id="doc-scope-select">
                                  <option value="all" selected>All</option>
                                  <option value="personal">Personal</option>
-                                 <option value="group">Group</option>
+                                 <option value="group">Group{% if active_group_name %}: {{ active_group_name }}{% endif %}</option>
                                  {% if settings.enable_public_workspaces %}
                                  <option value="public">Public</option>
                                  {% endif %}
                              </select>
                          </div>
-                             <div class="flex-grow-1" style="min-width: 200px;">
+                             <div class="flex-grow-1" style="min-width: 250px;">
                              <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
                              <div class="dropdown" id="document-dropdown">
                                 <button class="form-select form-select-sm d-flex justify-content-between align-items-center" 
                                         type="button" 
                                         id="document-dropdown-button" 
-                                        data-bs-toggle="dropdown" 
-                                        data-bs-auto-close="outside"
-                                        data-bs-display="static"
+                                        data-bs-toggle="dropdown"
                                         data-bs-offset="0,5"
                                         aria-expanded="false">
                                     <span class="selected-document-text">All Documents</span>
-                                    <i class="bi bi-chevron-down"></i>
                                 </button>
                                 <div class="dropdown-menu p-2" id="document-dropdown-menu" style="width: 400px;">
                                     <div class="document-search-container mb-2">
@@ -187,59 +370,16 @@
                 {% endif %}
 
                 
-                <div class="chat-input-container d-flex gap-2">
-                    <!-- Textarea takes up remaining space -->
-                     <textarea id="user-input" class="form-control flex-grow-1" placeholder="Type your message..." rows="1" style="resize: none;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px';"></textarea>
-
-                    <!-- Prompt Selector Container (conditionally visible) -->
-                    {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
-                     <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">
-                          <select class="form-select" id="prompt-select"></select>
-                          <!-- Optional: Add a small label above if needed -->
-                          <!-- <label for="prompt-select" class="form-label mb-1 small text-muted">Prompt</label> -->
-                     </div>
-                    {% endif %}
-
-                    <!-- Model selector -->
-                    <div class="flex-shrink-0">
-                        <div id="model-select-container">
-                            <label for="model-select" class="visually-hidden">Model</label>
-                            <select id="model-select" class="form-select">
-                            {% if settings.enable_gpt_apim %}
-                                {# when using APIM, azure_apim_gpt_deployment may be "dep1" or "dep1,dep2,…" #}
-                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                {% set apim_list = raw.split(',') %}
-                                {% for dep in apim_list %}
-                                {% set d = dep.strip() %}
-                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                    {{ d }}
-                                </option>
-                                {% endfor %}
-                            {% else %}
-                                {# normal direct-Azure OpenAI flow: show whatever you fetched into settings.gpt_model.selected #}
-                                {% for model in settings.gpt_model.selected %}
-                                <option
-                                    value="{{ model.deploymentName }}"
-                                    {% if loop.first %}selected{% endif %}
-                                >
-                                    {{ model.modelName }}
-                                </option>
-                                {% endfor %}
-                            {% endif %}
-                            </select>
-                        </div>
-                        <div id="agent-select-container" style="display: none;">
-                            <label for="agent-select" class="visually-hidden">Agent</label>
-                            <select id="agent-select" class="form-select">
-                                <!-- Agents will be populated dynamically by JS -->
-                            </select>
-                        </div>
+                <div class="chat-input-container position-relative">
+                    <!-- Textarea container with send button inside -->
+                    <div class="position-relative">
+                         <textarea id="user-input" class="form-control" placeholder="Type your message..." rows="1" style="resize: none; padding-right: 15px;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; window.handleInputChange && window.handleInputChange();"></textarea>
+                         
+                         <!-- Send Button positioned inside textarea area - initially hidden -->
+                         <button class="btn btn-primary position-absolute" id="send-btn" title="Send Message">
+                              <i class="bi bi-send-fill"></i>
+                         </button>
                     </div>
-
-                     <!-- Send Button (doesn't shrink) -->
-                     <button class="btn btn-primary flex-shrink-0" id="send-btn" title="Send Message">
-                          <i class="bi bi-send-fill"></i> <span class="d-none d-sm-inline">Send</span>
-                     </button>
                 </div>
             </div>
         </div> 
@@ -280,6 +420,34 @@
       </form>
     </div>
 </div>
+
+<!-- Modal for conversation details -->
+<div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="conversationDetailsModalLabel">
+                    <i class="bi bi-info-circle me-2"></i>Conversation Details
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="conversation-details-content">
+                    <div class="text-center p-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading conversation details...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 {% endblock %}
@@ -308,6 +476,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-utils.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-messages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversations.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-sidebar-conversations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-documents.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-prompts.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-input-actions.js') }}"></script>
@@ -315,6 +484,8 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-feedback.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

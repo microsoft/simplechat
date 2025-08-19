@@ -6,6 +6,7 @@ on:
     branches:
     - dev-mcp-server
 
+
   workflow_dispatch:
 
 jobs:

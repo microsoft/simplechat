@@ -27,6 +27,9 @@ import jwt
 import pandas
 from dotenv import load_dotenv
 
+# Add dotenv import
+from dotenv import load_dotenv
+
 from flask import (
     Flask, 
     flash, 
@@ -79,6 +82,8 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -90,7 +95,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.216.089'
+app.config['VERSION'] = '0.223.001'
 
 
 Session(app)
@@ -104,7 +109,7 @@ ALLOWED_EXTENSIONS = {
     'dvr-ms', 'wav'
 }
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
-MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
+MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
 
 # Add Support for Custom Azure Environments
 CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
@@ -160,23 +165,14 @@ storage_account_public_documents_container_name = "public-documents"
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
-cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key").lower().strip() #key or managed_identity
 
-try:
-    if cosmos_authentication_type == "managed_identity":
-        print("Initializing Cosmos DB client with managed identity...")
-        cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential())
-    else:
-        print("Initializing Cosmos DB client with access key...")
-        if not cosmos_key:
-            raise ValueError("AZURE_COSMOS_KEY environment variable is required when using key authentication")
-        cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key)
-    print("Cosmos DB client initialized successfully")
-except Exception as e:
-    print(f"Failed to initialize Cosmos DB client: {e}")
-    print(f"Cosmos endpoint: {cosmos_endpoint}")
-    print(f"Authentication type: {cosmos_authentication_type}")
-    raise
+cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
+
+if cosmos_authentication_type == "managed_identity":
+    cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
+else:
+    cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
+
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)
@@ -318,12 +314,12 @@ cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
 
 def ensure_custom_logo_file_exists(app, settings):
     """
-    If custom_logo_base64 is present in settings, ensure static/images/custom_logo.png
-    exists and reflects the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, removes the file.
+    If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
+    static files exist and reflect the current base64 data. Overwrites if necessary.
+    If base64 is empty/missing, removes the corresponding file.
     """
+    # Handle light mode logo
     custom_logo_b64 = settings.get('custom_logo_base64', '')
-    # Ensure the filename is consistent
     logo_filename = 'custom_logo.png'
     logo_path = os.path.join(app.root_path, 'static', 'images', logo_filename)
     images_dir = os.path.dirname(logo_path)
@@ -337,24 +333,52 @@ def ensure_custom_logo_file_exists(app, settings):
             try:
                 os.remove(logo_path)
                 print(f"Removed existing {logo_filename} as custom logo is disabled/empty.")
-            except OSError as ex: # Use OSError for file operations
+            except OSError as ex:
                 print(f"Error removing {logo_filename}: {ex}")
-        return
+    else:
+        # Custom logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_b64)
 
-    # Custom logo exists in settings, write/overwrite the file
-    try:
-        # Decode the current base64 string
-        decoded = base64.b64decode(custom_logo_b64)
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_filename} exists and matches current settings.")
 
-        # Write the decoded data to the file, overwriting if it exists
-        with open(logo_path, 'wb') as f:
-            f.write(decoded)
-        print(f"Ensured {logo_filename} exists and matches current settings.")
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_filename}: {ex}")
 
-    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
-        print(f"Failed to write/overwrite {logo_filename}: {ex}")
-    except Exception as ex: # Catch any other unexpected errors
-         print(f"Unexpected error during logo file write for {logo_filename}: {ex}")
+    # Handle dark mode logo
+    custom_logo_dark_b64 = settings.get('custom_logo_dark_base64', '')
+    logo_dark_filename = 'custom_logo_dark.png'
+    logo_dark_path = os.path.join(app.root_path, 'static', 'images', logo_dark_filename)
+
+    if not custom_logo_dark_b64:
+        # No custom dark logo in DB; remove the static file if it exists
+        if os.path.exists(logo_dark_path):
+            try:
+                os.remove(logo_dark_path)
+                print(f"Removed existing {logo_dark_filename} as custom dark logo is disabled/empty.")
+            except OSError as ex:
+                print(f"Error removing {logo_dark_filename}: {ex}")
+    else:
+        # Custom dark logo exists in settings, write/overwrite the file
+        try:
+            # Decode the current base64 string
+            decoded = base64.b64decode(custom_logo_dark_b64)
+
+            # Write the decoded data to the file, overwriting if it exists
+            with open(logo_dark_path, 'wb') as f:
+                f.write(decoded)
+            print(f"Ensured {logo_dark_filename} exists and matches current settings.")
+
+        except (base64.binascii.Error, TypeError, OSError) as ex:
+            print(f"Failed to write/overwrite {logo_dark_filename}: {ex}")
+        except Exception as ex:
+            print(f"Unexpected error writing {logo_dark_filename}: {ex}")
 
 def ensure_custom_favicon_file_exists(app, settings):
     """

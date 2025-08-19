@@ -13,6 +13,13 @@ from json_schema_validation import validate_agent
 
 bpa = Blueprint('admin_agents', __name__)
 
+# === AGENT GUID GENERATION ENDPOINT ===
+@bpa.route('/api/agents/generate_id', methods=['GET'])
+@login_required
+def generate_agent_id():
+    """Generate a new GUID for agent creation (user or admin)."""
+    return jsonify({'id': str(uuid.uuid4())})
+
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])
 @login_required
@@ -43,22 +50,37 @@ def get_user_agents():
 
 @bpa.route('/api/user/agents', methods=['POST'])
 @login_required
+@enabled_required("allow_user_agents")
 def set_user_agents():
     user_id = get_current_user_id()
     agents = request.json if isinstance(request.json, list) else []
+    settings = get_settings()
+
+    # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
+    if not settings.get('allow_user_custom_agent_endpoints', False):
+        for agent in agents:
+            # APIM fields
+            for k in ['azure_agent_apim_gpt_endpoint', 'azure_agent_apim_gpt_subscription_key', 'azure_agent_apim_gpt_api_revision']:
+                agent.pop(k, None)
+            # Non-APIM fields
+            for k in ['azure_openai_gpt_endpoint', 'azure_openai_gpt_key', 'azure_openai_gpt_api_revision']:
+                agent.pop(k, None)
+
     # Remove any global agents before saving
     filtered_agents = []
     for agent in agents:
         if agent.get('is_global', False):
             continue  # Skip global agents
         agent['is_global'] = False  # Ensure user agents are not global
+        # --- Require at least one deployment field ---
+        #if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
+        #    return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         validation_error = validate_agent(agent)
         if validation_error:
             return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
         filtered_agents.append(agent)
 
     # Enforce global agent only if per_user_semantic_kernel is False
-    settings = get_settings()
     per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
     if not per_user_semantic_kernel:
         global_selected_agent = settings.get('global_selected_agent', {})
@@ -77,6 +99,7 @@ def set_user_agents():
 
 # Add a DELETE endpoint for user agents (if not present)
 @bpa.route('/api/user/agents/<agent_name>', methods=['DELETE'])
+@enabled_required("allow_user_agents")
 @login_required
 def delete_user_agent(agent_name):
     user_id = get_current_user_id()
@@ -85,14 +108,18 @@ def delete_user_agent(agent_name):
     agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
     if not agent_to_delete:
         return jsonify({'error': 'Agent not found.'}), 404
-    if agent_to_delete.get('default_agent'):
-        return jsonify({'error': 'Cannot delete your default agent. Please set another agent as default first.'}), 400
+    # Prevent deleting the agent that matches global_selected_agent
+    settings = get_settings()
+    global_selected_agent = settings.get('global_selected_agent', {})
+    global_selected_name = global_selected_agent.get('name')
+    if agent_to_delete.get('name') == global_selected_name:
+        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
     new_agents = [a for a in agents if a['name'] != agent_name]
-    # Enforce at least one default agent remains if any agents left
-    default_count = sum(1 for a in new_agents if a.get('default_agent'))
-    if len(new_agents) > 0 and default_count != 1:
-        # If the deleted agent was default, this should never happen due to above check
-        return jsonify({'error': 'There must be exactly one default agent.'}), 400
+    # Enforce that if there are agents left, one must match global_selected_agent
+    if len(new_agents) > 0:
+        found = any(a.get('name') == global_selected_name for a in new_agents)
+        if not found:
+            return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
     settings_to_update = user_settings.get('settings', {})
     settings_to_update['agents'] = new_agents
     update_user_settings(user_id, settings_to_update)
@@ -121,7 +148,7 @@ def set_user_selected_agent():
 
 @bpa.route('/api/user/agent/settings', methods=['GET'])
 @login_required
-def get_global_agent_settings():
+def get_global_agent_settings_for_users():
     return get_global_agent_settings(include_admin_extras=False)
 
 # === ADMIN AGENTS ENDPOINTS ===
@@ -198,10 +225,14 @@ def add_agent():
             if not new_agent.get('id'):
                 new_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
         agents.append(new_agent)
-        # Enforce exactly one default agent
-        default_count = sum(1 for a in agents if a.get('default_agent'))
-        if default_count != 1:
-            return jsonify({'error': 'There must be exactly one default agent.'}), 400
+        # Enforce that if there are agents, one must match global_selected_agent
+        settings = get_settings()
+        global_selected_agent = settings.get('global_selected_agent', {})
+        global_selected_name = global_selected_agent.get('name')
+        if len(agents) > 0:
+            found = any(a.get('name') == global_selected_name for a in agents)
+            if not found:
+                return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
         settings['semantic_kernel_agents'] = agents
         update_settings(settings)
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in new_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
@@ -278,15 +309,23 @@ def edit_agent(agent_name):
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})
             return jsonify({'error': validation_error}), 400
+        # --- Require at least one deployment field ---
+        if not (updated_agent.get('azure_openai_gpt_deployment') or updated_agent.get('azure_agent_apim_gpt_deployment')):
+            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent})
+            return jsonify({'error': 'Agent must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         for i, a in enumerate(agents):
             if a['name'] == agent_name:
                 # Preserve the existing id
                 updated_agent['id'] = a.get('id')
                 agents[i] = updated_agent
-                # Enforce exactly one default agent
-                default_count = sum(1 for a in agents if a.get('default_agent'))
-                if default_count != 1:
-                    return jsonify({'error': 'There must be exactly one default agent.'}), 400
+                # Enforce that if there are agents, one must match global_selected_agent
+                settings = get_settings()
+                global_selected_agent = settings.get('global_selected_agent', {})
+                global_selected_name = global_selected_agent.get('name')
+                if len(agents) > 0:
+                    found = any(a.get('name') == global_selected_name for a in agents)
+                    if not found:
+                        return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
                 settings['semantic_kernel_agents'] = agents
                 update_settings(settings)
                 log_event(
@@ -394,8 +433,12 @@ def get_global_agent_settings(include_admin_extras=False):
         "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),
         "global_selected_agent": settings.get("global_selected_agent", {}),
         "merge_global_semantic_kernel_with_workspace": settings.get("merge_global_semantic_kernel_with_workspace", False),
-        "enable_gpt_apim": settings.get("enable_gpt_apim", False),""
+        "enable_gpt_apim": settings.get("enable_gpt_apim", False),
         "azure_apim_gpt_deployment": settings.get("azure_apim_gpt_deployment", ""),
-        "gpt_model": settings.get("gpt_model", {}).get("selected", []),
+        "gpt_model": settings.get("gpt_model", {}),
+        "allow_user_agents": settings.get("allow_user_agents", False),
+        "allow_user_custom_agent_endpoints": settings.get("allow_user_custom_agent_endpoints", False),
+        "allow_group_agents": settings.get("allow_group_agents", False),
+        "allow_group_custom_agent_endpoints": settings.get("allow_group_custom_agent_endpoints", False),
     })
     

@@ -290,7 +290,7 @@ export function loadPublicDocs() {
           const publicDirectorySettings = userSettings.publicDirectorySettings || {};
           // Only include documents from visible public workspaces
           publicDocs = (data.documents || []).filter(
-            (doc) => publicDirectorySettings[doc.public_workspace_id] !== false
+            (doc) => publicDirectorySettings[doc.public_workspace_id] === true
           );
           // Now fetch the workspace list to build the ID->name mapping
           return fetch("/api/public_workspaces/discover")
@@ -302,7 +302,7 @@ export function loadPublicDocs() {
               });
               // Determine if only one public workspace is visible
               const visibleWorkspaceIds = Object.keys(publicDirectorySettings).filter(
-                id => publicDirectorySettings[id] !== false
+                id => publicDirectorySettings[id] === true
               );
               if (visibleWorkspaceIds.length === 1) {
                 activePublicWorkspaceName = publicWorkspaceIdToName[visibleWorkspaceIds[0]] || "Unknown";

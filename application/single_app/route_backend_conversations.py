@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from functions_conversation_metadata import get_conversation_metadata
 
 def register_route_backend_conversations(app):
 
@@ -60,7 +61,10 @@ def register_route_backend_conversations(app):
             'id': conversation_id,
             'user_id': user_id,
             'last_updated': datetime.utcnow().isoformat(),
-            'title': 'New Conversation'
+            'title': 'New Conversation',
+            'context': [],
+            'tags': [],
+            'strict': False
         }
         cosmos_conversations_container.upsert_item(conversation_item)
 
@@ -250,3 +254,43 @@ def register_route_backend_conversations(app):
             "deleted_count": success_count,
             "failed_ids": failed_ids
         }), 200
+
+    @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
+    @login_required
+    @user_required
+    def get_conversation_metadata_api(conversation_id):
+        """
+        Get detailed metadata for a conversation including context, tags, and other information.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Return the full conversation metadata
+            return jsonify({
+                "conversation_id": conversation_id,
+                "title": conversation_item.get('title', ''),
+                "user_id": conversation_item.get('user_id', ''),
+                "last_updated": conversation_item.get('last_updated', ''),
+                "classification": conversation_item.get('classification', []),
+                "context": conversation_item.get('context', []),
+                "tags": conversation_item.get('tags', []),
+                "strict": conversation_item.get('strict', False)
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error retrieving conversation metadata: {e}")
+            return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500

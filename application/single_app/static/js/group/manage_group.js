@@ -121,7 +121,7 @@ $(document).ready(function () {
           method: "DELETE",
           success: function (resp) {
             alert("Group deleted successfully!");
-            window.location.href = "/";
+            window.location.href = "/my_groups";
           },
           error: function (err) {
             console.error(err);

@@ -2,7 +2,7 @@
 
 # Simple Chat
 
-![logo](./images/logo.png)
+![logo](./images/logo-wide.png)
 
 *   [Jump to Table of Contents](#table-of-contents)
 

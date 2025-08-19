@@ -48,13 +48,14 @@
 Pre-deployment Notes
 ============================================
 - Create a new Azure Open AI instance with the needed model deployments.
-- Have an Azure Container Registry (ACR) created and the name is set in the script.
+- Have an Azure Container Registry (ACR) created, admin user enabled, and the name is set in the script.
 - Deploy an application image to the ACR.
 - LOGIN to Azure Cli before running this script. See "LOGIN NOTES" above.
 
 ============================================
 Manual changes post-deployment.
 ============================================
+
 STEP 1) Azure App Service > Authentication > Add identity provider
     - Setup identity per instructions in the README.md file. (Azure CLI cannot do this in gov yet)
         - Identity provider: Microsoft
@@ -80,7 +81,7 @@ STEP 3) App Service
     - Navigate to Web UI url in a browser 
     - In the web ui, click on "Admin" > "app settings" to configure your app settings.
 
-STEP 4) Configure Azure Searxh indexes
+STEP 4) Configure Azure Search indexes
     #Deploy index as json files to Azure Search
     file: ai_search-index-group.json
     file: ai_search-index-user.json
@@ -90,33 +91,43 @@ STEP 5) Entra Security Groups
     you will need to assign them to the appropriate Enterprise Application
     and then add members to the Security Groups.
 
-STEP 6) Test Web UI fully.
+STEP 6) Cosmos DB
+    - Ensure disableLocalAuth set to false (unless using RBAC, if using key based auth, disableLocalAuth must be false)
+    - Ensure the firewall set to all networks (unless using private endpoints)
+
+STEP 7) Azure OpenAI 
+    - Configure a custom domain on you Azure OpenAI resources.  Otherwise, you will not be able to retrieve your OpenAI models
+    and add your OpenAI endpoint. 
+
+STEP 8) Test Web UI fully.
 #>
 
 $PSModuleAutoloadingPreference = "All"
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 #---------------------------------------------------------------------------------------------
 # Configuration Variables - MODIFY THESE VALUES AS NEEDED
 #---------------------------------------------------------------------------------------------
 $globalWhichAzurePlatform = "AzureUSGovernment" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
-$paramTenantId = "6bc5b33e-bc05-493c-b076-8f8ce1331511"
-$paramLocation = "usgovvirginia" # Primary Azure Government region for deployments (e.g., usgovvirginia, usgovarizona, usgovtexas)
-$paramResourceOwnerId = "John Doe" # used for tagging resources
-$paramEnvironment = "sbx"        # Environment identifier (e.g., dev, test, prod, uat)
-$paramBaseName = "marge2"         # A short base name for your organization or project (e.g., contoso1, projectx2)
-$ACR_NAME = "acr8000" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
-$IMAGE_NAME = "simple-chat:2025-05-15_7" # Replace with your image name
+$paramTenantId = "" # Tenant ID
+$paramLocation = "EastUS2" # Primary Azure Government region for deployments (e.g., usgovvirginia, usgovarizona, usgovtexas)
+$paramResourceOwnerId = "" # used for tagging resources
+$paramEnvironment = "prd"  # Environment identifier (e.g., dev, test, prod, uat)
+$paramBaseName = ""  # A short base name for your organization or project (e.g., contoso1, projectx2)
+$ACR_NAME = "" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
+$IMAGE_NAME = "" # Replace with your image name
 
-$param_UseExisting_OpenAi_Instance = $true # False => Not working yet.
-$param_Existing_AzureOpenAi_ResourceName = "azureopenai1" # Azure OpenAI resource name
-$param_Existing_AzureOpenAi_ResourceGroupName = "azureopenairg" # Azure OpenAI resource group name
+$param_UseExisting_OpenAi_Instance = $true
+$param_Existing_AzureOpenAi_ResourceName = "" # Azure OpenAI resource name
+$param_Existing_AzureOpenAi_ResourceGroupName = "" # Azure OpenAI resource group name
+$param_Existing_AzureOpenAi_SubscriptionId = "" # In case the resource is in another subscription
 #$param_Existing_AzureOpenAi_Deployment_Model = "gpt-4o" # Azure OpenAI deployment name
 #$param_Existing_AzureOpenAi_Deployment_Embeddings = "text-embedding-ada-002" # Azure OpenAI deployment model name
-#$param_Existing_AzureOpenAi_SubscriptionId = "4c1ccd07-9ebc-4701-b87f-c249066e0905" # MUST BE IN SAME SUBSCRIPTION!
 
 $paramCreateEntraSecurityGroups = $true # Set to true to create Entra ID security groups
+$param_Existing_ResourceGroupName = "" # Leave empty if not using an existing resource group name, one will be dynamically generated
+
 
 
 #---------------------------------------------------------------------------------------------
@@ -126,22 +137,28 @@ $paramCreateEntraSecurityGroups = $true # Set to true to create Entra ID securit
 # Azure Government specific settings (DO NOT MODIFY)
 if ($globalWhichAzurePlatform -eq "AzureCloud") {
     $paramCosmosDbUrlTemplate = "https://{0}.documents.azure.com:443/"
-    $ACR_BASE_URL = "$ACR_NAME.azurecr.us"
-    $paramRegistryServer = "https://acr8000.azurecr.io"
+    $ACR_BASE_URL = "$ACR_NAME.azurecr.io"
+    $paramRegistryServer = "https://$ACR_NAME.azurecr.io"
     $APPREG_REDIRECT_URI = "https://{0}.azurewebsites.net/.auth/login/aad/callback"
     $APPREG_REDIRECT_URI1 = "https://{0}.azurewebsites.net/getAToken"
     $APPREG_LOGOUT_URL = "https://{0}.azurewebsites.net/logout"
     $paramGraphUrl = "https://graph.microsoft.com"
-    $param_AzureOpenAi_Url = "https://{0}.openai.azure.com/" -f $param_Existing_AzureOpenAi_ResourceName
+    $paramArmUrl = "https://management.azure.com/"
+    $param_AzureOpenAi_Url = "https://{0}.openai.azure.com/"
+    $param_AiSearch_Url = "https://{0}.search.windows.net"
+    $param_AppService_Environment = "public"
 } elseif ($globalWhichAzurePlatform -eq "AzureUSGovernment") {
     $paramCosmosDbUrlTemplate = "https://{0}.documents.azure.us:443/"
     $ACR_BASE_URL = "$ACR_NAME.azurecr.us"
-    $paramRegistryServer = "https://acr8000.azurecr.us"
+    $paramRegistryServer = "https://$ACR_NAME.azurecr.us"
     $APPREG_REDIRECT_URI = "https://{0}.azurewebsites.us/.auth/login/aad/callback"
     $APPREG_REDIRECT_URI1 = "https://{0}.azurewebsites.us/getAToken"
     $APPREG_LOGOUT_URL = "https://{0}.azurewebsites.us/logout"
     $paramGraphUrl = "https://graph.microsoft.us"
-    $param_AzureOpenAi_Url = "https://{0}.openai.azure.us/" -f $param_Existing_AzureOpenAi_ResourceName
+    $paramArmUrl = "https://management.core.usgovcloudapi.net/"
+    $param_AzureOpenAi_Url = "https://{0}.openai.azure.us/"
+    $param_AiSearch_Url = "https://{0}.search.azure.us"
+    $param_AppService_Environment = "usgovernment"
 } elseif ($globalWhichAzurePlatform -eq "AzureSecret") {
     # SET THESE VALUES FOR il6 (information is tented)
     $paramCosmosDbUrlTemplate = ""
@@ -278,8 +295,12 @@ function CosmosDb_CreateContainer($databaseName, $containerName)
 #---------------------------------------------------------------------------------------------
 # Construct Resource Names
 #---------------------------------------------------------------------------------------------
-$rgTemp = Get-ResourceName -ResourceTypeSuffix $paramResourceGroupNameSuffix
-$resourceGroupName = "sc-" + $rgTemp
+if([string]::IsNullOrEmpty($param_Existing_ResourceGroupName)){
+    $rgTemp = Get-ResourceName -ResourceTypeSuffix $paramResourceGroupNameSuffix
+    $resourceGroupName = "sc-" + $rgTemp
+} else {
+    $resourceGroupName = $param_Existing_ResourceGroupName
+}
 $appRegistrationName = Get-ResourceName -ResourceTypeSuffix $paramEntraAppRegistrationSuffix
 $appServicePlanName = Get-ResourceName -ResourceTypeSuffix $paramAppServicePlanSuffix
 $appServiceName = Get-ResourceName -ResourceTypeSuffix $paramAppServiceSuffix # Will be part of FQDN, needs to be unique
@@ -316,6 +337,28 @@ Write-Host "--------------------------------------------------------------------
 
 cd $PSScriptRoot #Do Not Modify
 
+# Check the ACR configuration
+Write-Host "`n=====> Checking ACR: $($ACR_NAME) for admin user enabled..."
+if ((az acr show --name $ACR_NAME --query "adminUserEnabled" --output tsv) -eq 'false') {
+    Write-Host "Enabling admin user for ACR: $($ACR_NAME)..."
+    az acr update --name $ACR_NAME --admin-enabled true
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to enable admin user for ACR '$($ACR_NAME)'. Ensure you have permissions." ; exit 1 } # Basic error check
+} else {
+    Write-Host "ACR: $($ACR_NAME) admin user is already enabled."
+}
+
+# Check CosmosDB provider state
+$cosmosDbProviderState = az provider show --namespace Microsoft.DocumentDB --query "registrationState" --output tsv
+if ($cosmosDbProviderState -ne "Registered") {
+    Write-Host "Registering CosmosDB provider..."
+    az provider register --namespace Microsoft.DocumentDB
+
+    while($cosmosDbProviderState -ne "Registered") {
+        Start-Sleep -Seconds 5
+        $cosmosDbProviderState = az provider show --namespace Microsoft.DocumentDB --query "registrationState" --output tsv
+    }
+}
+
 $global_userType = az account show --query "user.type" -o tsv
 if ($global_userType -eq "servicePrincipal") {
     Write-Output "Logged in as a service principal."
@@ -331,11 +374,11 @@ if ($global_userType -eq "servicePrincipal") {
 }
 Write-Host "Logged in as: $currentUserObjectId" -ForegroundColor Yellow
 
-Write-Host "`nGetting Access Token Refreshed for: https://management.core.usgovcloudapi.net/" -ForegroundColor Yellow
-az account get-access-token --resource https://management.core.usgovcloudapi.net/ --output none
+Write-Host "`nGetting Access Token Refreshed for: $paramArmUrl" -ForegroundColor Yellow
+az account get-access-token --resource $paramArmUrl --output none
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get ARM  Access Token." ; exit 1 } # Basic error check
-Write-Host "`nGetting Access Token Refreshed for: https://graph.microsoft.us/" -ForegroundColor Yellow
-az account get-access-token --resource https://graph.microsoft.us/ --output none
+Write-Host "`nGetting Access Token Refreshed for: $paramGraphUrl" -ForegroundColor Yellow
+$userGraphToken = az account get-access-token --resource $paramGraphUrl -o json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get MSGraph Access Token."; exit 1 } # Basic error check
 
 # Find ACR registry
@@ -402,30 +445,36 @@ if (-not $logAnalyticsWorkspaceId) {
 
 
 # --- Create Key Vault ---
-Write-Host "`n=====> Creating Key Vault: $($keyVaultName)..."
+Write-Host "`n=====> Getting Key Vault: $($keyVaultName)..."
 # Check if the Key Vault exists
 $vault = az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
 if (-not $vault) {
-    Write-Host "Key Vault not found. Attempting to recover..."
+    Write-Host "Key Vault not found. Checking to see if its deleted..."
     # Attempt to recover the deleted Key Vault
-    az keyvault recover --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation
-    Write-Host "Key Vault recovered, waiting 30 seconds to make sure it is ready..."
-    Start-Sleep -Seconds 60
-    Write-Host "Key Vault 60 second wait over..."
+    $kv = az keyvault recover --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation
+    if($kv){
+        Write-Host "Key Vault recovered, waiting 30 seconds to make sure it is ready..."
+        Start-Sleep -Seconds 60
+        Write-Host "Key Vault 60 second wait over..."
+    }
+    else{
+        Write-Host "Key Vault was not in a deleted state"
+    }
 } else {
     Write-Host "Key Vault '$keyVaultName' already exists."
 }
 
 Write-Host "`n=====> Getting Key Vault: $($keyVaultName)..."
-$vault = az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
+$vault = az keyvault show --name $keyVaultName --resource-group $resourceGroupName 2>$null | ConvertFrom-Json
 if (-not $vault) {
+    Write-Host "`n=====> Creating Key Vault: $($keyVaultName)..."
     # Get current user's object ID to grant permissions
     $currentUserObjectId = $(az ad signed-in-user show --query "id" -o tsv)
     if (-not $currentUserObjectId) {
         Write-Warning "Could not retrieve current user's object ID. Key Vault permissions will need to be set manually."
-        az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization false # Using access policies if RBAC fails for user
+        $vault = az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization false | ConvertFrom-Json # Using access policies if RBAC fails for user
     } else {
-        az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization true # Recommended: Use RBAC
+        $vault = az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization true | ConvertFrom-Json # Recommended: Use RBAC
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Key Vault '$($keyVaultName)' created successfully with RBAC. Assigning 'Key Vault Secrets Officer' role to current user..."
             # Wait a bit for KV to be fully provisioned before assigning role
@@ -434,7 +483,7 @@ if (-not $vault) {
             if ($LASTEXITCODE -ne 0) { Write-Error "Failed to assign 'Key Vault Secrets Officer' role to current user for Key Vault '$($keyVaultName)'. You may need to do this manually."}
         } else {
             Write-Warning "Failed to create Key Vault '$($keyVaultName)' with RBAC. Trying with access policies..."
-            az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization false
+            $vault = az keyvault create --name $keyVaultName --resource-group $resourceGroupName --location $paramLocation --sku $paramKeyVaultSku --enable-rbac-authorization false | ConvertFrom-Json
             if ($LASTEXITCODE -eq 0 -and $currentUserObjectId) {
                 Write-Host "Key Vault '$($keyVaultName)' created with access policies. Setting secret permissions for current user..."
                 az keyvault set-policy --name $keyVaultName --resource-group $resourceGroupName --object-id $currentUserObjectId --secret-permissions get list set delete
@@ -479,7 +528,9 @@ $storageAccount = az storage account show --name $storageAccountName --resource-
 if (-not $storageAccount) {
     Write-Host "Storage account does not exist. Creating..."
     Write-Host "`n=====> Creating Storage Account: $($storageAccountName)..."
-    az storage account create --name $storageAccountName --resource-group $resourceGroupName --location $paramLocation --sku $paramStorageSku --kind $paramStorageKind --access-tier $paramStorageAccessTier --allow-blob-public-access false --tags $tagsJson
+    New-AzStorageAccount -Name $storageAccountName -ResourceGroupName $resourceGroupName -Location $paramLocation -SkuName $paramStorageSku -Kind $paramStorageKind -AccessTier $paramStorageAccessTier -AllowBlobPublicAccess $false -Tags $tags
+    # az command was failing with subscription not found
+    #az storage account create --name $storageAccountName --resource-group $resourceGroupName --location $paramLocation --sku $paramStorageSku --kind $paramStorageKind --access-tier $paramStorageAccessTier --allow-blob-public-access false --tags $tagsJson
     if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create Storage Account '$($storageAccountName)'." }
     else { Write-Host "Storage Account '$($storageAccountName)' created successfully." }
 } else {
@@ -617,7 +668,7 @@ if (-not $appRegistration -or $appRegistration.Count -eq 0) {
 
     Write-Host "App [$appRegistrationName] logout url set: [$tempAppServiceLogoutUrl]..."
     #az ad app update --id $($appRegistration.id) --web-logout-uri "$tempAppServiceLogoutUrl"
-    $appReg = az ad app show --id $($appRegistration.appId) | ConvertFrom-Json -Depth 10
+    $appReg = az ad app show --id $($appRegistration.appId) | ConvertFrom-Json
     $body = @{ web = @{ logoutUrl = "$tempAppServiceLogoutUrl" } } | ConvertTo-Json -Compress
     az rest --method PATCH --uri ($paramGraphUrl + '/v1.0/applications/{0}' -f $appReg.id) --headers 'Content-Type=application/json' --body ($body -replace '"', '\"') 
 
@@ -659,8 +710,10 @@ if (-not $account) {
     Write-Host "Cosmos DB account does not exist. Creating..."
     az cosmosdb create --name $cosmosDbName `
     --resource-group $resourceGroupName `
+    --locations regionName=$paramLocation `
     --kind $paramCosmosDbKind `
     --enable-multiple-write-locations false `
+    --public-network-access Enabled `
     --default-consistency-level 'Session' `
     --tags $tagsJson `
     --enable-burst-capacity True `
@@ -671,6 +724,8 @@ if (-not $account) {
 } else {
     Write-Host "Cosmos DB account '$cosmosDbName' already exists."
 }
+
+az resource update --resource-group $resourceGroupName --name $cosmosDbName --resource-type "Microsoft.DocumentDB/databaseAccounts" --set properties.disableLocalAuth=false
 
 # Create cosmos db database and collection
 # TODO: SHOULD I DO THIS OR NOT? Web UI creates this.
@@ -701,11 +756,13 @@ if (-not $account) {
 # Note: Azure OpenAI requires registration and sometimes specific SKU availability.
 # This command might fail if the subscription is not enabled for OpenAI or if the SKU isn't available in the region.
 
+$openAiUrl = $null
 if ($param_UseExisting_OpenAi_Instance -eq $true) {
     Write-Host "`n=====> Using existing Azure OpenAI Service: $($param_Existing_AzureOpenAi_ResourceName)..."
     #Write-Host "SubscriptionId: $param_Existing_AzureOpenAi_SubscriptionId"
     Write-Host "Resource Group name: $param_Existing_AzureOpenAi_ResourceGroupName"
-    Write-Host "Open Ai Url: $param_AzureOpenAi_Url"
+    $openAiUrl = $param_AzureOpenAi_Url -f $param_Existing_AzureOpenAi_ResourceName
+    
 } else {
     Write-Host "`n=====> Creating Azure OpenAI Service: $($openAIName)..."
     # Check if the Cognitive Services account exists
@@ -718,28 +775,30 @@ if ($param_UseExisting_OpenAi_Instance -eq $true) {
     } else {
         Write-Host "Cognitive Services account '$openAIName' already exists."
     }
+    $openAiUrl = $param_AzureOpenAi_Url -f $openAIName
 }
 
+Write-Host "Open Ai Url: $openAiUrl"
 
 # --- Create Document Intelligence Service ---
 Write-Host "`n=====> Creating Document Intelligence Service: $($docIntelName)..."
-$account = az cognitiveservices account show --name $docIntelName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
-if (-not $account) {
+$cogServicesAccount = az cognitiveservices account show --name $docIntelName --resource-group $resourceGroupName 2>$null | ConvertFrom-Json
+if (-not $cogServicesAccount) {
     Write-Host "Cognitive Services account does not exist. Creating..."
-    az cognitiveservices account create --name $docIntelName --resource-group $resourceGroupName --location $paramLocation --kind "FormRecognizer" --custom-domain $docIntelName --sku $paramCognitiveServicesSku --tags $tagsJson
+    $cogServicesAccount = az cognitiveservices account create --name $docIntelName --resource-group $resourceGroupName --location $paramLocation --kind "FormRecognizer" --custom-domain $docIntelName --sku $paramCognitiveServicesSku --tags $tagsJson | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create Document Intelligence Service '$($docIntelName)'." }
     else { Write-Host "Document Intelligence Service '$($docIntelName)' created successfully." }
 } else {
-    Write-Host "Cognitive Services account '$openAIName' already exists."
+    Write-Host "Cognitive Services account '$docIntelName' already exists."
 }
 
 # --- Create Azure AI Search Service ---
 Write-Host "`n=====> Creating Azure AI Search Service: $($searchServiceName)..."
 # Check if the search service exists
-$searchService = az search service show --name $searchServiceName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
+$searchService = az search service show --name $searchServiceName --resource-group $resourceGroupName 2>$null | ConvertFrom-Json
 if (-not $searchService) {
     Write-Host "Search service does not exist. Creating..."
-    az search service create --name $searchServiceName --resource-group $resourceGroupName --location $paramLocation --sku $paramSearchSku --replica-count $paramSearchReplicaCount --partition-count $paramSearchPartitionCount --public-network-access enabled # or "disabled"
+    $searchService = az search service create --name $searchServiceName --resource-group $resourceGroupName --location $paramLocation --sku $paramSearchSku --replica-count $paramSearchReplicaCount --partition-count $paramSearchPartitionCount --public-network-access enabled | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create Azure AI Search Service '$($searchServiceName)'. Check SKU availability and naming uniqueness." }
     else { Write-Host "Azure AI Search Service '$($searchServiceName)' created successfully." }
 
@@ -762,27 +821,30 @@ if (-not $searchService) {
     Write-Host "Search service '$searchServiceName' already exists."
 }
 
+$searchServiceUrl = $param_AiSearch_Url -f $searchServiceName
 
-# --- Create Azure AI Search Service ---
+# --- Create App Service Settings ---
 Write-Host "`n=====> Setting Azure App Service App Settings : $($appServiceName)..."
 $paramCosmosDbPrimaryKey = $(az cosmosdb keys list --name $cosmosDbName --resource-group $resourceGroupName --query primaryMasterKey --output tsv)
 
-$fileName = "C:\temp\aiassistant-deployer2025\simplechat\deployer\azurecli\appSettings.json"
+$fileName = ".\appSettings.json"
 $jsonAsText = Get-Content -Path $fileName -Raw
-$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_ENDPOINT>", "usgovernment")
-$jsonAsText = $jsonAsText.Replace("<TOKEN_SCM_DO_BUILD_DURING_DEPLOYMENT>", "true")
+$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_ENVIRONMENT>", "$param_AppService_Environment")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_COSMOS_AUTHENTICATION_TYPE>", "key")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_COSMOS_ENDPOINT>", "$paramCosmosDbUrl")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_COSMOS_KEY>", "$paramCosmosDbPrimaryKey")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_TENANT_ID>", "$paramTenantId")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_CLIENT_ID>", "$paramEntraAppRegistrationClientId")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_SECRET_KEY>", "$paramEntraAppRegistrationSecret")
-#$jsonAsText = $jsonAsText.Replace("<TOKEN_MICROSOFT_PROVIDER_AUTHENTICATION_SECRET>", "$paramEntraAppRegistrationSecret_MicrosoftProvider")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_WEBSITE_AUTH_AAD_ALLOWED_TENANTS>", "$paramTenantId")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_DOCKER_REGISTRY_SERVER_URL>", "$paramRegistryServer")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_DOCKER_REGISTRY_SERVER_USERNAME>", "$paramRegistryServerUsername")
 $jsonAsText = $jsonAsText.Replace("<TOKEN_DOCKER_REGISTRY_SERVER_PASSWORD>", "$paramRegistryServerPassword")
-$jsonAsText | Out-File -FilePath "C:\temp\aiassistant-deployer2025\simplechat\deployer\azurecli\appsettings-temp.json" -ErrorAction Stop
+$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_OPENAI_ENDPOINT>", "$openAiUrl")
+$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_DOCUMENTINTELLIGENCE_ENDPOINT>", "$($cogServicesAccount.properties.endpoint)")
+$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_SEARCH_SERVICE_ENDPOINT>", "$searchServiceUrl")
+$jsonAsText = $jsonAsText.Replace("<TOKEN_AZURE_KEY_VAULT_ENDPOINT>", "$($vault.properties.vaultUri)")
+$jsonAsText | Out-File -FilePath ".\appsettings-temp.json" -ErrorAction Stop
 az webapp config appsettings set --resource-group $resourceGroupName --name $appServiceName --settings '@appsettings-temp.json'
 if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to update Azure App Service App Settings." }
 else { Write-Host "Azure App Service App Settings configured." }
@@ -817,7 +879,9 @@ Write-Host "`nGetting Cognitive Services Account Open AI"
 if ($param_UseExisting_OpenAi_Instance -eq $false) {
     $resourceId = az cognitiveservices account show --name $openAIName --resource-group $resourceGroupName --query "id" --output tsv
 } else {
-    $resourceId = az cognitiveservices account show --name $param_Existing_AzureOpenAi_ResourceName --resource-group $param_Existing_AzureOpenAi_ResourceGroupName --query "id" --output tsv
+    $resourceId = az resource show --name $param_Existing_AzureOpenAi_ResourceName --resource-group $param_Existing_AzureOpenAi_ResourceGroupName `
+        --resource-type 'Microsoft.CognitiveServices/accounts' --subscription $param_Existing_AzureOpenAi_SubscriptionId --query "id"--output tsv
+
 }
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to find Open AI resource [$openAIName]." }
 else { Write-Host "Found Open AI resource [$openAIName]." }
@@ -828,7 +892,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Getting RBAC settings for Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -837,7 +901,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -848,7 +912,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Getting RBAC settings for Cognitive Services Open AI Account"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -857,7 +921,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -868,7 +932,7 @@ $assigneeObjectId = $appRegistrationIdentity_SP_AppId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -877,7 +941,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -887,7 +951,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -896,7 +960,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -907,7 +971,7 @@ $assigneeObjectId = $appRegistrationIdentity_SP_AppId
 Write-Host "Checking RBAC on Cognitive Services Open AI User for [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -916,7 +980,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -926,7 +990,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -935,7 +999,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -945,7 +1009,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -954,7 +1018,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -974,7 +1038,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Cosmos DB Account"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -983,7 +1047,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1009,7 +1073,7 @@ $assigneeObjectId = $managedIdentity_PrincipalId
 Write-Host "Checking RBAC on Storage Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1018,7 +1082,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }
@@ -1027,7 +1091,7 @@ $assigneeObjectId = $appService_SystemManagedIdentity_ObjectId
 Write-Host "Checking RBAC on Storage Account [$assigneeObjectId]"
 $assignment = az role assignment list `
   --assignee $assigneeObjectId `
-  --scope $resourceId `
+  --scope "$resourceId" `
   --query "[?roleDefinitionName=='$roleName']" `
   --output json | ConvertFrom-Json
 
@@ -1036,7 +1100,7 @@ if (-not $assignment) {
     az role assignment create `
       --assignee $assigneeObjectId `
       --role "$roleName" `
-      --scope $resourceId
+      --scope "$resourceId"
 } else {
     Write-Host "RBAC assignment already exists."
 }

@@ -54,7 +54,6 @@ def register_route_backend_public_workspaces(app):
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
-    @create_public_workspace_role_required
     def discover_public_workspaces():
         """
         GET /api/public_workspaces/discover?search=<term>
@@ -84,7 +83,6 @@ def register_route_backend_public_workspaces(app):
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
-    @create_public_workspace_role_required
     def api_list_public_workspaces():
         """
         GET /api/public_workspaces
@@ -179,7 +177,6 @@ def register_route_backend_public_workspaces(app):
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
-    @create_public_workspace_role_required
     def api_get_public_workspace(ws_id):
         """
         GET /api/public_workspaces/<ws_id>
@@ -193,7 +190,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>", methods=["PATCH", "PUT"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_update_public_workspace(ws_id):
         """
@@ -223,7 +219,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>", methods=["DELETE"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_delete_public_workspace(ws_id):
         """
@@ -245,7 +240,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/setActive", methods=["PATCH"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_set_active_public_workspace():
         """
@@ -279,7 +273,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/requests", methods=["GET"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_view_public_requests(ws_id):
         """
@@ -306,7 +299,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/requests", methods=["POST"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_request_public_workspace(ws_id):
         """
@@ -340,7 +332,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/requests/<req_id>", methods=["PATCH"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_handle_public_request(ws_id, req_id):
         """
@@ -387,7 +378,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/members", methods=["GET"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_list_public_members(ws_id):
         """
@@ -454,7 +444,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/members", methods=["POST"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_add_public_member(ws_id):
         """
@@ -498,7 +487,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["DELETE"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_remove_public_member(ws_id, member_id):
         """
@@ -541,7 +529,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["PATCH"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_update_public_member_role(ws_id, member_id):
         """
@@ -593,7 +580,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/transferOwnership", methods=["PATCH"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_transfer_public_ownership(ws_id):
         """
@@ -659,7 +645,6 @@ def register_route_backend_public_workspaces(app):
     @app.route("/api/public_workspaces/<ws_id>/fileCount", methods=["GET"])
     @login_required
     @user_required
-    @create_public_workspace_role_required
     @enabled_required("enable_public_workspaces")
     def api_public_file_count(ws_id):
         """

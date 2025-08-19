@@ -18,6 +18,40 @@ app_settings.app_title }} {% endblock %} {% block head %}
     table-layout: fixed;
     width: 100%;
   }
+  
+  /* Uniform width for action buttons (Approve, Delete, Chat) */
+  .action-btn-wide {
+    min-width: 90px;
+  }
+  
+  /* Styles for document checkboxes */
+  .document-checkbox {
+    cursor: pointer;
+    min-width: 18px;
+    min-height: 18px;
+    display: none; /* Hide checkboxes by default */
+  }
+  
+  /* Show checkboxes when in selection mode */
+  .selection-mode .document-checkbox {
+    display: block;
+  }
+  
+  /* Ensure the delete button is properly styled */
+  #group-delete-selected-btn, #group-remove-selected-btn {
+    transition: all 0.3s ease;
+  }
+  
+  /* Add some padding to the left when in selection mode */
+  .selection-mode .document-row {
+    padding-left: 0.5rem;
+  }
+  
+  /* Dropdown menu for actions */
+  .action-dropdown .dropdown-toggle::after {
+    display: none;
+  }
+  
   #group-documents-table th:nth-child(1), /* Expand */
       #group-documents-table td:nth-child(1) {
     width: 50px;
@@ -41,7 +75,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
   #group-documents-table th:nth-child(4), /* Actions */
       #group-documents-table td:nth-child(4) {
-    width: 200px;
+    width: 280px; /* Increased to fit dropdown and bulk actions */
   }
   .classification-badge {
     display: inline-block;
@@ -115,8 +149,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% endblock %} {% block content %}
 <div class="container">
   <h2>Group Workspace</h2>
-  <h3 id="active-group-name" class="mb-3" style="display: none"></h3>
-  <!-- Populated by JS -->
+  <!-- Removed redundant active-group-name heading -->
 
   <!-- Group Selector and Role Display -->
   <div class="row mb-3">
@@ -129,7 +162,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 data-bs-toggle="dropdown" 
                 aria-expanded="false">
           <span class="selected-group-text">Select a group...</span>
-          <i class="bi bi-chevron-down"></i>
         </button>
         <div class="dropdown-menu w-100" id="group-dropdown-menu">
           <div class="px-2 group-search-container d-none">
@@ -202,143 +234,145 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-legacy-update-prompt-placeholder"></div>
         <h5>Group Documents</h5>
         <p class="text-muted small">
-          Documents uploaded here are visible to all group members. Allowed
-          extensions: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg,
-          png, bmp, tiff, tif, heif, md, json {% if enable_video_file_support in
-          [True, 'True', 'true'] %} , mp4, mov, avi, wmv, mkv, webm {% endif %}
-          {% if enable_audio_file_support in [True, 'True', 'true'] %} , mp3,
-          wav, ogg, aac, flac, m4a {% endif %}
+          Documents uploaded here are visible to all group members.
         </p>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
-          <input type="file" id="file-input" multiple />
-          <!-- Allow multiple -->
-          <button id="upload-btn" class="btn btn-primary">
-            Upload Document(s)
-          </button>
-          <span id="upload-status" class="ms-2 text-muted small"></span>
+          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+            <input type="file" id="file-input" multiple style="display:none;" />
+            <div class="upload-area-content">
+              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
+              <div class="small text-muted mt-1">Allowed: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg, png, bmp, tiff, tif, heif, md, json{% if enable_video_file_support in [True, 'True', 'true'] %}, mp4, mov, avi, wmv, mkv, webm{% endif %}{% if enable_audio_file_support in [True, 'True', 'true'] %}, mp3, wav, ogg, aac, flac, m4a{% endif %}</div>
+            </div>
+          </div>
+          <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
           <!-- Per-file upload progress bars -->
-          <div id="group-upload-progress-container" class="mt-2"></div>
+          <div id="group-upload-progress-container" class="mt-2" style="display:none;"></div>
         </div>
-        <hr id="upload-hr" style="display: none" />
+        <!-- Removed <hr id="upload-hr"> to reduce whitespace -->
         <!-- Also controlled by JS -->
 
         <!-- Document Filters -->
-        <!-- Filter Row 1: Main Search & Classification -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          {% if enable_document_classification in [True, 'True', 'true'] %}
-          <div class="col-md-4">
-            <label for="group-docs-search-input" class="form-label mb-1 small"
-              >Search File Name/Title:</label
-            >
-            <input
-              type="search"
-              id="group-docs-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#group-docs-filters-collapse" aria-expanded="false" aria-controls="group-docs-filters-collapse" id="group-docs-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="group-docs-filters-collapse">
+          <!-- Filter Row 1: Main Search & Classification -->
+          <div class="row mb-3 align-items-end filter-controls-row">
+            {% if enable_document_classification in [True, 'True', 'true'] %}
+            <div class="col-md-4">
+              <label for="group-docs-search-input" class="form-label mb-1 small"
+                >Search File Name/Title:</label
+              >
+              <input
+                type="search"
+                id="group-docs-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-classification-filter"
+                class="form-label mb-1 small"
+                >Filter by Classification:</label
+              >
+              <select
+                id="group-docs-classification-filter"
+                class="form-select form-select-sm"
+              >
+                <option value="">(All Classifications)</option>
+                <option value="none">(No Classification)</option>
+                {% for cat in settings.document_classification_categories %}
+                <option value="{{ cat.label }}">{{ cat.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-docs-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-docs-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
+            {% else %}
+            <div class="col-md-7">
+              <label for="group-docs-search-input" class="form-label mb-1 small"
+                >Search File Name/Title:</label
+              >
+              <input
+                type="search"
+                id="group-docs-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-docs-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-docs-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
+            {% endif %}
           </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-classification-filter"
-              class="form-label mb-1 small"
-              >Filter by Classification:</label
-            >
-            <select
-              id="group-docs-classification-filter"
-              class="form-select form-select-sm"
-            >
-              <option value="">(All Classifications)</option>
-              <option value="none">(No Classification)</option>
-              {% for cat in settings.document_classification_categories %}
-              <option value="{{ cat.label }}">{{ cat.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-docs-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-docs-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
-          </div>
-          {% else %}
-          <div class="col-md-7">
-            <label for="group-docs-search-input" class="form-label mb-1 small"
-              >Search File Name/Title:</label
-            >
-            <input
-              type="search"
-              id="group-docs-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
-          </div>
-          <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-docs-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-docs-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
-          </div>
-          {% endif %}
-        </div>
-
-        <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) & Buttons -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          <div class="col-md-3">
-            <label for="group-docs-author-filter" class="form-label mb-1 small"
-              >Search Authors:</label
-            >
-            <input
-              type="search"
-              id="group-docs-author-filter"
-              class="form-control form-control-sm"
-              placeholder="Author name..."
-            />
-          </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-keywords-filter"
-              class="form-label mb-1 small"
-              >Search Keywords:</label
-            >
-            <input
-              type="search"
-              id="group-docs-keywords-filter"
-              class="form-control form-control-sm"
-              placeholder="Keyword..."
-            />
-          </div>
-          <div class="col-md-3">
-            <label
-              for="group-docs-abstract-filter"
-              class="form-label mb-1 small"
-              >Search Abstract:</label
-            >
-            <input
-              type="search"
-              id="group-docs-abstract-filter"
-              class="form-control form-control-sm"
-              placeholder="Abstract content..."
-            />
-          </div>
-          <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-            <!-- Buttons removed from metadata row -->
+          <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) & Buttons -->
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-3">
+              <label for="group-docs-author-filter" class="form-label mb-1 small"
+                >Search Authors:</label
+              >
+              <input
+                type="search"
+                id="group-docs-author-filter"
+                class="form-control form-control-sm"
+                placeholder="Author name..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-keywords-filter"
+                class="form-label mb-1 small"
+                >Search Keywords:</label
+              >
+              <input
+                type="search"
+                id="group-docs-keywords-filter"
+                class="form-control form-control-sm"
+                placeholder="Keyword..."
+              />
+            </div>
+            <div class="col-md-3">
+              <label
+                for="group-docs-abstract-filter"
+                class="form-label mb-1 small"
+                >Search Abstract:</label
+              >
+              <input
+                type="search"
+                id="group-docs-abstract-filter"
+                class="form-control form-control-sm"
+                placeholder="Abstract content..."
+              />
+            </div>
+            <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
+              <!-- Buttons removed from metadata row -->
+            </div>
           </div>
         </div>
         <!-- End Metadata Filters -->
@@ -351,7 +385,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <!-- Expand -->
               <th>File Name</th>
               <th>Title</th>
-              <th>Actions</th>
+              <th>Actions
+                <span id="group-bulk-actions" style="display: none; margin-left: 20px;">
+                  <!-- Bulk action buttons will appear here when documents are selected -->
+                  <button id="group-delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
+                    <i class="bi bi-trash"></i> Delete
+                  </button>
+                  <button id="group-remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
+                    <i class="bi bi-x-circle"></i> Remove
+                  </button>
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -428,37 +472,41 @@ app_settings.app_title }} {% endblock %} {% block head %}
             New Prompt
           </button>
         </div>
-        <hr />
 
         <!-- Group Prompts Filters -->
-        <div class="row mb-3 align-items-end filter-controls-row">
-          <div class="col-md-6">
-            <label
-              for="group-prompts-search-input"
-              class="form-label mb-1 small"
-            >
-              Search Prompt Name:
-            </label>
-            <input
-              type="search"
-              id="group-prompts-search-input"
-              class="form-control form-control-sm"
-              placeholder="Enter search term..."
-            />
-          </div>
-          <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
-            <button
-              id="group-prompts-apply-filters-btn"
-              class="btn btn-primary btn-sm"
-            >
-              Apply Filters
-            </button>
-            <button
-              id="group-prompts-clear-filters-btn"
-              class="btn btn-secondary btn-sm ms-1"
-            >
-              Clear Filters
-            </button>
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#group-prompts-filters-collapse" aria-expanded="false" aria-controls="group-prompts-filters-collapse" id="group-prompts-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="group-prompts-filters-collapse">
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-6">
+              <label
+                for="group-prompts-search-input"
+                class="form-label mb-1 small"
+              >
+                Search Prompt Name:
+              </label>
+              <input
+                type="search"
+                id="group-prompts-search-input"
+                class="form-control form-control-sm"
+                placeholder="Enter search term..."
+              />
+            </div>
+            <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
+              <button
+                id="group-prompts-apply-filters-btn"
+                class="btn btn-primary btn-sm"
+              >
+                Apply Filters
+              </button>
+              <button
+                id="group-prompts-clear-filters-btn"
+                class="btn btn-secondary btn-sm ms-1"
+              >
+                Clear Filters
+              </button>
+            </div>
           </div>
         </div>
 
@@ -680,11 +728,100 @@ app_settings.app_title }} {% endblock %} {% block head %}
     </form>
   </div>
 </div>
+
+<!-- Group Share Document Modal -->
+<div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="groupShareDocumentForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Share Document with Groups</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <!-- Current Document Info -->
+          <div class="mb-3">
+            <h6 id="groupShareDocumentTitle">Document: <span id="groupShareDocumentName"></span></h6>
+          </div>
+
+          <!-- Currently Shared Groups Section -->
+          <div class="mb-3">
+            <h6>Currently Shared With:</h6>
+            <div id="currentlySharedGroups" class="border rounded p-2" style="min-height: 60px; max-height: 150px; overflow-y: auto;">
+              <div id="noSharedGroups" class="text-muted">This document is not shared with any groups.</div>
+              <div id="sharedGroupsList"></div>
+            </div>
+          </div>
+
+          <hr />
+
+          <!-- Search Section -->
+          <div class="mb-3">
+            <label for="groupSearchTerm" class="form-label"
+              >Search for groups</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="groupSearchTerm"
+              placeholder="Enter group name..."
+            />
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm mt-2"
+              id="searchGroupsBtn"
+            >
+              Search
+            </button>
+            <!-- Optional: a small status label -->
+            <span id="groupSearchStatus" class="text-muted ms-2"></span>
+          </div>
+
+          <!-- Search Results Table -->
+          <div
+            class="table-responsive mb-3"
+            style="max-height: 200px; overflow: auto"
+          >
+            <table class="table table-sm" id="groupSearchResultsTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Populated by renderGroupSearchResults() -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
 {% endblock %} {% block scripts %}
 <!-- SimpleMDE CSS/JS (Keep As Is) -->
 <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
  LOCAL VERSION BELOW -->
 <script src="/static/js/simplemde/simplemde.min.js"></script>
+
+<!-- Include group document sharing JS -->
+<script src="/static/js/workspace/group-documents-sharing.js"></script>
 
 <!-- Pass backend flags to JS -->
 <script>
@@ -699,6 +836,70 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </script>
 
 <script>
+  // --- Filter toggle button logic ---
+  document.addEventListener("DOMContentLoaded", function() {
+    // Group Documents tab
+    var docsToggleBtn = document.getElementById("group-docs-filters-toggle-btn");
+    var docsCollapse = document.getElementById("group-docs-filters-collapse");
+    if (docsToggleBtn && docsCollapse) {
+      docsCollapse.addEventListener("show.bs.collapse", function() {
+        docsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      docsCollapse.addEventListener("hide.bs.collapse", function() {
+        docsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+    // Group Prompts tab
+    var promptsToggleBtn = document.getElementById("group-prompts-filters-toggle-btn");
+    var promptsCollapse = document.getElementById("group-prompts-filters-collapse");
+    if (promptsToggleBtn && promptsCollapse) {
+      promptsCollapse.addEventListener("show.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      promptsCollapse.addEventListener("hide.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+
+    // Hide upload status and progress container unless needed (Group)
+    var groupUploadStatus = document.getElementById("upload-status");
+    var groupUploadProgress = document.getElementById("group-upload-progress-container");
+    if (groupUploadStatus) groupUploadStatus.style.display = "none";
+    if (groupUploadProgress) groupUploadProgress.style.display = "none";
+
+    function showGroupUploadStatusIfNeeded() {
+      if (groupUploadStatus && groupUploadStatus.textContent.trim() !== "") {
+        groupUploadStatus.style.display = "";
+      } else if (groupUploadStatus) {
+        groupUploadStatus.style.display = "none";
+      }
+      if (groupUploadProgress && groupUploadProgress.children.length > 0) {
+        groupUploadProgress.style.display = "";
+      } else if (groupUploadProgress) {
+        groupUploadProgress.style.display = "none";
+      }
+    }
+
+    // Patch the upload logic to call showGroupUploadStatusIfNeeded after updates
+    var origSetStatus = groupUploadStatus && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(groupUploadStatus), 'textContent')?.set;
+    if (groupUploadStatus && origSetStatus) {
+      Object.defineProperty(groupUploadStatus, 'textContent', {
+        set: function(value) {
+          origSetStatus.call(this, value);
+          showGroupUploadStatusIfNeeded();
+        },
+        get: function() {
+          return origSetStatus.get ? origSetStatus.get.call(this) : this.innerText;
+        }
+      });
+    }
+    if (groupUploadProgress) {
+      var observer = new MutationObserver(showGroupUploadStatusIfNeeded);
+      observer.observe(groupUploadProgress, { childList: true, subtree: false });
+    }
+    showGroupUploadStatusIfNeeded();
+  });
+
   // --- Global State ---
   let userRoleInActiveGroup = null;
   let userGroups = [];
@@ -714,6 +915,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let groupDocsKeywordsFilter = "";
   let groupDocsAbstractFilter = "";
   const groupActivePolls = new Set(); // Separate polling set for group docs
+  
+  // Document selection state for group documents
+  let groupSelectedDocuments = new Set();
+  let groupSelectionMode = false;
 
   // --- Modals ---
   const loadingModal = new bootstrap.Modal(
@@ -758,6 +963,166 @@ app_settings.app_title }} {% endblock %} {% block head %}
   const groupDocMetadataForm = document.getElementById("doc-metadata-form");
   const uploadSection = document.getElementById("upload-section");
   const uploadHr = document.getElementById("upload-hr");
+
+  // --- Group Upload: Auto-upload on file select and drag-and-drop ---
+  /**
+   * Upload files utility for group workspace.
+   * @param {FileList|File[]} files - The files to upload.
+   */
+  async function uploadGroupFiles(files) {
+    if (!files || files.length === 0) {
+      alert("Please select file(s) to upload.");
+      return;
+    }
+
+    groupUploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
+
+    // Per-file progress container
+    const progressContainer = document.getElementById("group-upload-progress-container");
+    if (progressContainer) progressContainer.innerHTML = "";
+
+    let completed = 0;
+    let failed = 0;
+
+    // Helper to create a unique ID for each file
+    function makeId(file) {
+      return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
+    }
+
+    // Helper to create progress bar/status for a file
+    function createProgressBar(file, id) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'mb-2';
+      wrapper.id = id + '-wrapper';
+      wrapper.innerHTML = `
+        <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
+          <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
+      `;
+      return wrapper;
+    }
+
+    // Upload each file individually with progress
+    Array.from(files).forEach(file => {
+      const id = makeId(file);
+      if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
+
+      const progressBar = document.getElementById(id);
+      const statusText = document.getElementById(id + '-text');
+
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/group_documents/upload", true);
+
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          if (progressBar) {
+            progressBar.style.width = percent + '%';
+            progressBar.setAttribute('aria-valuenow', percent);
+          }
+          if (statusText) {
+            statusText.textContent = `Uploading ${file.name} (${percent}%)`;
+          }
+        }
+      };
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-success');
+            progressBar.classList.remove('progress-bar-animated');
+          }
+          if (statusText) {
+            statusText.textContent = `Uploaded ${file.name} (100%)`;
+          }
+          completed++;
+        } else {
+          if (progressBar) {
+            progressBar.classList.remove('bg-info');
+            progressBar.classList.add('bg-danger');
+            progressBar.classList.remove('progress-bar-animated');
+          }
+          if (statusText) {
+            statusText.textContent = `Failed to upload ${file.name}`;
+          }
+          failed++;
+        }
+        // Update summary status
+        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        if (completed + failed === files.length) {
+          groupFileInput.value = '';
+          groupDocsCurrentPage = 1;
+          fetchGroupDocuments();
+          // Clear upload progress bars after all uploads and table refresh
+          if (progressContainer) progressContainer.innerHTML = '';
+        }
+      };
+
+      xhr.onerror = function () {
+        if (progressBar) {
+          progressBar.classList.remove('bg-info');
+          progressBar.classList.add('bg-danger');
+          progressBar.classList.remove('progress-bar-animated');
+        }
+        if (statusText) {
+          statusText.textContent = `Failed to upload ${file.name}`;
+        }
+        failed++;
+        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        if (completed + failed === files.length) {
+          groupFileInput.value = '';
+          groupDocsCurrentPage = 1;
+          fetchGroupDocuments();
+          if (progressContainer) progressContainer.innerHTML = '';
+        }
+      };
+
+      xhr.send(formData);
+    });
+  }
+
+  // Manual button click (fallback)
+  const uploadArea = document.getElementById("upload-area");
+  if (groupFileInput && uploadArea && groupUploadStatusSpan) {
+    // Auto-upload on file selection
+    groupFileInput.addEventListener("change", () => {
+      if (groupFileInput.files && groupFileInput.files.length > 0) {
+        uploadGroupFiles(groupFileInput.files);
+      }
+    });
+
+    // Click on area triggers file input
+    uploadArea.addEventListener("click", (e) => {
+      if (e.target !== groupFileInput) {
+        groupFileInput.click();
+      }
+    });
+
+    // Drag-and-drop support
+    uploadArea.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      uploadArea.classList.add("dragover");
+      uploadArea.style.borderColor = "#0d6efd";
+    });
+    uploadArea.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove("dragover");
+      uploadArea.style.borderColor = "";
+    });
+    uploadArea.addEventListener("drop", (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove("dragover");
+      uploadArea.style.borderColor = "";
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        uploadGroupFiles(e.dataTransfer.files);
+      }
+    });
+  }
 
   // --- Filter elements (Group Documents Tab) ---
   const groupDocsSearchInput = document.getElementById(
@@ -831,9 +1196,285 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return luminance > 0.5;
   }
 
+  // --- Group Document Selection Functions ---
+  function updateGroupSelectedDocuments(documentId, isSelected) {
+    if (isSelected) {
+      groupSelectedDocuments.add(documentId);
+    } else {
+      groupSelectedDocuments.delete(documentId);
+    }
+    updateGroupBulkActionButtons();
+  }
+
+  function updateGroupBulkActionButtons() {
+    const deleteBtn = document.getElementById("group-delete-selected-btn");
+    const removeBtn = document.getElementById("group-remove-selected-btn");
+    const bulkActions = document.getElementById("group-bulk-actions");
+    
+    if (groupSelectedDocuments.size > 0) {
+      // Show bulk actions container
+      if (bulkActions) bulkActions.style.display = "inline-block";
+      
+      // Check if user can manage documents (delete permission)
+      const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
+      
+      // For group documents, we need to determine if any selected documents
+      // require different actions based on user permissions
+      let hasOwnedDocuments = false;
+      let hasNonOwnedDocuments = false;
+      
+      // Check ownership of selected documents
+      Array.from(groupSelectedDocuments).forEach(docId => {
+        const docRow = document.getElementById(`group-doc-row-${docId}`);
+        if (docRow && docRow.__docData) {
+          const doc = docRow.__docData;
+          // In group context, we check if user has management permissions
+          // rather than individual document ownership
+          if (canManage) {
+            hasOwnedDocuments = true;
+          } else {
+            hasNonOwnedDocuments = true;
+          }
+        }
+      });
+      
+      // Delete button: Show only if user has management permissions for group documents
+      if (deleteBtn) {
+        deleteBtn.style.display = (canManage && hasOwnedDocuments) ? "inline-block" : "none";
+      }
+      
+      // Remove button: Show for non-managers or when user wants to "remove from group"
+      // In group context, this could mean removing the document from the group
+      // but keeping it in the system (if supported by backend)
+      if (removeBtn) {
+        // For now, hide remove button as group documents are typically deleted, not removed
+        // This can be adjusted based on backend implementation
+        removeBtn.style.display = "none";
+      }
+    } else {
+      // No documents selected - hide everything
+      if (deleteBtn) deleteBtn.style.display = "none";
+      if (removeBtn) removeBtn.style.display = "none";
+      if (bulkActions) bulkActions.style.display = "none";
+    }
+  }
+
+  function toggleGroupSelectionMode() {
+    const table = document.getElementById("group-documents-table");
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    
+    groupSelectionMode = !groupSelectionMode;
+    
+    if (groupSelectionMode) {
+      // Enter selection mode
+      table.classList.add("selection-mode");
+      
+      // Show checkboxes and hide expand buttons
+      checkboxes.forEach(checkbox => {
+        checkbox.style.display = 'inline-block';
+      });
+      
+      expandContainers.forEach(container => {
+        container.style.display = 'none';
+      });
+      
+      // Show bulk actions
+      const bulkActions = document.getElementById("group-bulk-actions");
+      if (bulkActions) {
+        bulkActions.style.display = 'inline-block';
+      }
+    } else {
+      // Exit selection mode
+      table.classList.remove("selection-mode");
+      
+      // Hide checkboxes and show expand buttons
+      checkboxes.forEach(checkbox => {
+        checkbox.style.display = 'none';
+        checkbox.checked = false;
+      });
+      
+      expandContainers.forEach(container => {
+        container.style.display = 'inline-block';
+      });
+      
+      // Hide bulk actions and buttons
+      const bulkActions = document.getElementById("group-bulk-actions");
+      if (bulkActions) {
+        bulkActions.style.display = 'none';
+      }
+      const deleteBtn = document.getElementById("group-delete-selected-btn");
+      const removeBtn = document.getElementById("group-remove-selected-btn");
+      if (deleteBtn) deleteBtn.style.display = 'none';
+      if (removeBtn) removeBtn.style.display = 'none';
+      
+      // Clear selected documents
+      groupSelectedDocuments.clear();
+    }
+  }
+
+  function deleteGroupSelectedDocuments() {
+    if (groupSelectedDocuments.size === 0) return;
+    
+    if (!confirm(`Are you sure you want to delete ${groupSelectedDocuments.size} selected document(s)? This action cannot be undone.`)) {
+      return;
+    }
+
+    const deleteBtn = document.getElementById("group-delete-selected-btn");
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deleting...`;
+    }
+
+    const deletePromises = Array.from(groupSelectedDocuments).map(docId =>
+      fetch(`/api/group_documents/${docId}`, { method: "DELETE" })
+        .then(response => response.ok ? response.json() : Promise.reject(response))
+    );
+
+    Promise.allSettled(deletePromises)
+      .then(results => {
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+        
+        if (failed > 0) {
+          alert(`Deleted ${successful} document(s). ${failed} failed to delete.`);
+        } else {
+          console.log(`Successfully deleted ${successful} document(s)`);
+        }
+        
+        groupSelectedDocuments.clear();
+        updateGroupBulkActionButtons();
+        fetchGroupDocuments();
+      })
+      .finally(() => {
+        if (deleteBtn) {
+          deleteBtn.disabled = false;
+          deleteBtn.innerHTML = `<i class="bi bi-trash"></i> Delete`;
+        }
+      });
+  }
+
+  function removeGroupSelectedDocuments() {
+    if (groupSelectedDocuments.size === 0) return;
+    
+    // In group context, "remove" typically means removing the document from the group
+    // but this depends on backend implementation. For now, we'll treat it as delete
+    // since group documents are typically owned by the group, not individuals
+    
+    if (!confirm(`Are you sure you want to remove ${groupSelectedDocuments.size} selected document(s) from this group? This action cannot be undone.`)) {
+      return;
+    }
+
+    const removeBtn = document.getElementById("group-remove-selected-btn");
+    if (removeBtn) {
+      removeBtn.disabled = true;
+      removeBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Removing...`;
+    }
+
+    // For group documents, removal is typically the same as deletion
+    // This could be modified to use a different endpoint if the backend supports
+    // removing documents from groups without deleting them entirely
+    const documentIds = Array.from(groupSelectedDocuments);
+    let completed = 0;
+    let failed = 0;
+    
+    // Process each document removal sequentially
+    documentIds.forEach(docId => {
+      fetch(`/api/group_documents/${docId}`, { method: "DELETE" })
+        .then(response => {
+          if (response.ok) {
+            completed++;
+            const docRow = document.getElementById(`group-doc-row-${docId}`);
+            const detailsRow = document.getElementById(`group-details-row-${docId}`);
+            const statusRow = document.getElementById(`group-status-row-${docId}`);
+            if (docRow) docRow.remove();
+            if (detailsRow) detailsRow.remove();
+            if (statusRow) statusRow.remove();
+          } else {
+            failed++;
+          }
+          
+          // Update status when all operations complete
+          if (completed + failed === documentIds.length) {
+            if (failed > 0) {
+              alert(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`);
+            } else {
+              console.log(`Successfully removed ${completed} document(s) from group`);
+            }
+            
+            // Refresh the documents list
+            fetchGroupDocuments();
+            
+            // Exit selection mode
+            toggleGroupSelectionMode();
+          }
+        })
+        .catch(error => {
+          failed++;
+          console.error("Error removing document from group:", error);
+          
+          // Update status when all operations complete
+          if (completed + failed === documentIds.length) {
+            alert(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`);
+            
+            // Refresh the documents list
+            fetchGroupDocuments();
+            
+            // Exit selection mode
+            toggleGroupSelectionMode();
+          }
+        });
+    });
+    
+    // Reset button state after operations complete
+    if (removeBtn) {
+      setTimeout(() => {
+        if (document.body.contains(removeBtn)) {
+          removeBtn.disabled = false;
+          removeBtn.innerHTML = `<i class="bi bi-x-circle"></i> Remove`;
+        }
+      }, 2000);
+    }
+  }
+
+  // Make functions globally available
+  window.updateGroupSelectedDocuments = updateGroupSelectedDocuments;
+  window.toggleGroupSelectionMode = toggleGroupSelectionMode;
+  window.deleteGroupSelectedDocuments = deleteGroupSelectedDocuments;
+  window.removeGroupSelectedDocuments = removeGroupSelectedDocuments;
+
   // --- Initialization ---
   document.addEventListener("DOMContentLoaded", () => {
     console.log("Group Workspace initializing...");
+
+    // Initialize group document selection functionality
+    const groupDocumentsTable = document.getElementById("group-documents-table");
+    if (groupDocumentsTable) {
+      // Make sure selection mode is initially off
+      groupDocumentsTable.classList.remove('selection-mode');
+    }
+    
+    // Initialize event delegation for group document checkboxes
+    document.addEventListener('change', function(event) {
+      // Handle changes on group document checkboxes
+      if (event.target.classList.contains('document-checkbox')) {
+        const documentId = event.target.getAttribute('data-document-id');
+        if (window.updateGroupSelectedDocuments) {
+          window.updateGroupSelectedDocuments(documentId, event.target.checked);
+        }
+      }
+    });
+
+    // Add event listeners for bulk action buttons
+    const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
+    const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
+    
+    if (groupDeleteSelectedBtn) {
+      groupDeleteSelectedBtn.addEventListener("click", deleteGroupSelectedDocuments);
+    }
+    if (groupRemoveSelectedBtn) {
+      groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
+    }
 
     // Load initial data
     fetchUserGroups().then(() => {
@@ -957,7 +1598,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         sel.innerHTML = ""; 
         dropdownItems.innerHTML = "";
         
-        const activeGroupNameEl = document.getElementById("active-group-name");
+        // Element removed from HTML, only keep role element reference
         const activeGroupNameRoleEl = document.getElementById(
           "active-group-name-role"
         );
@@ -1050,8 +1691,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
 
         if (foundActive) {
-          activeGroupNameEl.textContent = activeGroupName;
-          activeGroupNameEl.style.display = "inline";
+          // Only update role element since heading element was removed
           activeGroupNameRoleEl.textContent = activeGroupName;
           updateRoleDisplay(); // Update role display and UI elements
         } else {
@@ -1059,9 +1699,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
           activeGroupId = null;
           userRoleInActiveGroup = null;
           activeGroupName = "";
-          activeGroupNameEl.textContent =
-            userGroups.length > 0 ? "Select a Group" : "No Groups Available";
-          activeGroupNameEl.style.display = "inline";
           document.getElementById("user-role-display").style.display = "none";
           // Clear tables or show message
           if (groupDocumentsTableBody)
@@ -1354,47 +1991,128 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     const docRow = document.createElement("tr");
     docRow.id = `group-doc-row-${docId}`; // Use distinct prefix
-    docRow.innerHTML = `
+    docRow.classList.add("document-row");
+    
+    // First column with checkbox and expand/collapse
+    let firstColumnHtml = `
         <td class="align-middle">
-            ${
-              isComplete && !hasError
-                ? `<button class="btn btn-link p-0" onclick="toggleGroupDetails('${docId}')" title="Show/Hide Details">
+            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <span class="expand-collapse-container">
+            ${isComplete && !hasError ?
+                `<button class="btn btn-link p-0" onclick="toggleGroupDetails('${docId}')" title="Show/Hide Details">
                     <span id="group-arrow-icon-${docId}" class="bi bi-chevron-right"></span>
-                 </button>`
-                : hasError
-                ? `<span class="text-danger" title="Processing Error: ${escapeHtml(
-                    docStatus
-                  )}"><i class="bi bi-exclamation-triangle-fill"></i></span>`
-                : `<span class="text-muted" title="Processing: ${escapeHtml(
-                    docStatus
-                  )} (${pct.toFixed(
-                    0
-                  )}%)"><i class="bi bi-hourglass-split"></i></span>`
+                    </button>` :
+                    (hasError ? `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`
+                             : `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`)
             }
-        </td>
-        <td class="align-middle" title="${escapeHtml(
-          doc.file_name || ""
-        )}">${escapeHtml(doc.file_name || "")}</td>
-        <td class="align-middle" title="${escapeHtml(
-          doc.title || ""
-        )}">${escapeHtml(doc.title || "N/A")}</td>
-        <td class="align-middle">
-            ${
-              canManage // Conditionally render delete button based on role
-                ? `<button class="btn btn-sm btn-danger" onclick="deleteGroupDocument('${docId}', event)" title="Delete Document">
-                    <i class="bi bi-trash-fill"></i>
-                 </button>`
-                : ""
-            }
-            ${
-              isComplete && !hasError // Chat button always available if complete? Or role-based? Assuming available for all members.
-                ? `<button class="btn btn-sm btn-primary ms-1" onclick="searchGroupDocumentInChat('${docId}')" title="Search in Chat">
-                    <i class="bi bi-chat-dots-fill"></i> Chat
-                 </button>`
-                : ""
-            }
+            </span>
         </td>
     `;
+    
+    // Create the actions dropdown menu and chat button
+    let actionsDropdown = '';
+    let chatButton = '';
+    
+    // Chat button for everyone with access (outside dropdown) - matching workspace.html
+    if (isComplete && !hasError) {
+        chatButton = `
+            <button class="btn btn-sm btn-primary me-1 action-btn-wide text-start"
+                onclick="searchGroupDocumentInChat('${docId}')"
+                title="Open Chat for Document"
+                aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+            >
+                <i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>
+                Chat
+            </button>
+        `;
+    }
+    
+    if (isComplete && !hasError) {
+        actionsDropdown = `
+        <div class="dropdown action-dropdown d-inline-block">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item select-btn" href="#" onclick="toggleGroupSelectionMode(); return false;">
+                    <i class="bi bi-check-square me-2"></i>Select
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;">
+                    <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+                </a></li>
+        `;
+        
+        // Add Extract Metadata option if enabled
+        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            actionsDropdown += `
+                <li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;">
+                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                </a></li>
+            `;
+        }
+        
+        // Add Search in Chat option
+        actionsDropdown += `
+            <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
+                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+            </a></li>
+        `;
+        
+        // Add sharing and delete/remove actions based on user role
+        if (canManage) {
+            // Manager actions - can share and delete
+            actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <i class="bi bi-share-fill me-2"></i>Share
+                    <span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>
+            `;
+        } else {
+            // Non-manager actions - in group context, regular members typically can't remove documents
+            // This could be extended to support "request removal" or similar functionality
+            // For now, we don't show any destructive actions for non-managers
+        }
+        
+        actionsDropdown += `
+            </ul>
+        </div>
+        `;
+    } else if (canManage) {
+        // Only managers can delete incomplete/error documents
+        actionsDropdown = `
+        <div class="dropdown action-dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>
+            </ul>
+        </div>
+        `;
+    } else {
+        // Non-managers cannot perform any actions on incomplete/error documents
+        actionsDropdown = '';
+    }
+    
+    // Complete row HTML
+    docRow.innerHTML = `
+        ${firstColumnHtml}
+        <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
+        <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
+        <td class="align-middle">
+            ${chatButton}
+            ${actionsDropdown}
+        </td>
+    `;
+    docRow.__docData = doc; // Attach the full doc object for reference
     groupDocumentsTableBody.appendChild(docRow);
 
     // Details Row (only if complete and no error)

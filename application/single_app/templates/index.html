@@ -8,11 +8,36 @@
 
 <div class="text-center mt-5">
     {% if app_settings.show_logo %}
-        {% if app_settings.custom_logo_base64 %}
-            <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}"
-                alt="Logo"
-                height="100"
-                class="mb-4">
+        {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
+            <!-- Light mode logo -->
+            {% if app_settings.custom_logo_base64 %}
+                <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}"
+                    alt="Logo"
+                    height="100"
+                    class="mb-4 d-light-mode-only">
+            {% else %}
+                <img src="{{ url_for('static', filename='images/logo.png') }}"
+                    alt="Logo"
+                    height="100"
+                    class="mb-4 d-light-mode-only">
+            {% endif %}
+            <!-- Dark mode logo -->
+            {% if app_settings.custom_logo_dark_base64 %}
+                <img src="{{ url_for('static', filename='images/custom_logo_dark.png') }}?v={{ app_settings.logo_dark_version | default(1) }}"
+                    alt="Logo"
+                    height="100"
+                    class="mb-4 d-dark-mode-only">
+            {% elif app_settings.custom_logo_base64 %}
+                <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}"
+                    alt="Logo"
+                    height="100"
+                    class="mb-4 d-dark-mode-only">
+            {% else %}
+                <img src="{{ url_for('static', filename='images/logo.png') }}"
+                    alt="Logo"
+                    height="100"
+                    class="mb-4 d-dark-mode-only">
+            {% endif %}
         {% else %}
             <img src="{{ url_for('static', filename='images/logo.png') }}"
                 alt="Logo"
@@ -22,9 +47,7 @@
     {% endif %}
 
     {% if session.get('user') and session['user'].get('roles')
-          and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
-        <h2>Welcome to {{ app_settings.app_title }}</h2>
-        <div
+          and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}        <div
             class="{% if app_settings.landing_page_alignment == 'center' %}text-center{% elif app_settings.landing_page_alignment == 'right' %}text-end{% else %}text-start{% endif %}">
             {{ landing_html | safe }}
         </div>
@@ -34,13 +57,11 @@
 
     {% else %}
         {% if session.get('user') %}
-            <h2>Welcome to {{ app_settings.app_title }}</h2>
             <p class="lead">
                 You are logged in but do not have the required permissions to access this application.
                 Please submit a ticket to request access.
             </p>
         {% else %}
-            <h2>Welcome to {{ app_settings.app_title }}</h2>
             <div>
                 {{ landing_html | safe }}
             </div>

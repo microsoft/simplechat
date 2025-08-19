@@ -246,6 +246,26 @@ def get_user_visible_public_workspaces(user_id: str) -> list:
     
     return visible_workspace_ids
 
+def get_user_visible_public_workspace_ids_from_settings(user_id: str) -> list:
+    """
+    Get the list of public workspace IDs that the user has marked as visible
+    using the publicDirectorySettings in user settings.
+    
+    Returns a list of workspace IDs where the value is true in publicDirectorySettings.
+    If publicDirectorySettings doesn't exist, falls back to the old method.
+    """
+    from functions_settings import get_user_settings
+    
+    user_settings = get_user_settings(user_id)
+    public_directory_settings = user_settings.get("settings", {}).get("publicDirectorySettings", {})
+    
+    # If publicDirectorySettings exists, return IDs where value is True
+    if public_directory_settings:
+        return [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+    
+    # Fall back to old method if publicDirectorySettings doesn't exist
+    return get_user_visible_public_workspaces(user_id)
+
 
 def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> None:
     """
@@ -258,22 +278,42 @@ def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> Non
 
 def add_visible_public_workspace(user_id: str, ws_id: str) -> None:
     """
-    Add a workspace to the user's visible list.
+    Add a workspace to the user's visible list using publicDirectorySettings.
     """
-    visible_ids = get_user_visible_public_workspaces(user_id)
-    if ws_id not in visible_ids:
-        visible_ids.append(ws_id)
-        set_user_visible_public_workspaces(user_id, visible_ids)
+    from functions_settings import get_user_settings, update_user_settings
+    
+    user_settings = get_user_settings(user_id)
+    settings_dict = user_settings.get("settings", {})
+    
+    # Initialize publicDirectorySettings if it doesn't exist
+    if "publicDirectorySettings" not in settings_dict:
+        settings_dict["publicDirectorySettings"] = {}
+    
+    # Set the workspace as visible
+    settings_dict["publicDirectorySettings"][ws_id] = True
+    
+    # Update user settings
+    update_user_settings(user_id, {"publicDirectorySettings": settings_dict["publicDirectorySettings"]})
 
 
 def remove_visible_public_workspace(user_id: str, ws_id: str) -> None:
     """
-    Remove a workspace from the user's visible list.
+    Remove a workspace from the user's visible list using publicDirectorySettings.
     """
-    visible_ids = get_user_visible_public_workspaces(user_id)
-    if ws_id in visible_ids:
-        visible_ids.remove(ws_id)
-        set_user_visible_public_workspaces(user_id, visible_ids)
+    from functions_settings import get_user_settings, update_user_settings
+    
+    user_settings = get_user_settings(user_id)
+    settings_dict = user_settings.get("settings", {})
+    
+    # Initialize publicDirectorySettings if it doesn't exist
+    if "publicDirectorySettings" not in settings_dict:
+        settings_dict["publicDirectorySettings"] = {}
+    
+    # Set the workspace as hidden
+    settings_dict["publicDirectorySettings"][ws_id] = False
+    
+    # Update user settings
+    update_user_settings(user_id, {"publicDirectorySettings": settings_dict["publicDirectorySettings"]})
 
 
 def get_user_visible_public_workspace_docs(user_id: str) -> list:

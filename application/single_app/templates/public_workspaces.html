@@ -48,7 +48,6 @@
       <div class="dropdown" id="public-dropdown">
         <button class="form-select d-flex justify-content-between align-items-center" id="public-dropdown-button" data-bs-toggle="dropdown">
           <span class="selected-public-text">Select a workspace...</span>
-          <i class="bi bi-chevron-down"></i>
         </button>
         <div class="dropdown-menu w-100" id="public-dropdown-menu">
           <div class="px-2 public-search-container d-none">
@@ -83,70 +82,75 @@
     <div class="tab-pane fade show active" id="public-docs-tab" role="tabpanel">
       <div class="card p-3 my-3">
         <h5>Public Documents</h5>
-        <p class="text-muted small">Allowed extensions: txt, pdf, docx, ...</p>
+        <p class="text-muted small">Documents uploaded here are visible to all authenticated users of this service.</p>
         <div class="mb-3" id="upload-public-section" style="display:none">
-          <input type="file" id="public-file-input" multiple />
-          <button id="public-upload-btn" class="btn btn-primary">Upload Document(s)</button>
-          <span id="public-upload-status" class="ms-2 text-muted small"></span>
-          <!-- Upload Progress/Status Area -->
-          <div id="public-upload-progress-container" class="mt-2"></div>
+          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+            <input type="file" id="file-input" multiple style="display:none;" />
+            <div class="upload-area-content">
+              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
+              <div class="small text-muted mt-1">
+                {{ allowed_extensions }}
+              </div>
+            </div>
+          </div>
+          <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
+          <div id="workspace-upload-progress-container" class="mt-2" style="display:none;"></div>
         </div>
-        <hr id="public-upload-hr" style="display:none" />
+        <!-- Removed <hr id="public-upload-hr"> to reduce whitespace -->
 
-        <div class="row mb-3 align-items-end filter-controls-row">
-          
-          <div class="col-md-4">
-            <label for="public-docs-search-input" class="form-label mb-1 small">Search File Name/Title:</label>
-            <input type="search" id="public-docs-search-input" class="form-control form-control-sm" placeholder="Enter search term..." spellcheck="false" data-ms-editor="true">
+        <!-- Search/Filter Controls (collapsible) -->
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#public-docs-filters-collapse" aria-expanded="false" aria-controls="public-docs-filters-collapse" id="public-docs-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="public-docs-filters-collapse">
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-4">
+              <label for="public-docs-search-input" class="form-label mb-1 small">Search File Name/Title:</label>
+              <input type="search" id="public-docs-search-input" class="form-control form-control-sm" placeholder="Enter search term..." spellcheck="false" data-ms-editor="true">
+            </div>
+            <div class="col-md-3">
+              <label for="public-docs-classification-filter" class="form-label mb-1 small">Filter by Classification:</label>
+              <select id="public-docs-classification-filter" class="form-select form-select-sm">
+                <option value="">(All Classifications)</option>
+                <option value="none">(No Classification)</option>
+                <option value="None">None</option>
+                <option value="N/A">N/A</option>
+                <option value="Pending">Pending</option>
+                <option value="Public">Public</option>
+                <option value="CUI">CUI</option>
+                <option value="ITAR">ITAR</option>
+              </select>
+            </div>
+            <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+              <button id="public-docs-apply-filters-btn" class="btn btn-primary btn-sm">
+                Apply Filters
+              </button>
+              <button id="public-docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">
+                Clear Filters
+              </button>
+            </div>
           </div>
-          <div class="col-md-3">
-            <label for="public-docs-classification-filter" class="form-label mb-1 small">Filter by Classification:</label>
-            <select id="public-docs-classification-filter" class="form-select form-select-sm">
-              <option value="">(All Classifications)</option>
-              <option value="none">(No Classification)</option>
-              
-              <option value="None">None</option>
-              
-              <option value="N/A">N/A</option>
-              
-              <option value="Pending">Pending</option>
-              
-              <option value="Public">Public</option>
-              
-              <option value="CUI">CUI</option>
-              
-              <option value="ITAR">ITAR</option>
-              
-            </select>
+          <div class="row mb-3 align-items-end filter-controls-row">
+            <div class="col-md-3">
+              <label for="public-docs-author-filter" class="form-label mb-1 small">Search Authors:</label>
+              <input type="search" id="public-docs-author-filter" class="form-control form-control-sm" placeholder="Author name..." spellcheck="false" data-ms-editor="true">
+            </div>
+            <div class="col-md-3">
+              <label for="public-docs-keywords-filter" class="form-label mb-1 small">Search Keywords:</label>
+              <input type="search" id="public-docs-keywords-filter" class="form-control form-control-sm" placeholder="Keyword..." spellcheck="false" data-ms-editor="true">
+            </div>
+            <div class="col-md-3">
+              <label for="public-docs-abstract-filter" class="form-label mb-1 small">Search Abstract:</label>
+              <input type="search" id="public-docs-abstract-filter" class="form-control form-control-sm" placeholder="Abstract content..." spellcheck="false" data-ms-editor="true">
+            </div>
+            <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
+              <!-- Buttons removed from metadata row -->
+            </div>
           </div>
-          <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
-            <button id="public-docs-apply-filters-btn" class="btn btn-primary btn-sm">
-              Apply Filters
-            </button>
-            <button id="public-docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">
-              Clear Filters
-            </button>
-          </div>
-          
         </div>
 
-        <div class="row mb-3 align-items-end filter-controls-row">
-          <div class="col-md-3">
-            <label for="public-docs-author-filter" class="form-label mb-1 small">Search Authors:</label>
-            <input type="search" id="public-docs-author-filter" class="form-control form-control-sm" placeholder="Author name..." spellcheck="false" data-ms-editor="true">
-          </div>
-          <div class="col-md-3">
-            <label for="public-docs-keywords-filter" class="form-label mb-1 small">Search Keywords:</label>
-            <input type="search" id="public-docs-keywords-filter" class="form-control form-control-sm" placeholder="Keyword..." spellcheck="false" data-ms-editor="true">
-          </div>
-          <div class="col-md-3">
-            <label for="public-docs-abstract-filter" class="form-label mb-1 small">Search Abstract:</label>
-            <input type="search" id="public-docs-abstract-filter" class="form-control form-control-sm" placeholder="Abstract content..." spellcheck="false" data-ms-editor="true">
-          </div>
-          <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
-            <!-- Buttons removed from metadata row -->
-          </div>
-        </div>
+        <!-- Removed duplicate filter row outside the collapsible area -->
 
         <table class="table table-striped" id="public-documents-table">
           <thead>
@@ -186,10 +190,22 @@
         <h5>Public Prompts</h5>
         <div id="public-prompts-role-warning" class="alert alert-warning" style="display:none">You do not have permission to manage public prompts.</div>
         <div class="mb-3" id="create-public-prompt-section" style="display:none"><button id="create-public-prompt-btn" class="btn btn-success">New Prompt</button></div>
-        <hr />
-        <div class="row mb-3 filter-controls-row">
-          <div class="col-md-6"><input type="search" id="public-prompts-search-input" class="form-control form-control-sm" placeholder="Search prompt name..." /></div>
-          <div class="col-md-6 text-end"><button id="public-prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button><button id="public-prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button></div>
+        
+        <!-- Prompts Filters -->
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#public-prompts-filters-collapse" aria-expanded="false" aria-controls="public-prompts-filters-collapse" id="public-prompts-filters-toggle-btn">
+          Show Search/Filters
+        </button>
+        <div class="collapse" id="public-prompts-filters-collapse">
+          <div class="row mb-3 filter-controls-row">
+            <div class="col-md-6">
+              <label for="public-prompts-search-input" class="form-label mb-1 small">Search Prompt Name:</label>
+              <input type="search" id="public-prompts-search-input" class="form-control form-control-sm" placeholder="Search prompt name..." />
+            </div>
+            <div class="col-md-6 filter-buttons-col mt-2 mt-md-0">
+              <button id="public-prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
+              <button id="public-prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
+            </div>
+          </div>
         </div>
         <table class="table table-striped" id="public-prompts-table"><thead><tr><th>Prompt Name</th><th>Actions</th></tr></thead><tbody><tr class="table-loading-row"><td colspan="2"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Loading public prompts...</td></tr></tbody></table>
         <div class="d-flex align-items-center gap-3 mb-3 mt-3"><div><label class="visually-hidden">Items per page:</label><select id="public-prompts-page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;"><option value="10" selected>10</option><option value="20">20</option><option value="50">50</option></select><span class="ms-1 small text-muted">items per page</span></div><div id="public-prompts-pagination-container" class="d-flex gap-1 ms-auto"></div></div>
@@ -271,6 +287,72 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/public/public_workspace.js"></script>
+<script>
+  // --- Filter toggle button logic and upload status/progress visibility ---
+  document.addEventListener("DOMContentLoaded", function() {
+    // Search/Filter toggle
+    var docsToggleBtn = document.getElementById("public-docs-filters-toggle-btn");
+    var docsCollapse = document.getElementById("public-docs-filters-collapse");
+    if (docsToggleBtn && docsCollapse) {
+      docsCollapse.addEventListener("show.bs.collapse", function() {
+        docsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      docsCollapse.addEventListener("hide.bs.collapse", function() {
+        docsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+    
+    // Prompts tab
+    var promptsToggleBtn = document.getElementById("public-prompts-filters-toggle-btn");
+    var promptsCollapse = document.getElementById("public-prompts-filters-collapse");
+    if (promptsToggleBtn && promptsCollapse) {
+      promptsCollapse.addEventListener("show.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Hide Search/Filters";
+      });
+      promptsCollapse.addEventListener("hide.bs.collapse", function() {
+        promptsToggleBtn.textContent = "Show Search/Filters";
+      });
+    }
+
+    // Hide upload status and progress container unless needed
+    var uploadStatus = document.getElementById("upload-status");
+    var uploadProgress = document.getElementById("workspace-upload-progress-container");
+    if (uploadStatus) uploadStatus.style.display = "none";
+    if (uploadProgress) uploadProgress.style.display = "none";
+
+    function showUploadStatusIfNeeded() {
+      if (uploadStatus && uploadStatus.textContent.trim() !== "") {
+        uploadStatus.style.display = "";
+      } else if (uploadStatus) {
+        uploadStatus.style.display = "none";
+      }
+      if (uploadProgress && uploadProgress.children.length > 0) {
+        uploadProgress.style.display = "";
+      } else if (uploadProgress) {
+        uploadProgress.style.display = "none";
+      }
+    }
+
+    // Patch the upload logic to call showUploadStatusIfNeeded after updates
+    var origSetStatus = uploadStatus && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(uploadStatus), 'textContent')?.set;
+    if (uploadStatus && origSetStatus) {
+      Object.defineProperty(uploadStatus, 'textContent', {
+        set: function(value) {
+          origSetStatus.call(this, value);
+          showUploadStatusIfNeeded();
+        },
+        get: function() {
+          return origSetStatus.get ? origSetStatus.get.call(this) : this.innerText;
+        }
+      });
+    }
+    if (uploadProgress) {
+      var observer = new MutationObserver(showUploadStatusIfNeeded);
+      observer.observe(uploadProgress, { childList: true, subtree: false });
+    }
+    showUploadStatusIfNeeded();
+  });
+</script>
 
 <script>
   // Function to toggle document details

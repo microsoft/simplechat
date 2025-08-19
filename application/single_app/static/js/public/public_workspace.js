@@ -40,9 +40,9 @@ const btnChangePublic = document.getElementById('btn-change-public');
 const btnMyPublics = document.getElementById('btn-my-publics');
 const uploadSection = document.getElementById('upload-public-section');
 const uploadHr = document.getElementById('public-upload-hr');
-const fileInput = document.getElementById('public-file-input');
-const uploadBtn = document.getElementById('public-upload-btn');
-const uploadStatus = document.getElementById('public-upload-status');
+const fileInput = document.getElementById('file-input');
+const uploadBtn = document.getElementById('upload-btn') || document.getElementById('public-upload-btn');
+const uploadStatus = document.getElementById('upload-status');
 const publicDocsTableBody = document.querySelector('#public-documents-table tbody');
 const publicDocsPagination = document.getElementById('public-docs-pagination-container');
 const publicDocsPageSizeSelect = document.getElementById('public-docs-page-size-select');
@@ -77,14 +77,59 @@ document.addEventListener('DOMContentLoaded', ()=>{
     }
   });
 
-  btnMyPublics.onclick = ()=> window.location.href = '/my_public_workspaces';
-  btnChangePublic.onclick = onChangeActivePublic;
+  if (btnMyPublics) btnMyPublics.onclick = ()=> window.location.href = '/my_public_workspaces';
+  if (btnChangePublic) btnChangePublic.onclick = onChangeActivePublic;
 
-  uploadBtn.onclick = onPublicUploadClick;
-  publicDocsPageSizeSelect.onchange = (e)=>{ publicDocsPageSize = +e.target.value; publicDocsCurrentPage=1; fetchPublicDocs(); };
-  docsApplyBtn.onclick = ()=>{ publicDocsSearchTerm = publicDocsSearchInput.value.trim(); publicDocsCurrentPage=1; fetchPublicDocs(); };
-  docsClearBtn.onclick = ()=>{ publicDocsSearchInput.value=''; publicDocsSearchTerm=''; publicDocsCurrentPage=1; fetchPublicDocs(); };
-  publicDocsSearchInput.onkeypress = e=>{ if(e.key==='Enter') docsApplyBtn.click(); };
+  // Upload functionality - handle both button click and drag-and-drop
+  if (uploadBtn) uploadBtn.onclick = onPublicUploadClick;
+  
+  // Add upload area functionality (drag-and-drop and click-to-browse)
+  const uploadArea = document.getElementById('upload-area');
+  if (fileInput && uploadArea) {
+    // Auto-upload on file selection
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files.length > 0) {
+        onPublicUploadClick();
+      }
+    });
+
+    // Click on area triggers file input
+    uploadArea.addEventListener('click', (e) => {
+      // Only trigger if not clicking the hidden input itself
+      if (e.target !== fileInput) {
+        fileInput.click();
+      }
+    });
+
+    // Drag-and-drop support
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+      uploadArea.style.borderColor = '#0d6efd';
+    });
+    
+    uploadArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      uploadArea.style.borderColor = '';
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      uploadArea.style.borderColor = '';
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        // Set the files to the file input and trigger upload
+        fileInput.files = e.dataTransfer.files;
+        onPublicUploadClick();
+      }
+    });
+  }
+  
+  if (publicDocsPageSizeSelect) publicDocsPageSizeSelect.onchange = (e)=>{ publicDocsPageSize = +e.target.value; publicDocsCurrentPage=1; fetchPublicDocs(); };
+  if (docsApplyBtn) docsApplyBtn.onclick = ()=>{ publicDocsSearchTerm = publicDocsSearchInput.value.trim(); publicDocsCurrentPage=1; fetchPublicDocs(); };
+  if (docsClearBtn) docsClearBtn.onclick = ()=>{ publicDocsSearchInput.value=''; publicDocsSearchTerm=''; publicDocsCurrentPage=1; fetchPublicDocs(); };
+  if (publicDocsSearchInput) publicDocsSearchInput.onkeypress = e=>{ if(e.key==='Enter') docsApplyBtn && docsApplyBtn.click(); };
 
   createPublicPromptBtn.onclick = ()=> openPublicPromptModal();
   publicPromptForm.onsubmit = onSavePublicPrompt;
@@ -148,7 +193,17 @@ async function onChangeActivePublic(){
 
 function updatePublicRoleDisplay(){
   const display = document.getElementById('user-public-role-display');
-  if(activePublicId){ document.getElementById('user-public-role').textContent=userRoleInActivePublic; document.getElementById('active-public-name-role').textContent=activePublicName; display.style.display='block'; uploadSection.style.display=['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic)?'block':'none'; uploadHr.style.display=uploadSection.style.display; } else display.style.display='none';
+  if (activePublicId) {
+    const roleEl = document.getElementById('user-public-role');
+    const nameRoleEl = document.getElementById('active-public-name-role');
+    if (roleEl) roleEl.textContent = userRoleInActivePublic;
+    if (nameRoleEl) nameRoleEl.textContent = activePublicName;
+    if (display) display.style.display = 'block';
+    if (uploadSection) uploadSection.style.display = ['Owner','Admin','DocumentManager'].includes(userRoleInActivePublic) ? 'block' : 'none';
+    // uploadHr was removed from template, so skip
+  } else {
+    if (display) display.style.display = 'none';
+  }
 }
 
 function loadActivePublicData(){
@@ -360,11 +415,18 @@ function renderPublicDocsPagination(page, pageSize, totalCount){
 }
 
 async function onPublicUploadClick() {
+  if (!fileInput) return alert('File input not found');
   const files = fileInput.files;
-  if (!files.length) return alert('Select files');
-  uploadBtn.disabled = true;
-  uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
-  uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
+  if (!files || !files.length) return alert('Select files');
+  
+  // Disable upload button if it exists
+  if (uploadBtn) {
+    uploadBtn.disabled = true;
+    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
+  }
+  
+  // Show upload status
+  if (uploadStatus) uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
 
   // Progress container for per-file status
   const progressContainer = document.getElementById('public-upload-progress-container');
@@ -442,13 +504,18 @@ async function onPublicUploadClick() {
         failed++;
       }
       // Update summary status
-      uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
       if (completed + failed === files.length) {
         fileInput.value = '';
         publicDocsCurrentPage = 1;
         fetchPublicDocs();
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload Document(s)';
+        
+        // Re-enable upload button if it exists
+        if (uploadBtn) {
+          uploadBtn.disabled = false;
+          uploadBtn.textContent = 'Upload Document(s)';
+        }
+        
         // Clear upload progress bars after all uploads and table refresh
         const progressContainer = document.getElementById('public-upload-progress-container');
         if (progressContainer) progressContainer.innerHTML = '';
@@ -465,13 +532,21 @@ async function onPublicUploadClick() {
         statusText.textContent = `Failed to upload ${file.name}`;
       }
       failed++;
-      uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
       if (completed + failed === files.length) {
         fileInput.value = '';
         publicDocsCurrentPage = 1;
         fetchPublicDocs();
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload Document(s)';
+        
+        // Re-enable upload button if it exists
+        if (uploadBtn) {
+          uploadBtn.disabled = false;
+          uploadBtn.textContent = 'Upload Document(s)';
+        }
+        
+        // Clear upload progress bars after all uploads and table refresh
+        const progressContainer = document.getElementById('public-upload-progress-container');
+        if (progressContainer) progressContainer.innerHTML = '';
       }
     };
 
