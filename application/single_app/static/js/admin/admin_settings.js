@@ -1515,6 +1515,14 @@ function setupToggles() {
             markFormAsModified();
         });
     }
+
+    // Enable File Sharing toggle
+    const enableFileSharingToggle = document.getElementById('enable_file_sharing');
+    if (enableFileSharingToggle) {
+        enableFileSharingToggle.addEventListener('change', function() {
+            markFormAsModified();
+        });
+    }
 }
 
 function setupTestButtons() {
