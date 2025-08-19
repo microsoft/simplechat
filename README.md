@@ -450,7 +450,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Select the **Standard S1** tier (or higher based on scale/HA needs). Consider replicas/partitions for production.
     *   Review Networking settings.
     *   You will initialize indexes later ([Initializing Indexes](#initializing-indexes-in-azure-ai-search)).
-    *   If using **Managed Identity**, grant the App Service's Managed Identity the `Search Index Data Contributor` role on this resource.
+    *   If using **Managed Identity**, grant the App Service's Managed Identity the `Contributor` and `Search Index Data Contributor` roles on this resource.
 5.  **Deploy Azure Cosmos DB**:
     *   Create an **Azure Cosmos DB** account.
     *   Select the **Azure Cosmos DB for NoSQL** API.
@@ -475,7 +475,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   If using the Content Safety feature, create an **Azure AI Content Safety** resource.
     *   Select the **Standard S0** pricing tier.
     *   Review Networking settings.
-    *   If using **Managed Identity**, grant the App Service's Managed Identity the `Cognitive Services Contributor` role on this resource.
+    *   If using **Managed Identity**, grant the App Service's Managed Identity the `Azure AI Developer` role on this resource.
 8.  **Deploy Bing Search Service (Optional)**:
     *   If using the Bing Web Search feature, create a **Bing Search v7** resource.
     *   Select the **S1** tier (or adjust based on expected query volume).
@@ -485,6 +485,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   You'll need to associate it with an Azure Media Services account (can be created during VI setup) and a Storage Account (used for temporary processing, can be new or existing).
     *   Managed Identity (System-assigned) is typically enabled by default.
     *   Note the **Account ID**, **Location**, and an **API Key** (Subscription level or Account level). These will be configured in Admin Settings.
+    * If using **Managed Identity** (required for all new VI accounts), grant the App Service's Managed Identity the `Contributor` role on this resource.
 10. **Deploy Azure Speech Service (Optional)**:
     *   If using the Audio Extraction feature, create an **Azure AI Speech** resource.
     *   Select the **Standard S0** pricing tier.
@@ -1088,13 +1089,13 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    | Target Service        | Required Role                       | Notes                                                        |
    | --------------------- | ----------------------------------- | ------------------------------------------------------------ |
    | Azure OpenAI          | Cognitive Services OpenAI User      | Allows data plane access (generating completions, embeddings, images). |
-   | Azure AI Search       | Search Index Data Contributor       | Allows reading/writing data to search indexes.               |
+   | Azure AI Search       | Contributor &<br> Search Index Data Contributor       | Allows token acquisition from Search ARM service, reading/writing data to search indexes.               |
    | Azure Cosmos DB       | Cosmos DB Built-in Data Contributor | Allows reading/writing data. Least privilege possible via custom roles. Key auth might be simpler. |
    | Document Intelligence | Cognitive Services User             | Allows using the DI service for analysis.                    |
-   | Content Safety        | Cognitive Services Contributor      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
+   | Content Safety        | Azure AI Developer      | Allows using the CS service for analysis. (Role name might vary slightly, check portal) |
    | Azure Storage Account | Storage Blob Data Contributor       | Required for Enhanced Citations if using Managed Identity. Allows reading/writing blobs. |
    | Azure Speech Service  | Cognitive Services User             | Allows using the Speech service for transcription.           |
-   | Video Indexer         | (Handled via VI resource settings)  | VI typically uses its own Managed Identity to access associated Storage/Media Services. Check VI docs. |
+   | Video Indexer         | Contributor  | Allows token acquisition from VI ARM service, API call sets scope of token permissions per call. |
 
 3. **Configure Application to Use Managed Identity**:
 
