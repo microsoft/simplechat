@@ -40,9 +40,22 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
+from route_backend_agents import bpa as admin_agents_bp
+from route_backend_public_workspaces import *
+from route_backend_public_documents import *
+from route_backend_public_prompts import *
+from route_external_group_documents import *
+from route_external_public_documents import *
+app.register_blueprint(admin_plugins_bp)
+app.register_blueprint(dynamic_plugins_bp)
+app.register_blueprint(admin_agents_bp)
+
+from flask import g
 from flask_session import Session
 from redis import Redis
 from functions_settings import get_settings
+from functions_authentication import get_current_user_id
 
 from route_external_health import *
 from route_external_group_documents import *
@@ -317,7 +330,6 @@ register_route_frontend_safety(app)
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
 
-# =================== Back End Routes ====================
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
@@ -353,6 +365,15 @@ register_route_backend_prompts(app)
 
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
+
+# ------------------- API Public Workspaces Routes -------
+register_route_backend_public_workspaces(app)
+
+# ------------------- API Public Documents Routes --------
+register_route_backend_public_documents(app)
+
+# ------------------- API Public Prompts Routes ----------
+register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
