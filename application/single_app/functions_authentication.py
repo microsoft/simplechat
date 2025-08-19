@@ -379,7 +379,7 @@ def accesstoken_required(f):
         print("User is valid")
 
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
-        kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
+        #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
         return f(*args, **kwargs)
     return decorated_function
 
