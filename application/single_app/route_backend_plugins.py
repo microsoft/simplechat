@@ -95,6 +95,18 @@ def get_plugin_types():
                                 'additionalFields': {'table': 'example_table', 'columns': [], 'warehouse_id': 'dummy'},
                                 'metadata': {'description': 'Example Databricks table'}
                             }
+                        elif 'openapi' in module_name.lower():
+                            # Special handling for OpenAPI plugin that requires spec path
+                            display_name = "OpenAPI"
+                            description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
+                            # Skip instantiation and use predefined values
+                            types.append({
+                                'type': module_name.replace('_plugin', ''),
+                                'class': attr,
+                                'display': display_name,
+                                'description': description
+                            })
+                            continue
                         elif 'azure_function' in module_name.lower():
                             minimal_manifest = {
                                 'endpoint': 'https://example.azurewebsites.net/api/function',
