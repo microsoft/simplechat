@@ -127,6 +127,20 @@ def get_plugin_types():
                                 'auth': {'type': 'key', 'key': 'dummy'},
                                 'metadata': {}
                             }
+                        elif 'sql_schema' in module_name.lower():
+                            minimal_manifest = {
+                                'database_type': 'sqlite',
+                                'connection_string': '/tmp/example.db',
+                                'metadata': {'description': 'Extract database schema information'}
+                            }
+                        elif 'sql_query' in module_name.lower():
+                            minimal_manifest = {
+                                'database_type': 'sqlite',
+                                'connection_string': '/tmp/example.db',
+                                'read_only': True,
+                                'max_rows': 1000,
+                                'metadata': {'description': 'Execute SQL queries safely'}
+                            }
                         
                         # Try with manifest first, then empty dict, then no params
                         try:

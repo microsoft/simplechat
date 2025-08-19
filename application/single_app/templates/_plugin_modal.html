@@ -217,6 +217,244 @@
               </div>
             </div>
           </div>
+          
+          <!-- SQL Database Configuration -->
+          <div id="sql-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="fas fa-database me-2"></i>SQL Database Configuration
+            </div>
+            
+            <!-- Database Type Selection -->
+            <div class="mb-3">
+              <label class="form-label">Database Type <span class="text-danger">*</span></label>
+              <div class="row g-2">
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlserver" value="sqlserver">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-sqlserver">
+                    <i class="fas fa-server me-1"></i>SQL Server
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-azure-sql" value="azure_sql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-azure-sql">
+                    <i class="fab fa-microsoft me-1"></i>Azure SQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-postgresql" value="postgresql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-postgresql">
+                    <i class="fas fa-elephant me-1"></i>PostgreSQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-mysql" value="mysql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-mysql">
+                    <i class="fas fa-dolphin me-1"></i>MySQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlite" value="sqlite">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-sqlite">
+                    <i class="fas fa-file-alt me-1"></i>SQLite
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- SQL Plugin Type Selection -->
+            <div class="mb-3">
+              <label class="form-label">Plugin Type <span class="text-danger">*</span></label>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-schema" value="schema">
+                  <label class="btn btn-outline-info w-100" for="sql-plugin-schema">
+                    <i class="fas fa-sitemap me-1"></i>Schema Plugin
+                    <small class="d-block text-muted">Extract database structure</small>
+                  </label>
+                </div>
+                <div class="col-md-6">
+                  <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-query" value="query">
+                  <label class="btn btn-outline-success w-100" for="sql-plugin-query">
+                    <i class="fas fa-search me-1"></i>Query Plugin
+                    <small class="d-block text-muted">Execute SQL queries</small>
+                  </label>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Database Connection Configuration -->
+            <div class="sql-connection-config">
+              <div class="config-section-label">
+                <i class="fas fa-plug me-2"></i>Connection Configuration
+              </div>
+              
+              <!-- Connection Method Selection -->
+              <div class="mb-3">
+                <label class="form-label">Connection Method</label>
+                <div class="btn-group w-100" role="group" aria-label="Connection method">
+                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-string" value="connection_string" checked>
+                  <label class="btn btn-outline-secondary" for="sql-conn-string">
+                    <i class="fas fa-link me-1"></i>Connection String
+                  </label>
+                  
+                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-params" value="parameters">
+                  <label class="btn btn-outline-secondary" for="sql-conn-params">
+                    <i class="fas fa-cogs me-1"></i>Individual Parameters
+                  </label>
+                </div>
+              </div>
+              
+              <!-- Connection String Section -->
+              <div id="sql-connection-string-section" class="mb-3">
+                <label for="sql-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="sql-connection-string" rows="3" placeholder="Enter your database connection string..."></textarea>
+                <div class="form-text">
+                  <strong>Examples:</strong>
+                  <div id="sql-connection-examples" class="mt-1">
+                    <!-- Connection string examples will be populated by JavaScript -->
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Individual Parameters Section -->
+              <div id="sql-connection-params-section" class="d-none">
+                <!-- Server field (not for SQLite) -->
+                <div class="mb-3" id="sql-server-field">
+                  <label for="sql-server" class="form-label">Server <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-server" placeholder="server.database.windows.net" />
+                  <div class="form-text">Database server hostname or IP address</div>
+                </div>
+                
+                <!-- Database field -->
+                <div class="mb-3" id="sql-database-field">
+                  <label for="sql-database" class="form-label">Database <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-database" placeholder="database_name" />
+                  <div class="form-text">Database name (or file path for SQLite)</div>
+                </div>
+                
+                <!-- Port field (optional, not for SQLite) -->
+                <div class="mb-3" id="sql-port-field">
+                  <label for="sql-port" class="form-label">Port</label>
+                  <input type="number" class="form-control" id="sql-port" placeholder="Auto-detect" />
+                  <div class="form-text">Leave empty to use default port</div>
+                </div>
+                
+                <!-- Driver field (for SQL Server) -->
+                <div class="mb-3 d-none" id="sql-driver-field">
+                  <label for="sql-driver" class="form-label">ODBC Driver</label>
+                  <select class="form-select" id="sql-driver">
+                    <option value="ODBC Driver 17 for SQL Server">ODBC Driver 17 for SQL Server</option>
+                    <option value="ODBC Driver 18 for SQL Server">ODBC Driver 18 for SQL Server</option>
+                    <option value="SQL Server">SQL Server (Legacy)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Authentication Configuration -->
+            <div class="sql-auth-config">
+              <div class="config-section-label">
+                <i class="fas fa-shield-alt me-2"></i>Authentication Configuration
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label">Authentication Type</label>
+                <select class="form-select" id="sql-auth-type">
+                  <option value="username_password">Username & Password</option>
+                  <option value="integrated">Integrated Authentication</option>
+                  <option value="managed_identity">Managed Identity (Azure)</option>
+                  <option value="service_principal">Service Principal (Azure)</option>
+                  <option value="connection_string_only">Connection String Only</option>
+                </select>
+              </div>
+              
+              <!-- Username/Password fields -->
+              <div id="sql-auth-credentials" class="row g-2">
+                <div class="col-md-6">
+                  <label for="sql-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-username" placeholder="username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="sql-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="sql-password" placeholder="password" />
+                </div>
+              </div>
+              
+              <!-- Service Principal fields -->
+              <div id="sql-auth-service-principal" class="d-none">
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label for="sql-client-id" class="form-label">Client ID <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="sql-client-id" placeholder="client-id" />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="sql-client-secret" class="form-label">Client Secret <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control" id="sql-client-secret" placeholder="client-secret" />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="sql-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="sql-tenant-id" placeholder="tenant-id" />
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Authentication info -->
+              <div id="sql-auth-info" class="alert alert-info mt-2 d-none">
+                <small id="sql-auth-info-text"></small>
+              </div>
+            </div>
+            
+            <!-- Query Plugin Specific Settings -->
+            <div id="sql-query-settings" class="d-none">
+              <div class="config-section-label">
+                <i class="fas fa-cog me-2"></i>Query Plugin Settings
+              </div>
+              
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="sql-read-only" class="form-label">Read Only Mode</label>
+                  <select class="form-select" id="sql-read-only">
+                    <option value="true">Yes (Recommended)</option>
+                    <option value="false">No (Allow writes)</option>
+                  </select>
+                  <div class="form-text">Prevent data modification queries</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="sql-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="sql-max-rows" value="1000" min="1" max="10000" />
+                  <div class="form-text">Limit query result size</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="sql-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="sql-timeout" value="30" min="5" max="300" />
+                  <div class="form-text">Query execution timeout</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Schema Plugin Specific Settings -->
+            <div id="sql-schema-settings" class="d-none">
+              <div class="config-section-label">
+                <i class="fas fa-cog me-2"></i>Schema Plugin Settings
+              </div>
+              
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="sql-include-system-tables" class="form-label">Include System Tables</label>
+                  <select class="form-select" id="sql-include-system-tables">
+                    <option value="false">No (Recommended)</option>
+                    <option value="true">Yes</option>
+                  </select>
+                  <div class="form-text">Include database system tables in schema</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="sql-table-filter" class="form-label">Table Filter</label>
+                  <input type="text" class="form-control" id="sql-table-filter" placeholder="e.g., user_*, *_log" />
+                  <div class="form-text">Filter tables by name pattern (use * as wildcard)</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Step 4: Advanced -->
@@ -356,6 +594,103 @@
   border-bottom: 1px solid #e3f2fd;
   padding-bottom: 0.5rem;
   margin-bottom: 1rem;
+}
+
+/* SQL Database configuration styling */
+#sql-config-section {
+  border: 1px solid #e8f5e8;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
+.sql-connection-config, 
+.sql-auth-config {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.btn-check:checked + .btn-outline-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-info {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-success {
+  background-color: #198754;
+  border-color: #198754;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-secondary {
+  background-color: #6c757d;
+  border-color: #6c757d;
+  color: white;
+}
+
+/* Connection string examples styling */
+#sql-connection-examples {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+#sql-connection-examples .example {
+  margin-bottom: 0.25rem;
+  color: #6c757d;
+}
+
+#sql-connection-examples .example:last-child {
+  margin-bottom: 0;
+}
+
+#sql-connection-examples .example strong {
+  color: #495057;
+}
+
+/* Database type icons */
+.btn-outline-primary i.fa-server::before {
+  color: #0078d4;
+}
+
+.btn-outline-primary i.fa-microsoft::before {
+  color: #00bcf2;
+}
+
+.btn-outline-primary i.fa-elephant::before {
+  color: #336791;
+}
+
+.btn-outline-primary i.fa-dolphin::before {
+  color: #f29111;
+}
+
+.btn-outline-primary i.fa-file-alt::before {
+  color: #003b57;
+}
+
+/* Authentication info alerts */
+#sql-auth-info {
+  border-left: 4px solid #0dcaf0;
+}
+
+/* Plugin type selection styling */
+.btn-outline-info small,
+.btn-outline-success small {
+  font-size: 0.75rem;
+  opacity: 0.8;
 }
 
 .auth-section {

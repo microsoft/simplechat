@@ -43,3 +43,8 @@ ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
 semantic-kernel>=1.32.1
 redis>=5.0,<6.0
+
+# SQL Database Drivers for SQL Plugins
+pyodbc>=4.0.0
+psycopg2-binary>=2.9.0
+PyMySQL>=1.0.0

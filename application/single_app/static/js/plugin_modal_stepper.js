@@ -39,6 +39,21 @@ export class PluginModalStepper {
     
     // URL validation handler
     document.getElementById('validate-openapi-url').addEventListener('click', () => this.validateOpenApiUrl());
+    
+    // SQL Plugin event handlers
+    document.querySelectorAll('input[name="sql-database-type"]').forEach(radio => {
+      radio.addEventListener('change', () => this.handleSqlDatabaseTypeChange());
+    });
+    
+    document.querySelectorAll('input[name="sql-plugin-type"]').forEach(radio => {
+      radio.addEventListener('change', () => this.handleSqlPluginTypeChange());
+    });
+    
+    document.querySelectorAll('input[name="sql-connection-method"]').forEach(radio => {
+      radio.addEventListener('change', () => this.handleSqlConnectionMethodChange());
+    });
+    
+    document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
   }
 
   async showModal(plugin = null) {
@@ -322,18 +337,32 @@ export class PluginModalStepper {
   showConfigSectionForType() {
     const openApiSection = document.getElementById('openapi-config-section');
     const genericSection = document.getElementById('generic-config-section');
+    const sqlSection = document.getElementById('sql-config-section');
     
-    // Determine if this is an OpenAPI plugin type
+    // Determine plugin type
     const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+    const isSqlType = this.selectedType && (
+      this.selectedType.toLowerCase().includes('sql') || 
+      this.selectedType.toLowerCase() === 'sql_schema' ||
+      this.selectedType.toLowerCase() === 'sql_query'
+    );
     
     if (isOpenApiType) {
       openApiSection.classList.remove('d-none');
       genericSection.classList.add('d-none');
+      sqlSection.classList.add('d-none');
       // Initialize the source sections for OpenAPI
       this.toggleOpenApiSourceSections();
+    } else if (isSqlType) {
+      openApiSection.classList.add('d-none');
+      genericSection.classList.add('d-none');
+      sqlSection.classList.remove('d-none');
+      // Initialize SQL plugin configuration
+      this.initializeSqlConfiguration();
     } else {
       openApiSection.classList.add('d-none');
       genericSection.classList.remove('d-none');
+      sqlSection.classList.add('d-none');
     }
   }
 
@@ -426,7 +455,9 @@ export class PluginModalStepper {
       case 3:
         // Validate based on which config section is visible
         const openApiSection = document.getElementById('openapi-config-section');
+        const sqlSection = document.getElementById('sql-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
+        const isSqlVisible = !sqlSection.classList.contains('d-none');
         
         if (isOpenApiVisible) {
           // Validate OpenAPI fields based on source type
@@ -480,6 +511,60 @@ export class PluginModalStepper {
             if (!token) {
               this.showError('OAuth2 access token is required.');
               return false;
+            }
+          }
+        } else if (isSqlVisible) {
+          // Validate SQL configuration
+          const selectedDbType = document.querySelector('input[name="sql-database-type"]:checked');
+          if (!selectedDbType) {
+            this.showError('Database type is required.');
+            return false;
+          }
+          
+          const selectedPluginType = document.querySelector('input[name="sql-plugin-type"]:checked');
+          if (!selectedPluginType) {
+            this.showError('Plugin type is required.');
+            return false;
+          }
+          
+          const selectedConnectionMethod = document.querySelector('input[name="sql-connection-method"]:checked');
+          if (!selectedConnectionMethod) {
+            this.showError('Connection method is required.');
+            return false;
+          }
+          
+          // Validate connection method specific fields
+          if (selectedConnectionMethod.value === 'connection-string') {
+            // No additional validation needed for connection string method
+          } else if (selectedConnectionMethod.value === 'individual-parameters') {
+            const server = document.getElementById('sql-server').value.trim();
+            const database = document.getElementById('sql-database').value.trim();
+            
+            if (!server) {
+              this.showError('Server is required.');
+              return false;
+            }
+            
+            if (!database) {
+              this.showError('Database is required.');
+              return false;
+            }
+            
+            // Validate authentication for individual parameters
+            const sqlAuthType = document.getElementById('sql-auth-type').value;
+            if (sqlAuthType === 'username-password') {
+              const username = document.getElementById('sql-username').value.trim();
+              const password = document.getElementById('sql-password').value.trim();
+              
+              if (!username) {
+                this.showError('Username is required.');
+                return false;
+              }
+              
+              if (!password) {
+                this.showError('Password is required.');
+                return false;
+              }
             }
           }
         } else {
@@ -764,6 +849,240 @@ export class PluginModalStepper {
     }
   }
 
+  // SQL Plugin Configuration Methods
+  initializeSqlConfiguration() {
+    // Set default values
+    document.getElementById('sql-read-only').value = 'true';
+    document.getElementById('sql-max-rows').value = '1000';
+    document.getElementById('sql-timeout').value = '30';
+    document.getElementById('sql-include-system-tables').value = 'false';
+    
+    // Initialize connection examples
+    this.updateSqlConnectionExamples();
+    
+    // Initialize auth info
+    this.updateSqlAuthInfo();
+    
+    // Show/hide relevant sections
+    this.handleSqlPluginTypeChange();
+    this.handleSqlDatabaseTypeChange();
+    this.handleSqlConnectionMethodChange();
+    this.handleSqlAuthTypeChange();
+  }
+
+  handleSqlDatabaseTypeChange() {
+    const selectedType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
+    
+    if (!selectedType) return;
+    
+    // Update connection examples
+    this.updateSqlConnectionExamples();
+    
+    // Show/hide fields based on database type
+    const serverField = document.getElementById('sql-server-field');
+    const portField = document.getElementById('sql-port-field');
+    const driverField = document.getElementById('sql-driver-field');
+    const databaseField = document.getElementById('sql-database-field');
+    const authTypeSelect = document.getElementById('sql-auth-type');
+    
+    if (selectedType === 'sqlite') {
+      serverField.style.display = 'none';
+      portField.style.display = 'none';
+      driverField.style.display = 'none';
+      databaseField.querySelector('label').textContent = 'Database File Path';
+      databaseField.querySelector('input').placeholder = '/path/to/database.db';
+      databaseField.querySelector('.form-text').textContent = 'Full path to the SQLite database file';
+      
+      // Limit auth options for SQLite
+      authTypeSelect.innerHTML = `
+        <option value="connection_string_only">File Path Only</option>
+      `;
+    } else {
+      serverField.style.display = 'block';
+      portField.style.display = 'block';
+      databaseField.querySelector('label').textContent = 'Database';
+      databaseField.querySelector('input').placeholder = 'database_name';
+      databaseField.querySelector('.form-text').textContent = 'Database name';
+      
+      // Show/hide driver field for SQL Server
+      if (selectedType === 'sqlserver' || selectedType === 'azure_sql') {
+        driverField.style.display = 'block';
+      } else {
+        driverField.style.display = 'none';
+      }
+      
+      // Set auth options based on database type
+      if (selectedType === 'azure_sql') {
+        authTypeSelect.innerHTML = `
+          <option value="managed_identity">Managed Identity (Recommended)</option>
+          <option value="username_password">Username & Password</option>
+          <option value="service_principal">Service Principal</option>
+          <option value="connection_string_only">Connection String Only</option>
+        `;
+      } else {
+        authTypeSelect.innerHTML = `
+          <option value="username_password">Username & Password</option>
+          <option value="integrated">Integrated Authentication</option>
+          <option value="connection_string_only">Connection String Only</option>
+        `;
+      }
+    }
+    
+    // Update port placeholder
+    this.updatePortPlaceholder(selectedType);
+    
+    // Trigger auth type change to update fields
+    this.handleSqlAuthTypeChange();
+  }
+
+  handleSqlPluginTypeChange() {
+    const selectedType = document.querySelector('input[name="sql-plugin-type"]:checked')?.value;
+    
+    const querySettings = document.getElementById('sql-query-settings');
+    const schemaSettings = document.getElementById('sql-schema-settings');
+    
+    if (selectedType === 'query') {
+      querySettings.classList.remove('d-none');
+      schemaSettings.classList.add('d-none');
+    } else if (selectedType === 'schema') {
+      querySettings.classList.add('d-none');
+      schemaSettings.classList.remove('d-none');
+    } else {
+      querySettings.classList.add('d-none');
+      schemaSettings.classList.add('d-none');
+    }
+  }
+
+  handleSqlConnectionMethodChange() {
+    const selectedMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value;
+    
+    const stringSection = document.getElementById('sql-connection-string-section');
+    const paramsSection = document.getElementById('sql-connection-params-section');
+    
+    if (selectedMethod === 'connection_string') {
+      stringSection.classList.remove('d-none');
+      paramsSection.classList.add('d-none');
+    } else {
+      stringSection.classList.add('d-none');
+      paramsSection.classList.remove('d-none');
+    }
+  }
+
+  handleSqlAuthTypeChange() {
+    const authType = document.getElementById('sql-auth-type').value;
+    const credentialsDiv = document.getElementById('sql-auth-credentials');
+    const servicePrincipalDiv = document.getElementById('sql-auth-service-principal');
+    
+    // Hide all auth sections first
+    credentialsDiv.style.display = 'none';
+    servicePrincipalDiv.style.display = 'none';
+    
+    // Show relevant sections
+    switch (authType) {
+      case 'username_password':
+        credentialsDiv.style.display = 'block';
+        break;
+      case 'service_principal':
+        servicePrincipalDiv.style.display = 'block';
+        break;
+      case 'integrated':
+      case 'managed_identity':
+      case 'connection_string_only':
+        // No additional fields needed
+        break;
+    }
+    
+    // Update auth info
+    this.updateSqlAuthInfo();
+  }
+
+  updateSqlConnectionExamples() {
+    const selectedType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
+    const examplesDiv = document.getElementById('sql-connection-examples');
+    
+    if (!selectedType || !examplesDiv) return;
+    
+    const examples = this.getSqlConnectionExamples(selectedType);
+    examplesDiv.innerHTML = examples;
+  }
+
+  getSqlConnectionExamples(dbType) {
+    const examples = {
+      sqlserver: `
+        <div class="example"><strong>SQL Server:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;UID=user;PWD=pass</div>
+        <div class="example"><strong>Integrated Auth:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.com;DATABASE=mydb;Trusted_Connection=yes</div>
+      `,
+      azure_sql: `
+        <div class="example"><strong>Managed Identity:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;Authentication=ActiveDirectoryMsi</div>
+        <div class="example"><strong>Username/Password:</strong> DRIVER={ODBC Driver 17 for SQL Server};SERVER=server.database.windows.net;DATABASE=mydb;UID=user;PWD=pass</div>
+      `,
+      postgresql: `
+        <div class="example"><strong>PostgreSQL:</strong> host=localhost dbname=mydb user=username password=password port=5432</div>
+        <div class="example"><strong>With SSL:</strong> host=server.com dbname=mydb user=username password=password sslmode=require</div>
+      `,
+      mysql: `
+        <div class="example"><strong>MySQL:</strong> mysql://username:password@localhost:3306/database_name</div>
+        <div class="example"><strong>With SSL:</strong> mysql://username:password@server.com:3306/database_name?ssl=true</div>
+      `,
+      sqlite: `
+        <div class="example"><strong>SQLite:</strong> /path/to/your/database.db</div>
+        <div class="example"><strong>Relative path:</strong> ./data/database.db</div>
+      `
+    };
+    
+    return examples[dbType] || '';
+  }
+
+  updatePortPlaceholder(dbType) {
+    const portInput = document.getElementById('sql-port');
+    if (!portInput) return;
+    
+    const defaultPorts = {
+      sqlserver: '1433',
+      azure_sql: '1433',
+      postgresql: '5432',
+      mysql: '3306'
+    };
+    
+    portInput.placeholder = defaultPorts[dbType] || 'Auto-detect';
+  }
+
+  updateSqlAuthInfo() {
+    const authType = document.getElementById('sql-auth-type').value;
+    const dbType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
+    const infoDiv = document.getElementById('sql-auth-info');
+    const infoText = document.getElementById('sql-auth-info-text');
+    
+    if (!infoDiv || !infoText) return;
+    
+    let message = '';
+    
+    switch (authType) {
+      case 'managed_identity':
+        message = 'Managed Identity uses Azure AD authentication without storing credentials. Ensure your application has the appropriate database permissions assigned.';
+        break;
+      case 'service_principal':
+        message = 'Service Principal authentication uses Azure AD application credentials. Store client secrets securely and rotate them regularly.';
+        break;
+      case 'integrated':
+        message = 'Integrated Authentication uses Windows credentials of the running application. Ensure the application service account has database access.';
+        break;
+      case 'username_password':
+        message = 'Username and password authentication stores credentials in the configuration. Consider using more secure authentication methods for production.';
+        break;
+      case 'connection_string_only':
+        message = 'Connection string contains all authentication details. Ensure the string is properly secured and not logged in plain text.';
+        break;
+    }
+    
+    if (message) {
+      infoText.textContent = message;
+      infoDiv.classList.remove('d-none');
+    } else {
+      infoDiv.classList.add('d-none');
+    }
+  }
+
   populateFormFromPlugin(plugin) {
     // Step 2 fields
     document.getElementById('plugin-name').value = plugin.name || '';
@@ -828,7 +1147,9 @@ export class PluginModalStepper {
   getFormData() {
     // Determine which configuration section is active
     const openApiSection = document.getElementById('openapi-config-section');
+    const sqlSection = document.getElementById('sql-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
+    const isSqlVisible = !sqlSection.classList.contains('d-none');
     
     let auth = {};
     let endpoint = '';
@@ -882,6 +1203,106 @@ export class PluginModalStepper {
       } else if (authType === 'none') {
         auth = {}; // No auth needed
       }
+    } else if (isSqlVisible) {
+      // Collect SQL plugin data
+      const databaseType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
+      const pluginType = document.querySelector('input[name="sql-plugin-type"]:checked')?.value;
+      const connectionMethod = document.querySelector('input[name="sql-connection-method"]:checked')?.value;
+      const authType = document.getElementById('sql-auth-type').value;
+      
+      if (!databaseType) {
+        throw new Error('Please select a database type');
+      }
+      if (!pluginType) {
+        throw new Error('Please select a plugin type (Schema or Query)');
+      }
+      
+      // Set the actual plugin type based on selection
+      this.selectedType = pluginType === 'schema' ? 'sql_schema' : 'sql_query';
+      
+      // Database configuration
+      additionalFields.database_type = databaseType;
+      
+      if (connectionMethod === 'connection_string') {
+        const connectionString = document.getElementById('sql-connection-string').value.trim();
+        if (!connectionString) {
+          throw new Error('Please enter a connection string');
+        }
+        additionalFields.connection_string = connectionString;
+      } else {
+        // Individual parameters
+        if (databaseType !== 'sqlite') {
+          const server = document.getElementById('sql-server').value.trim();
+          if (!server) {
+            throw new Error('Please enter the server name');
+          }
+          additionalFields.server = server;
+          
+          const port = document.getElementById('sql-port').value.trim();
+          if (port) {
+            additionalFields.port = parseInt(port);
+          }
+          
+          if (databaseType === 'sqlserver' || databaseType === 'azure_sql') {
+            additionalFields.driver = document.getElementById('sql-driver').value;
+          }
+        }
+        
+        const database = document.getElementById('sql-database').value.trim();
+        if (!database) {
+          throw new Error('Please enter the database name/path');
+        }
+        additionalFields.database = database;
+      }
+      
+      // Authentication configuration
+      auth.type = authType;
+      
+      switch (authType) {
+        case 'username_password':
+          const username = document.getElementById('sql-username').value.trim();
+          const password = document.getElementById('sql-password').value.trim();
+          if (!username || !password) {
+            throw new Error('Please enter both username and password');
+          }
+          additionalFields.username = username;
+          additionalFields.password = password;
+          break;
+          
+        case 'service_principal':
+          const clientId = document.getElementById('sql-client-id').value.trim();
+          const clientSecret = document.getElementById('sql-client-secret').value.trim();
+          const tenantId = document.getElementById('sql-tenant-id').value.trim();
+          if (!clientId || !clientSecret || !tenantId) {
+            throw new Error('Please enter client ID, client secret, and tenant ID');
+          }
+          auth.client_id = clientId;
+          auth.client_secret = clientSecret;
+          auth.tenant_id = tenantId;
+          break;
+          
+        case 'integrated':
+        case 'managed_identity':
+        case 'connection_string_only':
+          // No additional fields needed
+          break;
+      }
+      
+      // Plugin-specific settings
+      if (pluginType === 'query') {
+        additionalFields.read_only = document.getElementById('sql-read-only').value === 'true';
+        additionalFields.max_rows = parseInt(document.getElementById('sql-max-rows').value) || 1000;
+        additionalFields.timeout = parseInt(document.getElementById('sql-timeout').value) || 30;
+      } else if (pluginType === 'schema') {
+        additionalFields.include_system_tables = document.getElementById('sql-include-system-tables').value === 'true';
+        const tableFilter = document.getElementById('sql-table-filter').value.trim();
+        if (tableFilter) {
+          additionalFields.table_filter = tableFilter;
+        }
+      }
+      
+      // For SQL plugins, endpoint is not applicable
+      endpoint = '';
     } else {
       // Collect generic plugin data
       endpoint = document.getElementById('plugin-endpoint-generic').value.trim();
