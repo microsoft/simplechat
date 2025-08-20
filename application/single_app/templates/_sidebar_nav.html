@@ -178,7 +178,7 @@
           <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
             {% if profile_image %}
               <!-- Render profile image directly from server data -->
-              <img src="data:image/jpeg;base64,{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
+              <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
             {% else %}
               <!-- Fallback to initials with class for JS targeting -->
               <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
