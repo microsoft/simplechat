@@ -165,7 +165,20 @@ def authorized_getasession():
             return jsonify({"message": data}), 401
 
         print("✅ Token validation successful!")
-        session["user"] = data
+        print(f"📋 Token contains: {data}")
+        print(f"🔑 User ID (oid): {data.get('oid', 'Not found')}")
+        print(f"👤 User name: {data.get('name', data.get('preferred_username', 'Not found'))}")
+        print(f"🎭 User roles from token: {data.get('roles', 'Not found')}")
+
+        # Ensure the user object has the required roles for Flask app access
+        if 'roles' not in data:
+            print("🔧 Adding default User role to token data")
+            data['roles'] = ['User']  # Add default User role for access
+        elif 'User' not in data['roles'] and 'Admin' not in data['roles']:
+            print("🔧 Adding User role to existing roles")
+            data['roles'].append('User')  # Ensure User role exists
+        
+        session["user"] = data  # ← This line needs to be indented
 
         # FIXED: Build MSAL app WITH session cache to save tokens
         print("🔧 Building MSAL app and saving cache...")
