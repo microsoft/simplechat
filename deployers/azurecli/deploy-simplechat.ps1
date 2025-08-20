@@ -93,7 +93,8 @@ STEP 5) Entra Security Groups
 
 STEP 6) Cosmos DB
     - Ensure disableLocalAuth set to false (unless using RBAC, if using key based auth, disableLocalAuth must be false)
-    - Ensure the firewall set to all networks (unless using private endpoints)
+    - Ensure the firewall is set to all networks (unless using private endpoints)
+
 
 STEP 7) Azure OpenAI 
     - Configure a custom domain on you Azure OpenAI resources.  Otherwise, you will not be able to retrieve your OpenAI models

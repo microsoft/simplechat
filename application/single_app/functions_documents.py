@@ -2856,7 +2856,9 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 "update_callback": update_callback
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             total_chunks_saved = process_single_tabular_sheet(**args)
@@ -2888,7 +2890,9 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                     "update_callback": update_callback
                 }
 
-                if is_group:
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
                     args["group_id"] = group_id
 
                 chunks_from_sheet = process_single_tabular_sheet(**args)

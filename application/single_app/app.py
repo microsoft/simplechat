@@ -5,7 +5,9 @@ import pickle
 import json
 
 from semantic_kernel import Kernel
-from semantic_kernel_loader import initialize_semantic_kernel 
+from semantic_kernel_loader import initialize_semantic_kernel
+
+from azure.monitor.opentelemetry import configure_azure_monitor
 
 from config import *
 
@@ -45,6 +47,8 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_external_group_documents import *
+from route_external_public_documents import *
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -56,11 +60,13 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
-# from route_external_group_documents import *
-# from route_external_documents import *
-# from route_external_groups import *
-# from route_external_admin_settings import *
+from route_external_group_documents import *
+from route_external_public_documents import *
+from route_external_documents import *
+from route_external_groups import *
+from route_external_admin_settings import *
 
+configure_azure_monitor()
 
 # =================== Helper Functions ===================
 @app.before_first_request
@@ -118,6 +124,45 @@ def before_first_request():
     if enable_semantic_kernel and not per_user_semantic_kernel:
         print("Semantic Kernel is enabled. Initializing...")
         initialize_semantic_kernel()
+
+    Session(app)
+
+    # Setup session handling
+    if settings.get('enable_redis_cache'):
+        redis_url = settings.get('redis_url', '').strip()
+        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+
+        if redis_url:
+            app.config['SESSION_TYPE'] = 'redis'
+
+            if redis_auth_type == 'managed_identity':
+                print("Redis enabled using Managed Identity")
+                credential = DefaultAzureCredential()
+                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
+                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=token.token,
+                    ssl=True
+                )
+            else:
+                # Default to key-based auth
+                redis_key = settings.get('redis_key', '').strip()
+                print("Redis enabled using Access Key")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=redis_key,
+                    ssl=True
+                )
+        else:
+            print("Redis enabled but URL missing; falling back to filesystem.")
+            app.config['SESSION_TYPE'] = 'filesystem'
+    else:
+        app.config['SESSION_TYPE'] = 'filesystem'
 
     Session(app)
 
@@ -288,7 +333,6 @@ register_route_frontend_safety(app)
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
 
-# =================== Back End Routes ====================
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
@@ -335,19 +379,22 @@ register_route_backend_public_documents(app)
 register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
-#register_route_external_health(app)
+register_route_external_health(app)
 
 # ------------------- Extenral Groups Routes ----------
-#register_route_external_groups(app)
+register_route_external_groups(app)
 
 # ------------------- Extenral Group Documents Routes ----------
-#register_route_external_group_documents(app)
+register_route_external_group_documents(app)
+
+# ------------------- Extenral Public Documents Routes ----------
+register_route_external_public_documents(app)
 
 # ------------------- Extenral Documents Routes ----------
-#register_route_external_documents(app)
+register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
-#register_route_external_admin_settings(app)
+register_route_external_admin_settings(app)
 
 if __name__ == '__main__':
     settings = get_settings()
