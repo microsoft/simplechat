@@ -365,18 +365,15 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
 }
 
 async function deleteAgent(name) {
-  // For user agents, just remove from the list and POST the new list
+  // Use the proper DELETE endpoint instead of POST
   try {
-    const res = await fetch('/api/user/agents');
-    if (!res.ok) throw new Error('Failed to load agents');
-    let agents = await res.json();
-    agents = agents.filter(a => a.name !== name);
-    const saveRes = await fetch('/api/user/agents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(agents)
+    const deleteRes = await fetch(`/api/user/agents/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
     });
-    if (!saveRes.ok) throw new Error('Failed to delete agent');
+    if (!deleteRes.ok) {
+      const errorData = await deleteRes.json();
+      throw new Error(errorData.error || 'Failed to delete agent');
+    }
     fetchAgents();
   } catch (e) {
     renderError(e.message);

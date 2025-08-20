@@ -14,9 +14,10 @@ class MSGraphPlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": self.manifest.get("name", "msgraph_plugin"),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "msgraph",
-            "description": "Plugin for interacting with Microsoft Graph API. Supports calendar lookup, user profile, and security info.",
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "get_my_profile",

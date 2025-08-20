@@ -27,9 +27,10 @@ class EmbeddingModelPlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": "embedding_model_plugin",
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "embedding_model",
-            "description": "Plugin for generating text embeddings using the configured embedding model.",
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "embed",

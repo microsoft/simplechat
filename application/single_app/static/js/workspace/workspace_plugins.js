@@ -1,9 +1,84 @@
 
-// workspace_plugins.js (refactored to use plugin_common.js)
-import { renderPluginsTable, toggleAuthFields, populatePluginTypes, showPluginModal, validatePluginManifest } from '../plugin_common.js';
+// workspace_plugins.js (refactored to use plugin_wizard.js)
+import { renderPluginsTable, validatePluginManifest } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
+import PluginWizard from "../plugin_wizard.js";
 
 const root = document.getElementById('workspace-plugins-root');
+let pluginWizard;
+
+// Initialize wizard when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+  pluginWizard = new PluginWizard();
+  
+  // Handle save button click
+  document.getElementById('save-plugin-btn').addEventListener('click', async function(event) {
+    event.preventDefault();
+    
+    // Validate final step
+    if (!pluginWizard.validateCurrentStep()) {
+      return;
+    }
+
+    // Collect form data from wizard
+    const pluginData = pluginWizard.collectFormData();
+    
+    // Validate required fields
+    if (!pluginData.name || !pluginData.type) {
+      showError('Name and type are required.');
+      return;
+    }
+
+    // Build plugin manifest for API
+    const newPlugin = {
+      name: pluginData.name,
+      displayName: pluginData.displayName,
+      type: pluginData.type,
+      description: pluginData.description,
+      endpoint: pluginData.additionalFields.endpoint || '',
+      auth: pluginData.auth,
+      metadata: pluginData.metadata,
+      additionalFields: pluginData.additionalFields
+    };
+
+    // Validate with JSON schema
+    try {
+      const valid = await validatePluginManifest(newPlugin);
+      if (!valid) {
+        showError('Validation error: Invalid plugin data.');
+        return;
+      }
+    } catch (e) {
+      showError('Schema validation failed: ' + e.message);
+      return;
+    }
+
+    // Save
+    try {
+      // Get all plugins, update or add
+      const res = await fetch('/api/user/plugins');
+      if (!res.ok) throw new Error('Failed to load plugins');
+      let plugins = await res.json();
+      const idx = plugins.findIndex(p => p.name === newPlugin.name);
+      if (idx >= 0) {
+        plugins[idx] = newPlugin;
+      } else {
+        plugins.push(newPlugin);
+      }
+      const saveRes = await fetch('/api/user/plugins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plugins)
+      });
+      if (!saveRes.ok) throw new Error('Failed to save plugin');
+      bootstrap.Modal.getInstance(document.getElementById('plugin-modal')).hide();
+      fetchPlugins();
+      showToast('Plugin saved successfully', 'success');
+    } catch (e) {
+      showError(e.message);
+    }
+  });
+});
 
 function renderLoading() {
   root.innerHTML = `<div class="text-center p-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
@@ -11,6 +86,12 @@ function renderLoading() {
 
 function renderError(msg) {
   root.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
+}
+
+function showError(msg) {
+  if (pluginWizard) {
+    pluginWizard.showError(msg);
+  }
 }
 
 async function fetchPlugins() {
@@ -29,7 +110,6 @@ async function fetchPlugins() {
     if (createPluginBtn) {
       createPluginBtn.onclick = () => {
         console.log('[WORKSPACE PLUGINS] New Plugin button clicked');
-        //showToast('Workspace: New Plugin button clicked', 'info');
         openPluginModal();
       };
     }
@@ -39,149 +119,12 @@ async function fetchPlugins() {
 }
 
 function openPluginModal(plugin = null) {
-  const modalEl = document.getElementById('plugin-modal');
-  if (!modalEl) return alert('Plugin modal not found.');
-  // Fields
-  const nameField = document.getElementById('plugin-name');
-  const typeField = document.getElementById('plugin-type');
-  const descField = document.getElementById('plugin-description');
-  const endpointField = document.getElementById('plugin-endpoint');
-  const authTypeField = document.getElementById('plugin-auth-type');
-  const authKeyField = document.getElementById('plugin-auth-key');
-  const authIdentityField = document.getElementById('plugin-auth-identity');
-  const authTenantIdField = document.getElementById('plugin-auth-tenant-id');
-  const metadataField = document.getElementById('plugin-metadata');
-  const additionalFieldsField = document.getElementById('plugin-additional-fields');
-  const errorDiv = document.getElementById('plugin-modal-error');
-  // Auth field groups and labels
-  const authKeyGroup = document.getElementById('auth-key-group');
-  const authIdentityGroup = document.getElementById('auth-identity-group');
-  const authTenantIdGroup = document.getElementById('auth-tenantid-group');
-  const authKeyLabel = document.getElementById('auth-key-label');
-  const authIdentityLabel = document.getElementById('auth-identity-label');
-  const authTenantIdLabel = document.getElementById('auth-tenantid-label');
-
-  // Attach auth type toggle
-  authTypeField.onchange = () => toggleAuthFields({
-    authTypeSelect: authTypeField,
-    authKeyGroup,
-    authIdentityGroup,
-    authTenantIdGroup,
-    authKeyLabel,
-    authIdentityLabel,
-    authTenantIdLabel
-  });
-
-  // Show modal with shared logic
-  showPluginModal({
-    plugin,
-    populateTypes: () => populatePluginTypes({ endpoint: '/api/user/plugins/types', typeSelect: typeField }),
-    nameField,
-    typeField,
-    descField,
-    endpointField,
-    authTypeField,
-    authKeyField,
-    authIdentityField,
-    authTenantIdField,
-    metadataField,
-    additionalFieldsField,
-    errorDiv,
-    modalEl,
-    afterShow: () => {
-      // Save handler
-      document.getElementById('save-plugin-btn').onclick = async (event) => {
-        event.preventDefault();
-        // Always get the latest typeField from the DOM in case it was replaced
-        const currentTypeField = document.getElementById('plugin-type');
-        // Parse JSON fields
-        let metadataObj = {};
-        let additionalFieldsObj = {};
-        try {
-          metadataObj = metadataField.value.trim() ? JSON.parse(metadataField.value) : {};
-          if (typeof metadataObj !== 'object' || Array.isArray(metadataObj)) throw new Error('Metadata must be a JSON object');
-        } catch (e) {
-          errorDiv.textContent = 'Metadata: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        try {
-          additionalFieldsObj = additionalFieldsField.value.trim() ? JSON.parse(additionalFieldsField.value) : {};
-          if (typeof additionalFieldsObj !== 'object' || Array.isArray(additionalFieldsObj)) throw new Error('Additional Fields must be a JSON object');
-        } catch (e) {
-          errorDiv.textContent = 'Additional Fields: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        // Build plugin object
-        const authType = authTypeField.value;
-        const auth = { type: authType };
-        if (authType === 'key') {
-          auth.key = authKeyField.value.trim();
-        } else if (authType === 'identity') {
-          auth.identity = authIdentityField.value.trim();
-        } else if (authType === 'servicePrincipal') {
-          auth.identity = authIdentityField.value.trim();
-          auth.key = authKeyField.value.trim();
-          auth.tenantId = authTenantIdField.value.trim();
-        }
-        // For 'user', no extra fields
-        const selectedType = currentTypeField ? currentTypeField.value.trim() : '';
-        console.log('[PLUGIN SAVE] Selected type:', selectedType);
-        if (!selectedType) {
-          errorDiv.textContent = 'Please select a plugin type.';
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        const newPlugin = {
-          name: nameField.value.trim(),
-          type: selectedType,
-          description: descField.value.trim(),
-          endpoint: endpointField.value.trim(),
-          auth,
-          metadata: metadataObj,
-          additionalFields: additionalFieldsObj
-        };
-        // Validate with JSON schema (Ajv)
-        try {
-          const valid = await validatePluginManifest(newPlugin);
-          if (!valid) {
-            errorDiv.textContent = 'Validation error: Invalid plugin data.';
-            errorDiv.classList.remove('d-none');
-            return;
-          }
-        } catch (e) {
-          errorDiv.textContent = 'Schema validation failed: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        // Save
-        try {
-          // Get all plugins, update or add
-          const res = await fetch('/api/user/plugins');
-          if (!res.ok) throw new Error('Failed to load plugins');
-          let plugins = await res.json();
-          const idx = plugins.findIndex(p => p.name === newPlugin.name);
-          if (idx >= 0) {
-            plugins[idx] = newPlugin;
-          } else {
-            plugins.push(newPlugin);
-          }
-          const saveRes = await fetch('/api/user/plugins', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(plugins)
-          });
-          if (!saveRes.ok) throw new Error('Failed to save plugin');
-          bootstrap.Modal.getInstance(modalEl).hide();
-          fetchPlugins();
-        } catch (e) {
-          errorDiv.textContent = e.message;
-          errorDiv.classList.remove('d-none');
-        }
-      };
-    }
-  });
+  if (!pluginWizard) {
+    console.error('Plugin wizard not initialized');
+    return;
+  }
+  
+  pluginWizard.show(plugin);
 }
 
 async function deletePlugin(name) {
@@ -194,6 +137,7 @@ async function deletePlugin(name) {
       throw new Error(data.error || 'Failed to delete plugin');
     }
     fetchPlugins();
+    showToast('Plugin deleted successfully', 'success');
   } catch (e) {
     renderError(e.message);
   }

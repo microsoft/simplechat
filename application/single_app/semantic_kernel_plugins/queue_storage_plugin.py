@@ -26,9 +26,10 @@ class QueueStoragePlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": self.manifest.get("name", "queue_storage_plugin"),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "queue_storage",
-            "description": "Plugin for sending messages to an Azure Storage Queue. Use this to enqueue tasks, trigger background processing, or communicate between distributed components.",
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "send_message",

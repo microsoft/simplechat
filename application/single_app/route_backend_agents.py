@@ -72,6 +72,11 @@ def set_user_agents():
         if agent.get('is_global', False):
             continue  # Skip global agents
         agent['is_global'] = False  # Ensure user agents are not global
+        
+        # Legacy field migration: convert plugins_to_load to actions_to_load
+        if 'plugins_to_load' in agent:
+            agent['actions_to_load'] = agent.pop('plugins_to_load')
+        
         # --- Require at least one deployment field ---
         #if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
         #    return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
@@ -209,6 +214,11 @@ def add_agent():
         agents = settings.get('semantic_kernel_agents', [])
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         new_agent['is_global'] = True
+        
+        # Legacy field migration: convert plugins_to_load to actions_to_load
+        if 'plugins_to_load' in new_agent:
+            new_agent['actions_to_load'] = new_agent.pop('plugins_to_load')
+        
         validation_error = validate_agent(new_agent)
         if validation_error:
             log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": new_agent, "error": validation_error})
@@ -305,6 +315,11 @@ def edit_agent(agent_name):
         agents = settings.get('semantic_kernel_agents', [])
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         updated_agent['is_global'] = True
+        
+        # Legacy field migration: convert plugins_to_load to actions_to_load
+        if 'plugins_to_load' in updated_agent:
+            updated_agent['actions_to_load'] = updated_agent.pop('plugins_to_load')
+        
         validation_error = validate_agent(updated_agent)
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})

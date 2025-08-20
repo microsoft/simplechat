@@ -25,9 +25,10 @@ class AzureFunctionPlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": self.manifest.get("name", "azure_function_plugin"),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "azure_function",
-            "description": "Plugin for calling an Azure Function via HTTP POST or GET using function key or managed identity authentication. Use this to trigger serverless logic or workflows in Azure Functions.",
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "call_function_post",

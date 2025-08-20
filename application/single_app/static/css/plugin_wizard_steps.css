@@ -1,0 +1,228 @@
+/* Plugin Wizard Step Progress Indicator Styles */
+
+.step-progress-container {
+  position: relative;
+  margin: 20px 0;
+}
+
+.step-progress-line {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  background-color: #dee2e6;
+  z-index: 1;
+}
+
+.step-progress-line::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background-color: #0d6efd;
+  transition: width 0.3s ease;
+  width: 0%;
+  z-index: 2;
+}
+
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 3;
+  min-width: 80px;
+}
+
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #dee2e6;
+  border: 2px solid #dee2e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: #6c757d;
+  transition: all 0.3s ease;
+  margin-bottom: 8px;
+}
+
+.step-number {
+  display: block;
+}
+
+.step-check,
+.step-error {
+  display: none;
+  font-size: 16px;
+}
+
+.step-label {
+  text-align: center;
+  min-height: 40px;
+}
+
+.step-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #6c757d;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.step-subtitle {
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.2;
+}
+
+/* Step States */
+
+/* Active Step */
+.step-item.active .step-circle {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: white;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+}
+
+.step-item.active .step-title {
+  color: #0d6efd;
+  font-weight: 700;
+}
+
+.step-item.active .step-subtitle {
+  color: #6c757d;
+}
+
+/* Completed Step */
+.step-item.completed .step-circle {
+  background-color: #198754;
+  border-color: #198754;
+  color: white;
+}
+
+.step-item.completed .step-number {
+  display: none;
+}
+
+.step-item.completed .step-check {
+  display: block;
+}
+
+.step-item.completed .step-title {
+  color: #198754;
+}
+
+.step-item.completed .step-subtitle {
+  color: #6c757d;
+}
+
+/* Error Step */
+.step-item.error .step-circle {
+  background-color: #dc3545;
+  border-color: #dc3545;
+  color: white;
+}
+
+.step-item.error .step-number {
+  display: none;
+}
+
+.step-item.error .step-error {
+  display: block;
+}
+
+.step-item.error .step-title {
+  color: #dc3545;
+}
+
+.step-item.error .step-subtitle {
+  color: #dc3545;
+}
+
+/* Pending/Future Steps */
+.step-item.pending .step-circle {
+  background-color: #f8f9fa;
+  border-color: #dee2e6;
+  color: #adb5bd;
+}
+
+.step-item.pending .step-title {
+  color: #adb5bd;
+}
+
+.step-item.pending .step-subtitle {
+  color: #adb5bd;
+}
+
+/* Progress line animation */
+.step-progress-container.step-1 .step-progress-line::before { width: 0%; }
+.step-progress-container.step-2 .step-progress-line::before { width: 25%; }
+.step-progress-container.step-3 .step-progress-line::before { width: 50%; }
+.step-progress-container.step-4 .step-progress-line::before { width: 75%; }
+.step-progress-container.step-5 .step-progress-line::before { width: 100%; }
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .step-item {
+    min-width: 60px;
+  }
+  
+  .step-circle {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+  
+  .step-title {
+    font-size: 10px;
+  }
+  
+  .step-subtitle {
+    font-size: 9px;
+  }
+  
+  .step-progress-line {
+    left: 16px;
+    right: 16px;
+    top: 16px;
+  }
+}
+
+/* Summary step specific styles */
+.step-content#step-5 .card {
+  border: 1px solid #dee2e6;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.step-content#step-5 .card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.step-content#step-5 .row {
+  margin-bottom: 8px;
+}
+
+.step-content#step-5 .row:last-child {
+  margin-bottom: 0;
+}
+
+.step-content#step-5 code {
+  background-color: #f8f9fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.step-content#step-5 .alert {
+  font-size: 12px;
+  padding: 8px 12px;
+}

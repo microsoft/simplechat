@@ -1,6 +1,197 @@
 // admin_plugins.js
 import { showToast } from "../chat/chat-toast.js"
-import { showPluginModal as sharedShowPluginModal, renderPluginsTable as sharedRenderPluginsTable, populatePluginTypes as sharedPopulatePluginTypes, toggleAuthFields as sharedToggleAuthFields, validatePluginManifest as sharedValidatePluginManifest } from "../plugin_common.js";
+import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest as sharedValidatePluginManifest } from "../plugin_common.js";
+import PluginWizard from "../plugin_wizard.js";
+
+// Global wizard instance
+let pluginWizard;
+
+// Main logic
+document.addEventListener('DOMContentLoaded', function () {
+    if (!document.getElementById('plugins-tab')) return;
+
+    // Initialize the plugin wizard
+    pluginWizard = new PluginWizard();
+
+    // Add plugin button uses new wizard
+    document.getElementById('add-plugin-btn').addEventListener('click', async function () {
+        await pluginWizard.show();
+    });
+
+    // Save plugin (add or edit) - now handled by wizard
+    document.getElementById('save-plugin-btn').addEventListener('click', async function (event) {
+        event.preventDefault();
+        
+        console.log('🔧 Starting plugin save process...');
+        
+        // Validate final step
+        if (!pluginWizard.validateCurrentStep()) {
+            console.error('❌ Final step validation failed');
+            return;
+        }
+
+        // Collect form data from wizard
+        const pluginData = pluginWizard.collectFormData();
+        console.log('📋 Collected form data:', JSON.stringify(pluginData, null, 2));
+        
+        // Validate required fields
+        if (!pluginData.name || !pluginData.type) {
+            const error = 'Name and type are required.';
+            console.error('❌ Missing required fields:', { name: pluginData.name, type: pluginData.type });
+            showPluginModalError(error);
+            return;
+        }
+
+        // Check for spaces in name (maintain backward compatibility)
+        if (/\s/.test(pluginData.name)) {
+            const error = 'Internal name cannot contain spaces.';
+            console.error('❌ Invalid name format:', pluginData.name);
+            showPluginModalError(error);
+            return;
+        }
+
+        // Validate endpoint if present
+        if (pluginData.additionalFields.endpoint && 
+            !pluginData.additionalFields.endpoint.startsWith('https://')) {
+            const error = 'Endpoint must start with https://';
+            console.error('❌ Invalid endpoint format:', pluginData.additionalFields.endpoint);
+            showPluginModalError(error);
+            return;
+        }
+
+        const editing = document.getElementById('plugin-modal').getAttribute('data-editing');
+        const method = editing ? 'PUT' : 'POST';
+        const url = editing ? `/api/admin/plugins/${encodeURIComponent(editing)}` : '/api/admin/plugins';
+
+        // Build plugin manifest for API
+        const pluginManifest = {
+            name: pluginData.name,
+            displayName: pluginData.displayName,
+            type: pluginData.type,
+            description: pluginData.description,
+            endpoint: pluginData.additionalFields.endpoint || '',
+            auth: pluginData.auth,
+            metadata: pluginData.metadata,
+            additionalFields: pluginData.additionalFields
+        };
+
+        console.log('📦 Built plugin manifest:', JSON.stringify(pluginManifest, null, 2));
+
+        // Use shared validation
+        try {
+            console.log('🔍 Validating plugin manifest...');
+            const valid = await sharedValidatePluginManifest(pluginManifest);
+            if (!valid) {
+                console.error('❌ Plugin manifest validation failed');
+                showPluginModalError('Validation error: Invalid plugin data. Check console for details.');
+                return;
+            }
+            console.log('✅ Plugin manifest validation passed');
+        } catch (e) {
+            console.error('❌ Schema validation error:', e);
+            showPluginModalError('Schema validation failed: ' + e.message);
+            return;
+        }
+
+        // Save plugin
+        console.log(`🚀 Sending ${method} request to ${url}...`);
+        fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(pluginManifest)
+        })
+            .then(res => {
+                console.log('📡 Server response status:', res.status, res.statusText);
+                return res.json().then(data => ({ ok: res.ok, status: res.status, data }));
+            })
+            .then(({ ok, status, data }) => {
+                console.log('📨 Server response data:', JSON.stringify(data, null, 2));
+                if (ok && data.success) {
+                    console.log('✅ Plugin saved successfully');
+                    fetchPlugins();
+                    bootstrap.Modal.getInstance(document.getElementById('plugin-modal')).hide();
+                    showToast('Plugin saved successfully', 'success');
+                } else {
+                    console.error('❌ Server returned error:', data);
+                    const errorMsg = data.error || data.message || `Server error (${status})`;
+                    showPluginModalError(`Error saving plugin: ${errorMsg}`);
+                }
+            })
+            .catch(err => {
+                console.error('❌ Network/fetch error:', err);
+                showPluginModalError('Error saving plugin: ' + err.message);
+            });
+    });
+
+    document.getElementById('plugins-tab').addEventListener('shown.bs.tab', function () {
+        fetchPlugins();
+    });
+
+    function handleEdit(name) { editPlugin(name); }
+    function handleDelete(name) { deletePlugin(name); }
+    function renderTable(plugins) {
+        sharedRenderPluginsTable({
+            plugins,
+            tbodySelector: '#plugins-table-body',
+            onEdit: handleEdit,
+            onDelete: handleDelete,
+            ensureTable: false // Table is already present in admin view
+        });
+    }
+
+    function fetchPlugins() {
+        fetch('/api/admin/plugins')
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to fetch plugins');
+                return res.json();
+            })
+            .then(plugins => renderTable(plugins))
+            .catch(err => showToast('Error loading plugins: ' + err.message, 'danger'));
+    }
+
+    // Initial table load
+    fetchPlugins();
+});
+
+// Edit plugin modal logic
+async function editPlugin(name) {
+    const res = await fetch('/api/admin/plugins');
+    const plugins = await res.json();
+    const plugin = plugins.find(p => p.name === name);
+    
+    if (plugin) {
+        // Set editing mode
+        document.getElementById('plugin-modal').setAttribute('data-editing', plugin.name);
+        
+        // Show wizard with plugin data
+        await pluginWizard.show(plugin);
+    }
+}
+
+// Delete plugin logic
+function deletePlugin(name) {
+    if (confirm(`Are you sure you want to delete plugin "${name}"?`)) {
+        fetch(`/api/admin/plugins/${encodeURIComponent(name)}`, {
+            method: 'DELETE'
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    fetchPlugins();
+                    showToast('Plugin deleted successfully', 'success');
+                } else {
+                    showToast('Error deleting plugin: ' + (data.error || 'Unknown error'), 'danger');
+                }
+            })
+            .catch(err => showToast('Error deleting plugin: ' + err.message, 'danger'));
+    }
+}
+
+function showPluginModalError(msg) {
+    pluginWizard.showError(msg);
+}
 
 // Main logic
 document.addEventListener('DOMContentLoaded', function () {

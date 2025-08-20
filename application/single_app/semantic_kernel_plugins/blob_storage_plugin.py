@@ -26,9 +26,10 @@ class BlobStoragePlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": self.manifest.get("name", "blob_storage_plugin"),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "blob_storage",
-            "description": self.manifest.get("description", "Plugin for Azure Blob Storage operations that uses key or managed identity authentication allowing querying of blob storage data sources."),
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "list_containers",

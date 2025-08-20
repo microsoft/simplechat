@@ -54,9 +54,10 @@ class DatabricksTablePlugin(BasePlugin):
         )
         full_desc = f"{user_desc}\n\n{api_desc}"
         return {
-            "name": self._metadata.get("name", self.table_name),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "databricks_table",
-            "description": full_desc,
+            "description": self.get_description(),
             "methods": [
                 {
                     "name": "query_table",

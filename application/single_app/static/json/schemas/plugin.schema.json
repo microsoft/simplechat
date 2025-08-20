@@ -11,6 +11,10 @@
           "pattern": "^[A-Za-z0-9_-]+$",
           "description": "Alphanumeric, underscore, and dash only"
         },
+        "displayName": {
+          "type": "string",
+          "description": "Human-readable display name for the plugin"
+        },
         "type": {
           "type": "string"
         },

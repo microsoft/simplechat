@@ -26,13 +26,30 @@ class OpenApiPlugin(BasePlugin):
         self.auth = self.manifest.get("auth", {})
         self._metadata = self._generate_metadata()
 
+    def get_display_name(self) -> str:
+        """Override to use OpenAPI info as fallback"""
+        return (self.manifest.get('displayName') or 
+                self.manifest.get('name') or 
+                self.openapi.get("info", {}).get("title", "OpenAPI Plugin"))
+    
+    def get_name(self) -> str:
+        """Override to use OpenAPI info as fallback"""
+        return (self.manifest.get('name') or 
+                self.openapi.get("info", {}).get("title", "openapi_plugin").lower().replace(" ", "_"))
+    
+    def get_description(self) -> str:
+        """Override to use OpenAPI info as fallback"""
+        return (self.manifest.get('description') or 
+                self.openapi.get("info", {}).get("description", "OpenAPI-based plugin"))
+
     @property
     def metadata(self) -> Dict[str, Any]:
         info = self.openapi.get("info", {})
         return {
-            "name": info.get("title", "OpenAPIPlugin"),
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "openapi",
-            "description": info.get("description", ""),
+            "description": self.get_description(),
             "methods": self._metadata["methods"]
         }
 

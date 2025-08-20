@@ -153,9 +153,10 @@ class LogAnalyticsPlugin(BasePlugin):
     @property
     def metadata(self) -> Dict[str, Any]:
         return {
-            "name": "LogAnalyticsPlugin",
+            "name": self.get_name(),
+            "displayName": self.get_display_name(),
             "type": "log_analytics",
-            "description": "Plugin for querying Azure Log Analytics and discovering schema.",
+            "description": self.get_description(),
             "methods": self._metadata["methods"]
         }
 
