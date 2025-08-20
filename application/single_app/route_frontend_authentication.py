@@ -192,7 +192,7 @@ def authorized_getasession():
         print("✅ User already has session")
     
     return jsonify({"message": "Session established", "status": "success"}), 200
-    
+
     @app.route('/logout')
     def logout():
         user_name = session.get("user", {}).get("name", "User")
@@ -221,3 +221,32 @@ def authorized_getasession():
         
         print(f"{user_name} logged out. Redirecting to Azure AD logout.")
         return redirect(logout_url)
+
+@app.route('/logout')
+def logout():
+    user_name = session.get("user", {}).get("name", "User")
+    # Get the user's email before clearing the session
+    user_email = session.get("user", {}).get("preferred_username") or session.get("user", {}).get("email")
+    # Clear Flask session data
+    session.clear()
+    # Redirect user to Azure AD logout endpoint
+    # MSAL provides a helper for this too, but constructing manually is fine
+    # Get settings from database, with environment variable fallback
+    from functions_settings import get_settings
+    settings = get_settings()
+    home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
+    
+    logout_uri = home_redirect_url if home_redirect_url else url_for('index', _external=True, _scheme='https') # Where to land after logout
+    
+    print(f"Logout redirect URI: {logout_uri}")
+    
+    logout_url = (
+        f"{AUTHORITY}/oauth2/v2.0/logout"
+        f"?post_logout_redirect_uri={quote(logout_uri)}"
+    )
+    # Add logout_hint parameter if we have the user's email
+    if user_email:
+        logout_url += f"&logout_hint={quote(user_email)}"
+    
+    print(f"{user_name} logged out. Redirecting to Azure AD logout.")
+    return redirect(logout_url)
