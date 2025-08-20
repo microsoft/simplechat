@@ -329,18 +329,21 @@ def validate_bearer_token(token):
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
 
         # Validate the token
+        # Accept both CLIENT_ID and api://CLIENT_ID audience formats
+        expected_audiences = [CLIENT_ID, f"api://{CLIENT_ID}"]
         decoded_token = jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],  # Microsoft Entra typically uses RS256
-            audience=CLIENT_ID,  # Accept GUID-based audience (not api:// format)
+            audience=expected_audiences,  # Accept both GUID and api:// formats
+
             issuer=f"https://sts.windows.net/{TENANT_ID}/", # Example for common tenant or specific tenant ID
             #issuer=AUTHORITY, # Example for common tenant or specific tenant ID
             options={
                 "verify_exp": True,
                 "verify_nbf": True,
                 "verify_iss": True,
-                "verify_aud": True, # TODO: THIS NEEDS TO BE FIXED TO VERIFY AUDIENCE.
+                "verify_aud": True, # Now properly configured to verify audience
             }
         )
         return True, decoded_token

@@ -182,6 +182,66 @@ def authorized_getasession():
 
         return jsonify(result, 200)
 
+@app.route('/getASession', methods=['GET']) # This is your redirect URI path GREGUNGER TODO
+def authorized_getasession():
+    """
+    FIXED VERSION: The main authentication endpoint that converts Bearer tokens to session cookies.
+    This includes both fixes:
+    1. Accept api://CLIENT_ID audience format 
+    2. Properly initialize msal_app variable with enhanced debugging
+    """
+    print("🔍 /getASession endpoint called")
+
+    if "user" not in session:
+        print("👤 No user in session, checking Authorization header...")
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            print("❌ Authorization header missing")
+            return jsonify({"message": "Authorization header missing"}), 401
+
+        if not auth_header.startswith("Bearer "):
+            print("❌ Invalid Authorization header format")
+            return jsonify({"message": "Invalid Authorization header format"}), 401
+
+        token = auth_header.split(" ")[1]
+        print(f"🎫 Validating Bearer token: {token[:20]}...")
+        
+        is_valid, data = validate_bearer_token(token) # return true, bearer token
+
+        if not is_valid:
+            print(f"❌ Token validation failed: {data}")
+            return jsonify({"message": data}), 401
+
+        print("✅ Token validation successful!")
+        print(f"📋 Token contains: {data}")
+        print(f"🔑 User ID (oid): {data.get('oid', 'Not found')}")
+        print(f"👤 User name: {data.get('name', data.get('preferred_username', 'Not found'))}")
+        print(f"🎭 User roles from token: {data.get('roles', 'Not found')}")
+
+        # Ensure the user object has the required roles for Flask app access
+        if 'roles' not in data:
+            print("🔧 Adding default User role to token data")
+            data['roles'] = ['User']  # Add default User role for access
+        elif 'User' not in data['roles'] and 'Admin' not in data['roles']:
+            print("🔧 Adding User role to existing roles")
+            data['roles'].append('User')  # Ensure User role exists
+        
+        session["user"] = data  # ← This line needs to be indented
+
+        # FIXED: Build MSAL app WITH session cache to save tokens
+        print("🔧 Building MSAL app and saving cache...")
+        msal_app = _build_msal_app(cache=_load_cache())
+        # --- CRITICAL: Save the entire cache (contains tokens) to session ---
+        _save_cache(msal_app.token_cache)
+
+        user_name = session['user'].get('name', session['user'].get('preferred_username', 'Unknown'))
+        print(f"🎉 User {user_name} logged in successfully.")
+    else:
+        print("✅ User already has session")
+    
+    return jsonify({"message": "Session established", "status": "success"}), 200
+
     @app.route('/logout')
     def logout():
         user_name = session.get("user", {}).get("name", "User")
@@ -210,3 +270,32 @@ def authorized_getasession():
         
         print(f"{user_name} logged out. Redirecting to Azure AD logout.")
         return redirect(logout_url)
+
+@app.route('/logout')
+def logout():
+    user_name = session.get("user", {}).get("name", "User")
+    # Get the user's email before clearing the session
+    user_email = session.get("user", {}).get("preferred_username") or session.get("user", {}).get("email")
+    # Clear Flask session data
+    session.clear()
+    # Redirect user to Azure AD logout endpoint
+    # MSAL provides a helper for this too, but constructing manually is fine
+    # Get settings from database, with environment variable fallback
+    from functions_settings import get_settings
+    settings = get_settings()
+    home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
+    
+    logout_uri = home_redirect_url if home_redirect_url else url_for('index', _external=True, _scheme='https') # Where to land after logout
+    
+    print(f"Logout redirect URI: {logout_uri}")
+    
+    logout_url = (
+        f"{AUTHORITY}/oauth2/v2.0/logout"
+        f"?post_logout_redirect_uri={quote(logout_uri)}"
+    )
+    # Add logout_hint parameter if we have the user's email
+    if user_email:
+        logout_url += f"&logout_hint={quote(user_email)}"
+    
+    print(f"{user_name} logged out. Redirecting to Azure AD logout.")
+    return redirect(logout_url)
