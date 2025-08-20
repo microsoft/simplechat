@@ -76,7 +76,6 @@ def get_access_token():
 
         if "access_token" in result:
             appLogger.info("Successfully acquired access token.")
-            result["access_token"]
             return result["access_token"]
         else:
             appLogger.error(f"Error acquiring token: {result.get('error')}")

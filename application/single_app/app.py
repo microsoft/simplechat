@@ -163,6 +163,45 @@ def before_first_request():
 
     Session(app)
 
+    # Setup session handling
+    if settings.get('enable_redis_cache'):
+        redis_url = settings.get('redis_url', '').strip()
+        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+
+        if redis_url:
+            app.config['SESSION_TYPE'] = 'redis'
+
+            if redis_auth_type == 'managed_identity':
+                print("Redis enabled using Managed Identity")
+                credential = DefaultAzureCredential()
+                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
+                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=token.token,
+                    ssl=True
+                )
+            else:
+                # Default to key-based auth
+                redis_key = settings.get('redis_key', '').strip()
+                print("Redis enabled using Access Key")
+                app.config['SESSION_REDIS'] = Redis(
+                    host=redis_url,
+                    port=6380,
+                    db=0,
+                    password=redis_key,
+                    ssl=True
+                )
+        else:
+            print("Redis enabled but URL missing; falling back to filesystem.")
+            app.config['SESSION_TYPE'] = 'filesystem'
+    else:
+        app.config['SESSION_TYPE'] = 'filesystem'
+
+    Session(app)
+
 @app.context_processor
 def inject_settings():
     settings = get_settings()
@@ -291,7 +330,6 @@ register_route_frontend_safety(app)
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
 
-# =================== Back End Routes ====================
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
