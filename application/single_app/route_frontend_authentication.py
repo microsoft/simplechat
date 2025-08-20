@@ -133,6 +133,53 @@ def register_route_frontend_authentication(app):
 
         return jsonify(result, 200)
 
+@app.route('/getASession', methods=['GET']) # This is your redirect URI path GREGUNGER TODO
+def authorized_getasession():
+    """
+    FIXED VERSION: The main authentication endpoint that converts Bearer tokens to session cookies.
+    This includes both fixes:
+    1. Accept api://CLIENT_ID audience format 
+    2. Properly initialize msal_app variable with enhanced debugging
+    """
+    print("🔍 /getASession endpoint called")
+
+    if "user" not in session:
+        print("👤 No user in session, checking Authorization header...")
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            print("❌ Authorization header missing")
+            return jsonify({"message": "Authorization header missing"}), 401
+
+        if not auth_header.startswith("Bearer "):
+            print("❌ Invalid Authorization header format")
+            return jsonify({"message": "Invalid Authorization header format"}), 401
+
+        token = auth_header.split(" ")[1]
+        print(f"🎫 Validating Bearer token: {token[:20]}...")
+        
+        is_valid, data = validate_bearer_token(token) # return true, bearer token
+
+        if not is_valid:
+            print(f"❌ Token validation failed: {data}")
+            return jsonify({"message": data}), 401
+
+        print("✅ Token validation successful!")
+        session["user"] = data
+
+        # FIXED: Build MSAL app WITH session cache to save tokens
+        print("🔧 Building MSAL app and saving cache...")
+        msal_app = _build_msal_app(cache=_load_cache())
+        # --- CRITICAL: Save the entire cache (contains tokens) to session ---
+        _save_cache(msal_app.token_cache)
+
+        user_name = session['user'].get('name', session['user'].get('preferred_username', 'Unknown'))
+        print(f"🎉 User {user_name} logged in successfully.")
+    else:
+        print("✅ User already has session")
+    
+    return jsonify({"message": "Session established", "status": "success"}), 200
+    
     @app.route('/logout')
     def logout():
         user_name = session.get("user", {}).get("name", "User")
