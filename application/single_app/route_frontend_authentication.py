@@ -2,7 +2,7 @@
 
 from unittest import result
 from config import *
-from functions_authentication import _build_msal_app, _load_cache, _save_cache
+from functions_authentication import _build_msal_app, _load_cache, _save_cache, validate_bearer_token
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
