@@ -6,22 +6,33 @@ from semantic_kernel.functions import kernel_function
 from azure.identity import DefaultAzureCredential
 
 class BlobStoragePlugin(BasePlugin):
-    def __init__(self, manifest: Dict[str, Any]):
-        self.manifest = manifest
-        self.endpoint = manifest.get('endpoint')
-        self.key = manifest.get('auth', {}).get('key')
-        self.auth_type = manifest.get('auth', {}).get('type', 'key')
-        self._metadata = manifest.get('metadata', {})
-        if not self.endpoint or not self.auth_type:
-            raise ValueError("BlobStoragePlugin requires 'endpoint' and 'auth.type' in the manifest.")
-        if self.auth_type == 'identity':
-            self.service_client = BlobServiceClient(account_url=self.endpoint, credential=DefaultAzureCredential())
-        elif self.auth_type == 'key':
-            if not self.key:
-                raise ValueError("BlobStoragePlugin requires 'auth.key' when using key authentication.")
-            self.service_client = BlobServiceClient(account_url=self.endpoint, credential=self.key)
+    def __init__(self, manifest: Optional[Dict[str, Any]] = None):
+        self.manifest = manifest or {}
+        self.service_client = None
+        
+        if self.manifest:
+            self.endpoint = self.manifest.get('endpoint')
+            self.key = self.manifest.get('auth', {}).get('key')
+            self.auth_type = self.manifest.get('auth', {}).get('type', 'key')
+            self._metadata = self.manifest.get('metadata', {})
+            
+            if not self.endpoint or not self.auth_type:
+                raise ValueError("BlobStoragePlugin requires 'endpoint' and 'auth.type' in the manifest.")
+            
+            if self.auth_type == 'identity':
+                self.service_client = BlobServiceClient(account_url=self.endpoint, credential=DefaultAzureCredential())
+            elif self.auth_type == 'key':
+                if not self.key:
+                    raise ValueError("BlobStoragePlugin requires 'auth.key' when using key authentication.")
+                self.service_client = BlobServiceClient(account_url=self.endpoint, credential=self.key)
+            else:
+                raise ValueError(f"Unsupported auth.type: {self.auth_type}")
         else:
-            raise ValueError(f"Unsupported auth.type: {self.auth_type}")
+            # Default values for when no manifest is provided (e.g., during plugin discovery)
+            self.endpoint = None
+            self.key = None
+            self.auth_type = None
+            self._metadata = {}
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -85,22 +96,30 @@ class BlobStoragePlugin(BasePlugin):
 
     @kernel_function(description="List all containers in the storage account.")
     def list_containers(self) -> List[str]:
+        if not self.service_client:
+            raise ValueError("BlobStoragePlugin not properly configured. Manifest required.")
         containers = self.service_client.list_containers()
         return [c['name'] for c in containers]
 
     @kernel_function(description="List all blobs in a given container.")
     def list_blobs(self, container_name: str) -> List[str]:
+        if not self.service_client:
+            raise ValueError("BlobStoragePlugin not properly configured. Manifest required.")
         container_client = self.service_client.get_container_client(container_name)
         blobs = container_client.list_blobs()
         return [b['name'] for b in blobs]
 
     @kernel_function(description="Get metadata for a specific blob.")
     def get_blob_metadata(self, container_name: str, blob_name: str) -> dict:
+        if not self.service_client:
+            raise ValueError("BlobStoragePlugin not properly configured. Manifest required.")
         blob_client = self.service_client.get_blob_client(container=container_name, blob=blob_name)
         return blob_client.get_blob_properties().metadata
 
     @kernel_function(description="Read the contents of a blob as text or base64 for images to be renderable in the browser.")
     def get_blob_content(self, container_name: str, blob_name: str) -> str:
+        if not self.service_client:
+            raise ValueError("BlobStoragePlugin not properly configured. Manifest required.")
         blob_client = self.service_client.get_blob_client(container=container_name, blob=blob_name)
         stream = blob_client.download_blob()
         data = stream.readall()
@@ -118,6 +137,8 @@ class BlobStoragePlugin(BasePlugin):
 
     @kernel_function(description="Iterates over all blobs in a container, reads their data, and return a dict of blob_name: content. Uses text or base64 for images to be renderable in the browser.")
     def iterate_blobs_in_container(self, container_name: str) -> dict:
+        if not self.service_client:
+            raise ValueError("BlobStoragePlugin not properly configured. Manifest required.")
         container_client = self.service_client.get_container_client(container_name)
         result = {}
         for blob in container_client.list_blobs():

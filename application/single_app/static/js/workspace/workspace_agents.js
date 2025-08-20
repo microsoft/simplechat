@@ -191,6 +191,30 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
     errorDiv.classList.add('d-none');
   }
 
+  // Fetch user settings to check permissions
+  let userSettings = {};
+  try {
+    const resp = await fetch('/api/user/agent/settings');
+    if (resp.ok) {
+      userSettings = await resp.json();
+    }
+  } catch (e) {
+    console.warn('Failed to fetch user agent settings:', e);
+  }
+
+  // Check if user has permission for custom endpoints (available throughout function)
+  const allowCustomEndpoints = userSettings.allow_user_custom_agent_endpoints === true;
+  
+  // Determine if custom connection should be enabled (available throughout function)
+  // If user doesn't have permission, force custom connection off
+  const shouldEnableCustom = allowCustomEndpoints && agentsCommon.shouldEnableCustomConnection(agent);
+  
+  // Hide/show custom connection toggle based on permissions
+  const customConnectionToggleDiv = document.getElementById('agent-custom-connection-toggle');
+  if (customConnectionToggleDiv) {
+    customConnectionToggleDiv.style.display = allowCustomEndpoints ? '' : 'none';
+  }
+
   // Populate modal fields using shared helper
   agentsCommon.setAgentModalFields(agent || {}, { context: 'user' });
 
@@ -222,8 +246,9 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
       deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
     })
   );
+  
   agentsCommon.toggleCustomConnectionUI(
-    agentsCommon.shouldEnableCustomConnection(agent),
+    shouldEnableCustom,
     {
       customFields: document.getElementById('agent-custom-connection-fields'),
       globalModelGroup: document.getElementById('agent-global-model-group'),
@@ -341,6 +366,14 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   };
   // Attach shared toggle handlers after shared helpers
   const customConnectionToggle = document.getElementById('agent-custom-connection');
+  
+  // Set the custom connection toggle state based on permissions and agent state
+  if (customConnectionToggle) {
+    customConnectionToggle.checked = shouldEnableCustom;
+    // Disable the toggle if no permission
+    customConnectionToggle.disabled = !allowCustomEndpoints;
+  }
+  
   const advancedToggle = document.getElementById('agent-advanced-toggle');
   const modalElements = {
     customFields: document.getElementById('agent-custom-connection-fields'),
