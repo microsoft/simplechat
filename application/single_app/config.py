@@ -495,15 +495,12 @@ def initialize_clients(settings):
                             credential=DefaultAzureCredential(),
                             audience=search_resource_manager
                         )
-<<<<<<< HEAD
                         search_client_public = SearchClient(
                             endpoint=azure_ai_search_endpoint,
                             index_name="simplechat-public-index",
                             credential=DefaultAzureCredential(),
                             audience=search_resource_manager
                         )
-=======
->>>>>>> 449bc0f2595243c071dbbc367f8b84298b00034f
                     else:
                         search_client_user = SearchClient(
                             endpoint=azure_ai_search_endpoint,
@@ -515,14 +512,11 @@ def initialize_clients(settings):
                             index_name="simplechat-group-index",
                             credential=DefaultAzureCredential()
                         )
-<<<<<<< HEAD
                         search_client_public = SearchClient(
                             endpoint=azure_ai_search_endpoint,
                             index_name="simplechat-public-index",
                             credential=DefaultAzureCredential()
                         )
-=======
->>>>>>> 449bc0f2595243c071dbbc367f8b84298b00034f
                 else:
                     search_client_user = SearchClient(
                         endpoint=azure_ai_search_endpoint,
