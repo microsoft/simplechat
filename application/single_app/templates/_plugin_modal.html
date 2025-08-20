@@ -45,20 +45,16 @@
         <div class="plugin-step d-none" id="plugin-step-2">
           <h6 class="mb-3">Action Details</h6>
           <div class="mb-3">
-            <label for="plugin-name" class="form-label">Action Name <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="plugin-name" required pattern="^[^\s]+$" name="plugin_name"/>
-            <div class="form-text">Action name must be unique.</div>
-          </div>
-          <div class="mb-3">
-            <label for="plugin-display-name" class="form-label">Display Name</label>
-            <input type="text" class="form-control" id="plugin-display-name" />
-            <div class="form-text">Human-readable name for this action.</div>
+            <label for="plugin-display-name" class="form-label">Display Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="plugin-display-name" required />
+            <div class="form-text">Human-readable name for this action. The action name will be generated automatically.</div>
           </div>
           <div class="mb-3">
             <label for="plugin-description" class="form-label">Description</label>
             <textarea class="form-control" id="plugin-description" rows="3" placeholder="Describe what this action does..."></textarea>
           </div>
-          <!-- Hidden field to store selected type -->
+          <!-- Hidden fields to store generated name and selected type -->
+          <input type="hidden" id="plugin-name" name="plugin_name" />
           <input type="hidden" id="plugin-type" name="plugin_type" />
         </div>
 
