@@ -305,7 +305,16 @@ def get_settings():
         "speech_service_endpoint": "https://eastus.api.cognitive.microsoft.com",
         "speech_service_location": "eastus",
         "speech_service_locale": "en-US",
-        "speech_service_key": ""
+        "speech_service_key": "",
+
+        # SSL/HTTPS Server Settings
+        'enable_https': True,
+        'https_port': 5443,
+        'ssl_cert_path': '',
+        'ssl_key_path': '',
+        'ssl_cert_base64': '',
+        'ssl_key_base64': '',
+        'use_adhoc_ssl': True  # For development only - generates self-signed certs
     }
 
     try:

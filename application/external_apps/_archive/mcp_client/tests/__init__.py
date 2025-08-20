@@ -1,0 +1,1 @@
+# Test package for SimpleChat MCP Client
