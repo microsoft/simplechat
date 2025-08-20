@@ -122,6 +122,7 @@ def register_route_external_public_documents(app):
         Return a paginated, filtered list of documents for the user's *active* public.
         Mirrors logic of api_get_user_documents.
         """
+        
         user_id = request.args.get('user_id')
         active_workspace_id = request.args.get('active_workspace_id')
 
@@ -136,6 +137,10 @@ def register_route_external_public_documents(app):
 
         if page < 1: page = 1
         if page_size < 1: page_size = 10
+
+        print(f"Fetching public documents for user {user_id} in workspace {active_workspace_id} using filters: "
+              f"search='{search_term}', classification='{classification_filter}', author='{author_filter}', "
+              f"keywords='{keywords_filter}', abstract='{abstract_filter}'")
 
         # --- 2) Build dynamic WHERE clause and parameters ---
         query_conditions = ["c.public_workspace_id = @public_workspace_id"]
@@ -177,9 +182,12 @@ def register_route_external_public_documents(app):
 
         where_clause = " AND ".join(query_conditions)
 
+        print("Query Parameters:", json.dumps(query_params, indent=2))
+
         # --- 3) Get total count ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
+            print(f"Executing count query: {count_query_str}")
             count_items = list(cosmos_public_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -200,6 +208,7 @@ def register_route_external_public_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
+            print(f"Executing data query: {data_query_str}")
             docs = list(cosmos_public_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
@@ -218,6 +227,7 @@ def register_route_external_public_documents(app):
                 WHERE c.public_workspace_id = @public_workspace_id
                     AND NOT IS_DEFINED(c.percentage_complete)
             """
+            print(f"Executing legacy query: {legacy_q}")
             legacy_docs = list(
                 cosmos_public_documents_container.query_items(
                     query=legacy_q,
@@ -229,14 +239,19 @@ def register_route_external_public_documents(app):
         except Exception as e:
             print(f"Error executing legacy query: {e}")
 
-        # --- 5) Return results ---
-        return jsonify({
+        json_data = {
             "documents": docs,
             "page": page,
             "page_size": page_size,
             "total_count": total_count,
             "needs_legacy_update_check": legacy_count > 0
-        }), 200
+        }
+
+        # Log the JSON data (for debugging)
+        print(f"Returning results for public documents query: {json.dumps(json_data, indent=2)}")
+
+        # --- 5) Return results ---
+        return jsonify(json_data), 200
 
 
     @app.route('/external/public_documents/<document_id>', methods=['GET'])

@@ -20,6 +20,7 @@ API_SCOPE = os.getenv("API_SCOPE") # Or a specific scope defined for your API, e
 API_BASE_URL = os.getenv("API_BASE_URL") # Base URL for your API
 GROUP_DOCUMENTS_UPLOAD_URL = f"{API_BASE_URL}/external/group_documents/upload"
 PUBLIC_DOCUMENTS_UPLOAD_URL = f"{API_BASE_URL}/external/public_documents/upload"
+PUBLIC_DOCUMENTS_LIST_URL = f"{API_BASE_URL}/external/public_documents"
 BEARER_TOKEN_TEST_URL = f"{API_BASE_URL}/external/testaccesstoken"  # URL to test the access token
 UPLOAD_DIRECTORY = os.getenv("UPLOAD_DIRECTORY")  # Local directory containing files to upload
 g_ACCESS_TOKEN = None  # Placeholder for the access token function
@@ -114,7 +115,17 @@ def upload_document(file_path, user_id, active_workspace_scope, active_workspace
 
     try:
         with open(file_path, 'rb') as f:
+            
             files = {'file': (file_name, f)}
+
+            # Check if the file has already been uploaded
+            if has_file_been_uploaded(file_name, user_id, active_workspace_id, access_token):
+                appLogger.info(f"File {file_name} has already been uploaded.")
+                exit(0)
+                return True
+            else:
+                return False
+
             appLogger.info(f"`nAttempting to upload: {file_name} to url: {upload_url}")
             appLogger.info(f"User_ID: {user_id}, Workspace_ID: {active_workspace_id}")
             input("Press Enter to process this file...") # For debugging purposes, uncomment to pause before upload
@@ -240,21 +251,58 @@ def read_files_in_directory(directory, user_id, active_workspace_scope, active_w
         file_path = os.path.abspath(file_path)
 
         appLogger.info(f"read_files_in_directory: {file_path}")
-        fileProcessedAlready = has_file_been_processed(file_path)
-        if (fileProcessedAlready):
-            ignoredFileLogger.debug(f"{file_path}")
-            appLogger.info(f"Skipping {file_path}: Already processed.")
-            continue
+        #fileProcessedAlready = has_file_been_processed(file_path)
+        #if (fileProcessedAlready):
+        #    ignoredFileLogger.debug(f"{file_path}")
+        #    appLogger.info(f"Skipping {file_path}: Already processed.")
+        #    continue
 
         print(f"Processing file(s): {file_path}")
         if (os.path.isfile(file_path)):
-            files.append(filename)
-            appLogger.debug("Uploading file")
-            appLogger.debug(f"Uploading file: {filename}")
+            #files.append(filename)
+            #appLogger.debug("Uploading file")
+            #appLogger.debug(f"Uploading file: {filename}")
             upload_document(file_path, user_id, active_workspace_scope, active_workspace_id, classification, g_ACCESS_TOKEN)
         else:
             appLogger.info(f"Skipping {filename}: Not a file.")
     #return files
+
+def has_file_been_uploaded(file_name, user_id, workspace_id, access_token):
+    """
+    Checks if a file has already been uploaded to the public workspace, by looking for an existing file
+
+    Args:
+        file_name (str): Name of the file to check.
+        user_id (str): User ID to check against.
+        workspace_id (str): Workspace ID to check against.
+        access_token (str): The Microsoft Entra ID access token.
+
+    Returns:
+        bool: True if the file has already been uploaded, False otherwise.
+    """
+
+    list_files_url = PUBLIC_DOCUMENTS_LIST_URL
+
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }    
+    
+    params = {
+        "user_id": user_id.strip(),
+        "active_workspace_id": workspace_id.strip(),
+        "search": file_name
+    }
+
+    appLogger.info(f"Checking for file {file_name} in {workspace_id} for user {user_id}")
+
+    response = requests.get(list_files_url, headers=headers, params=params, timeout=60) # Added timeout
+    response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+
+    appLogger.info(f"has_file_been_uploaded status code: {response.status_code}")
+    appLogger.debug(f"Response: {response.text}")
+
+    return False
+
 
 def has_file_been_processed(file_path):
     """
