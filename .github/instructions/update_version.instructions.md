@@ -20,4 +20,5 @@ After Code Changes
 app.config['VERSION'] = '0.224.100'
 
 Ensure the version is updated in the following files: 
+
 config.py
