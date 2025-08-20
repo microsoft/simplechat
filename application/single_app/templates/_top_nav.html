@@ -96,6 +96,7 @@
         {% endif %}
       {% endif %}
     </ul>
+    {% endif %}
     <!-- Right side nav -->
     <ul class="navbar-nav">
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
