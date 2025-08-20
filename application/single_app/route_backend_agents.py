@@ -108,18 +108,27 @@ def delete_user_agent(agent_name):
     agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
     if not agent_to_delete:
         return jsonify({'error': 'Agent not found.'}), 404
-    # Prevent deleting the agent that matches global_selected_agent
+    
     settings = get_settings()
-    global_selected_agent = settings.get('global_selected_agent', {})
-    global_selected_name = global_selected_agent.get('name')
-    if agent_to_delete.get('name') == global_selected_name:
-        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
-    new_agents = [a for a in agents if a['name'] != agent_name]
-    # Enforce that if there are agents left, one must match global_selected_agent
-    if len(new_agents) > 0:
-        found = any(a.get('name') == global_selected_name for a in new_agents)
-        if not found:
-            return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
+    per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+    
+    # Only enforce global agent validation if per_user_semantic_kernel is False (global mode)
+    if not per_user_semantic_kernel:
+        # In global mode, prevent deleting the agent that matches global_selected_agent
+        global_selected_agent = settings.get('global_selected_agent', {})
+        global_selected_name = global_selected_agent.get('name')
+        if agent_to_delete.get('name') == global_selected_name:
+            return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
+        new_agents = [a for a in agents if a['name'] != agent_name]
+        # Enforce that if there are agents left, one must match global_selected_agent
+        if len(new_agents) > 0:
+            found = any(a.get('name') == global_selected_name for a in new_agents)
+            if not found:
+                return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
+    else:
+        # In workspace mode, allow free deletion of personal agents
+        new_agents = [a for a in agents if a['name'] != agent_name]
+    
     settings_to_update = user_settings.get('settings', {})
     settings_to_update['agents'] = new_agents
     update_user_settings(user_id, settings_to_update)
