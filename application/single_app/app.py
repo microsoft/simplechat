@@ -5,7 +5,9 @@ import pickle
 import json
 
 from semantic_kernel import Kernel
-from semantic_kernel_loader import initialize_semantic_kernel 
+from semantic_kernel_loader import initialize_semantic_kernel
+
+from azure.monitor.opentelemetry import configure_azure_monitor
 
 from config import *
 
@@ -64,6 +66,7 @@ from route_external_documents import *
 from route_external_groups import *
 from route_external_admin_settings import *
 
+configure_azure_monitor()
 
 # =================== Helper Functions ===================
 @app.before_first_request
