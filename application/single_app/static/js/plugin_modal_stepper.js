@@ -54,6 +54,15 @@ export class PluginModalStepper {
     });
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
+    
+    // Auto-generate action name when display name changes
+    document.getElementById('plugin-display-name').addEventListener('input', (e) => {
+      const displayName = e.target.value.trim();
+      if (displayName) {
+        const actionName = this.generateActionName(displayName);
+        document.getElementById('plugin-name').value = actionName;
+      }
+    });
   }
 
   async showModal(plugin = null) {
@@ -441,13 +450,18 @@ export class PluginModalStepper {
         break;
         
       case 2:
-        const name = document.getElementById('plugin-name').value.trim();
-        if (!name) {
-          this.showError('Action name is required.');
+        const displayName = document.getElementById('plugin-display-name').value.trim();
+        if (!displayName) {
+          this.showError('Display name is required.');
           return false;
         }
-        if (!/^[^\s]+$/.test(name)) {
-          this.showError('Action name cannot contain spaces.');
+        
+        // Auto-generate action name from display name
+        const actionName = this.generateActionName(displayName);
+        document.getElementById('plugin-name').value = actionName;
+        
+        if (!/^[^\s]+$/.test(actionName)) {
+          this.showError('Generated action name cannot contain spaces. Please use a simpler display name.');
           return false;
         }
         break;
@@ -1348,6 +1362,16 @@ export class PluginModalStepper {
       metadata,
       additionalFields
     };
+  }
+
+  generateActionName(displayName) {
+    // Convert display name to a valid action name
+    return displayName
+      .toLowerCase()                 // Convert to lowercase
+      .replace(/[^a-z0-9\s]/g, '')  // Remove special characters except spaces
+      .replace(/\s+/g, '_')         // Replace spaces with underscores
+      .replace(/_+/g, '_')          // Replace multiple underscores with single
+      .replace(/^_|_$/g, '');       // Remove leading and trailing underscores
   }
 
   escapeHtml(str) {

@@ -4,6 +4,7 @@ import re
 import builtins
 from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_plugins.plugin_loader import get_all_plugin_metadata
+from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from functions_settings import get_settings, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
@@ -82,81 +83,100 @@ def get_plugin_types():
                     and obj is not BasePlugin
                 ):
                     found = True
+                    # Special handling for OpenAPI plugin that requires spec path
+                    if 'openapi' in module_name.lower():
+                        display_name = "OpenAPI"
+                        description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
+                        types.append({
+                            'type': module_name.replace('_plugin', ''),
+                            'class': attr,
+                            'display': display_name,
+                            'description': description
+                        })
+                        continue
+                    
                     # Try to get display name from plugin instance
                     try:
-                        # Create minimal manifest for different plugin types
-                        minimal_manifest = {}
+                        # Use a more robust instantiation pattern
+                        plugin_instance = None
+                        instantiation_error = None
                         
-                        # Special handling for plugins that require specific manifest fields
+                        # Try creating instance with minimal safe manifest
+                        safe_manifest = {}
+                        
+                        # Only add minimal required fields based on plugin type
                         if 'databricks' in module_name.lower():
-                            minimal_manifest = {
-                                'endpoint': 'https://example.databricks.com/api/2.0/sql/statements',
-                                'auth': {'key': 'dummy'},
-                                'additionalFields': {'table': 'example_table', 'columns': [], 'warehouse_id': 'dummy'},
-                                'metadata': {'description': 'Example Databricks table'}
-                            }
-                        elif 'openapi' in module_name.lower():
-                            # Special handling for OpenAPI plugin that requires spec path
-                            display_name = "OpenAPI"
-                            description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
-                            # Skip instantiation and use predefined values
-                            types.append({
-                                'type': module_name.replace('_plugin', ''),
-                                'class': attr,
-                                'display': display_name,
-                                'description': description
-                            })
-                            continue
-                        elif 'azure_function' in module_name.lower():
-                            minimal_manifest = {
-                                'endpoint': 'https://example.azurewebsites.net/api/function',
+                            safe_manifest = {
+                                'endpoint': 'https://example.databricks.com',
                                 'auth': {'type': 'key', 'key': 'dummy'},
-                                'metadata': {}
+                                'additionalFields': {'table': 'example', 'columns': [], 'warehouse_id': 'dummy'},
+                                'metadata': {'description': 'Example Databricks plugin'}
                             }
-                        elif 'queue_storage' in module_name.lower():
-                            minimal_manifest = {
-                                'endpoint': 'https://example.queue.core.windows.net',
-                                'queue_name': 'example-queue',
-                                'auth': {'type': 'key', 'key': 'dummy'},
-                                'metadata': {}
-                            }
-                        elif 'blob_storage' in module_name.lower():
-                            minimal_manifest = {
-                                'endpoint': 'https://example.blob.core.windows.net',
-                                'container_name': 'example-container',
-                                'auth': {'type': 'key', 'key': 'dummy'},
-                                'metadata': {}
-                            }
-                        elif 'sql_schema' in module_name.lower():
-                            minimal_manifest = {
+                        elif 'sql' in module_name.lower():
+                            safe_manifest = {
                                 'database_type': 'sqlite',
-                                'connection_string': '/tmp/example.db',
-                                'metadata': {'description': 'Extract database schema information'}
+                                'connection_string': ':memory:',
+                                'metadata': {'description': 'Example SQL plugin'}
                             }
-                        elif 'sql_query' in module_name.lower():
-                            minimal_manifest = {
-                                'database_type': 'sqlite',
-                                'connection_string': '/tmp/example.db',
-                                'read_only': True,
-                                'max_rows': 1000,
-                                'metadata': {'description': 'Execute SQL queries safely'}
+                        elif any(x in module_name.lower() for x in ['azure_function', 'blob_storage', 'queue_storage']):
+                            safe_manifest = {
+                                'endpoint': 'https://example.azure.com',
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {'description': f'Example {module_name} plugin'}
+                            }
+                        elif 'msgraph' in module_name.lower():
+                            safe_manifest = {
+                                'auth': {'type': 'user'},
+                                'metadata': {'description': 'Microsoft Graph plugin'}
+                            }
+                        elif 'log_analytics' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://api.loganalytics.io',
+                                'auth': {'type': 'user'},
+                                'additionalFields': {'workspaceId': 'dummy', 'cloud': 'public'},
+                                'metadata': {'description': 'Azure Log Analytics plugin'}
+                            }
+                        elif 'embedding' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://api.openai.com',
+                                'auth': {'type': 'key', 'key': 'dummy'},
+                                'metadata': {'description': 'Embedding model plugin'}
                             }
                         
-                        # Try with manifest first, then empty dict, then no params
+                        # Try instantiation with progressively simpler approaches
                         try:
-                            plugin_instance = obj(minimal_manifest)
-                        except (TypeError, ValueError):
+                            plugin_instance = obj(safe_manifest)
+                        except (TypeError, ValueError, KeyError) as e:
                             try:
                                 plugin_instance = obj({})
-                            except TypeError:
-                                plugin_instance = obj()
+                            except (TypeError, ValueError) as e2:
+                                try:
+                                    plugin_instance = obj()
+                                except Exception as e3:
+                                    instantiation_error = e3
+                        except Exception as e:
+                            instantiation_error = e
                         
-                        display_name = plugin_instance.display_name
-                        description = plugin_instance.metadata.get("description", "")
+                        if plugin_instance is None:
+                            # Fallback to class name formatting
+                            display_name = attr.replace('Plugin', '').replace('_', ' ')
+                            description = f"Plugin for {display_name.lower()} functionality"
+                            debug_log.append(f"Failed to instantiate {attr} for metadata extraction: {instantiation_error}. Using fallback display name.")
+                        else:
+                            try:
+                                display_name = plugin_instance.display_name
+                                description = plugin_instance.metadata.get("description", "")
+                            except Exception as e:
+                                # Fallback if display_name or metadata access fails
+                                display_name = attr.replace('Plugin', '').replace('_', ' ')
+                                description = f"Plugin for {display_name.lower()} functionality"
+                                debug_log.append(f"Failed to get metadata from {attr}: {e}. Using fallback.")
+                        
                     except Exception as e:
-                        # Fallback to class name formatting if instantiation fails
+                        # Final fallback to class name formatting
                         display_name = attr.replace('Plugin', '').replace('_', ' ')
-                        description = ""
+                        description = f"Plugin for {display_name.lower()} functionality"
+                        debug_log.append(f"Complete failure to instantiate {attr}: {e}. Using final fallback.")
                     
                     types.append({
                         'type': module_name.replace('_plugin', ''),
@@ -334,27 +354,41 @@ def add_plugin():
         settings = get_settings()
         plugins = settings.get('semantic_kernel_plugins', [])
         new_plugin = request.json
+        
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
         validation_error = validate_plugin(new_plugin)
         if validation_error:
             log_event("Add plugin failed: validation error", level=logging.WARNING, extra={"action": "add", "plugin": new_plugin, "error": validation_error})
             return jsonify({'error': validation_error}), 400
+        
         if allowed_types is not None and new_plugin.get('type') not in allowed_types:
             return jsonify({'error': f"Invalid plugin type: {new_plugin.get('type')}"}), 400
+        
+        # Enhanced manifest validation using health checker
+        plugin_type = new_plugin.get('type', '')
+        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(new_plugin, plugin_type)
+        if not is_valid:
+            log_event("Add plugin failed: manifest validation error", level=logging.WARNING, 
+                     extra={"action": "add", "plugin": new_plugin, "errors": validation_errors})
+            return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+        
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
         merged = get_merged_plugin_settings(new_plugin.get('type'), new_plugin, schema_dir)
         new_plugin['metadata'] = merged.get('metadata', new_plugin.get('metadata', {}))
         new_plugin['additionalFields'] = merged.get('additionalFields', new_plugin.get('additionalFields', {}))
+        
         # Prevent duplicate names (case-insensitive)
         if any(p['name'].lower() == new_plugin['name'].lower() for p in plugins):
             log_event("Add plugin failed: duplicate name", level=logging.WARNING, extra={"action": "add", "plugin": new_plugin})
             return jsonify({'error': 'Plugin with this name already exists.'}), 400
+        
         plugins.append(new_plugin)
         settings['semantic_kernel_plugins'] = plugins
         update_settings(settings)
         log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+        
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
@@ -370,20 +404,31 @@ def edit_plugin(plugin_name):
         settings = get_settings()
         plugins = settings.get('semantic_kernel_plugins', [])
         updated_plugin = request.json
+        
         # Strict validation with dynamic allowed types
         allowed_types = discover_plugin_types()
         validation_error = validate_plugin(updated_plugin)
         if validation_error:
             log_event("Edit plugin failed: validation error", level=logging.WARNING, extra={"action": "edit", "plugin": updated_plugin, "error": validation_error})
             return jsonify({'error': validation_error}), 400
+        
         if allowed_types is not None and updated_plugin.get('type') not in allowed_types:
             return jsonify({'error': f"Invalid plugin type: {updated_plugin.get('type')}"}), 400
-        # Merge with schema to ensure all required fields are present
         
+        # Enhanced manifest validation using health checker
+        plugin_type = updated_plugin.get('type', '')
+        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(updated_plugin, plugin_type)
+        if not is_valid:
+            log_event("Edit plugin failed: manifest validation error", level=logging.WARNING, 
+                     extra={"action": "edit", "plugin": updated_plugin, "errors": validation_errors})
+            return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+        
+        # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
         merged = get_merged_plugin_settings(updated_plugin.get('type'), updated_plugin, schema_dir)
         updated_plugin['metadata'] = merged.get('metadata', updated_plugin.get('metadata', {}))
         updated_plugin['additionalFields'] = merged.get('additionalFields', updated_plugin.get('additionalFields', {}))
+        
         for i, p in enumerate(plugins):
             if p['name'] == plugin_name:
                 plugins[i] = updated_plugin

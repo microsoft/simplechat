@@ -18,6 +18,7 @@ from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from functions_settings import get_settings, get_user_settings
 from functions_appinsights import log_event, get_appinsights_logger
+from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from flask import g
 import logging
 import importlib
@@ -27,8 +28,7 @@ import inspect
 import builtins
 
 # Agent and Azure OpenAI chat service imports
-if 'logger' in globals() and logger is not None:
-    log_event("[SK Loader] Starting loader")
+log_event("[SK Loader] Starting loader")
 try:
     from semantic_kernel.agents import ChatCompletionAgent
     from agent_logging_chat_completion import LoggingChatCompletionAgent
@@ -36,14 +36,12 @@ try:
 except ImportError:
     ChatCompletionAgent = None
     AzureChatCompletion = None
-    if 'logger' in globals() and logger is not None:
-        log_event(
-            "[SK Loader] ChatCompletionAgent or AzureChatCompletion not available. Ensure you have the correct Semantic Kernel version.",
-            level=logging.ERROR,
-            exceptionTraceback=True
-        )
-if 'logger' in globals() and logger is not None:    
-    log_event("[SK Loader] Completed imports")
+    log_event(
+        "[SK Loader] ChatCompletionAgent or AzureChatCompletion not available. Ensure you have the correct Semantic Kernel version.",
+        level=logging.ERROR,
+        exceptionTraceback=True
+    )
+log_event("[SK Loader] Completed imports")
 
 
 # Define supported chat types in a single place
@@ -514,15 +512,45 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
                         # Use the factory to create OpenAPI plugins from configuration
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                     else:
-                        # Standard plugin instantiation
-                        plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
+                        # Standard plugin instantiation with health checking and robust error handling
+                        plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
+                            matched_class, manifest, name
+                        )
+                        
+                        if plugin_instance is None:
+                            # Try fallback plugin if main plugin fails
+                            log_event(f"[SK Loader] Creating fallback plugin for {name} due to instantiation failures: {'; '.join(instantiation_errors)}", 
+                                    {"plugin_name": name, "plugin_type": plugin_type, "errors": instantiation_errors}, level=logging.WARNING)
+                            plugin_instance = PluginErrorRecovery.create_fallback_plugin(name, plugin_type)
+                        
+                        if plugin_instance is None:
+                            raise Exception(f"Both main and fallback plugin creation failed: {'; '.join(instantiation_errors)}")
+                        
+                        plugin = plugin_instance
+                    
+                    # Validate plugin has required methods
+                    if hasattr(plugin, 'get_functions'):
+                        try:
+                            functions = plugin.get_functions()
+                            log_event(f"[SK Loader] Plugin {name} exposes {len(functions) if functions else 0} functions", 
+                                    {"plugin_name": name, "plugin_type": plugin_type, "function_count": len(functions) if functions else 0}, 
+                                    level=logging.DEBUG)
+                        except Exception as e:
+                            log_event(f"[SK Loader] Warning: Plugin {name} get_functions() failed: {e}", 
+                                    {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.WARNING)
                     
                     kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
-                    log_event(f"[SK Loader] Loaded plugin: {name} (type: {plugin_type}) [{mode_label}]", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                    log_event(f"[SK Loader] Successfully loaded plugin: {name} (type: {plugin_type}) [{mode_label}]", 
+                            {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                 except Exception as e:
-                    log_event(f"[SK Loader] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                    log_event(f"[SK Loader] Failed to instantiate plugin: {name}: {e}", 
+                            {"plugin_name": name, "plugin_type": plugin_type, "error": str(e), "error_type": type(e).__name__}, 
+                            level=logging.ERROR, exceptionTraceback=True)
+                    # Continue with other plugins instead of failing completely
+                    continue
             else:
-                log_event(f"[SK Loader] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+                log_event(f"[SK Loader] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]", 
+                        {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
     except Exception as e:
         log_event(f"[SK Loader] Error discovering plugin types for {mode_label} mode: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
 

@@ -6,8 +6,8 @@ Helper functions for creating and registering SQL plugins with Semantic Kernel
 from typing import Dict, Any, List, Optional, Union
 import os
 import json
-from sql_schema_plugin import SQLSchemaPlugin
-from sql_query_plugin import SQLQueryPlugin
+from .sql_schema_plugin import SQLSchemaPlugin
+from .sql_query_plugin import SQLQueryPlugin
 
 class SQLPluginFactory:
     """Factory class for creating SQL plugins with common configurations"""

@@ -49,11 +49,12 @@ class BasePlugin(ABC):
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         self.manifest = manifest or {}
 
-    @abstractmethod
     def get_functions(self) -> List[str]:
         """
         Returns a list of function names this plugin exposes for registration with SK.
+        Default implementation returns an empty list.
+        Override this method if you want to explicitly declare exposed functions.
         """
-        pass
+        return []
 
     
