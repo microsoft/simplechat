@@ -176,6 +176,10 @@ def get_index_client() -> SearchIndexClient:
         endpoint = settings["azure_ai_search_endpoint"].rstrip("/")
         if settings.get("azure_ai_search_authentication_type", "key") == "managed_identity":
             credential = DefaultAzureCredential()
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                return SearchIndexClient(endpoint=endpoint,
+                                          credential=credential,
+                                          audience=search_resource_manager)
         else:
             credential = AzureKeyCredential(settings["azure_ai_search_key"])
 
@@ -415,11 +419,17 @@ def _test_safety_connection(payload):
         key = direct_data.get('key')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                content_safety_client = ContentSafetyClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential(),
+                    credential_scopes=[cognitive_services_scope]
+                )
+            else:
+                content_safety_client = ContentSafetyClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential()
+                )
         else:
             content_safety_client = ContentSafetyClient(
                 endpoint=endpoint,
@@ -478,32 +488,6 @@ def _test_azure_ai_search_connection(payload):
 
     if enable_apim:
         apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        subscription_key = apim_data.get('subscription_key')
-
-        content_safety_client = ContentSafetyClient(
-            endpoint=endpoint,
-            credential=AzureKeyCredential(subscription_key)
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        key = direct_data.get('key')
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
-        else:
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=AzureKeyCredential(key)
-            )
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
         endpoint = apim_data.get('endpoint')  # e.g. https://my-apim.azure-api.net/search
         subscription_key = apim_data.get('subscription_key')
         url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
@@ -516,10 +500,22 @@ def _test_azure_ai_search_connection(payload):
         endpoint = direct_data.get('endpoint')  # e.g. https://<searchservice>.search.windows.net
         key = direct_data.get('key')
         url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
-        headers = {
-            'api-key': key,
-            'Content-Type': 'application/json'
-        }
+
+        if direct_data.get('auth_type') == 'managed_identity':
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"): # change credential scopes for US Gov or custom environments
+                credential_scopes=search_resource_manager + "/.default"
+            arm_scope = credential_scopes
+            credential = DefaultAzureCredential()
+            arm_token = credential.get_token(arm_scope).token
+            headers = {
+                'Authorization': f'Bearer {arm_token}',
+                'Content-Type': 'application/json'
+            }
+        else:
+            headers = {
+                'api-key': key,
+                'Content-Type': 'application/json'
+            }
 
     # A small GET to /indexes to verify we have connectivity
     resp = requests.get(url, headers=headers, timeout=10)
@@ -540,7 +536,7 @@ def _test_azure_doc_intelligence_connection(payload):
         endpoint = apim_data.get('endpoint')
         subscription_key = apim_data.get('subscription_key')
 
-        document_intelligence_client = DocumentAnalysisClient(
+        document_intelligence_client = DocumentIntelligenceClient(
             endpoint=endpoint,
             credential=AzureKeyCredential(subscription_key)
         )
@@ -550,24 +546,42 @@ def _test_azure_doc_intelligence_connection(payload):
         key = direct_data.get('key')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            
-            document_intelligence_client = DocumentAnalysisClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                document_intelligence_client = DocumentIntelligenceClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential(),
+                    credential_scopes=[cognitive_services_scope],
+                    api_version="2024-11-30"    # Must be specified otherwise looks for 2023-07-31-preview by default which is not a valid version in Azure Government
+                )
+            else:
+                document_intelligence_client = DocumentIntelligenceClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential()
+                )
         else:
-            document_intelligence_client = DocumentAnalysisClient(
+            document_intelligence_client = DocumentIntelligenceClient(
                 endpoint=endpoint,
                 credential=AzureKeyCredential(key)
             )
     
     # Use local test file instead of URL for better offline testing
     test_file_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
-    with open(test_file_path, 'rb') as f:
+    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+        # Required format for Document Intelligence API version 2024-11-30 and later
+        with open(test_file_path, 'rb') as f:
+            file_bytes = f.read()
+            base64_source = base64.b64encode(file_bytes).decode('utf-8')
+
         poller = document_intelligence_client.begin_analyze_document(
-            model_id="prebuilt-read",
-            document=f
+            "prebuilt-read",
+            {"base64Source": base64_source}
         )
+    else:
+        with open(test_file_path, 'rb') as f:
+            poller = document_intelligence_client.begin_analyze_document(
+                model_id="prebuilt-read",
+                document=f
+            )
 
     max_wait_time = 600
     start_time = time.time()
@@ -578,7 +592,7 @@ def _test_azure_doc_intelligence_connection(payload):
             break
         if time.time() - start_time > max_wait_time:
             raise TimeoutError("Document analysis took too long.")
-        time.sleep(30)
+        time.sleep(10)
 
     if status == "succeeded":
         return jsonify({'message': 'Azure document intelligence connection successful'}), 200
