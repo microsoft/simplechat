@@ -10,16 +10,10 @@ pip install -r requirements.txt
 - Use the Client ID and Password in the .env (described below).
 - The bulk upload Service Principal will need the ExternalAPI app role (which is a app role on the app service app registration)
 
+## STEP 2: Disable the App Service Authentication
+- Temporarily disable the App Service Authentication during the bulk file upload.
 
-## STEP 2: Configure the App Service App Registration
-- On the App Service App Registration, you will need to expose an API
-- The Application ID URI will be in the format "api://`<app registration client id`>/"
-
-## STEP 3: Configure the App Service Authentication
-- On the App Service Authentication page (easy auth), select edit on the Identity Provider (Microsoft)
-- In the "Allowed token audiences", add in the API you exposed in step 2 above "api://`<app registration client id`>/" and click save
-
-## STEP 4: .env file
+## STEP 3: .env file
 
 Create a .env file to put environment variables in.
 
@@ -35,11 +29,11 @@ API_BASE_URL=<https://web-8000.azurewebsites.us> (Example only)
 UPLOAD_DIRECTORY=./test-documents (Example only)
 ```
 
-## STEP 5: Create a folder repository of files to upload
+## STEP 4: Create a folder repository of files to upload
 
 ./test-documents is a sample folder
 
-## STEP 6: Update the map.csv file and add the following columns (Example only)
+## STEP 5: Update the map.csv file and add the following columns (Example only)
 
 ```csv
 folderName, userId, activeGroupOid
@@ -47,7 +41,7 @@ folder1, e81deb4e-839d-40e2-b0fc-020a90ec5f60, 496bd544-817a-4eb2-85da-576a0146b
 folder2, e81deb4e-839d-40e2-b0fc-020a90ec5f60, 496bd544-817a-4eb2-85da-576a0146b106
 ```
 
+## STEP 6: Run main.py script
+
+
 ## STEP 7: Run main.py script
-
-
-## STEP 8: Run main.py script
