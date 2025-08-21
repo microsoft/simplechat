@@ -297,9 +297,9 @@ export function appendMessage(
     console.log("Agent Check Result:", agentCheck);
     const overallCondition = augmented && (hybridCheck || webCheck || agentCheck);
     console.log("Overall Condition Result:", overallCondition);
-    const shouldShowCitations = augmented && citationsButtonsHtml;
+    const shouldShowCitations = (augmented && citationsButtonsHtml) || agentCheck;
     console.log(
-      `Condition check (augmented && citationsButtonsHtml): ${shouldShowCitations}`
+      `Condition check ((augmented && citationsButtonsHtml) || agentCheck): ${shouldShowCitations}`
     );
 
     if (shouldShowCitations) {
