@@ -60,14 +60,12 @@ def register_route_external_groups(app):
         """
         Returns the user's groups with server-side pagination and search.
         Query Parameters:
-            user_id (str): User ID (required).
             page (int): Page number (default: 1).
             page_size (int): Items per page (default: 10).
             search (str): Search term for group name/description.
         """
-        user_id = request.args.get('user_id', None)
-        if not user_id:
-            return jsonify({'error': 'invalid user_id'}), 400
+        user_info = get_current_user_info()
+        user_id = user_info["userId"]
 
         try:
             # --- Pagination Parameters ---
