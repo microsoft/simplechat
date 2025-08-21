@@ -47,6 +47,7 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import *
+
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)

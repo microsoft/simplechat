@@ -65,7 +65,7 @@
           <!-- OpenAPI specific fields (will be shown/hidden based on plugin type) -->
           <div id="openapi-config-section" class="d-none">
             <div class="config-section-label">
-              <i class="fas fa-file-code me-2"></i>OpenAPI Configuration
+              <i class="bi bi-file-earmark-code me-2"></i>OpenAPI Configuration
             </div>
             
             <!-- OpenAPI Spec Source Selection -->
@@ -74,12 +74,12 @@
               <div class="btn-group w-100" role="group" aria-label="OpenAPI source selection">
                 <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-file" value="file" checked>
                 <label class="btn btn-outline-primary" for="openapi-source-file">
-                  <i class="fas fa-upload me-1"></i>Upload File
+                  <i class="bi bi-upload me-1"></i>Upload File
                 </label>
                 
                 <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-url" value="url">
                 <label class="btn btn-outline-primary" for="openapi-source-url">
-                  <i class="fas fa-link me-1"></i>From URL
+                  <i class="bi bi-link-45deg me-1"></i>From URL
                 </label>
               </div>
             </div>
@@ -101,7 +101,7 @@
               <div class="input-group">
                 <input type="url" class="form-control" id="plugin-openapi-url" placeholder="https://api.example.com/openapi.yaml" />
                 <button type="button" class="btn btn-outline-secondary" id="validate-openapi-url">
-                  <i class="fas fa-check me-1"></i>Validate
+                  <i class="bi bi-check-circle me-1"></i>Validate
                 </button>
               </div>
               <div class="form-text">
@@ -119,13 +119,13 @@
             
             <!-- API Info Display -->
             <div id="openapi-info-display" class="alert alert-info d-none">
-              <h6><i class="fas fa-info-circle me-2"></i>API Information</h6>
+              <h6><i class="bi bi-info-circle me-2"></i>API Information</h6>
               <div id="openapi-info-content"></div>
             </div>
             
             <div class="auth-section">
               <div class="config-section-label">
-                <i class="fas fa-shield-alt me-2"></i>Authentication Configuration
+                <i class="bi bi-shield-lock me-2"></i>Authentication Configuration
               </div>
               <div class="mb-3">
                 <label class="form-label">Authentication Type</label>
@@ -217,7 +217,7 @@
           <!-- SQL Database Configuration -->
           <div id="sql-config-section" class="d-none">
             <div class="config-section-label">
-              <i class="fas fa-database me-2"></i>SQL Database Configuration
+              <i class="bi bi-database me-2"></i>SQL Database Configuration
             </div>
             
             <!-- Database Type Selection -->
@@ -227,7 +227,7 @@
                 <div class="col-6 col-md-3">
                   <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlserver" value="sqlserver">
                   <label class="btn btn-outline-primary w-100" for="sql-db-sqlserver">
-                    <i class="fas fa-server me-1"></i>SQL Server
+                    <i class="bi bi-server me-1"></i>SQL Server
                   </label>
                 </div>
                 <div class="col-6 col-md-3">
@@ -239,39 +239,39 @@
                 <div class="col-6 col-md-3">
                   <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-postgresql" value="postgresql">
                   <label class="btn btn-outline-primary w-100" for="sql-db-postgresql">
-                    <i class="fas fa-elephant me-1"></i>PostgreSQL
+                    <i class="bi bi-hdd me-1"></i>PostgreSQL
                   </label>
                 </div>
                 <div class="col-6 col-md-3">
                   <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-mysql" value="mysql">
                   <label class="btn btn-outline-primary w-100" for="sql-db-mysql">
-                    <i class="fas fa-dolphin me-1"></i>MySQL
+                    <i class="bi bi-hdd-fill me-1"></i>MySQL
                   </label>
                 </div>
                 <div class="col-6 col-md-3">
                   <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlite" value="sqlite">
                   <label class="btn btn-outline-primary w-100" for="sql-db-sqlite">
-                    <i class="fas fa-file-alt me-1"></i>SQLite
+                    <i class="bi bi-file-earmark-text me-1"></i>SQLite
                   </label>
                 </div>
               </div>
             </div>
 
             <!-- SQL Plugin Type Selection -->
-            <div class="mb-3">
+            <div class="mb-3 sql-plugin-type-selection">
               <label class="form-label">Plugin Type <span class="text-danger">*</span></label>
               <div class="row g-2">
                 <div class="col-md-6">
                   <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-schema" value="schema">
                   <label class="btn btn-outline-info w-100" for="sql-plugin-schema">
-                    <i class="fas fa-sitemap me-1"></i>Schema Plugin
+                    <i class="bi bi-diagram-3 me-1"></i>Schema Plugin
                     <small class="d-block text-muted">Extract database structure</small>
                   </label>
                 </div>
                 <div class="col-md-6">
                   <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-query" value="query">
                   <label class="btn btn-outline-success w-100" for="sql-plugin-query">
-                    <i class="fas fa-search me-1"></i>Query Plugin
+                    <i class="bi bi-search me-1"></i>Query Plugin
                     <small class="d-block text-muted">Execute SQL queries</small>
                   </label>
                 </div>
@@ -281,7 +281,7 @@
             <!-- Database Connection Configuration -->
             <div class="sql-connection-config">
               <div class="config-section-label">
-                <i class="fas fa-plug me-2"></i>Connection Configuration
+                <i class="bi bi-plug me-2"></i>Connection Configuration
               </div>
               
               <!-- Connection Method Selection -->
@@ -290,12 +290,12 @@
                 <div class="btn-group w-100" role="group" aria-label="Connection method">
                   <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-string" value="connection_string" checked>
                   <label class="btn btn-outline-secondary" for="sql-conn-string">
-                    <i class="fas fa-link me-1"></i>Connection String
+                    <i class="bi bi-link-45deg me-1"></i>Connection String
                   </label>
                   
                   <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-params" value="parameters">
                   <label class="btn btn-outline-secondary" for="sql-conn-params">
-                    <i class="fas fa-cogs me-1"></i>Individual Parameters
+                    <i class="bi bi-gear me-1"></i>Individual Parameters
                   </label>
                 </div>
               </div>
@@ -350,7 +350,7 @@
             <!-- Authentication Configuration -->
             <div class="sql-auth-config">
               <div class="config-section-label">
-                <i class="fas fa-shield-alt me-2"></i>Authentication Configuration
+                <i class="bi bi-shield-lock me-2"></i>Authentication Configuration
               </div>
               
               <div class="mb-3">
@@ -403,7 +403,7 @@
             <!-- Query Plugin Specific Settings -->
             <div id="sql-query-settings" class="d-none">
               <div class="config-section-label">
-                <i class="fas fa-cog me-2"></i>Query Plugin Settings
+                <i class="bi bi-gear me-2"></i>Query Plugin Settings
               </div>
               
               <div class="row g-3">
@@ -431,7 +431,7 @@
             <!-- Schema Plugin Specific Settings -->
             <div id="sql-schema-settings" class="d-none">
               <div class="config-section-label">
-                <i class="fas fa-cog me-2"></i>Schema Plugin Settings
+                <i class="bi bi-gear me-2"></i>Schema Plugin Settings
               </div>
               
               <div class="row g-3">

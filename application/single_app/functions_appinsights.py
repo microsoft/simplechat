@@ -52,6 +52,20 @@ def log_event(
                 logger.addHandler(logging.StreamHandler())
                 logger.setLevel(logging.INFO)
         
+        # Enhanced exception handling for Application Insights
+        # When exceptionTraceback=True, ensure we capture full exception context
+        exc_info_to_use = exceptionTraceback
+        
+        # For ERROR level logs with exceptionTraceback=True, always log as exception
+        if level >= logging.ERROR and exceptionTraceback:
+            if logger and hasattr(logger, 'exception'):
+                # Use logger.exception() for better exception capture in Application Insights
+                logger.exception(message, extra=extra, stacklevel=stacklevel)
+                return
+            else:
+                # Fallback to standard logging with exc_info
+                exc_info_to_use = True
+        
         # Format message with extra properties for structured logging
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
@@ -61,7 +75,7 @@ def log_event(
                 extra=extra,
                 stacklevel=stacklevel,
                 stack_info=includeStack,
-                exc_info=exceptionTraceback
+                exc_info=exc_info_to_use
             )
         else:
             logger.log(
@@ -69,8 +83,14 @@ def log_event(
                 message,
                 stacklevel=stacklevel,
                 stack_info=includeStack,
-                exc_info=exceptionTraceback
+                exc_info=exc_info_to_use
             )
+            
+        # For Azure Monitor, ensure exception-level logs are properly categorized
+        if level >= logging.ERROR and _azure_monitor_configured:
+            # Add a debug print to verify exception logging is working
+            print(f"[Azure Monitor] Exception logged: {message[:100]}...")
+            
     except Exception as e:
         # Fallback to basic logging if anything fails
         try:
@@ -120,7 +140,7 @@ def setup_appinsights_logging(settings):
         
         _azure_monitor_configured = True
         
-        # Set up logger
+        # Set up logger with proper exception handling
         if enable_global:
             logger = logging.getLogger()
             logger.setLevel(logging.INFO)
@@ -131,6 +151,14 @@ def setup_appinsights_logging(settings):
             logger.setLevel(logging.INFO)
             _appinsights_logger = logger
             print("[Azure Monitor] Application Insights enabled for 'azure_monitor' logger")
+            
+        # Test that exception logging is working
+        print("[Azure Monitor] Testing exception capture...")
+        try:
+            raise Exception("Test exception for Azure Monitor validation")
+        except Exception as test_e:
+            logger.error("Test exception logged successfully", exc_info=True)
+            print("[Azure Monitor] Exception capture test completed")
     
     except Exception as e:
         print(f"[Azure Monitor] Failed to setup Application Insights: {e}")

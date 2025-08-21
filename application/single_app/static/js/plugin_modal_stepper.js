@@ -535,10 +535,18 @@ export class PluginModalStepper {
             return false;
           }
           
+          // Plugin type should be auto-selected based on initial choice, but check as fallback
           const selectedPluginType = document.querySelector('input[name="sql-plugin-type"]:checked');
           if (!selectedPluginType) {
-            this.showError('Plugin type is required.');
-            return false;
+            // Auto-select based on selectedType if not already selected
+            if (this.selectedType && this.selectedType.toLowerCase() === 'sql_schema') {
+              document.getElementById('sql-plugin-schema').checked = true;
+            } else if (this.selectedType && this.selectedType.toLowerCase() === 'sql_query') {
+              document.getElementById('sql-plugin-query').checked = true;
+            } else {
+              this.showError('Plugin type is required.');
+              return false;
+            }
           }
           
           const selectedConnectionMethod = document.querySelector('input[name="sql-connection-method"]:checked');
@@ -870,6 +878,18 @@ export class PluginModalStepper {
     document.getElementById('sql-max-rows').value = '1000';
     document.getElementById('sql-timeout').value = '30';
     document.getElementById('sql-include-system-tables').value = 'false';
+    
+    // Auto-select plugin type based on initial selection and hide the redundant selection
+    if (this.selectedType) {
+      const pluginTypeSection = document.querySelector('.sql-plugin-type-selection');
+      if (this.selectedType.toLowerCase() === 'sql_schema') {
+        document.getElementById('sql-plugin-schema').checked = true;
+        if (pluginTypeSection) pluginTypeSection.style.display = 'none';
+      } else if (this.selectedType.toLowerCase() === 'sql_query') {
+        document.getElementById('sql-plugin-query').checked = true;
+        if (pluginTypeSection) pluginTypeSection.style.display = 'none';
+      }
+    }
     
     // Initialize connection examples
     this.updateSqlConnectionExamples();
@@ -1270,7 +1290,25 @@ export class PluginModalStepper {
       }
       
       // Authentication configuration
-      auth.type = authType;
+      // Map SQL auth types to schema-compliant auth types
+      let schemaAuthType;
+      switch (authType) {
+        case 'username_password':
+          schemaAuthType = 'user';
+          break;
+        case 'service_principal':
+          schemaAuthType = 'servicePrincipal';
+          break;
+        case 'managed_identity':
+          schemaAuthType = 'identity';
+          break;
+        case 'integrated':
+        case 'connection_string_only':
+        default:
+          schemaAuthType = 'identity';
+          break;
+      }
+      auth.type = schemaAuthType;
       
       switch (authType) {
         case 'username_password':

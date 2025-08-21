@@ -27,28 +27,53 @@ class SQLQueryPlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
         super().__init__(manifest)
         self.manifest = manifest
-        self.connection_string = manifest.get('connection_string')
-        self.database_type = manifest.get('database_type', 'sqlserver').lower()
+        
+        # Extract parameters from additionalFields if present, otherwise use direct manifest
+        additional_fields = manifest.get('additionalFields', {})
+        
+        self.connection_string = manifest.get('connection_string') or additional_fields.get('connection_string')
+        raw_db_type = (manifest.get('database_type') or additional_fields.get('database_type', 'sqlserver')).lower()
+        # Map azure_sql to sqlserver for compatibility
+        self.database_type = 'sqlserver' if raw_db_type in ['azure_sql', 'azuresql'] else raw_db_type
         self.auth_type = manifest.get('auth', {}).get('type', 'connection_string')
-        self.server = manifest.get('server')
-        self.database = manifest.get('database')
-        self.username = manifest.get('username')
-        self.password = manifest.get('password')
-        self.driver = manifest.get('driver')
-        self.read_only = manifest.get('read_only', True)  # Default to read-only for safety
-        self.max_rows = manifest.get('max_rows', 1000)  # Limit result size
-        self.timeout = manifest.get('timeout', 30)  # Query timeout in seconds
+        self.server = manifest.get('server') or additional_fields.get('server')
+        self.database = manifest.get('database') or additional_fields.get('database')
+        self.username = manifest.get('username') or additional_fields.get('username')
+        self.password = manifest.get('password') or additional_fields.get('password')
+        self.driver = manifest.get('driver') or additional_fields.get('driver')
+        self.read_only = manifest.get('read_only') or additional_fields.get('read_only', True)  # Default to read-only for safety
+        self.max_rows = manifest.get('max_rows') or additional_fields.get('max_rows', 1000)  # Limit result size
+        self.timeout = manifest.get('timeout') or additional_fields.get('timeout', 30)  # Query timeout in seconds
         self._metadata = manifest.get('metadata', {})
+        
+        # Add comprehensive logging
+        log_event(f"[SQLQueryPlugin] Initializing plugin", extra={
+            "database_type": self.database_type,
+            "auth_type": self.auth_type,
+            "server": self.server,
+            "database": self.database,
+            "read_only": self.read_only,
+            "max_rows": self.max_rows,
+            "timeout": self.timeout,
+            "has_connection_string": bool(self.connection_string),
+            "has_username": bool(self.username),
+            "manifest_keys": list(manifest.keys())
+        })
+        print(f"[SQLQueryPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}, Read-Only: {self.read_only}")
         
         # Validate required configuration
         if not self.connection_string and not (self.server and self.database):
-            raise ValueError("SQLQueryPlugin requires either 'connection_string' or 'server' and 'database' in the manifest.")
+            error_msg = "SQLQueryPlugin requires either 'connection_string' or 'server' and 'database' in the manifest."
+            log_event(f"[SQLQueryPlugin] Configuration error: {error_msg}", extra={"manifest": manifest})
+            print(f"[SQLQueryPlugin] ERROR: {error_msg}")
+            raise ValueError(error_msg)
         
         # Set up database-specific configurations
         self._setup_database_config()
         
         # Initialize connection (lazy loading)
         self._connection = None
+        print(f"[SQLQueryPlugin] Initialization complete")
 
     def _setup_database_config(self):
         """Setup database-specific configurations and import requirements"""

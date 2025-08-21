@@ -27,7 +27,10 @@ def get_kernel():
     return getattr(g, 'kernel', None) or getattr(builtins, 'kernel', None)
 
 def get_kernel_agents():
-    return getattr(g, 'kernel_agents', None) or getattr(builtins, 'kernel_agents', None)
+    g_agents = getattr(g, 'kernel_agents', None)
+    builtins_agents = getattr(builtins, 'kernel_agents', None)
+    log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
+    return g_agents or builtins_agents
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
@@ -63,6 +66,7 @@ def register_route_backend_chats(app):
             
         search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
         hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
+        agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
         system_messages_for_augmentation = [] # Collect system messages from search/bing
         search_results = []
         # --- Configuration ---
@@ -1198,6 +1202,16 @@ def register_route_backend_chats(app):
         kernel = get_kernel()
         all_agents = get_kernel_agents()
         
+        log_event(f"[SKChat] Retrieved kernel: {type(kernel)}, all_agents: {type(all_agents)} with {len(all_agents) if all_agents else 0} agents", level=logging.INFO)
+        if all_agents:
+            if isinstance(all_agents, dict):
+                agent_names = list(all_agents.keys())
+            else:
+                agent_names = [getattr(agent, 'name', 'unnamed') for agent in all_agents]
+            log_event(f"[SKChat] Agent names available: {agent_names}", level=logging.INFO)
+        else:
+            log_event(f"[SKChat] all_agents is None or empty! This is the root problem.", level=logging.ERROR)
+        
         log_event(f"[SKChat] Semantic Kernel enabled. Per-user mode: {per_user_semantic_kernel}, Multi-agent orchestration: {enable_multi_agent_orchestration}, agents enabled: {user_enable_agents}")
         if enable_semantic_kernel and user_enable_agents:
         # PATCH: Use new agent selection logic
@@ -1318,6 +1332,24 @@ def register_route_backend_chats(app):
                     msg = str(result)
                     notice = None
                     agent_used = getattr(selected_agent, 'name', 'agent')
+                    
+                    # Extract tool invocations for agent citations
+                    tool_invocations = []
+                    if hasattr(selected_agent, 'tool_invocations'):
+                        tool_invocations = selected_agent.tool_invocations
+                        log_event(
+                            f"[Agent Citations] Extracted {len(tool_invocations)} tool invocations from agent",
+                            extra={
+                                "agent": agent_used,
+                                "tool_count": len(tool_invocations),
+                                "tools": [inv.get('tool_name', 'unknown') for inv in tool_invocations]
+                            }
+                        )
+                    
+                    # Store tool invocations globally to be accessed by the calling function
+                    # Using a pattern similar to how other data flows through the system
+                    agent_citations_list.extend(tool_invocations)
+                    
                     if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                         # If the agent response indicates fallback mode
                         notice = (
@@ -1487,6 +1519,7 @@ def register_route_backend_chats(app):
             'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
             'web_search_citations': bing_citations_list, # <--- SIMPLIFIED: Directly use the list
+            'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
             'user_message': user_message,
             'model_deployment_name': final_model_used,
             'metadata': {} # Used by SK
@@ -1547,5 +1580,6 @@ def register_route_backend_chats(app):
             'augmented': bool(system_messages_for_augmentation),
             'hybrid_citations': hybrid_citations_list,
             'web_search_citations': bing_citations_list,
+            'agent_citations': agent_citations_list,
             'kernel_fallback_notice': kernel_fallback_notice
         }), 200

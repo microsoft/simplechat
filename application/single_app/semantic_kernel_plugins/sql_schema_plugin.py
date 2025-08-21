@@ -25,25 +25,47 @@ class SQLSchemaPlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
         super().__init__(manifest)
         self.manifest = manifest
-        self.connection_string = manifest.get('connection_string')
-        self.database_type = manifest.get('database_type', 'sqlserver').lower()
+        
+        # Extract parameters from additionalFields if present, otherwise use direct manifest
+        additional_fields = manifest.get('additionalFields', {})
+        
+        self.connection_string = manifest.get('connection_string') or additional_fields.get('connection_string')
+        raw_db_type = (manifest.get('database_type') or additional_fields.get('database_type', 'sqlserver')).lower()
+        # Map azure_sql to sqlserver for compatibility
+        self.database_type = 'sqlserver' if raw_db_type in ['azure_sql', 'azuresql'] else raw_db_type
         self.auth_type = manifest.get('auth', {}).get('type', 'connection_string')
-        self.server = manifest.get('server')
-        self.database = manifest.get('database')
-        self.username = manifest.get('username')
-        self.password = manifest.get('password')
-        self.driver = manifest.get('driver')
+        self.server = manifest.get('server') or additional_fields.get('server')
+        self.database = manifest.get('database') or additional_fields.get('database')
+        self.username = manifest.get('username') or additional_fields.get('username')
+        self.password = manifest.get('password') or additional_fields.get('password')
+        self.driver = manifest.get('driver') or additional_fields.get('driver')
         self._metadata = manifest.get('metadata', {})
+        
+        # Add comprehensive logging
+        log_event(f"[SQLSchemaPlugin] Initializing plugin", extra={
+            "database_type": self.database_type,
+            "auth_type": self.auth_type,
+            "server": self.server,
+            "database": self.database,
+            "has_connection_string": bool(self.connection_string),
+            "has_username": bool(self.username),
+            "manifest_keys": list(manifest.keys())
+        })
+        print(f"[SQLSchemaPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}")
         
         # Validate required configuration
         if not self.connection_string and not (self.server and self.database):
-            raise ValueError("SQLSchemaPlugin requires either 'connection_string' or 'server' and 'database' in the manifest.")
+            error_msg = "SQLSchemaPlugin requires either 'connection_string' or 'server' and 'database' in the manifest."
+            log_event(f"[SQLSchemaPlugin] Configuration error: {error_msg}", extra={"manifest": manifest})
+            print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
+            raise ValueError(error_msg)
         
         # Set up database-specific configurations
         self._setup_database_config()
         
         # Initialize connection (lazy loading)
         self._connection = None
+        print(f"[SQLSchemaPlugin] Initialization complete")
 
     def _setup_database_config(self):
         """Setup database-specific configurations and import requirements"""
@@ -201,6 +223,14 @@ class SQLSchemaPlugin(BasePlugin):
         table_filter: Optional[str] = None
     ) -> ResultWithMetadata:
         """Get complete database schema"""
+        log_event(f"[SQLSchemaPlugin] get_database_schema called", extra={
+            "database_type": self.database_type,
+            "database": self.database,
+            "include_system_tables": include_system_tables,
+            "table_filter": table_filter
+        })
+        print(f"[SQLSchemaPlugin] Getting database schema - DB: {self.database}, Include System: {include_system_tables}")
+        
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -211,6 +241,72 @@ class SQLSchemaPlugin(BasePlugin):
                 "tables": {},
                 "relationships": []
             }
+            
+            # Get tables list
+            tables_query = self._get_tables_query(include_system_tables, table_filter)
+            print(f"[SQLSchemaPlugin] Executing tables query: {tables_query}")
+            cursor.execute(tables_query)
+            tables = cursor.fetchall()
+            
+            print(f"[SQLSchemaPlugin] Found {len(tables)} tables")
+            
+            # Get schema for each table
+            for table in tables:
+                if isinstance(table, tuple) and len(table) >= 2:
+                    table_name = table[0]
+                    schema_name = table[1]
+                    qualified_table_name = f"{schema_name}.{table_name}"
+                else:
+                    table_name = table[0] if isinstance(table, tuple) else table
+                    schema_name = None
+                    qualified_table_name = table_name
+                    
+                try:
+                    table_schema = self._get_table_schema_data(cursor, table_name, schema_name)
+                    schema_data["tables"][table_name] = table_schema
+                    print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name}")
+                except Exception as e:
+                    print(f"[SQLSchemaPlugin] Error getting schema for table {qualified_table_name}: {e}")
+                    log_event(f"[SQLSchemaPlugin] Error getting table schema", extra={
+                        "table_name": qualified_table_name,
+                        "error": str(e)
+                    })
+            
+            # Get relationships
+            try:
+                relationships = self._get_relationships_data(cursor)
+                schema_data["relationships"] = relationships
+                print(f"[SQLSchemaPlugin] Found {len(relationships)} relationships")
+            except Exception as e:
+                print(f"[SQLSchemaPlugin] Error getting relationships: {e}")
+                
+            log_event(f"[SQLSchemaPlugin] get_database_schema completed", extra={
+                "tables_count": len(schema_data["tables"]),
+                "relationships_count": len(schema_data["relationships"])
+            })
+            
+            return ResultWithMetadata(
+                schema_data,
+                {
+                    "source": "sql_schema_plugin",
+                    "database_type": self.database_type,
+                    "table_count": len(schema_data["tables"]),
+                    "relationship_count": len(schema_data["relationships"])
+                }
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to get database schema: {str(e)}"
+            print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
+            log_event(f"[SQLSchemaPlugin] get_database_schema failed", extra={
+                "error": str(e),
+                "database_type": self.database_type,
+                "database": self.database
+            })
+            return ResultWithMetadata(
+                {"error": error_msg},
+                {"source": "sql_schema_plugin", "success": False}
+            )
             
             # Get tables
             tables_query = self._get_tables_query(include_system_tables, table_filter)
@@ -341,10 +437,11 @@ class SQLSchemaPlugin(BasePlugin):
                 base_query += f" AND name LIKE '{table_filter.replace('*', '%')}'"
             return base_query
 
-    def _get_table_schema_data(self, cursor, table_name: str) -> Dict[str, Any]:
+    def _get_table_schema_data(self, cursor, table_name: str, schema_name: str = None) -> Dict[str, Any]:
         """Get detailed schema data for a specific table"""
         schema_data = {
             "table_name": table_name,
+            "schema_name": schema_name,
             "columns": [],
             "primary_keys": [],
             "foreign_keys": [],
@@ -352,7 +449,7 @@ class SQLSchemaPlugin(BasePlugin):
         }
         
         # Get columns
-        columns_query = self._get_columns_query(table_name)
+        columns_query = self._get_columns_query(table_name, schema_name)
         cursor.execute(columns_query)
         columns = cursor.fetchall()
         
@@ -361,7 +458,7 @@ class SQLSchemaPlugin(BasePlugin):
             schema_data["columns"].append(column_info)
         
         # Get primary keys
-        pk_query = self._get_primary_keys_query(table_name)
+        pk_query = self._get_primary_keys_query(table_name, schema_name)
         if pk_query:
             cursor.execute(pk_query)
             pks = cursor.fetchall()
@@ -369,14 +466,17 @@ class SQLSchemaPlugin(BasePlugin):
         
         return schema_data
 
-    def _get_columns_query(self, table_name: str) -> str:
+    def _get_columns_query(self, table_name: str, schema_name: str = None) -> str:
         """Get database-specific query for table columns"""
         if self.database_type == 'sqlserver':
+            where_clause = f"WHERE TABLE_NAME = '{table_name}'"
+            if schema_name:
+                where_clause += f" AND TABLE_SCHEMA = '{schema_name}'"
             return f"""
                 SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, 
                        CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
                 FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_NAME = '{table_name}'
+                {where_clause}
                 ORDER BY ORDINAL_POSITION
             """
         elif self.database_type == 'postgresql':
@@ -392,13 +492,16 @@ class SQLSchemaPlugin(BasePlugin):
         elif self.database_type == 'sqlite':
             return f"PRAGMA table_info({table_name})"
 
-    def _get_primary_keys_query(self, table_name: str) -> Optional[str]:
+    def _get_primary_keys_query(self, table_name: str, schema_name: str = None) -> Optional[str]:
         """Get database-specific query for primary keys"""
         if self.database_type == 'sqlserver':
+            where_clause = f"WHERE TABLE_NAME = '{table_name}'"
+            if schema_name:
+                where_clause += f" AND TABLE_SCHEMA = '{schema_name}'"
             return f"""
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE TABLE_NAME = '{table_name}' 
+                {where_clause}
                 AND CONSTRAINT_NAME LIKE 'PK_%'
             """
         elif self.database_type == 'postgresql':
