@@ -25,7 +25,6 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
-from dotenv import load_dotenv
 
 # Add dotenv import
 from dotenv import load_dotenv
@@ -86,9 +85,6 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 load_dotenv()
 
 app = Flask(__name__)
-
-# Set Flask secret key from environment variable
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fallback-development-key-only')
 
 app.config['EXECUTOR_TYPE'] = 'thread'
 app.config['EXECUTOR_MAX_WORKERS'] = 30
@@ -165,14 +161,12 @@ storage_account_public_documents_container_name = "public-documents"
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
-
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
 
 if cosmos_authentication_type == "managed_identity":
     cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
 else:
     cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
-
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)

@@ -3,11 +3,6 @@ import builtins
 import logging
 import pickle
 import json
-import os
-from dotenv import load_dotenv
-
-# Load environment variables first, before importing config
-load_dotenv()
 
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel 
@@ -61,11 +56,10 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
-from route_external_group_documents import *
-from route_external_documents import *
-from route_external_groups import *
-from route_external_admin_settings import *
-from route_external_chat import *
+# from route_external_group_documents import *
+# from route_external_documents import *
+# from route_external_groups import *
+# from route_external_admin_settings import *
 
 
 # =================== Helper Functions ===================
@@ -341,94 +335,22 @@ register_route_backend_public_documents(app)
 register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
-register_route_external_health(app)
+#register_route_external_health(app)
 
 # ------------------- Extenral Groups Routes ----------
-register_route_external_groups(app)
+#register_route_external_groups(app)
 
 # ------------------- Extenral Group Documents Routes ----------
-register_route_external_group_documents(app)
+#register_route_external_group_documents(app)
 
 # ------------------- Extenral Documents Routes ----------
-register_route_external_documents(app)
+#register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
-register_route_external_admin_settings(app)
-
-# ------------------- Extenral Chat Routes ----------
-register_route_external_chat(app)
+#register_route_external_admin_settings(app)
 
 if __name__ == '__main__':
     settings = get_settings()
     print(f"Starting Single App. Initializing clients...")
     initialize_clients(settings)
-    
-    # SSL/HTTPS Configuration
-    ssl_context = None
-    host = "0.0.0.0"
-    port = 5000
-    
-    if settings.get('enable_https', False):
-        import ssl
-        import base64
-        import tempfile
-        import os
-        
-        print("HTTPS is enabled. Configuring SSL...")
-        port = settings.get('https_port', 5443)
-        
-        # Check if using adhoc SSL (self-signed certificates for development)
-        if settings.get('use_adhoc_ssl', False):
-            print("Using adhoc SSL (self-signed certificates) for development...")
-            ssl_context = 'adhoc'
-        else:
-            # Use provided certificates
-            ssl_cert_path = settings.get('ssl_cert_path', '')
-            ssl_key_path = settings.get('ssl_key_path', '')
-            ssl_cert_base64 = settings.get('ssl_cert_base64', '')
-            ssl_key_base64 = settings.get('ssl_key_base64', '')
-            
-            if ssl_cert_path and ssl_key_path:
-                # Use certificate files from disk
-                print(f"Using SSL certificates from files: {ssl_cert_path}, {ssl_key_path}")
-                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                ssl_context.load_cert_chain(ssl_cert_path, ssl_key_path)
-            elif ssl_cert_base64 and ssl_key_base64:
-                # Use base64 encoded certificates
-                print("Using base64 encoded SSL certificates...")
-                try:
-                    # Decode base64 certificates and save to temporary files
-                    cert_data = base64.b64decode(ssl_cert_base64)
-                    key_data = base64.b64decode(ssl_key_base64)
-                    
-                    # Create temporary files
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.crt', delete=False) as cert_file:
-                        cert_file.write(cert_data)
-                        temp_cert_path = cert_file.name
-                    
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.key', delete=False) as key_file:
-                        key_file.write(key_data)
-                        temp_key_path = key_file.name
-                    
-                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                    ssl_context.load_cert_chain(temp_cert_path, temp_key_path)
-                    
-                    # Clean up temporary files after loading
-                    os.unlink(temp_cert_path)
-                    os.unlink(temp_key_path)
-                    
-                except Exception as e:
-                    print(f"Error loading base64 certificates: {e}")
-                    print("Falling back to HTTP...")
-                    ssl_context = None
-                    port = 5000
-            else:
-                print("HTTPS enabled but no valid certificates provided. Falling back to HTTP...")
-                port = 5000
-    
-    if ssl_context:
-        print(f"Starting server with HTTPS on https://{host}:{port}")
-    else:
-        print(f"Starting server with HTTP on http://{host}:{port}")
-    
-    app.run(host=host, port=port, debug=False, ssl_context=ssl_context)
+    app.run(host="0.0.0.0", port=5000, debug=False)

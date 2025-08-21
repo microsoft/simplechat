@@ -1,9 +1,0 @@
-{
-  "server_path": "../external_apps/mcp_server/simplechat_mcp_server.py",
-  "timeout": 30,
-  "log_level": "INFO",
-  "server_env": {
-    "SIMPLECHAT_MCP_SIMPLECHAT_BASE_URL": "https://your-simplechat-instance.com",
-    "SIMPLECHAT_MCP_SIMPLECHAT_BEARER_TOKEN": "your-bearer-token-here"
-  }
-}
