@@ -383,7 +383,7 @@ resource "azurerm_linux_web_app" "app" {
     active_directory_v2 {
       client_id = azuread_application.app_registration.client_id
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" # This should be allowed optional
-      tenant_auth_endpoint       = "https://login.microsoftonline.us/${data.azuread_client_config.current.tenant_id}/v2.0"
+      tenant_auth_endpoint       = var.global_which_azure_platform == "AzureUSGovernment" ? "https://login.microsoftonline.us/${data.azuread_client_config.current.tenant_id}/v2.0" : "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0"
     }
 
     login {
