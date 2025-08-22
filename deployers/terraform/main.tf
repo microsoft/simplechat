@@ -318,6 +318,7 @@ resource "azurerm_storage_account" "sa" {
   account_replication_type = "LRS" # Standard_LRS
   account_kind             = "StorageV2"
   access_tier              = "Hot"
+  allow_nested_items_to_be_public =  false
   public_network_access_enabled = false # From script's allow-blob-public-access false
   tags                     = local.common_tags
 }
@@ -426,6 +427,7 @@ resource "azurerm_linux_web_app" "app" {
   site_config {
     always_on  = true
     minimum_tls_version = "1.2"
+    container_registry_use_managed_identity = true
 
     application_stack {
       docker_image_name = "${var.image_name}"
@@ -446,7 +448,7 @@ resource "azurerm_linux_web_app" "app" {
       site_config[0].application_stack[0].docker_image_name
     ]
   }
-
+  
   tags = local.common_tags
 }
 
