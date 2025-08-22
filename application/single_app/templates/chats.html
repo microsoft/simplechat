@@ -224,7 +224,7 @@
                             <i class="bi bi-image"></i> <span class="search-btn-text d-none d-md-inline">Image</span>
                         </button>
                         {% endif %}
-                        {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                        {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                         <button
                             id="search-documents-btn"
                             class="btn btn-outline-secondary btn-sm search-btn"
@@ -313,7 +313,7 @@
                 </div>
 
                 
-                {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
+                {% if settings.enable_user_workspace or settings.enable_group_workspaces or settings.enable_public_workspaces %}
                 <div id="search-documents-container" class="card p-2 mb-2" style="display: none; border-radius: 0.5rem;">
                     
                      <div class="d-flex flex-wrap align-items-end gap-2">

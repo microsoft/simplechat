@@ -264,8 +264,8 @@ def register_route_backend_public_workspaces(app):
             user_id in ws.get("admins", []) or
             any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
         )
-        if not is_member:
-            return jsonify({"error": "Not a member"}), 403
+        #if not is_member:
+            #return jsonify({"error": "Not a member"}), 403
 
         update_active_public_workspace_for_user(user_id, ws_id)
         return jsonify({"message": f"Active set to {ws_id}"}), 200

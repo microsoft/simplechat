@@ -6,6 +6,8 @@ from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
 
+MAX_CONCURRENT_UPLOADS = int(os.getenv("MAX_CONCURRENT_UPLOADS", 25))
+
 def register_route_external_public_documents(app):
     """
     Provides backend routes for public-level document management:
@@ -37,6 +39,13 @@ def register_route_external_public_documents(app):
 
         processed_docs = []
         upload_errors = []
+
+        # Get a count of all documents currently being uploaded
+        upload_count = get_pending_document_count()
+
+        if (upload_count + len(files)) > MAX_CONCURRENT_UPLOADS:
+            print(f"Concurrent upload limit reached: {upload_count} + {len(files)} > {MAX_CONCURRENT_UPLOADS}")
+            return jsonify({'error': 'Concurrent upload limit reached'}), 429
 
         for file in files:
             if not file.filename:
@@ -182,12 +191,12 @@ def register_route_external_public_documents(app):
 
         where_clause = " AND ".join(query_conditions)
 
-        print("Query Parameters:", json.dumps(query_params, indent=2))
+        #print("Query Parameters:", json.dumps(query_params, indent=2))
 
         # --- 3) Get total count ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            print(f"Executing count query: {count_query_str}")
+            #print(f"Executing count query: {count_query_str}")
             count_items = list(cosmos_public_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -195,7 +204,7 @@ def register_route_external_public_documents(app):
             ))
             total_count = count_items[0] if count_items else 0
         except Exception as e:
-            print(f"Error executing count query for public: {e}")
+            #print(f"Error executing count query for public: {e}")
             return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
 
         # --- 4) Get paginated data ---
@@ -208,7 +217,7 @@ def register_route_external_public_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
-            print(f"Executing data query: {data_query_str}")
+            #print(f"Executing data query: {data_query_str}")
             docs = list(cosmos_public_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
@@ -227,7 +236,7 @@ def register_route_external_public_documents(app):
                 WHERE c.public_workspace_id = @public_workspace_id
                     AND NOT IS_DEFINED(c.percentage_complete)
             """
-            print(f"Executing legacy query: {legacy_q}")
+            #print(f"Executing legacy query: {legacy_q}")
             legacy_docs = list(
                 cosmos_public_documents_container.query_items(
                     query=legacy_q,
@@ -248,7 +257,7 @@ def register_route_external_public_documents(app):
         }
 
         # Log the JSON data (for debugging)
-        print(f"Returning results for public documents query: {json.dumps(json_data, indent=2)}")
+        #print(f"Returning results for public documents query: {json.dumps(json_data, indent=2)}")
 
         # --- 5) Return results ---
         return jsonify(json_data), 200
