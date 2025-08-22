@@ -29,16 +29,8 @@ export class PluginModalStepper {
     document.getElementById('plugin-auth-type').addEventListener('change', () => this.toggleOpenApiAuthFields());
     document.getElementById('plugin-auth-type-generic').addEventListener('change', () => this.toggleGenericAuthFields());
     
-    // OpenAPI source selection handlers
-    document.querySelectorAll('input[name="openapi-source"]').forEach(radio => {
-      radio.addEventListener('change', () => this.toggleOpenApiSourceSections());
-    });
-    
     // File upload handler
     document.getElementById('plugin-openapi-file').addEventListener('change', (e) => this.handleFileUpload(e));
-    
-    // URL validation handler
-    document.getElementById('validate-openapi-url').addEventListener('click', () => this.validateOpenApiUrl());
     
     // SQL Plugin event handlers
     document.querySelectorAll('input[name="sql-database-type"]').forEach(radio => {
@@ -360,8 +352,6 @@ export class PluginModalStepper {
       openApiSection.classList.remove('d-none');
       genericSection.classList.add('d-none');
       sqlSection.classList.add('d-none');
-      // Initialize the source sections for OpenAPI
-      this.toggleOpenApiSourceSections();
     } else if (isSqlType) {
       openApiSection.classList.add('d-none');
       genericSection.classList.add('d-none');
@@ -474,23 +464,14 @@ export class PluginModalStepper {
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         
         if (isOpenApiVisible) {
-          // Validate OpenAPI fields based on source type
-          const selectedSource = document.querySelector('input[name="openapi-source"]:checked').value;
+          // Validate OpenAPI fields
+          const fileInput = document.getElementById('plugin-openapi-file');
           const endpoint = document.getElementById('plugin-endpoint').value.trim();
           
-          // Validate source-specific fields
-          if (selectedSource === 'file') {
-            const fileInput = document.getElementById('plugin-openapi-file');
-            if (!fileInput.files || fileInput.files.length === 0) {
-              this.showError('OpenAPI specification file is required.');
-              return false;
-            }
-          } else if (selectedSource === 'url') {
-            const url = document.getElementById('plugin-openapi-url').value.trim();
-            if (!url) {
-              this.showError('OpenAPI specification URL is required.');
-              return false;
-            }
+          // Validate file upload
+          if (!fileInput.files || fileInput.files.length === 0) {
+            this.showError('OpenAPI specification file is required.');
+            return false;
           }
           
           if (!endpoint) {
@@ -674,26 +655,6 @@ export class PluginModalStepper {
     }
   }
 
-  toggleOpenApiSourceSections() {
-    const selectedSource = document.querySelector('input[name="openapi-source"]:checked').value;
-    const fileSection = document.getElementById('openapi-file-section');
-    const urlSection = document.getElementById('openapi-url-section');
-
-    // Hide all sections first
-    fileSection.classList.add('d-none');
-    urlSection.classList.add('d-none');
-
-    // Show the selected section
-    switch (selectedSource) {
-      case 'file':
-        fileSection.classList.remove('d-none');
-        break;
-      case 'url':
-        urlSection.classList.remove('d-none');
-        break;
-    }
-  }
-
   async handleFileUpload(event) {
     const file = event.target.files[0];
     const statusDiv = document.getElementById('openapi-file-status');
@@ -742,66 +703,6 @@ export class PluginModalStepper {
       console.error('Upload error:', error);
       statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>Upload failed: ${error.message}`;
       statusDiv.className = 'mt-2 text-danger';
-    }
-  }
-
-  async validateOpenApiUrl() {
-    const urlInput = document.getElementById('plugin-openapi-url');
-    const statusDiv = document.getElementById('openapi-url-status');
-    const validateBtn = document.getElementById('validate-openapi-url');
-    
-    const url = urlInput.value.trim();
-    if (!url) {
-      statusDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Please enter a URL';
-      statusDiv.className = 'mt-2 text-warning';
-      return;
-    }
-
-    // Disable button and show loading
-    validateBtn.disabled = true;
-    validateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Validating...';
-    
-    statusDiv.innerHTML = '<div class="spinner-border spinner-border-sm me-2" role="status"></div>Downloading and validating...';
-    statusDiv.className = 'mt-2 text-info';
-
-    try {
-      const response = await fetch('/api/openapi/validate-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ url: url })
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        statusDiv.innerHTML = `
-          <i class="bi bi-check-circle me-2"></i>
-          URL validated successfully!
-          <br><small class="text-muted">File ID: ${result.file_id}</small>
-        `;
-        statusDiv.className = 'mt-2 text-success';
-
-        // Store the file ID for later use
-        urlInput.dataset.fileId = result.file_id;
-
-        // Display API info if available
-        if (result.api_info) {
-          this.displayOpenApiInfo(result.api_info);
-        }
-      } else {
-        statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${result.error || 'Validation failed'}`;
-        statusDiv.className = 'mt-2 text-danger';
-      }
-    } catch (error) {
-      console.error('Validation error:', error);
-      statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>Validation failed: ${error.message}`;
-      statusDiv.className = 'mt-2 text-danger';
-    } finally {
-      // Re-enable button
-      validateBtn.disabled = false;
-      validateBtn.innerHTML = '<i class="bi bi-check me-1"></i>Validate';
     }
   }
 
@@ -1217,31 +1118,14 @@ export class PluginModalStepper {
       // Collect OpenAPI-specific data
       endpoint = document.getElementById('plugin-endpoint').value.trim();
       
-      // Handle OpenAPI spec source
-      const selectedSource = document.querySelector('input[name="openapi-source"]:checked').value;
-      additionalFields.openapi_source_type = selectedSource;
-      
-      if (selectedSource === 'file') {
-        const fileInput = document.getElementById('plugin-openapi-file');
-        const fileId = fileInput.dataset.fileId;
-        if (!fileId) {
-          throw new Error('Please upload an OpenAPI specification file');
-        }
-        additionalFields.openapi_file_id = fileId;
-      } else if (selectedSource === 'url') {
-        const urlInput = document.getElementById('plugin-openapi-url');
-        const url = urlInput.value.trim();
-        const fileId = urlInput.dataset.fileId;
-        if (!url) {
-          throw new Error('Please enter an OpenAPI specification URL');
-        }
-        if (!fileId) {
-          throw new Error('Please validate the OpenAPI specification URL');
-        }
-        additionalFields.openapi_url = url;
-        additionalFields.openapi_file_id = fileId;
+      // Handle OpenAPI file upload
+      const fileInput = document.getElementById('plugin-openapi-file');
+      const fileId = fileInput.dataset.fileId;
+      if (!fileId) {
+        throw new Error('Please upload an OpenAPI specification file');
       }
-      
+      additionalFields.openapi_file_id = fileId;
+      additionalFields.openapi_source_type = 'file';
       additionalFields.base_url = endpoint;
       
       const authType = document.getElementById('plugin-auth-type').value;

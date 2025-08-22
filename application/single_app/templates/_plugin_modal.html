@@ -68,22 +68,6 @@
               <i class="bi bi-file-earmark-code me-2"></i>OpenAPI Configuration
             </div>
             
-            <!-- OpenAPI Spec Source Selection -->
-            <div class="mb-3">
-              <label class="form-label">OpenAPI Specification Source</label>
-              <div class="btn-group w-100" role="group" aria-label="OpenAPI source selection">
-                <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-file" value="file" checked>
-                <label class="btn btn-outline-primary" for="openapi-source-file">
-                  <i class="bi bi-upload me-1"></i>Upload File
-                </label>
-                
-                <input type="radio" class="btn-check" name="openapi-source" id="openapi-source-url" value="url">
-                <label class="btn btn-outline-primary" for="openapi-source-url">
-                  <i class="bi bi-link-45deg me-1"></i>From URL
-                </label>
-              </div>
-            </div>
-            
             <!-- File Upload Section -->
             <div id="openapi-file-section" class="mb-3">
               <label for="plugin-openapi-file" class="form-label">OpenAPI Specification File <span class="text-danger">*</span></label>
@@ -93,22 +77,6 @@
                 <br><strong>Security:</strong> Files are automatically scanned for malicious content.
               </div>
               <div id="openapi-file-status" class="mt-2"></div>
-            </div>
-            
-            <!-- URL Section -->
-            <div id="openapi-url-section" class="mb-3 d-none">
-              <label for="plugin-openapi-url" class="form-label">OpenAPI Specification URL <span class="text-danger">*</span></label>
-              <div class="input-group">
-                <input type="url" class="form-control" id="plugin-openapi-url" placeholder="https://api.example.com/openapi.yaml" />
-                <button type="button" class="btn btn-outline-secondary" id="validate-openapi-url">
-                  <i class="bi bi-check-circle me-1"></i>Validate
-                </button>
-              </div>
-              <div class="form-text">
-                Provide a URL to your OpenAPI specification. The file will be downloaded and validated.
-                <br><strong>Security:</strong> Only HTTPS URLs are recommended. Content is scanned for malicious patterns.
-              </div>
-              <div id="openapi-url-status" class="mt-2"></div>
             </div>
             
             <div class="mb-3">
