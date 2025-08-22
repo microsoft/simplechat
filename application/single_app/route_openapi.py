@@ -85,19 +85,14 @@ def register_openapi_routes(app):
                         'error': f'Validation failed: {error}'
                     }), 400
                 
-                # Create secure storage directory if it doesn't exist
-                upload_dir = os.path.join(current_app.instance_path, 'openapi_specs')
-                os.makedirs(upload_dir, exist_ok=True)
+                # Generate unique file ID for reference
+                file_id = str(uuid.uuid4())
                 
-                # Generate unique filename to prevent conflicts
-                unique_id = str(uuid.uuid4())[:8]
-                base_name, ext = os.path.splitext(safe_filename)
-                stored_filename = f"{base_name}_{unique_id}{ext}"
-                storage_path = os.path.join(upload_dir, stored_filename)
+                # We don't permanently store the file - just use the validated content
+                # The spec content will be stored in Cosmos DB user settings
                 
-                # Move validated file to secure storage
-                import shutil
-                shutil.move(temp_path, storage_path)
+                # Clean up the temporary file since we have the validated content
+                os.unlink(temp_path)
                 
                 # Extract basic spec information
                 info = spec.get('info', {})
@@ -113,9 +108,9 @@ def register_openapi_routes(app):
                 
                 return jsonify({
                     'success': True,
-                    'filename': stored_filename,
-                    'storage_path': storage_path,
+                    'file_id': file_id,
                     'original_filename': file.filename,
+                    'spec_content': spec,  # Return the actual spec content
                     'spec_info': spec_info
                 })
                 

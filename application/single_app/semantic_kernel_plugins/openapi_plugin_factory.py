@@ -2,9 +2,10 @@
 OpenAPI Plugin Factory
 
 Factory class for creating OpenAPI plugins from different sources:
-- Uploaded files
-- URLs 
-- File paths
+- Stored content in user settings (preferred)
+- Uploaded files (deprecated)
+- URLs (deprecated)
+- File paths (deprecated)
 """
 
 import os
@@ -16,13 +17,8 @@ from .openapi_plugin import OpenApiPlugin
 class OpenApiPluginFactory:
     """Factory for creating OpenAPI plugins from various sources."""
     
+    # Legacy directory for backward compatibility
     UPLOADED_FILES_DIR = "uploaded_openapi_files"
-    
-    @classmethod
-    def ensure_upload_directory(cls):
-        """Ensure the upload directory exists."""
-        if not os.path.exists(cls.UPLOADED_FILES_DIR):
-            os.makedirs(cls.UPLOADED_FILES_DIR, exist_ok=True)
     
     @classmethod
     def create_from_config(cls, config: Dict[str, Any]) -> OpenApiPlugin:
@@ -30,27 +26,36 @@ class OpenApiPluginFactory:
         Create an OpenAPI plugin from configuration.
         
         Args:
-            config: Configuration dictionary containing source type and auth info
+            config: Configuration dictionary containing source and auth info
             
         Returns:
             OpenApiPlugin instance
             
         Raises:
             ValueError: If configuration is invalid
-            FileNotFoundError: If specified files don't exist
         """
-        # Ensure upload directory exists
-        cls.ensure_upload_directory()
-        
-        source_type = config.get('openapi_source_type')
         base_url = config.get('base_url', '')
         auth = cls._extract_auth_config(config)
         
         if not base_url:
             raise ValueError("base_url is required")
         
-        # Determine the OpenAPI spec path based on source type
-        if source_type == 'file':
+        # Check if we have OpenAPI spec content directly in the config
+        openapi_spec_content = config.get('openapi_spec_content')
+        if openapi_spec_content:
+            return OpenApiPlugin(
+                base_url=base_url,
+                auth=auth,
+                openapi_spec_content=openapi_spec_content
+            )
+        
+        # Fall back to legacy file-based approach for backward compatibility
+        source_type = config.get('openapi_source_type')
+        
+        if source_type == 'content':
+            # This should be handled above, but just in case
+            raise ValueError("openapi_spec_content is required for content source type")
+        elif source_type == 'file':
             openapi_spec_path = cls._get_uploaded_file_path(config)
         elif source_type == 'url':
             openapi_spec_path = cls._get_downloaded_file_path(config)
@@ -60,9 +65,9 @@ class OpenApiPluginFactory:
             raise ValueError(f"Invalid openapi_source_type: {source_type}")
         
         return OpenApiPlugin(
-            openapi_spec_path=openapi_spec_path,
             base_url=base_url,
-            auth=auth
+            auth=auth,
+            openapi_spec_path=openapi_spec_path
         )
     
     @classmethod

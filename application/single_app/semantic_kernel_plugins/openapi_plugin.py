@@ -55,25 +55,28 @@ from semantic_kernel.functions import kernel_function
 
 class OpenApiPlugin(BasePlugin):
     def __init__(self, 
-                 openapi_spec_path: str,
                  base_url: str,
                  auth: Optional[Dict[str, Any]] = None,
-                 manifest: Optional[Dict[str, Any]] = None):
+                 manifest: Optional[Dict[str, Any]] = None,
+                 openapi_spec_path: Optional[str] = None,
+                 openapi_spec_content: Optional[Dict[str, Any]] = None):
         """
         Initialize the OpenAPI plugin with user-provided configuration.
         
         Args:
-            openapi_spec_path: Path to the OpenAPI specification file (YAML or JSON)
             base_url: Base URL of the API (e.g., 'https://api.example.com')
             auth: Authentication configuration (e.g., {'type': 'bearer', 'token': 'xxx'})
             manifest: Additional manifest configuration
+            openapi_spec_path: Path to the OpenAPI specification file (YAML or JSON) - DEPRECATED
+            openapi_spec_content: OpenAPI specification content as parsed dict (preferred)
         """
-        if not openapi_spec_path:
-            raise ValueError("openapi_spec_path is required")
         if not base_url:
             raise ValueError("base_url is required")
+        if not openapi_spec_path and not openapi_spec_content:
+            raise ValueError("Either openapi_spec_path or openapi_spec_content is required")
         
         self.openapi_spec_path = openapi_spec_path
+        self.openapi_spec_content = openapi_spec_content
         self.base_url = base_url.rstrip('/')  # Remove trailing slash
         self.auth = auth or {}
         self.manifest = manifest or {}
@@ -83,7 +86,15 @@ class OpenApiPlugin(BasePlugin):
         self._metadata = self._generate_metadata()
     
     def _load_openapi_spec(self) -> Dict[str, Any]:
-        """Load OpenAPI specification from YAML or JSON file."""
+        """Load OpenAPI specification from content or file."""
+        # If we have spec content directly, use it
+        if self.openapi_spec_content:
+            return self.openapi_spec_content
+            
+        # Fall back to file-based loading for backward compatibility
+        if not self.openapi_spec_path:
+            raise ValueError("No OpenAPI specification provided")
+            
         if not os.path.exists(self.openapi_spec_path):
             raise FileNotFoundError(f"OpenAPI specification file not found: {self.openapi_spec_path}")
         

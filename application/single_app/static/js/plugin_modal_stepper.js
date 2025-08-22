@@ -688,12 +688,14 @@ export class PluginModalStepper {
         `;
         statusDiv.className = 'mt-2 text-success';
 
-        // Store the file ID for later use
-        document.getElementById('plugin-openapi-file').dataset.fileId = result.file_id;
+        // Store the file ID and spec content for later use
+        const fileElement = document.getElementById('plugin-openapi-file');
+        fileElement.dataset.fileId = result.file_id;
+        fileElement.dataset.specContent = JSON.stringify(result.spec_content);
 
         // Display API info if available
-        if (result.api_info) {
-          this.displayOpenApiInfo(result.api_info);
+        if (result.spec_info) {
+          this.displayOpenApiInfo(result.spec_info);
         }
       } else {
         statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${result.error || 'Upload failed'}`;
@@ -1121,11 +1123,14 @@ export class PluginModalStepper {
       // Handle OpenAPI file upload
       const fileInput = document.getElementById('plugin-openapi-file');
       const fileId = fileInput.dataset.fileId;
-      if (!fileId) {
+      const specContent = fileInput.dataset.specContent;
+      if (!fileId || !specContent) {
         throw new Error('Please upload an OpenAPI specification file');
       }
-      additionalFields.openapi_file_id = fileId;
-      additionalFields.openapi_source_type = 'file';
+      
+      // Store the OpenAPI spec content directly in the plugin config
+      additionalFields.openapi_spec_content = JSON.parse(specContent);
+      additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
       
       const authType = document.getElementById('plugin-auth-type').value;
