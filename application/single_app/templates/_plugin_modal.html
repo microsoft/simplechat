@@ -114,7 +114,10 @@
             <div class="mb-3">
               <label for="plugin-endpoint" class="form-label">Base URL <span class="text-danger">*</span></label>
               <input type="text" class="form-control" id="plugin-endpoint" placeholder="https://api.example.com" />
-              <div class="form-text">Base URL of your API (without trailing slash).</div>
+              <div class="form-text">
+                Base URL of your API (without trailing slash). 
+                <br><small class="text-muted"><i class="bi bi-lightbulb me-1"></i>This will be auto-populated from your OpenAPI spec if available, but you can modify it as needed.</small>
+              </div>
             </div>
             
             <!-- API Info Display -->
@@ -233,7 +236,7 @@
                 <div class="col-6 col-md-3">
                   <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-azure-sql" value="azure_sql">
                   <label class="btn btn-outline-primary w-100" for="sql-db-azure-sql">
-                    <i class="fab fa-microsoft me-1"></i>Azure SQL
+                    <i class="bi bi-microsoft me-1"></i>Azure SQL
                   </label>
                 </div>
                 <div class="col-6 col-md-3">
@@ -657,23 +660,23 @@
 }
 
 /* Database type icons */
-.btn-outline-primary i.fa-server::before {
+.btn-outline-primary i.bi-server::before {
   color: #0078d4;
 }
 
-.btn-outline-primary i.fa-microsoft::before {
+.btn-outline-primary i.bi-microsoft::before {
   color: #00bcf2;
 }
 
-.btn-outline-primary i.fa-elephant::before {
+.btn-outline-primary i.bi-hdd::before {
   color: #336791;
 }
 
-.btn-outline-primary i.fa-dolphin::before {
+.btn-outline-primary i.bi-hdd-fill::before {
   color: #f29111;
 }
 
-.btn-outline-primary i.fa-file-alt::before {
+.btn-outline-primary i.bi-file-earmark-text::before {
   color: #003b57;
 }
 

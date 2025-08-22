@@ -136,14 +136,15 @@ def register_openapi_routes(app):
     @user_required
     def validate_openapi_url():
         """
-        Validate an OpenAPI specification from a URL without downloading.
+        Validate and download an OpenAPI specification from a URL.
         
         Expected JSON data:
         - url: The URL to the OpenAPI specification
         
         Returns:
         - success: Boolean indicating if validation was successful
-        - spec_info: Basic information about the OpenAPI spec
+        - file_id: The unique file ID for the stored specification
+        - api_info: Basic information about the OpenAPI spec
         - error: Error message if validation failed
         """
         try:
@@ -170,9 +171,30 @@ def register_openapi_routes(app):
                     'error': f'Validation failed: {error}'
                 }), 400
             
-            # Extract basic spec information
+            # Generate filename from URL or spec title
             info = spec.get('info', {})
-            spec_info = {
+            title = info.get('title', 'openapi_spec')
+            # Sanitize title for filename
+            title = secure_filename(title) or 'openapi_spec'
+            safe_filename = f"{title}.yaml"
+            
+            # Create secure storage directory
+            upload_dir = os.path.join(current_app.instance_path, 'openapi_specs')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Generate unique filename to prevent conflicts
+            unique_id = str(uuid.uuid4())[:8]
+            base_name, ext = os.path.splitext(safe_filename)
+            stored_filename = f"{base_name}_{unique_id}{ext}"
+            storage_path = os.path.join(upload_dir, stored_filename)
+            
+            # Save spec to file
+            import yaml
+            with open(storage_path, 'w', encoding='utf-8') as f:
+                yaml.dump(spec, f, default_flow_style=False, allow_unicode=True)
+            
+            # Extract basic spec information
+            api_info = {
                 'title': info.get('title', 'Unknown API'),
                 'description': info.get('description', ''),
                 'version': info.get('version', ''),
@@ -180,12 +202,13 @@ def register_openapi_routes(app):
                 'servers': spec.get('servers', []),
                 'paths_count': len(spec.get('paths', {})),
                 'components_count': len(spec.get('components', {})),
-                'url': url
+                'source_url': url
             }
             
             return jsonify({
                 'success': True,
-                'spec_info': spec_info
+                'file_id': stored_filename,
+                'api_info': api_info
             })
             
         except Exception as e:

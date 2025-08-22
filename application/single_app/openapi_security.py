@@ -271,7 +271,9 @@ class OpenApiSecurityValidator:
             content = ""
             total_size = 0
             for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
-                total_size += len(chunk.encode('utf-8'))
+                # chunk is already a string when decode_unicode=True
+                chunk_size = len(chunk.encode('utf-8')) if isinstance(chunk, str) else len(chunk)
+                total_size += chunk_size
                 if total_size > self.MAX_URL_CONTENT_SIZE:
                     return False, {}, "Content size exceeds maximum allowed size"
                 content += chunk

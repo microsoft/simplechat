@@ -236,9 +236,30 @@ def set_user_plugins():
         # Remove is_global if present
         if 'is_global' in plugin:
             del plugin['is_global']
+        
+        # Ensure required fields have default values
+        plugin.setdefault('name', '')
+        plugin.setdefault('displayName', plugin.get('name', ''))
+        plugin.setdefault('description', '')
+        plugin.setdefault('endpoint', '')
+        plugin.setdefault('metadata', {})
+        plugin.setdefault('additionalFields', {})
+        
+        # Ensure auth has default structure
+        if 'auth' not in plugin:
+            plugin['auth'] = {'type': 'identity'}
+        elif not isinstance(plugin['auth'], dict):
+            plugin['auth'] = {'type': 'identity'}
+        elif 'type' not in plugin['auth']:
+            plugin['auth']['type'] = 'identity'
+        
         # Auto-fill type from metadata if missing or empty
-        if not plugin.get('type') and plugin.get('metadata', {}).get('type'):
-            plugin['type'] = plugin['metadata']['type']
+        if not plugin.get('type'):
+            if plugin.get('metadata', {}).get('type'):
+                plugin['type'] = plugin['metadata']['type']
+            else:
+                plugin['type'] = 'unknown'  # Default type
+        
         validation_error = validate_plugin(plugin)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400

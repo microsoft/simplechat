@@ -721,7 +721,7 @@ export class PluginModalStepper {
 
       if (response.ok) {
         statusDiv.innerHTML = `
-          <i class="fas fa-check-circle me-2"></i>
+          <i class="bi bi-check-circle me-2"></i>
           File uploaded and validated successfully!
           <br><small class="text-muted">File ID: ${result.file_id}</small>
         `;
@@ -735,12 +735,12 @@ export class PluginModalStepper {
           this.displayOpenApiInfo(result.api_info);
         }
       } else {
-        statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>${result.error || 'Upload failed'}`;
+        statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${result.error || 'Upload failed'}`;
         statusDiv.className = 'mt-2 text-danger';
       }
     } catch (error) {
       console.error('Upload error:', error);
-      statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Upload failed: ${error.message}`;
+      statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>Upload failed: ${error.message}`;
       statusDiv.className = 'mt-2 text-danger';
     }
   }
@@ -752,7 +752,7 @@ export class PluginModalStepper {
     
     const url = urlInput.value.trim();
     if (!url) {
-      statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>Please enter a URL';
+      statusDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Please enter a URL';
       statusDiv.className = 'mt-2 text-warning';
       return;
     }
@@ -777,7 +777,7 @@ export class PluginModalStepper {
 
       if (response.ok) {
         statusDiv.innerHTML = `
-          <i class="fas fa-check-circle me-2"></i>
+          <i class="bi bi-check-circle me-2"></i>
           URL validated successfully!
           <br><small class="text-muted">File ID: ${result.file_id}</small>
         `;
@@ -791,23 +791,24 @@ export class PluginModalStepper {
           this.displayOpenApiInfo(result.api_info);
         }
       } else {
-        statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>${result.error || 'Validation failed'}`;
+        statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${result.error || 'Validation failed'}`;
         statusDiv.className = 'mt-2 text-danger';
       }
     } catch (error) {
       console.error('Validation error:', error);
-      statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Validation failed: ${error.message}`;
+      statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>Validation failed: ${error.message}`;
       statusDiv.className = 'mt-2 text-danger';
     } finally {
       // Re-enable button
       validateBtn.disabled = false;
-      validateBtn.innerHTML = '<i class="fas fa-check me-1"></i>Validate';
+      validateBtn.innerHTML = '<i class="bi bi-check me-1"></i>Validate';
     }
   }
 
   displayOpenApiInfo(apiInfo) {
     const infoDisplay = document.getElementById('openapi-info-display');
     const infoContent = document.getElementById('openapi-info-content');
+    const endpointInput = document.getElementById('plugin-endpoint');
     
     let infoHtml = '';
     if (apiInfo.title) {
@@ -828,6 +829,29 @@ export class PluginModalStepper {
         }
         infoHtml += '<br>';
       });
+      
+      // Auto-populate Base URL from the first server if endpoint is empty
+      if (endpointInput && !endpointInput.value.trim()) {
+        const firstServerUrl = apiInfo.servers[0].url;
+        endpointInput.value = firstServerUrl;
+        
+        // Add a visual indication that the URL was auto-populated
+        endpointInput.classList.add('border-success');
+        setTimeout(() => {
+          endpointInput.classList.remove('border-success');
+        }, 2000);
+        
+        // Show a small notification
+        const notification = document.createElement('div');
+        notification.className = 'text-success small mt-1';
+        notification.innerHTML = '<i class="bi bi-check-circle me-1"></i>Base URL auto-populated from OpenAPI spec';
+        endpointInput.parentNode.appendChild(notification);
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 3000);
+      }
     }
     if (apiInfo.endpoints_count) {
       infoHtml += `<strong>Endpoints:</strong> ${apiInfo.endpoints_count}<br>`;
