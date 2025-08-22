@@ -428,7 +428,7 @@ resource "azurerm_linux_web_app" "app" {
     minimum_tls_version = "1.2"
 
     application_stack {
-      docker_image_name = "${local.param_registry_server}/${var.image_name}"
+      docker_image_name = "${var.image_name}"
       docker_registry_username = var.acr_username
       docker_registry_password = var.acr_password
       docker_registry_url = local.param_registry_server
