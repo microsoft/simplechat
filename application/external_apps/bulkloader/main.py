@@ -453,7 +453,7 @@ def get_uploading_workspace_files(files):
         if file["percentage_complete"] < 100:
             uploading_files.append(file)
 
-    print(f"Found {len(uploading_files)} files that are currently uploading.")
+    appLogger.info(f"Found {len(uploading_files)} files that are currently uploading.")
 
     return uploading_files
 
@@ -483,9 +483,10 @@ def delete_failed_workspace_files(files, user_id, workspace_id, active_workspace
         if file["percentage_complete"] < 100 and (last_updated < twelve_hours_ago or file["status"].startswith("Error:")):
             failed_files.append(file)            
             
-    print(f"Found {len(failed_files)} failed files.")
+    appLogger.info(f"Found {len(failed_files)} failed files.")
 
     for file in failed_files:
+        appLogger.info(f"Deleting failed file: {file['file_name']} with ID: {file['id']}")
         delete_workspace_file(file["id"], user_id, workspace_id, active_workspace_scope, access_token)  
 
     return failed_files
@@ -519,9 +520,10 @@ def delete_duplicate_workspace_files(files, user_id, workspace_id, active_worksp
                 duplicate_files.append(files[i])
 
     # Output the number of duplicates found
-    print(f"Total duplicate file entries (excluding one per group): {len(duplicate_files)}")   
+    appLogger.info(f"Total duplicate file entries (excluding one per group): {len(duplicate_files)}")   
 
     for file in duplicate_files:
+        appLogger.info(f"Deleting duplicate file: {file['file_name']} with ID: {file['id']}")
         delete_workspace_file(file["id"], user_id, workspace_id, active_workspace_scope, access_token)  
 
     return duplicate_files
