@@ -260,6 +260,7 @@ def register_route_external_public_documents(app):
             "page_size": page_size,
             "total_count": total_count,
             "needs_legacy_update_check": legacy_count > 0
+        }
 
         # Log the JSON data (for debugging)
         #print(f"Returning results for public documents query: {json.dumps(json_data, indent=2)}")
