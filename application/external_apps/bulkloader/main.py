@@ -509,7 +509,7 @@ def delete_duplicate_workspace_files(files, user_id, workspace_id, active_worksp
     for index, file in enumerate(files):
         file_name = file.get('file_name')
         if file_name:
-            file_name_map[file_name].append(index)
+            file_name_map[file_name].append(index)  
 
     # Collect full file objects that are duplicates (excluding one per group)
     duplicate_files = []

@@ -197,6 +197,7 @@ def register_route_external_public_documents(app):
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
             #print(f"Executing count query: {count_query_str}")
+
             count_items = list(cosmos_public_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -204,6 +205,7 @@ def register_route_external_public_documents(app):
             ))
             total_count = count_items[0] if count_items else 0
         except Exception as e:
+
             #print(f"Error executing count query for public: {e}")
             return jsonify({"error": f"Error counting documents: {str(e)}"}), 500
 
@@ -217,7 +219,9 @@ def register_route_external_public_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
+
             #print(f"Executing data query: {data_query_str}")
+
             docs = list(cosmos_public_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,
@@ -236,7 +240,9 @@ def register_route_external_public_documents(app):
                 WHERE c.public_workspace_id = @public_workspace_id
                     AND NOT IS_DEFINED(c.percentage_complete)
             """
+
             #print(f"Executing legacy query: {legacy_q}")
+  
             legacy_docs = list(
                 cosmos_public_documents_container.query_items(
                     query=legacy_q,
@@ -254,7 +260,6 @@ def register_route_external_public_documents(app):
             "page_size": page_size,
             "total_count": total_count,
             "needs_legacy_update_check": legacy_count > 0
-        }
 
         # Log the JSON data (for debugging)
         #print(f"Returning results for public documents query: {json.dumps(json_data, indent=2)}")
