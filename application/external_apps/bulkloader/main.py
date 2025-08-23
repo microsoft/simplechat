@@ -1,11 +1,14 @@
 import argparse
+from importlib.metadata import files
 import os
 import sys
 import csv
 import requests
 import time
 import math
-from datetime import datetime, timedelta
+import json
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from msal import ConfidentialClientApplication
 import logging
 from dotenv import load_dotenv
@@ -450,22 +453,22 @@ def get_uploading_workspace_files(files):
         if file["percentage_complete"] < 100:
             uploading_files.append(file)
 
-    print(f"Found {len(uploading_files)} files that are currently uploading.")
+    appLogger.info(f"Found {len(uploading_files)} files that are currently uploading.")
 
     return uploading_files
 
 def delete_failed_workspace_files(files, user_id, workspace_id, active_workspace_scope, access_token):
     """
-    Retrieves a list of failed workspace files.
+    Processes a list of files deleting failed workspace files.
 
     Args:
-        files (list): A list of file names to check.
+        files (list): A list of files to check.
 
     Returns:
-        list: A list of failed file names.
+        list: A list of failed files.
     """
     failed_files = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     twelve_hours_ago = now - timedelta(hours=12)
     
     for file in files:
@@ -473,19 +476,57 @@ def delete_failed_workspace_files(files, user_id, workspace_id, active_workspace
         last_updated = None
 
         try:
-            last_updated = datetime.strptime(file["last_updated"], "%Y-%m-%dT%H:%M:%SZ")
+            last_updated = datetime.strptime(file["last_updated"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         except ValueError:
             continue  # Skip if date format is invalid
 
         if file["percentage_complete"] < 100 and (last_updated < twelve_hours_ago or file["status"].startswith("Error:")):
             failed_files.append(file)            
             
-    print(f"Found {len(failed_files)} failed files.")
+    appLogger.info(f"Found {len(failed_files)} failed files.")
 
     for file in failed_files:
+        appLogger.info(f"Deleting failed file: {file['file_name']} with ID: {file['id']}")
         delete_workspace_file(file["id"], user_id, workspace_id, active_workspace_scope, access_token)  
 
     return failed_files
+
+def delete_duplicate_workspace_files(files, user_id, workspace_id, active_workspace_scope, access_token):
+    """
+    Processes a list of files deleting duplicate workspace files.
+
+    Args:
+        files (list): A list of files to check.
+
+    Returns:
+        list: A list of duplicate files.
+    """
+    duplicate_files = []
+
+    file_name_map = defaultdict(list)
+
+    # Populate the map with indices of each file_name
+    for index, file in enumerate(files):
+        file_name = file.get('file_name')
+        if file_name:
+            file_name_map[file_name].append(index)
+
+    # Collect full file objects that are duplicates (excluding one per group)
+    duplicate_files = []
+    for indices in file_name_map.values():
+        if len(indices) > 1:
+            # Keep one file and add the rest to duplicate_files
+            for i in indices[1:]:
+                duplicate_files.append(files[i])
+
+    # Output the number of duplicates found
+    appLogger.info(f"Total duplicate file entries (excluding one per group): {len(duplicate_files)}")   
+
+    for file in duplicate_files:
+        appLogger.info(f"Deleting duplicate file: {file['file_name']} with ID: {file['id']}")
+        delete_workspace_file(file["id"], user_id, workspace_id, active_workspace_scope, access_token)  
+
+    return duplicate_files
 
 
 def has_file_been_processed(file_path):
@@ -522,6 +563,7 @@ def main():
     parser.add_argument("-w", "--workspaceid", required=False, help="Workspace ID")
     parser.add_argument("-u", "--userid", required=False, help="User ID")
     parser.add_argument("-s", "--scope", choices=["public", "group"], required=False, help="Scope or workspace visibility")
+    parser.add_argument("-dupes", "--removeduplicates", action="store_true", help="Removes duplicate documents")
 
     args = parser.parse_args()
 
@@ -533,6 +575,7 @@ def main():
     workspaceid = args.workspaceid
     userid = args.userid
     scope = args.scope
+    removeduplicates = args.removeduplicates
 
     successFileLogger = setup_FileLoggers('success_file_logger', success_fileLogname, logging.DEBUG)
     ignoredFileLogger = setup_FileLoggers('ignored_file_logger', ignored_fileLogname, logging.DEBUG)
@@ -575,6 +618,10 @@ def main():
         all_files = get_workspace_files(userid, workspaceid, scope, g_ACCESS_TOKEN)
 
         delete_failed_workspace_files(all_files, userid, workspaceid, scope, g_ACCESS_TOKEN)
+
+        if removeduplicates:
+            appLogger.info("Will remove duplicate documents...")
+            delete_duplicate_workspace_files(all_files, userid, workspaceid, scope, g_ACCESS_TOKEN)
 
 if __name__ == "__main__":
     main()
