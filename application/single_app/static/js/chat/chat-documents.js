@@ -272,7 +272,7 @@ export function loadGroupDocs() {
 
 export function loadPublicDocs() {
   // Use a large page_size to load all documents at once, without pagination
-  return fetch("/api/public_workspace_documents?page_size=1000")
+  return fetch("/api/public_workspace_documents?page_size=10000")
     .then((r) => r.json())
     .then((data) => {
       if (data.error) {
