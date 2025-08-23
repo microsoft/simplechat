@@ -561,6 +561,41 @@ def calculate_processing_percentage(doc_metadata):
     # This ensures progress is monotonic upwards until completion or error.
     return max(final_pct, current_pct)
 
+def get_pending_document_count():
+    """
+    Retrieves the count of pending documents for all scopes, public, group and personal.
+
+    Returns:
+        int: The count of pending documents.
+    """
+
+    print("Calculating concurrent uploading document count.")
+
+    total_pending_count = 0
+    query = "SELECT VALUE COUNT(1) FROM c WHERE c.percentage_complete < 100 AND (NOT STARTSWITH(c.status, 'Error:'))"
+
+    count_user = list(cosmos_user_documents_container.query_items(
+        query=query,
+        enable_cross_partition_query=True
+    ))
+    total_pending_count = count_user[0] if count_user else 0
+
+    count_group = list(cosmos_group_documents_container.query_items(
+        query=query,
+        enable_cross_partition_query=True
+    ))
+    total_pending_count += count_group[0] if count_group else 0
+
+    count_public = list(cosmos_public_documents_container.query_items(
+        query=query,
+        enable_cross_partition_query=True
+    ))
+    total_pending_count += count_public[0] if count_public else 0
+
+    print(f"Concurrent uploading document count: {total_pending_count}")
+
+    return total_pending_count 
+
 def update_document(**kwargs):
     document_id = kwargs.get('document_id')
     user_id = kwargs.get('user_id')
