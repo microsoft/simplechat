@@ -1,3 +1,4 @@
-folderName, userId, activeGroupOid,classification
-folder1,457f0fcb-b0b4-4b12-b55c-d4f116a7e1c1,d107fc4a-6496-48ea-8a0a-fd5668af74a4,cui
-folder2,e81deb4e-839d-40e2-b0fc-020a90ec5f60,69ef0598-d9ee-4353-873e-1ce32837f985,topsecret
+folderName, userId, workspaceScope, workspaceId, classification
+Folder1,b788e7de-d84a-4491-9389-30f21a4e89ee,public,d9e0d0c1-c44e-4e0d-8374-3c309e8e6c61,
+Folder2,b788e7de-d84a-4491-9389-30f21a4e89ee,public,c8dbbc87-a6e6-4c9d-8910-5fdbb4ea3794,
+Folder3,d5a8a2c5-f2de-4faa-affc-df36f2932da6,public,b88a9375-c2aa-4452-bbdb-3e9003e8cd5e,
