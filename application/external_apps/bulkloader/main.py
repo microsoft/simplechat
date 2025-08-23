@@ -108,7 +108,9 @@ def upload_document(file_path, user_id, active_workspace_scope, active_workspace
     Returns:
         bool: True if the upload was successful, False otherwise.
     """
+    global g_ACCESS_TOKEN
     file_name = os.path.basename(file_path)
+
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
@@ -342,6 +344,8 @@ def get_workspace_files(user_id, workspace_id, active_workspace_scope, access_to
     Returns:
         list: A list of file names in the workspace, or an empty list if none found.
     """
+
+    global g_ACCESS_TOKEN
 
     headers = {
         "Authorization": f"Bearer {access_token}"
