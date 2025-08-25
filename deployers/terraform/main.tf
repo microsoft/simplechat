@@ -177,8 +177,9 @@ locals {
   search_service_name         = "${var.param_base_name}-${var.param_environment}-search"
   storage_account_base        = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name        = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
-  acr_base_url                = "${var.acr_name}.azurecr.us" # Script has this hardcoded for US Gov
-  param_registry_server       = "https://${var.acr_name}.azurecr.us" # Script has this hardcoded for US Gov
+  
+  acr_base_url                = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"  
+  param_registry_server   = var.global_which_azure_platform == "AzureUSGovernment" ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
 
   app_service_fqdn_suffix = var.global_which_azure_platform == "AzureUSGovernment" ? ".azurewebsites.us" : ".azurewebsites.net"
   graph_url               = var.global_which_azure_platform == "AzureUSGovernment" ? "https://graph.microsoft.us" : "https://graph.microsoft.com"
@@ -444,7 +445,6 @@ resource "azurerm_linux_web_app" "app" {
 
   lifecycle {
     ignore_changes = [
-      site_config[0].application_stack[0].docker_registry_url,
       site_config[0].application_stack[0].docker_image_name
     ]
   }
