@@ -1,4 +1,5 @@
 // admin_settings.js
+import { showToast } from "../chat/chat-toast.js";
 
 let gptSelected = window.gptSelected || [];
 let gptAll      = window.gptAll || [];
@@ -12,6 +13,10 @@ let imageAll      = window.imageAll || [];
 let classificationCategories = window.classificationCategories || [];
 let enableDocumentClassification = window.enableDocumentClassification || false;
 
+let externalLinks = window.externalLinks || [];
+let enableExternalLinks = window.enableExternalLinks || false;
+let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
+
 // Track whether form has been modified since last save
 let formModified = false;
 
@@ -20,8 +25,15 @@ const classificationSettingsDiv = document.getElementById('document_classificati
 const classificationTbody = document.getElementById('classification-categories-tbody');
 const addClassificationBtn = document.getElementById('add-classification-btn');
 const classificationJsonInput = document.getElementById('document_classification_categories_json');
+
+const enableExternalLinksToggle = document.getElementById('enable_external_links');
+const externalLinksSettingsDiv = document.getElementById('external_links_settings');
+const externalLinksTbody = document.getElementById('external-links-tbody');
+const addExternalLinkBtn = document.getElementById('add-external-link-btn');
+const externalLinksJsonInput = document.getElementById('external_links_json');
+
 const adminForm = document.getElementById('admin-settings-form');
-const saveButton = adminForm ? adminForm.querySelector('button[type="submit"]') : null;
+const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 
@@ -55,14 +67,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- NEW: Classification Setup ---
     setupClassification(); // Initialize classification section
     
+    // --- NEW: External Links Setup ---
+    setupExternalLinks(); // Initialize external links section
+    
     // --- Setup form change tracking ---
     setupFormChangeTracking();
-    
+
     // --- Setup Settings Walkthrough (after all other components are ready) ---
     setTimeout(() => {
         setupSettingsWalkthrough();
     }, 100);
-    
+
+
     // --- Add form submission validation ---
     if (adminForm) {
         adminForm.addEventListener('submit', function(e) {
@@ -672,14 +688,619 @@ function updateClassificationJsonInput() {
     return "[]";
 }
 
+// --- *** NEW: External Links Functions *** ---
+
+/**
+ * Sets up initial state and event listeners for the external links section.
+ */
+function setupExternalLinks() {
+    if (enableExternalLinksToggle) {
+        enableExternalLinksToggle.addEventListener('change', toggleExternalLinksSettingsVisibility);
+        toggleExternalLinksSettingsVisibility(); // Set initial state
+    }
+
+    if (addExternalLinkBtn) {
+        addExternalLinkBtn.addEventListener('click', handleAddExternalLink);
+    }
+
+    if (externalLinksTbody) {
+        externalLinksTbody.addEventListener('click', handleExternalLinksAction);
+    }
+
+    // Render existing external links
+    renderExternalLinks();
+    updateExternalLinksJsonInput();
+}
+
+/**
+ * Shows or hides the external links settings area based on the toggle switch.
+ */
+function toggleExternalLinksSettingsVisibility() {
+    if (externalLinksSettingsDiv && enableExternalLinksToggle) {
+        externalLinksSettingsDiv.style.display = enableExternalLinksToggle.checked ? 'block' : 'none';
+    }
+}
+
+/**
+ * Renders the external links rows in the table body.
+ */
+function renderExternalLinks() {
+    if (!externalLinksTbody) return;
+
+    // Clear existing content
+    externalLinksTbody.innerHTML = '';
+
+    // Render each external link
+    externalLinks.forEach((link, index) => {
+        const row = createExternalLinkRow(link, index);
+        externalLinksTbody.appendChild(row);
+    });
+
+    // Update hidden input
+    updateExternalLinksJsonInput();
+}
+
+/**
+ * Creates a single table row (<tr>) for an external link.
+ * @param {object} link - The link object {label, url}.
+ * @param {number} index - The index of the link in the array.
+ * @param {boolean} isNew - Optional flag if the row is newly added and editable by default.
+ * @returns {HTMLTableRowElement} The created table row element.
+ */
+function createExternalLinkRow(link, index, isNew = false) {
+    const row = document.createElement('tr');
+    row.setAttribute('data-index', index);
+
+    if (isNew) {
+        // Create an editable row for new links
+        row.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm external-link-label-input" 
+                       value="${escapeHtml(link.label)}" placeholder="Link Label">
+            </td>
+            <td>
+                <input type="url" class="form-control form-control-sm external-link-url-input" 
+                       value="${escapeHtml(link.url)}" placeholder="https://example.com">
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
+                <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
+            </td>
+        `;
+    } else {
+        // Create a read-only row for existing links
+        row.innerHTML = `
+            <td class="external-link-label">${escapeHtml(link.label)}</td>
+            <td class="external-link-url">
+                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+                    ${escapeHtml(link.url)}
+                </a>
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-outline-primary external-link-edit-btn" data-index="${index}">Edit</button>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-1 external-link-delete-btn" data-index="${index}">Delete</button>
+            </td>
+        `;
+    }
+
+    return row;
+}
+
+/**
+ * Handles clicks on the "Add New Link" button.
+ */
+function handleAddExternalLink() {
+    // Create a new temporary link for editing
+    const newLink = { label: '', url: '' };
+    const newIndex = `new-${Date.now()}`; // Use timestamp to avoid conflicts
+    
+    // Create and add the new row in edit mode
+    const newRow = createExternalLinkRow(newLink, newIndex, true);
+    newRow.setAttribute('data-index', newIndex);
+    
+    if (externalLinksTbody) {
+        externalLinksTbody.appendChild(newRow);
+    }
+    
+    // Focus on the label input
+    const labelInput = newRow.querySelector('.external-link-label-input');
+    if (labelInput) {
+        labelInput.focus();
+    }
+    
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks within the external links table body (Edit, Save, Delete, Cancel).
+ * Uses event delegation.
+ * @param {Event} event - The click event.
+ */
+function handleExternalLinksAction(event) {
+    const target = event.target;
+    if (!target.matches('button')) return;
+
+    const row = target.closest('tr');
+    if (!row) return;
+
+    const indexAttr = target.getAttribute('data-index') || row.getAttribute('data-index');
+    const isNew = typeof indexAttr === 'string' && indexAttr.startsWith('new-');
+
+    if (target.classList.contains('external-link-edit-btn')) {
+        handleEditExternalLink(row);
+    } else if (target.classList.contains('external-link-save-btn')) {
+        handleSaveExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-cancel-btn')) {
+        handleCancelExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-delete-btn')) {
+        handleDeleteExternalLink(row, indexAttr, isNew);
+    }
+}
+
+/**
+ * Handles clicks on the "Edit" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to make editable.
+ */
+function handleEditExternalLink(row) {
+    const index = parseInt(row.getAttribute('data-index'));
+    const link = externalLinks[index];
+    if (!link) return;
+
+    // Replace the row content with editable inputs
+    row.innerHTML = `
+        <td>
+            <input type="text" class="form-control form-control-sm external-link-label-input" 
+                   value="${escapeHtml(link.label)}" placeholder="Link Label">
+        </td>
+        <td>
+            <input type="url" class="form-control form-control-sm external-link-url-input" 
+                   value="${escapeHtml(link.url)}" placeholder="https://example.com">
+        </td>
+        <td>
+            <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
+            <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
+        </td>
+    `;
+
+    // Focus on the label input
+    const labelInput = row.querySelector('.external-link-label-input');
+    if (labelInput) {
+        labelInput.focus();
+    }
+
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks on the "Save" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to save.
+ * @param {string|number} indexAttr - The original index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added row.
+ */
+function handleSaveExternalLink(row, indexAttr, isNew) {
+    const labelInput = row.querySelector('.external-link-label-input');
+    const urlInput = row.querySelector('.external-link-url-input');
+
+    if (!labelInput || !urlInput) return;
+
+    const label = labelInput.value.trim();
+    const url = urlInput.value.trim();
+
+    // Validation
+    if (!label) {
+        alert('Please enter a label for the link.');
+        labelInput.focus();
+        return;
+    }
+
+    if (!url) {
+        alert('Please enter a URL for the link.');
+        urlInput.focus();
+        return;
+    }
+
+    // Basic URL validation
+    try {
+        new URL(url);
+    } catch (e) {
+        alert('Please enter a valid URL (e.g., https://example.com).');
+        urlInput.focus();
+        return;
+    }
+
+    const linkData = { label, url };
+
+    if (isNew) {
+        // Add new link to the array
+        externalLinks.push(linkData);
+        const newIndex = externalLinks.length - 1;
+        
+        // Replace the row with a read-only version
+        const newRow = createExternalLinkRow(linkData, newIndex, false);
+        row.parentNode.replaceChild(newRow, row);
+    } else {
+        // Update existing link
+        const index = parseInt(indexAttr);
+        if (index >= 0 && index < externalLinks.length) {
+            externalLinks[index] = linkData;
+            
+            // Replace the row with a read-only version
+            const updatedRow = createExternalLinkRow(linkData, index, false);
+            row.parentNode.replaceChild(updatedRow, row);
+        }
+    }
+
+    updateExternalLinksJsonInput();
+    markFormAsModified();
+}
+
+/**
+ * Handles clicks on the "Cancel" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to cancel editing.
+ * @param {string|number} indexAttr - The index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added, unsaved row.
+ */
+function handleCancelExternalLink(row, indexAttr, isNew) {
+    if (isNew) {
+        // Remove the row entirely for new, unsaved links
+        row.remove();
+    } else {
+        // Restore the original read-only row for existing links
+        const index = parseInt(indexAttr);
+        const link = externalLinks[index];
+        if (link) {
+            const restoredRow = createExternalLinkRow(link, index, false);
+            row.parentNode.replaceChild(restoredRow, row);
+        }
+    }
+}
+
+/**
+ * Handles clicks on the "Delete" button for a specific row.
+ * @param {HTMLTableRowElement} row - The table row to delete.
+ * @param {string|number} indexAttr - The index attribute ('new-...' or number).
+ * @param {boolean} isNew - Whether this was a newly added, unsaved row.
+ */
+function handleDeleteExternalLink(row, indexAttr, isNew) {
+    if (isNew) {
+        // Just remove the row for unsaved new links
+        row.remove();
+        return;
+    }
+
+    const index = parseInt(indexAttr);
+    const link = externalLinks[index];
+    
+    if (link && confirm(`Are you sure you want to delete the link "${link.label}"?`)) {
+        // Remove from array
+        externalLinks.splice(index, 1);
+        
+        // Re-render all links to update indices
+        renderExternalLinks();
+        
+        markFormAsModified();
+    }
+}
+
+/**
+ * Updates the hidden input field with the current external links as JSON.
+ */
+function updateExternalLinksJsonInput() {
+    if (externalLinksJsonInput) {
+        try {
+            // First make sure externalLinks is an array
+            if (!Array.isArray(externalLinks)) {
+                externalLinks = [];
+            }
+            
+            // Ensure we only stringify valid links with required properties
+            const validLinks = externalLinks.filter(link => 
+                link && 
+                typeof link === 'object' &&
+                typeof link.label === 'string' && 
+                typeof link.url === 'string'
+            );
+            
+            const jsonString = JSON.stringify(validLinks);
+            externalLinksJsonInput.value = jsonString;
+            return jsonString;
+        } catch (e) {
+            console.error("Error stringifying external links:", e);
+            externalLinksJsonInput.value = "[]"; // Set to empty array on error
+            return "[]";
+        }
+    }
+    return "[]";
+}
+
 function setupToggles() {
-    // Existing toggles...
+    // --- Health Check Toggle ---
+    const enableHealthCheckToggle = document.getElementById('enable_health_check');
+    const healthCheckSettingsDiv = document.getElementById('health_check_settings');
+    if (enableHealthCheckToggle) {
+        // Set initial state if there is a settings div
+        if (healthCheckSettingsDiv) {
+            healthCheckSettingsDiv.style.display = enableHealthCheckToggle.checked ? 'block' : 'none';
+        }
+        enableHealthCheckToggle.addEventListener('change', function () {
+            if (healthCheckSettingsDiv) {
+                healthCheckSettingsDiv.style.display = this.checked ? 'block' : 'none';
+            }
+            markFormAsModified();
+        });
+    }
+
+    // --- Enable Agents (Semantic Kernel) Toggle ---
+    const agentsMainContent = document.getElementById('agents-main-content');
+    const agentsDisabledMsg = document.getElementById('agents-disabled-message');
+    const pluginsMainContent = document.getElementById('plugins-main-content');
+    const pluginsDisabledMsg = document.getElementById('plugins-disabled-message');
+    // Use backend-rendered value to show/hide content
+    if (typeof settings !== 'undefined' && settings) {
+        const enabled = !!settings.enable_semantic_kernel;
+        if (agentsMainContent && agentsDisabledMsg) {
+            agentsMainContent.style.display = enabled ? 'block' : 'none';
+            agentsDisabledMsg.style.display = enabled ? 'none' : 'block';
+        }
+        if (pluginsMainContent && pluginsDisabledMsg) {
+            pluginsMainContent.style.display = enabled ? 'block' : 'none';
+            pluginsDisabledMsg.style.display = enabled ? 'none' : 'block';
+        }
+    }
+    if (document.getElementById('core-plugin-toggles')) {
+        // --- Core Plugin Toggles ---
+        const timeToggle = document.getElementById('toggle-time-plugin');
+        const httpToggle = document.getElementById('toggle-http-plugin');
+        const waitToggle = document.getElementById('toggle-wait-plugin');
+        const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
+        const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
+        const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
+        const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
+        const toggles = [timeToggle, httpToggle, waitToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        // Feedback area
+        let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
+        if (!feedbackDiv) {
+            feedbackDiv = document.createElement('div');
+            feedbackDiv.id = 'core-plugin-toggles-feedback';
+            feedbackDiv.className = 'mt-2';
+            const togglesDiv = document.getElementById('core-plugin-toggles');
+            if (togglesDiv) togglesDiv.appendChild(feedbackDiv);
+        }
+
+        // Helper to show feedback
+        function showFeedback(msg, type = 'info') {
+            feedbackDiv.innerHTML = `<div class="alert alert-${type} py-1 px-2 mb-0">${msg}</div>`;
+            setTimeout(() => { feedbackDiv.innerHTML = ''; }, 3000);
+        }
+
+        // Fetch current settings and set toggle states
+        async function loadCorePluginToggles() {
+            try {
+                const resp = await fetch('/api/admin/plugins/settings');
+                if (!resp.ok) throw new Error('Failed to fetch plugin settings');
+                const settings = await resp.json();
+                if (timeToggle) timeToggle.checked = !!settings.enable_time_plugin;
+                if (httpToggle) httpToggle.checked = !!settings.enable_http_plugin;
+                if (waitToggle) waitToggle.checked = !!settings.enable_wait_plugin;
+                if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
+                if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
+                if (allowGroupPluginsToggle) allowGroupPluginsToggle.checked = !!settings.allow_group_plugins;
+            } catch (err) {
+                showFeedback('Error loading plugin toggle states: ' + err.message, 'danger');
+            }
+        }
+        // Initial load
+        loadCorePluginToggles();
+
+        // Handler for toggle changes
+        function onToggleChange() {
+            // Disable toggles while saving
+            toggles.forEach(t => t && (t.disabled = true));
+            const payload = {
+                enable_time_plugin: timeToggle ? timeToggle.checked : false,
+                enable_http_plugin: httpToggle ? httpToggle.checked : false,
+                enable_wait_plugin: waitToggle ? waitToggle.checked : false,
+                enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
+                enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
+                allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
+                allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
+            };
+            fetch('/api/admin/plugins/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(async resp => {
+                const data = await resp.json();
+                if (resp.ok) {
+                    showFeedback('Plugin settings updated. Restart required to take effect.', 'success');
+                } else {
+                    showFeedback('Error: ' + (data.error || 'Failed to update plugin settings'), 'danger');
+                }
+            })
+            .catch(err => {
+                showFeedback('Error: ' + err.message, 'danger');
+            })
+            .finally(() => {
+                toggles.forEach(t => t && (t.disabled = false));
+            });
+        }
+        toggles.forEach(t => t && t.addEventListener('change', onToggleChange));
+
+        // --- Ensure toggles always reflect backend state on Plugins tab activation ---
+        // Listen for Bootstrap tab activation events
+        document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(tabBtn => {
+            tabBtn.addEventListener('shown.bs.tab', function (event) {
+                const target = event.target.getAttribute('data-bs-target');
+                if (target === '#plugins') {
+                    loadCorePluginToggles();
+                }
+            });
+        });
+    }
+
+    // --- User/Group Plugin Toggles ---
+    const allowUserPluginsToggle = document.getElementById('allow_user_plugins');
+    const allowGroupPluginsToggle = document.getElementById('allow_group_plugins');
+    let pluginSettingsFeedbackDiv = document.getElementById('plugin-settings-feedback');
+    if (!pluginSettingsFeedbackDiv) {
+        pluginSettingsFeedbackDiv = document.createElement('div');
+        pluginSettingsFeedbackDiv.id = 'plugin-settings-feedback';
+        pluginSettingsFeedbackDiv.className = 'mt-2';
+        // Try to append to plugins card
+        const pluginsCard = document.getElementById('user-group-plugin-toggles');
+        if (pluginsCard) pluginsCard.appendChild(pluginSettingsFeedbackDiv);
+    }
+
+    function showPluginSettingsFeedback(msg, type = 'info') {
+        pluginSettingsFeedbackDiv.innerHTML = `<div class="alert alert-${type} py-1 px-2 mb-0">${msg}</div>`;
+        setTimeout(() => { pluginSettingsFeedbackDiv.innerHTML = ''; }, 3000);
+    }
+
+    function saveUserGroupPluginSettings() {
+        // Disable toggles while saving
+        if (allowUserPluginsToggle) allowUserPluginsToggle.disabled = true;
+        if (allowGroupPluginsToggle) allowGroupPluginsToggle.disabled = true;
+        const payload = {
+            allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
+            allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
+        };
+        fetch('/api/admin/plugins/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(async resp => {
+            const data = await resp.json();
+            if (resp.ok) {
+                showPluginSettingsFeedback('Plugin settings updated.', 'success');
+            } else {
+                showPluginSettingsFeedback('Error: ' + (data.error || 'Failed to update plugin settings'), 'danger');
+            }
+        })
+        .catch(err => {
+            showPluginSettingsFeedback('Error: ' + err.message, 'danger');
+        })
+        .finally(() => {
+            if (allowUserPluginsToggle) allowUserPluginsToggle.disabled = false;
+            if (allowGroupPluginsToggle) allowGroupPluginsToggle.disabled = false;
+        });
+    }
+
+    if (allowUserPluginsToggle) {
+        allowUserPluginsToggle.addEventListener('change', saveUserGroupPluginSettings);
+    }
+    if (allowGroupPluginsToggle) {
+        allowGroupPluginsToggle.addEventListener('change', saveUserGroupPluginSettings);
+    }
+
+    // --- Agent Settings Toggles (corrected) ---
+    const allowUserAgentsToggle = document.getElementById('toggle-allow-user-agents');
+    const allowUserCustomAgentEndpointsToggle = document.getElementById('toggle-allow-user-custom-agent-endpoints');
+    const allowGroupAgentsToggle = document.getElementById('toggle-allow-group-agents');
+    const allowGroupCustomAgentEndpointsToggle = document.getElementById('toggle-allow-group-custom-agent-endpoints');
+    let agentSettingsFeedbackDiv = document.getElementById('agent-settings-feedback');
+    if (!agentSettingsFeedbackDiv) {
+        agentSettingsFeedbackDiv = document.createElement('div');
+        agentSettingsFeedbackDiv.id = 'agent-settings-feedback';
+        agentSettingsFeedbackDiv.className = 'mt-2';
+        const agentTogglesCard = document.getElementById('agent-toggles-card');
+        if (agentTogglesCard) {
+            agentTogglesCard.insertAdjacentElement('afterend', agentSettingsFeedbackDiv);
+        } else {
+            // Fallback to previous behavior
+            (document.getElementById('agents-main-content') || document.body).appendChild(agentSettingsFeedbackDiv);
+        }
+    }
+
+    function showAgentSettingsFeedback(msg, type = 'info') {
+        agentSettingsFeedbackDiv.innerHTML = `<div class="alert alert-${type} py-1 px-2 mb-0">${msg}</div>`;
+        setTimeout(() => { agentSettingsFeedbackDiv.innerHTML = ''; }, 3000);
+    }
+
+    // Fetch agent settings and set toggles
+    async function loadAgentSettings() {
+        try {
+            const resp = await fetch('/api/admin/agent/settings');
+            if (!resp.ok) throw new Error('Failed to fetch agent settings');
+            const settings = await resp.json();
+            if (allowUserAgentsToggle) allowUserAgentsToggle.checked = !!settings.allow_user_agents;
+            if (allowUserCustomAgentEndpointsToggle) allowUserCustomAgentEndpointsToggle.checked = !!settings.allow_user_custom_agent_endpoints;
+            if (allowGroupAgentsToggle) allowGroupAgentsToggle.checked = !!settings.allow_group_agents;
+            if (allowGroupCustomAgentEndpointsToggle) allowGroupCustomAgentEndpointsToggle.checked = !!settings.allow_group_custom_agent_endpoints;
+        } catch (err) {
+            showAgentSettingsFeedback('Error loading agent settings: ' + err.message, 'danger');
+        }
+    }
+    // Initial load
+    loadAgentSettings();
+
+    // Handler for toggle changes
+    function saveAgentSetting(settingName, value) {
+        const toggleMap = {
+            'allow_user_agents': allowUserAgentsToggle,
+            'allow_user_custom_agent_endpoints': allowUserCustomAgentEndpointsToggle,
+            'allow_group_agents': allowGroupAgentsToggle,
+            'allow_group_custom_agent_endpoints': allowGroupCustomAgentEndpointsToggle
+        };
+        const toggle = toggleMap[settingName];
+        if (toggle) toggle.disabled = true;
+        fetch(`/api/admin/agents/settings/${settingName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value })
+        })
+        .then(async resp => {
+            const data = await resp.json();
+            if (resp.ok) {
+                showAgentSettingsFeedback('Agent setting updated.', 'success');
+            } else {
+                showAgentSettingsFeedback('Error: ' + (data.error || 'Failed to update agent setting'), 'danger');
+            }
+        })
+        .catch(err => {
+            showAgentSettingsFeedback('Error: ' + err.message, 'danger');
+        })
+        .finally(() => {
+            if (toggle) toggle.disabled = false;
+        });
+    }
+
+    if (allowUserAgentsToggle) {
+        allowUserAgentsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_user_agents', allowUserAgentsToggle.checked);
+        });
+    }
+    if (allowUserCustomAgentEndpointsToggle) {
+        allowUserCustomAgentEndpointsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_user_custom_agent_endpoints', allowUserCustomAgentEndpointsToggle.checked);
+        });
+    }
+    if (allowGroupAgentsToggle) {
+        allowGroupAgentsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_group_agents', allowGroupAgentsToggle.checked);
+        });
+    }
+    if (allowGroupCustomAgentEndpointsToggle) {
+        allowGroupCustomAgentEndpointsToggle.addEventListener('change', () => {
+            saveAgentSetting('allow_group_custom_agent_endpoints', allowGroupCustomAgentEndpointsToggle.checked);
+        });
+    }
+
+    // --- Logging Toggle ---
+    const enableAppInsightsLoggingToggle = document.getElementById('enable_appinsights_global_logging');
+    if (enableAppInsightsLoggingToggle) {
+        enableAppInsightsLoggingToggle.addEventListener('change', () => {
+            markFormAsModified();
+        });
+    }
+
     const enableGptApim = document.getElementById('enable_gpt_apim');
     if (enableGptApim) {
         enableGptApim.addEventListener('change', function () {
             document.getElementById('non_apim_gpt_settings').style.display = this.checked ? 'none' : 'block';
             document.getElementById('apim_gpt_settings').style.display = this.checked ? 'block' : 'none';
-            
             // Toggle visibility of APIM model note and fetch step in the walkthrough
             const apimModelNote = document.getElementById('apim-model-note');
             const fetchModelsStep = document.getElementById('fetch-models-step');
@@ -687,7 +1308,6 @@ function setupToggles() {
                 apimModelNote.style.display = this.checked ? 'block' : 'none';
                 fetchModelsStep.style.display = this.checked ? 'none' : 'block';
             }
-            
             markFormAsModified();
         });
     }
@@ -727,7 +1347,6 @@ function setupToggles() {
             redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
         });
     }
-
 
     const enableEnhancedCitation = document.getElementById('enable_enhanced_citations');
     if (enableEnhancedCitation) {
@@ -893,6 +1512,14 @@ function setupToggles() {
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
+    // Enable File Sharing toggle
+    const enableFileSharingToggle = document.getElementById('enable_file_sharing');
+    if (enableFileSharingToggle) {
+        enableFileSharingToggle.addEventListener('change', function() {
             markFormAsModified();
         });
     }
@@ -1390,7 +2017,10 @@ document.addEventListener('DOMContentLoaded', () => {
       // 1) check for missing fields
       fetch('/api/admin/settings/check_index_fields', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'same-origin',
         body: JSON.stringify({ indexType: type })
       })
       .then(r => r.json())
@@ -1407,7 +2037,10 @@ document.addEventListener('DOMContentLoaded', () => {
         fixBtn.disabled = true;
         fetch('/api/admin/settings/fix_index_fields', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
           body: JSON.stringify({ indexType: type })
         })
         .then(r => r.json())
@@ -1772,21 +2405,61 @@ function shouldSkipWalkthroughStep(stepNumber) {
 }
 
 /**
- * Find the next applicable step after a given step
- * @param {number} currentStep - Current step number
- * @returns {number} Next applicable step number or 12 (last step) if none found
+ * Find the next applicable step based on enabled features
+ * @param {number} currentStep - The current step number
+ * @returns {number} The next applicable step number or -1 if none found
  */
+
 function findNextApplicableStep(currentStep) {
-    const availableSteps = calculateAvailableWalkthroughSteps();
+    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
+    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
+    const workspacesEnabled = workspaceEnabled || groupsEnabled;
     
-    // Find the first available step after the current one
-    for (let i = 0; i < availableSteps.length; i++) {
-        if (availableSteps[i] > currentStep) {
-            return availableSteps[i];
+    // Start checking from the next step
+    let nextStep = currentStep + 1;
+    
+    // Maximum step to avoid infinite loop
+    const maxSteps = 12;
+    
+    while (nextStep <= maxSteps) {
+        // Check if this step is applicable based on conditions
+        switch (nextStep) {
+            case 5: // Embedding settings
+            case 6: // AI Search settings 
+            case 7: // Document Intelligence settings
+                if (!workspacesEnabled) {
+                    // Skip these steps if workspaces not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 8: // Video support
+                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+                if (!workspacesEnabled || !videoEnabled) {
+                    // Skip this step if workspaces not enabled or video not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            case 9: // Audio support
+                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
+                if (!workspacesEnabled || !audioEnabled) {
+                    // Skip this step if workspaces not enabled or audio not enabled
+                    nextStep++;
+                    continue;
+                }
+                return nextStep;
+                
+            default:
+                // All other steps are always applicable
+                return nextStep;
         }
     }
     
-    return 12; // Default to last step if no next step found
+    // If we've gone past all steps, return -1
+    return -1;
 }
 
 /**
@@ -2067,6 +2740,102 @@ function updateStepCompletionStatus(stepNumber) {
         
         // Update or hide the requirement alert
         if (requirementAlert) {
+            requirementAlert.classList.remove('alert-danger');
+            requirementAlert.classList.add('alert-success');
+            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
+        }
+    } else {
+        // Ensure badges show required status
+        badges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-danger');
+            badge.textContent = 'Required';
+        });
+        
+        // Reset requirement alert if needed
+        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
+            requirementAlert.classList.remove('alert-success');
+            requirementAlert.classList.add('alert-danger');
+            
+            // Reset alert text based on step number
+            switch (stepNumber) {
+                case 2:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
+                    break;
+                case 3:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
+                    break;
+                case 5:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
+                    break;
+                case 6:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
+                    break;
+                case 7:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
+                    break;
+                case 8:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
+                    break;
+                case 9:
+                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
+                    break;
+            }
+        }
+    }
+    
+    // Update optional features status if they're enabled/configured
+    if (optionalFeaturesEnabled) {
+        // Update optional badges to show as complete
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-secondary');
+            badge.classList.add('bg-success');
+            badge.textContent = 'Complete';
+        });
+        
+        // Update optional alert if present
+        if (optionalAlert) {
+            optionalAlert.classList.remove('alert-info');
+            optionalAlert.classList.add('alert-success');
+            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
+        }
+    } else {
+        // Keep optional badges as is
+        optionalBadges.forEach(badge => {
+            badge.classList.remove('bg-success');
+            badge.classList.add('bg-secondary');
+            badge.textContent = 'Optional';
+        });
+        
+        // Reset optional alert if it was changed
+        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
+            optionalAlert.classList.remove('alert-success');
+            optionalAlert.classList.add('alert-info');
+            
+            // Reset optional alert text based on step number
+            switch (stepNumber) {
+                case 1:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
+                    break;
+                case 4:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
+                    break;
+                case 10:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
+                    break;
+                case 11:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
+                    break;
+                case 12:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
+                    break;
+                default:
+                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
+            }
+        }
+    }
+}
+
 /**
  * Setup field change listeners for real-time validation during walkthrough
  */
@@ -2162,101 +2931,6 @@ function setupWalkthroughFieldListeners() {
             setTimeout(() => updateStepCompletionStatus(5), 100);
         }
     });
-}
-            requirementAlert.classList.remove('alert-danger');
-            requirementAlert.classList.add('alert-success');
-            requirementAlert.innerHTML = '<strong>Complete:</strong> Configuration finished for this step.';
-        }
-    } else {
-        // Ensure badges show required status
-        badges.forEach(badge => {
-            badge.classList.remove('bg-success');
-            badge.classList.add('bg-danger');
-            badge.textContent = 'Required';
-        });
-        
-        // Reset requirement alert if needed
-        if (requirementAlert && requirementAlert.classList.contains('alert-success')) {
-            requirementAlert.classList.remove('alert-success');
-            requirementAlert.classList.add('alert-danger');
-            
-            // Reset alert text based on step number
-            switch (stepNumber) {
-                case 2:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> GPT API configuration is required for Simple Chat to function.';
-                    break;
-                case 3:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Select at least one GPT model for users to use.';
-                    break;
-                case 5:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.';
-                    break;
-                case 6:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Azure AI Search is required if workspaces are enabled.';
-                    break;
-                case 7:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Document Intelligence is required if workspaces are enabled.';
-                    break;
-                case 8:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Video support configuration is required if workspaces are enabled.';
-                    break;
-                case 9:
-                    requirementAlert.innerHTML = '<strong>Required:</strong> Audio support configuration is required if workspaces are enabled.';
-                    break;
-            }
-        }
-    }
-    
-    // Update optional features status if they're enabled/configured
-    if (optionalFeaturesEnabled) {
-        // Update optional badges to show as complete
-        optionalBadges.forEach(badge => {
-            badge.classList.remove('bg-secondary');
-            badge.classList.add('bg-success');
-            badge.textContent = 'Complete';
-        });
-        
-        // Update optional alert if present
-        if (optionalAlert) {
-            optionalAlert.classList.remove('alert-info');
-            optionalAlert.classList.add('alert-success');
-            optionalAlert.innerHTML = '<strong>Complete:</strong> Optional features configured successfully.';
-        }
-    } else {
-        // Keep optional badges as is
-        optionalBadges.forEach(badge => {
-            badge.classList.remove('bg-success');
-            badge.classList.add('bg-secondary');
-            badge.textContent = 'Optional';
-        });
-        
-        // Reset optional alert if it was changed
-        if (optionalAlert && optionalAlert.classList.contains('alert-success')) {
-            optionalAlert.classList.remove('alert-success');
-            optionalAlert.classList.add('alert-info');
-            
-            // Reset optional alert text based on step number
-            switch (stepNumber) {
-                case 1:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Configure your application title and logo.';
-                    break;
-                case 4:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable personal and group workspaces for document management.';
-                    break;
-                case 10:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable content safety features to filter inappropriate content.';
-                    break;
-                case 11:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable user feedback and conversation archiving.';
-                    break;
-                case 12:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> Enable enhanced citations and image generation features.';
-                    break;
-                default:
-                    optionalAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
-            }
-        }
-    }
 }
 
 /**
@@ -2390,63 +3064,6 @@ function navigatePreviousStep() {
 }
 
 /**
- * Find the next applicable step based on enabled features
- * @param {number} currentStep - The current step number
- * @returns {number} The next applicable step number or -1 if none found
- */
-function findNextApplicableStep(currentStep) {
-    const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
-    const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
-    const workspacesEnabled = workspaceEnabled || groupsEnabled;
-    
-    // Start checking from the next step
-    let nextStep = currentStep + 1;
-    
-    // Maximum step to avoid infinite loop
-    const maxSteps = 12;
-    
-    while (nextStep <= maxSteps) {
-        // Check if this step is applicable based on conditions
-        switch (nextStep) {
-            case 5: // Embedding settings
-            case 6: // AI Search settings 
-            case 7: // Document Intelligence settings
-                if (!workspacesEnabled) {
-                    // Skip these steps if workspaces not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 8: // Video support
-                const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
-                if (!workspacesEnabled || !videoEnabled) {
-                    // Skip this step if workspaces not enabled or video not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            case 9: // Audio support
-                const audioEnabled = document.getElementById('enable_audio_file_support')?.checked || false;
-                if (!workspacesEnabled || !audioEnabled) {
-                    // Skip this step if workspaces not enabled or audio not enabled
-                    nextStep++;
-                    continue;
-                }
-                return nextStep;
-                
-            default:
-                // All other steps are always applicable
-                return nextStep;
-        }
-    }
-    
-    // If we've gone past all steps, return -1
-    return -1;
-}
-
-/**
  * Sets up event listeners to track form changes
  */
 function setupFormChangeTracking() {
@@ -2494,12 +3111,12 @@ function updateSaveButtonState() {
         saveButton.disabled = false;
         saveButton.classList.remove('btn-secondary');
         saveButton.classList.add('btn-primary');
-        saveButton.textContent = 'Save Pending';
+        saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Pending';
     } else {
         // Disable button, make it grey, and reset text
         saveButton.disabled = true;
         saveButton.classList.remove('btn-primary');
         saveButton.classList.add('btn-secondary');
-        saveButton.textContent = 'Save Settings';
+        saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Settings';
     }
 }

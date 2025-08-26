@@ -1,10 +1,11 @@
 
-name: SimpleChat Docker Image Publish (dev-chainguard)
+name: SimpleChat Docker Image Publish (dev branch)
 
 on:
   push:
     branches:
-    - dev-chainguard
+    - Development
+
   workflow_dispatch:
 
 jobs:
@@ -25,9 +26,17 @@ jobs:
         login-server: ${{ secrets.ACR_LOGIN_SERVER }}
         
     - uses: actions/checkout@v3
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Install Ajv
+      run: npm install ajv@^8.0.0 ajv-formats
+    - name: Generate standalone JSON schema validators
+      run: node scripts/generate-validators.mjs
     - name: Build the Docker image
       run:         
-        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
-        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev-chainguard:latest;
+        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;

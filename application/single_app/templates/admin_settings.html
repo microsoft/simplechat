@@ -38,6 +38,51 @@
         #classification-categories-tbody td {
             vertical-align: middle;
         }
+        
+        /* Ensure external links table cells have consistent vertical alignment */
+        #external-links-tbody td {
+            vertical-align: middle;
+        }
+        
+        /* Floating Save Button */
+        .floating-save-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 50px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+        
+        .floating-save-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .floating-save-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Ensure the button is visible above other content */
+        .floating-save-btn {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .floating-save-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: 140px;
+            }
+        }
     </style>
 {% endblock %}
 
@@ -80,8 +125,7 @@
             {% endif %}
         </p>
         <div class="d-flex align-items-center mb-3">
-            <button type="submit" class="btn btn-primary mt-3">Save Settings</button>
-            <button type="button" class="btn btn-outline-secondary mt-3 ms-2" id="launch-walkthrough-btn">
+            <button type="button" class="btn btn-outline-secondary mt-3" id="launch-walkthrough-btn">
                 <i class="bi bi-signpost-split"></i> Start Setup Walkthrough
             </button>
         </div>
@@ -115,7 +159,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Custom Logo</span>
+                                <span>Custom Logos (Light & Dark Mode)</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -187,11 +231,11 @@
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Your Workspace (Personal Workspace)</span>
+                                <span>Personal Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>My Groups (Group Workspaces)</span>
+                                <span>Group Workspaces</span>
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
@@ -402,7 +446,6 @@
         </div>
         
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
-            
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
                     type="button" role="tab" aria-controls="general" aria-selected="true">
@@ -457,6 +500,24 @@
                     Search and Extract
                 </button>
             </li>
+            <!-- Agents Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
+                    Agents
+                </button>
+            </li>
+            <!-- Plugins Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="plugins-tab" data-bs-toggle="tab" data-bs-target="#plugins" type="button" role="tab" aria-controls="plugins" aria-selected="false">
+                    Plugins
+                </button>
+            </li>
+            <!-- Logging Admin Tab -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
+                    Logging
+                </button>
+            </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="other-tab" data-bs-toggle="tab" data-bs-target="#other" type="button"
                     role="tab" aria-controls="other" aria-selected="false">
@@ -464,15 +525,200 @@
                 </button>
             </li>
         </ul>
-
-        
         <div class="tab-content mt-3" id="adminSettingsTabContent">
+            <!-- Plugins Tab Content -->
+            <div class="tab-pane fade" id="plugins" role="tabpanel" aria-labelledby="plugins-tab">
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and plugins require a restart of the web app to take effect.
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Plugins are not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Global  Plugins</h4>
+                            <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Plugin</button>
+                        </div>
+                        {% if settings.per_user_semantic_kernel %}
+                        <!-- Plugin Feature Flags -->
+                            <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                <h6 class="mb-2">Workspace Plugin Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Plugins</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Plugins</label>
+                                </div>
+                            </div>
+                        {% endif %}
+                        
+                        <!-- Core Plugin Toggles -->
+                        <div class="card p-3 mb-3" id="core-plugin-toggles">
+                            <h6 class="mb-2">Core Plugin Toggles</h6>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Plugin</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Plugin</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Plugin</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Plugin</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Plugin</label>
+                            </div>
+                        </div>
+                        <table class="table table-bordered" id="plugins-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="plugins-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </div>
 
+
+            <!-- Agents Tab Content -->
+            <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and plugins require a restart of the web app to take effect.
+                </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
+                    </div>
+                    <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Agents UI is not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-per-user-sk" name="per_user_semantic_kernel" {% if settings.per_user_semantic_kernel %}checked{% endif %} {% if not settings.enable_semantic_kernel %}disabled{% endif %}>
+                            <label class="form-check-label ms-2" for="toggle-per-user-sk">Workspace Mode (workspace-specific agents/plugins and disables global configuration)</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
+                        </div>
+                        {% if settings.per_user_semantic_kernel %}
+                            <!-- Agent Feature Flags -->
+                            <div class="card p-3 mb-3" id="agent-toggles-card">
+                                <h6 class="mb-2">Workspace Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                                </div>
+                            </div>
+                            <!-- End Agent Feature Flags -->
+                            
+                        {% endif %}
+                        <!-- Orchestration Settings Card -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Agent Orchestration Settings</h4>
+                        </div>
+                        <div class="card p-3 mb-3">
+                            <p class="text-muted mb-1">Configure how the chat system orchestrates agents (single or multi-agent group chat).</p>
+                            <div class="mb-3">
+                                <label for="orchestration_type" class="form-label">Orchestration Type</label>
+                                <select class="form-select" id="orchestration_type" name="orchestration_type"></select>
+                            </div>
+                            <div class="mb-3" id="max_rounds_per_agent_group" style="display:none;">
+                                <label for="max_rounds_per_agent" class="form-label">Max Rounds Per Agent (Group Chat)</label>
+                                <input type="number" class="form-control" id="max_rounds_per_agent" name="max_rounds_per_agent" min="1" value="1">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="save-orchestration-settings-btn">Save Orchestration Settings</button>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Global  Agents</h4>
+                            <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                        </div>
+                        <div class="mb-3 d-flex align-items-center">
+                            {% if settings.orchestration_type == "default_agent" %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Selected Agent:</label>
+                            {% else %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator Agent:</label>
+                            {% endif %}
+                            <select id="default-agent-select" class="form-select w-auto" style="min-width:200px;"></select>
+                            <span id="default-agent-select-msg" class="ms-2 text-muted small"></span>
+                        </div>
+                        <table class="table table-bordered" id="agents-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Display Name</th>
+                                    <th>Description</th>
+                                    {% if settings.orchestration_type == "default_agent" %}
+                                        <th>Selected Agent</th>
+                                    {% else %}
+                                        <th>Orchestrator Agent</th>
+                                    {% endif %}
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agents-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </div>
+
+
+            <!-- Logging Tab Content -->
+            <div class="tab-pane fade" id="logging" role="tabpanel" aria-labelledby="logging-tab">
+                <div class="mb-3">
+                    <h4>Application Insights Logging</h4>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_appinsights_global_logging" name="enable_appinsights_global_logging" {% if settings.enable_appinsights_global_logging %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_appinsights_global_logging">
+                            Enable Application Insights Global Logging
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable global logging to Application Insights for all agents and orchestration events."></i>
+                    </div>
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <strong>Note:</strong> Changing this setting requires an application restart to take effect.
+                    </div>
+                </div>
+            </div>
             
             <div class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab">
                 
                  <p class="text-muted">
-                    Configure general application settings, including the application’s title, logo, and landing page text.
+                    Configure general application settings, including the application's title, logo, and landing page text.
                 </p>
                 <div class="card p-3 mb-3">
                     <div class="mb-3">
@@ -491,8 +737,14 @@
                         <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
                     </div>
                     <div class="form-group mb-3">
-                        <label for="logo_file">Upload Custom Logo</label>
+                        <label for="logo_file">Upload Custom Logo (Light Mode)</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in light mode.</small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
+                        <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes.</small>
                     </div>
                     <div class="form-group mb-3">
                         <label for="favicon_file">Upload Custom Favicon</label>
@@ -548,6 +800,8 @@
                     ></div>
                 </div>
 
+
+
                 <!-- Dark Mode Card -->
                 <div class="card p-3 mb-3">
                     <h5>Appearance</h5>
@@ -569,6 +823,41 @@
                         </div>
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Default Navigation</label>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_left_nav_default"
+                                name="enable_left_nav_default"
+                                {% if settings.enable_left_nav_default %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_left_nav_default">
+                                Enable Left Nav by Default
+                            </label>
+                        </div>
+                        <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
+                    </div>
+                </div>
+                <!-- Health Check Toggle -->
+                <div class="card p-3 mb-3">
+                    <h5>Health Check</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_health_check"
+                            name="enable_health_check"
+                            {% if settings.enable_health_check %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_health_check">
+                            Enable Health Check Endpoint
+                        </label>
+                    </div>
+                    <p class="text-muted mb-0">
+                        When enabled, the /health endpoint will respond to health check requests. Disable to turn off health check endpoint for this app.
+                    </p>
                 </div>
                 <!-- New Classification Banner Section -->
                 <div class="card p-3 mb-3">
@@ -595,6 +884,56 @@
                               style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
+                    </div>
+                </div>
+
+                <!-- External Links Section -->
+                <div class="card p-3 mb-3">
+                    <h5>External Links</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_external_links" name="enable_external_links"
+                            {% if settings.enable_external_links %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_external_links">
+                            Enable External Links in Navigation
+                        </label>
+                    </div>
+                    <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
+                    
+                    <div id="external_links_settings" {% if not settings.enable_external_links %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="external_links_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name" 
+                                   value="{{ settings.external_links_menu_name or 'External Links' }}" placeholder="External Links">
+                            <small class="form-text text-muted">This name will appear in the navigation bar as the menu title.</small>
+                        </div>
+                        
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="external_links_force_menu" name="external_links_force_menu"
+                                {% if settings.external_links_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="external_links_force_menu">
+                                Force Menu Display
+                            </label>
+                            <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
+                        </div>
+                        
+                        <h6>External Links</h6>
+                        <p class="text-muted small">Define custom links that will appear in the navigation bar for users to access external resources.</p>
+                        
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Label</th>
+                                    <th>URL</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="external-links-tbody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                        
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="add-external-link-btn">Add New Link</button>
+                        <input type="hidden" name="external_links_json" id="external_links_json">
                     </div>
                 </div>
             </div>
@@ -1034,7 +1373,6 @@
                 <div id="test_image_result" class="mt-2"></div>
             </div>
 
-
             <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
                 <p class="text-muted">
                     Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
@@ -1082,6 +1420,32 @@
                         <div id="test_redis_result" class="mt-2"></div>
                     </div>
                 </div>
+
+                <!-- Authentication & Redirect Settings Card -->
+                <div class="card p-3 mb-3">
+                    <h5>Authentication & Redirect Settings</h5>
+                    <p class="text-muted mb-1">Configure redirect URLs for home page and login authentication.</p>
+                    
+                    <div class="mb-3">
+                        <label for="home_redirect_url" class="form-label">Home Redirect URL</label>
+                        <input type="url" class="form-control" id="home_redirect_url" name="home_redirect_url" 
+                               value="{{ settings.home_redirect_url or '' }}" 
+                               placeholder="https://your-frontdoor.azurefd.net">
+                        <small class="form-text text-muted">
+                            Optional: Redirect users to this URL when accessing the home page. Useful for Front Door or load balancer configurations. Leave blank to use default behavior.
+                        </small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="login_redirect_url" class="form-label">Login Redirect URL</label>
+                        <input type="url" class="form-control" id="login_redirect_url" name="login_redirect_url" 
+                               value="{{ settings.login_redirect_url or '' }}" 
+                               placeholder="https://your-frontdoor.azurefd.net/getAToken">
+                        <small class="form-text text-muted">
+                            Optional: Override the OAuth2 redirect URI for login authentication. Useful for Front Door or custom authentication flows. Leave blank to use auto-generated redirect URI.
+                        </small>
+                    </div>
+                </div>
             </div>
 
 
@@ -1093,7 +1457,7 @@
                 
                 <div class="card mb-3 p-3">
                     
-                    <h5>Enable Your Workspace</h5>
+                    <h5>Enable Personal Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of your personal workspace.
                     </p>
@@ -1104,7 +1468,7 @@
                             name="enable_user_workspace"
                             {% if settings.enable_user_workspace %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_user_workspace">
-                            Enable Your Workspace
+                            Enable Personal Workspaces
                         </label>
                     </div>
                 </div>
@@ -1112,7 +1476,7 @@
                
                <div class="card mb-3 p-3">
                     
-                    <h5>Enable My Groups (includes Group Workspaces)</h5>
+                    <h5>Enable Group Workspaces</h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of group workspaces, as well as group collaboration features.
                     </p>
@@ -1123,7 +1487,7 @@
                             name="enable_group_workspaces"
                             {% if settings.enable_group_workspaces %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_group_workspaces">
-                            Enable My Groups (includes Group Workspaces)
+                            Enable Group Workspaces
                         </label>
                     </div>
 
@@ -1145,6 +1509,60 @@
                         </p>
                     </div>
                     
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable Public Workspaces</h5>
+                    <p class="text-muted">
+                        Turn this on to enable public workspaces that are visible to everyone in the organization.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                    </div>
+
+                    <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
+                        <hr> 
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_public_workspace"
+                                name="require_member_of_create_public_workspace"
+                                {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
+                                Require Membership to Create Public Workspaces
+                            </label>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only users who are members of the 'CreatePublicWorkspaces' role (defined in your App registration) can create public workspaces. If disabled, any authenticated user can create public workspaces (provided 'Enable Public Workspaces' is active).
+                        </p>
+                    </div>
+                    
+                </div>
+
+                <div class="card mb-3 p-3">
+                    
+                    <h5>Enable File Sharing</h5>
+                    <p class="text-muted">
+                        Turn this on to enable file sharing capabilities between users and workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sharing"
+                            name="enable_file_sharing"
+                            {% if settings.enable_file_sharing %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sharing">
+                            Enable File Sharing
+                        </label>
+                    </div>
                 </div>
 
                 <div class="card mb-3 p-3">
@@ -2122,6 +2540,8 @@
                         <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
                             rows="5">{{ settings.default_system_prompt }}</textarea>
                     </div>
+
+
                 </div>
 
                 <div class="card mb-3 p-3">
@@ -2165,6 +2585,19 @@
             </div>
         </div> 
     </form>
+    
+    <!-- Floating Save Button -->
+    <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
+        <i class="bi bi-floppy"></i> Save Settings
+    </button>
+    
+    <div>
+        <!-- Plugin Modal (moved outside form) -->
+        {% include '_plugin_modal.html' %}
+
+        <!-- Agent Modal (moved outside form) -->
+        {% include '_agent_modal.html' %}
+    </div>
 </div>
 {% endblock %}
 <script>
@@ -2279,8 +2712,29 @@
     }
     window.enableDocumentClassification = "{{ enable_document_classification }}";
 
+    // *** NEW: External Links Data ***
+    try {
+        let externalLinksStr = '{{ settings.external_links|tojson(indent=None)|safe }}';
+        if (!externalLinksStr || externalLinksStr.trim() === '') {
+            externalLinksStr = '[]';
+        }
+        window.externalLinks = JSON.parse(externalLinksStr);
+    } catch (e) {
+        console.error("Error parsing external links:", e);
+        window.externalLinks = [];
+    }
+    // Ensure it's always an array
+    if (!Array.isArray(window.externalLinks)) {
+        window.externalLinks = [];
+    }
+    window.enableExternalLinks = "{{ enable_external_links }}";
+    window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
+    window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
+
 </script>
-<script src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
 
 <!-- Script to update the walkthrough steps based on form changes -->
 <script>

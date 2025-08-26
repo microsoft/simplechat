@@ -2,7 +2,7 @@
 
 # Simple Chat
 
-![logo](./images/logo.png)
+![logo](./images/logo-wide.png)
 
 *   [Jump to Table of Contents](#table-of-contents)
 
@@ -37,7 +37,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 -   **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
 -   **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
 -   **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
--   **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
+-   **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`, `ExternalApi`).
 -   **Backend Services**:
     -   **Azure Cosmos DB**: Stores conversations, document metadata, user/group information, settings, and optionally archived chats and feedback.
     -   **Azure AI Search**: Powers efficient hybrid search and retrieval over personal and group documents.
@@ -621,6 +621,7 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
     | **Create Group**           | Users/Groups         | `CreateGroups`         | Allows user to create new groups (if enabled).   | Yes                                  |
     | **Safety Violation Admin** | Users/Groups         | `SafetyViolationAdmin` | Allows access to view content safety violations. | Yes                                  |
     | **Feedback Admin**         | Users/Groups         | `FeedbackAdmin`        | Allows access to view user feedback admin page.  | Yes                                  |
+    | **External API Access**    | Both         | `ExternalApi`          | Required for access to external API endpoints (e.g., for integrations or automation). | Yes                                  |
 
     ![App Registration - App Roles](./images/app_reg-app_roles.png) 
 
@@ -634,6 +635,8 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
     *   Select the users or security groups you want to grant access.
     *   Under **Select a role**, choose the appropriate App Role (`Admins`, `Users`, etc.) you defined.
     *   Click **Assign**. Only assigned users/groups will be able to log in (if "Assignment required?" is enabled on the Enterprise App, which is recommended).
+
+> **Note:** The `ExternalApi` role is required for any user or service that needs to call external API endpoints protected by the application. Assign this role to users, groups, or service principals that require programmatic or integration access.
 
 #### Grant App Registration Access to Azure OpenAI (for Model Fetching)
 
@@ -987,7 +990,10 @@ Once the application is running and you log in as a user assigned the Admin role
 
 Key configuration sections include:
 
-1. **General**: Application title, custom logo upload, landing page markdown text.
+1. **General**: Application title, custom logo upload, landing page markdown text, authentication & redirect settings.
+   - **Authentication & Redirect Settings**: Configure redirect URLs for Front Door or load balancer scenarios:
+     - **Home Redirect URL**: Optional URL to redirect users when accessing the home page (useful for Front Door configurations)
+     - **Login Redirect URL**: Optional override for OAuth2 redirect URI during authentication (useful for Front Door or custom authentication flows)
 2. **GPT**: Configure Azure OpenAI endpoint(s) for chat models. Supports Direct endpoint or APIM. Allows Key or Managed Identity authentication. Test connection button. Select active deployment(s).
    1. Setting up Multi-model selection for users
 3. **Embeddings**: Configure Azure OpenAI endpoint(s) for embedding models. Supports Direct/APIM, Key/Managed Identity. Test connection. Select active deployment.
@@ -1233,6 +1239,20 @@ For more details, see the [Azure documentation on Private Endpoints](https://lea
          This causes the app to call the AOAI endpoint through the APIM-mode flow, bypassing the cross-tenant management-plane check and allowing model listing to succeed.
 
    ![Cross-tenant Model Support](./images/cross_tenant-model_support.png)
+
+8. **Q: How do I enable external users (from other organizations) to access Simple Chat group workspaces via Access Packages if they cannot read local Entra?**
+
+   - **A:** When using Access Packages to allow external organizations to log into your deployment of Simple Chat, you may encounter a scenario where external users do not have permissions to read your local Entra directory (Microsoft Entra ID) and therefore cannot search for or assign users to Simple Chat group workspaces.
+
+     - **Solution:** To resolve this, you must create a custom Entra role with the following permissions and update your Access Package to assign this role. This requires the **Microsoft Entra ID Governance** license.
+
+       ```text
+       microsoft.directory/groups/members/read
+       microsoft.directory/users/standard/read
+       ```
+
+
+![Custom Role for External Users](./images/custom_role-external_users.png)
 
 ## Usage
 

@@ -1,7 +1,7 @@
 /* css/styles.css */
 
 body {
-    font-family: Arial, sans-serif;
+    font-family: var(--bs-font-sans-serif);
     margin: 0;
     padding: 0;
 }
@@ -26,13 +26,20 @@ main {
     --bs-body-color: #e9ecef;
 }
 
-[data-bs-theme="dark"] .navbar-light {
-    background-color: #343a40 !important;
+/* Theme-based logo visibility */
+[data-bs-theme="light"] .d-dark-mode-only {
+    display: none !important;
 }
 
-[data-bs-theme="dark"] .navbar-light .navbar-brand,
-[data-bs-theme="dark"] .navbar-light .nav-link {
-    color: #e9ecef;
+[data-bs-theme="dark"] .d-light-mode-only {
+    display: none !important;
+}
+
+/* Logo transition support */
+.navbar-brand img, 
+#sidebar-logo,
+#sidebar-logo-dark {
+    transition: opacity 0.2s ease-in-out;
 }
 
 [data-bs-theme="dark"] .card {
@@ -96,27 +103,4 @@ main {
 [data-bs-theme="dark"] .btn-light:hover {
     background-color: #495057 !important;
     border-color: #6c757d !important;
-}
-
-/* Dark mode toggle styles */
-.dark-mode-toggle {
-    cursor: pointer;
-    padding: 0.25rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-}
-
-.dark-mode-toggle:hover {
-    opacity: 0.8;
-}
-
-/* Ensure nav-link containing dark mode toggle is aligned with other nav links */
-.nav-item .nav-link.dark-mode-toggle {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding-top: 0;
-    padding-bottom: 0;
 }

@@ -1,3 +1,17 @@
+/* chats.css */
+
+/* Prevent initial layout shift by disabling transitions on page load */
+.no-transitions *,
+.no-transitions #left-pane,
+.no-transitions #right-pane {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* Remove all margin from sidebar navigation */
+.nav.flex-column {
+    margin: 0 !important;
+}
 /* Fix for document dropdown visibility */
 #document-dropdown .dropdown-menu.show {
   display: block !important;
@@ -143,13 +157,23 @@
   overflow: hidden; /* Prevent panes themselves from scrolling */
   margin-left: 30px; /* Optional: space between left and right panes */
   /* d-flex and flex-column are already on the elements via HTML classes for internal layout */
+  /* Center the content within the right pane by default */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+/* Center and constrain the width of right pane content by default */
+#right-pane > div {
+  width: 100% !important;
+  max-width: 1000px !important; /* Constrain maximum width for better readability */
 }
 
 
 .chat-classification-badge {
   display: inline-block;
-  padding: 0.2em 0.5em; /* Slightly smaller padding */
-  font-size: 0.75em;   /* Smaller font size */
+  padding: 0.35em 0.65em; /* Match Bootstrap badge padding */
+  font-size: 0.75em;   /* Match Bootstrap badge font size */
   font-weight: 600;
   line-height: 1;
   color: #fff; /* Default white text */
@@ -217,62 +241,56 @@
   background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeAPTBAPAXJmw1AAAAAElFTkSuQmCC');
   cursor: col-resize;
 }
-/* Style when docked */
+/* Style when docked - CLEAN SIMPLE IMPLEMENTATION */
 body.layout-docked #left-pane {
-  position: fixed !important; /* Force override */
-  top: 66px !important; /* Matches calc(100vh - 66px) - ADJUST IF HEADER HEIGHT CHANGES */
+  position: fixed !important;
+  top: 66px !important; /* Below navbar */
   left: 0 !important;
-  width: 320px !important; /* Default docked width - ADJUST AS NEEDED */
-  height: calc(100vh - 66px) !important; /* Full height minus header */
+  width: 320px !important;
+  height: calc(100vh - 66px) !important;
   z-index: 1031 !important;
   background: var(--bs-body-bg, white) !important;
   border-right: 1px solid var(--bs-border-color, #dee2e6) !important;
-  transform: translateX(0); /* Ensure it's visible initially */
-  transition: transform 0.3s ease-in-out, width 0.3s ease-in-out;
-  /* Override flex basis potentially set by split.js before destroy */
-  flex-basis: auto !important;
 }
 
 body.layout-docked #right-pane {
-  margin-left: 320px !important; /* Same as docked left pane width */
-  width: calc(100% - 300px) !important;
-  transition: margin-left 0.3s ease-in-out, width 0.3s ease-in-out;
-   /* Override flex basis potentially set by split.js before destroy */
-  flex-basis: auto !important;
-  height: 100% !important; /* Ensure it still takes full height */
-  overflow: hidden !important; /* Ensure inner content scrolls */
-  /* Reset any potentially conflicting positioning */
+  margin-left: 320px !important;
+  width: calc(100% - 320px) !important;
+  height: calc(100vh - 66px) !important;
   position: relative !important;
-  top: auto !important;
-  left: auto !important;
-  transform: none !important;
+  /* Center content horizontally */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
 }
 
-/* When banner is present, adjust docked left-pane position */
+/* Center and limit width of right pane content */
+body.layout-docked #right-pane > div {
+  width: 100% !important;
+  max-width: 1000px !important;
+}
+
+/* When classification banner is present */
 body.has-classification-banner.layout-docked #left-pane {
-  top: 106px !important; /* 66px (original) + 40px (banner) */
-  height: calc(100vh - 106px) !important; /* Adjusted height */
+  top: 106px !important;
+  height: calc(100vh - 106px) !important;
 }
 
-/* When banner is present, adjust docked right-pane height */
 body.has-classification-banner.layout-docked #right-pane {
-  height: calc(100vh - 106px) !important; /* Adjusted height */
-}
-
-/* Style when docked AND hidden */
-body.layout-docked.left-pane-hidden #left-pane {
-   transform: translateX(-100%);
-   border-right: none !important;
-}
-body.layout-docked.left-pane-hidden #right-pane {
-   margin-left: 0 !important;
-   width: 100% !important;
+  height: calc(100vh - 106px) !important;
 }
 
 /* Hide Split.js gutter when docked */
 body.layout-docked .gutter {
   display: none !important;
 }
+
+/*
+ * REMOVED a set of problematic rules that were here.
+ * The rules `body.layout-docked .container`, `body.layout-docked .container-fluid`, etc.
+ * were too broad and were incorrectly applying a margin to the top navigation bar,
+ * causing the layout issue. The corrected `#right-pane` rule above now handles the layout correctly.
+ */
 
 
 /* --- Styles SPECIFICALLY for Split Layout --- */
@@ -309,6 +327,16 @@ body.layout-split #right-pane {
     transform: none !important; /* Reset transform */
     /* flex-basis will be set by Split.js */
     overflow: hidden; /* Keep inner scroll */
+    /* Center the content within the right pane */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+}
+
+/* Center and constrain the width of right pane content in split mode */
+body.layout-split #right-pane > div {
+    width: 100% !important;
+    max-width: 1000px !important; /* Constrain maximum width for better readability */
 }
 
 /* Ensure gutter is visible and sized correctly in split mode */
@@ -325,8 +353,14 @@ body.layout-split .gutter {
 /* Custom styles for the Conversations List */
 #conversations-list,
 #conversations-list-offcanvas {
-  max-height: 80vh;
-  overflow-y: auto;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto !important;
+}
+
+/* Ensure conversations list scrolls properly when top nav is active */
+#conversations-list {
+  height: calc(100vh - 140px);
+  min-height: 200px;
 }
 
 .conversation-item {
@@ -438,6 +472,147 @@ body.layout-split .gutter {
   align-items: center;
 }
 
+/* User message footer styling */
+.user-message .message-footer {
+  padding-top: 5px;
+  margin-top: 8px;
+}
+
+.copy-user-btn, .source-user-btn {
+  border: none;
+  background: transparent;
+  color: #6c757d;
+  font-size: 0.875rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.copy-user-btn, .metadata-toggle-btn {
+  border: none;
+  background: transparent;
+  color: #6c757d;
+  font-size: 0.875rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.copy-user-btn:hover, .metadata-toggle-btn:hover {
+  color: #0d6efd;
+  background-color: #e3f2fd;
+}
+
+/* Metadata drawer styling */
+.metadata-container {
+  font-size: 0.875rem;
+  color: #6c757d;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.metadata-content {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Responsive grid layout for metadata sections */
+@media (min-width: 768px) {
+  .metadata-content {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .metadata-content {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.metadata-section {
+  margin-bottom: 0; /* Remove margin since grid gap handles spacing */
+  break-inside: avoid; /* Prevent sections from breaking across columns in some browsers */
+}
+
+.metadata-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #495057;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.5rem;
+}
+
+.metadata-item {
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.4;
+}
+
+.metadata-item .badge {
+  font-size: 0.7rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+.metadata-code {
+  font-size: 0.75rem;
+  background-color: #e9ecef;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.copy-user-btn:hover, .source-user-btn:hover {
+  color: #0d6efd;
+  background-color: #e3f2fd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn,
+[data-bs-theme="dark"] .source-user-btn {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn,
+[data-bs-theme="dark"] .metadata-toggle-btn {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn:hover,
+[data-bs-theme="dark"] .source-user-btn:hover {
+  color: #ffffff;
+  background-color: #0a58ca;
+}
+
+[data-bs-theme="dark"] .copy-user-btn:hover,
+[data-bs-theme="dark"] .metadata-toggle-btn:hover {
+  color: #ffffff;
+  background-color: #0a58ca;
+}
+
+/* Dark mode metadata drawer styling */
+[data-bs-theme="dark"] .metadata-container {
+  background-color: #343a40;
+  color: #adb5bd;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] .metadata-title {
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .metadata-code {
+  background-color: #495057;
+  border-color: #6c757d;
+  color: #e9ecef;
+}
+
 /* Ensure the image is a fixed small size */
 .image-message .generated-image {
   width: 170px;
@@ -455,7 +630,7 @@ body.layout-split .gutter {
 }
 
 [data-bs-theme="dark"] #chatbox {
-  background-color: #2b3035; /* Darker background for chat area in dark mode */
+  background-color: #212529; /* Match container main-content in dark mode */
 }
 
 .chat-container {
@@ -1009,10 +1184,38 @@ ol {
   max-width: 250px;
   border-radius: var(--bs-border-radius);
   margin-bottom: 0;
+  border: none;
+  min-width: 120px;
+  padding: 0.375rem 0.75rem;
+}
+
+#model-select {
+  border: none;
+  min-width: 120px;
+  padding: 0.375rem 0.75rem;
+}
+
+#agent-select {
+  border: none;
+  min-width: 120px;
+  padding: 0.375rem 0.75rem;
 }
 
 #classification-banner {
   border-bottom: 1px solid #e0e0e0;
   box-shadow: 0 2px 4px rgba(0,0,0,0.02);
   z-index: 1050;
+}
+
+/* Remove left margin from navbar-nav.me-auto in top nav */
+.navbar-nav.me-auto {
+    margin-left: 0 !important;
+}
+
+/* Ensure split-container uses full viewport width in top nav mode */
+#split-container {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }

@@ -29,3 +29,11 @@ priv-*
 
 # temporary files
 flask_session
+
+# node modules
+/node_modules
+/package-lock.json
+/package.json
+
+
+application/external_apps/bulkloader/map.csv

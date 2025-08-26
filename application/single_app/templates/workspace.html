@@ -1,6 +1,6 @@
 <!-- templates/workspace.html -->
 {% extends "base.html" %}
-{% block title %} Your Workspace - {{ app_settings.app_title }} {% endblock %}
+{% block title %} Personal Workspace - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
   <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css" />
    LOCAL VERSION BELOW -->
@@ -13,12 +13,45 @@
       width: 100%;
     }
 
+    /* Uniform width for action buttons (Approve, Delete, Chat) */
+    .action-btn-wide {
+      min-width: 90px;
+    }
+
     /* --- Documents Table Styles --- */
     /* Example: Keep the expand-arrow column narrow */
     #documents-table th:nth-child(1),
     #documents-table td:nth-child(1) {
       width: 50px;
       text-align: Left;
+    }
+    
+    /* Styles for document checkboxes */
+    .document-checkbox {
+      cursor: pointer;
+      min-width: 18px;
+      min-height: 18px;
+      display: none; /* Hide checkboxes by default */
+    }
+    
+    /* Show checkboxes when in selection mode */
+    .selection-mode .document-checkbox {
+      display: block;
+    }
+    
+    /* Ensure the delete button is properly styled */
+    #delete-selected-btn, #remove-selected-btn {
+      transition: all 0.3s ease;
+    }
+    
+    /* Add some padding to the left when in selection mode */
+    .selection-mode .document-row {
+      padding-left: 0.5rem;
+    }
+    
+    /* Dropdown menu for actions */
+    .action-dropdown .dropdown-toggle::after {
+      display: none;
     }
     /* File Name column */
     #documents-table th:nth-child(2),
@@ -38,10 +71,10 @@
       white-space: nowrap;
       text-overflow: ellipsis;
     }
-    /* Actions column */
+    /* Actions column (now 4th column) */
     #documents-table th:nth-child(4),
     #documents-table td:nth-child(4) {
-      width: 200px; /* or whatever fits your buttons */
+      width: 240px; /* Increased to fit Share button with badge */
     }
 
     /* --- Prompts Table Styles --- */
@@ -108,7 +141,7 @@
 
 {% block content %}
   <div class="container">
-    <h2>Your Workspace</h2>
+    <h2>Personal Workspace</h2>
 
     <!-- Nav Tabs -->
     <ul class="nav nav-tabs" id="workspaceTab" role="tablist">
@@ -140,6 +173,36 @@
           Your Prompts
         </button>
       </li>
+      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="agents-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#agents-tab"
+          type="button"
+          role="tab"
+          aria-controls="agents-tab"
+          aria-selected="false"
+        >
+          Your Agents
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button
+          class="nav-link"
+          id="plugins-tab-btn"
+          data-bs-toggle="tab"
+          data-bs-target="#plugins-tab"
+          type="button"
+          role="tab"
+          aria-controls="plugins-tab"
+          aria-selected="false"
+        >
+          Your Plugins
+        </button>
+      </li>
+      {% endif %}
     </ul>
 
     <!-- Tab Panes -->
@@ -154,30 +217,30 @@
         <div class="card p-3 my-3">
           <div id="legacy-update-prompt-placeholder"></div> 
           <h5>Your Documents</h5>
-          <p class="text-muted small">Only you can see documents you upload. Allowed extensions:
-            txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg,
-            png, bmp, tiff, tif, heif, md, json
-            {% if enable_video_file_support in [True, 'True', 'true'] %}
-                , mp4, mov, avi, wmv, mkv, webm
-            {% endif %}
-            {% if enable_audio_file_support in [True, 'True', 'true'] %}
-                , mp3, wav, ogg, aac, flac, m4a
-            {% endif %}
-          </p>
+          <p class="text-muted small">Only you can see documents you upload.</p>
 
           <!-- Document Upload Form -->
           <div class="mb-3">
-            <input type="file" id="file-input" multiple />
-            <button id="upload-btn" class="btn btn-primary">
-              Upload Document(s)
-            </button>
-            <span id="upload-status" class="ms-2 text-muted small"></span>
+            <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+              <input type="file" id="file-input" multiple style="display:none;" />
+              <div class="upload-area-content">
+                <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+                <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
+                <div class="small text-muted mt-1">Allowed: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg, png, bmp, tiff, tif, heif, md, json{% if enable_video_file_support in [True, 'True', 'true'] %}, mp4, mov, avi, wmv, mkv, webm{% endif %}{% if enable_audio_file_support in [True, 'True', 'true'] %}, mp3, wav, ogg, aac, flac, m4a{% endif %}</div>
+              </div>
+            </div>
+            <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
+            <!-- Per-file upload progress bars -->
+            <div id="workspace-upload-progress-container" class="mt-2" style="display:none;"></div>
           </div>
-          <hr>
 
           <!-- Document Filters -->
-           <!-- Filter Row 1: Main Search & Classification -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+          <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#docs-filters-collapse" aria-expanded="false" aria-controls="docs-filters-collapse" id="docs-filters-toggle-btn">
+            Show Search/Filters
+          </button>
+          <div class="collapse" id="docs-filters-collapse">
+            <!-- Filter Row 1: Main Search & Classification -->
+            <div class="row mb-3 align-items-end filter-controls-row">
                 {% if enable_document_classification in [True, 'True', 'true'] %}
                     <div class="col-md-4">
                         <label for="docs-search-input" class="form-label mb-1 small">Search File Name/Title:</label>
@@ -193,25 +256,40 @@
                              {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+                    <div class="col-md-2">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" id="docs-shared-only-filter">
+                            <label class="form-check-label small" for="docs-shared-only-filter">
+                                Show only shared files
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
                         <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
                         <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                     </div>
                 {% else %}
                     <!-- Layout when classification is disabled -->
-                    <div class="col-md-7">
+                    <div class="col-md-6">
                         <label for="docs-search-input" class="form-label mb-1 small">Search File Name/Title:</label>
                         <input type="search" id="docs-search-input" class="form-control form-control-sm" placeholder="Enter search term...">
                     </div>
-                    <div class="col-md-5 filter-buttons-col mt-2 mt-md-0">
+                    <div class="col-md-3">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" id="docs-shared-only-filter">
+                            <label class="form-check-label small" for="docs-shared-only-filter">
+                                Show only shared files
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
                         <button id="docs-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
                         <button id="docs-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                     </div>
                 {% endif %}
-           </div>
-
-           <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+            </div>
+            <!-- Filter Row 2: Metadata Filters (Always Shown, No Buttons) -->
+            <div class="row mb-3 align-items-end filter-controls-row">
                 <div class="col-md-3">
                     <label for="docs-author-filter" class="form-label mb-1 small">Search Authors:</label>
                     <input type="search" id="docs-author-filter" class="form-control form-control-sm" placeholder="Author name...">
@@ -227,23 +305,36 @@
                 <div class="col-md-3 filter-buttons-col mt-2 mt-md-0">
                     <!-- Buttons removed from metadata row -->
                 </div>
-           </div>
-           <!-- End Metadata Filters -->
+            </div>
+          </div>
+          <!-- End Metadata Filters -->
 
           <!-- Documents List -->
           <table class="table table-striped" id="documents-table">
             <thead>
               <tr>
-                <th></th> <!-- Expand/Collapse -->
+                <th>
+                  <!-- Expand/Collapse Column -->
+                </th>
                 <th>File Name</th>
                 <th>Title</th>
-                <th>Actions</th>
+                <th>Actions
+                  <span id="bulk-actions" style="display: none; margin-left: 20px;">
+                    <!-- Bulk action buttons will appear here when documents are selected -->
+                    <button id="delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
+                      <i class="bi bi-trash"></i> Delete
+                    </button>
+                    <button id="remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
+                      <i class="bi bi-x-circle"></i> Remove
+                    </button>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
               <!-- Populated by JavaScript -->
               <tr class="table-loading-row">
-                <td colspan="4">
+                <td colspan="5">
                     <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                     Loading documents...
                 </td>
@@ -289,10 +380,13 @@
               New Prompt
             </button>
           </div>
-          <hr>
 
           <!-- Prompts Filters -->
-           <div class="row mb-3 align-items-end filter-controls-row">
+          <button class="btn btn-outline-secondary btn-sm mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#prompts-filters-collapse" aria-expanded="false" aria-controls="prompts-filters-collapse" id="prompts-filters-toggle-btn">
+            Show Search/Filters
+          </button>
+          <div class="collapse" id="prompts-filters-collapse">
+            <div class="row mb-3 align-items-end filter-controls-row">
                 <div class="col-md-6">
                     <label for="prompts-search-input" class="form-label mb-1 small">Search Prompt Name:</label>
                     <input type="search" id="prompts-search-input" class="form-control form-control-sm" placeholder="Enter search term...">
@@ -301,7 +395,8 @@
                     <button id="prompts-apply-filters-btn" class="btn btn-primary btn-sm">Apply Filters</button>
                     <button id="prompts-clear-filters-btn" class="btn btn-secondary btn-sm ms-1">Clear Filters</button>
                  </div>
-           </div>
+            </div>
+          </div>
 
           <!-- Prompts List -->
           <table class="table table-striped" id="prompts-table">
@@ -341,9 +436,95 @@
         </div> <!-- End Card -->
       </div>
       <!-- End PROMPTS TAB -->
+      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      <!-- ============= AGENTS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="agents-tab"
+        role="tabpanel"
+        aria-labelledby="agents-tab-btn"
+      >
+        {% if settings.allow_user_agents %}
+          <div class="tab-pane-inner">
+            <div class="card p-3 my-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0 d-flex align-items-center gap-2">
+                  Your Agents
+                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+                </h5>
+                <button class="btn btn-success btn-sm" id="create-agent-btn">New Agent</button>
+              </div>
+              <div class="mb-3 row align-items-center">
+                <label for="active-agent-select" class="col-sm-3 col-form-label">Selected Agent:</label>
+                <div class="col-sm-5">
+                  <select id="active-agent-select" class="form-select form-select-sm"></select>
+                </div>
+                <div class="col-sm-4">
+                  <span id="active-agent-select-msg" class="text-muted small"></span>
+                </div>
+              </div>
+              <table class="table table-striped" id="agents-table">
+                <thead><tr><th>Name</th><th>Display Name</th><th>Selected</th><th>Actions</th></tr></thead>
+                <tbody id="agents-table-body">
+                  <tr class="table-loading-row">
+                    <td colspan="4">
+                      <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                      Loading agents...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="workspace-agents-error"></div>
+          </div>
+        {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Custom User Agents are currently disabled. Please ask your admin to enable agents for your workspace.
+          </div>
+        {% endif %}
+      </div>
+      <!-- End AGENTS TAB -->
+      {% endif %}
+
+      {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+      <!-- ============= PLUGINS TAB ============= -->
+      <div
+        class="tab-pane fade"
+        id="plugins-tab"
+        role="tabpanel"
+        aria-labelledby="plugins-tab-btn"
+      >
+        {% if settings.allow_user_plugins %}
+          <div id="workspace-plugins-root"></div>
+          <!-- Plugins Table Template (hidden) -->
+          <template id="plugins-table-template">
+            <div class="card p-3 my-3">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0 d-flex align-items-center gap-2">
+                  Your Plugins
+                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+                </h5>
+                <button class="btn btn-success btn-sm" id="create-plugin-btn">New Plugin</button>
+              </div>
+              <table class="table table-striped" id="plugins-table">
+                <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Actions</th></tr></thead>
+                <tbody id="plugins-table-body">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </template>
+          </div>
+        {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Custom User Plugins are currently disabled. Please ask your admin to enable plugins for your workspace.
+          </div>
+        {% endif %}
+      {% endif %}
     </div>
     <!-- End Tab Content -->
   </div>
+  <!--</div>-->
 
   <!-- Modal for Creating/Editing Prompts (Keep As Is) -->
   <div
@@ -499,10 +680,157 @@
       </form>
     </div>
   </div>
+<div>
+  <!-- Modal for Creating/Editing Agent -->
+
+  {% include "_agent_modal.html" %}
+
+  <!-- Modal for Creating/Editing Plugin -->
+
+  {% include "_plugin_modal.html" %}
+</div>
+
+<!-- Share Document Modal -->
+<div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="shareDocumentForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Share Document</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <!-- Current Document Info -->
+          <div class="mb-3">
+            <h6 id="shareDocumentTitle">Document: <span id="shareDocumentName"></span></h6>
+          </div>
+
+          <!-- Currently Shared Users Section -->
+          <div class="mb-3">
+            <h6>Currently Shared With:</h6>
+            <div id="currentlySharedUsers" class="border rounded p-2" style="min-height: 60px; max-height: 150px; overflow-y: auto;">
+              <div id="noSharedUsers" class="text-muted">This document is not shared with anyone.</div>
+              <div id="sharedUsersList"></div>
+            </div>
+          </div>
+
+          <hr />
+
+          <!-- Search Section -->
+          <div class="mb-3">
+            <label for="userSearchTerm" class="form-label"
+              >Search for user (by name or email)</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="userSearchTerm"
+              placeholder="e.g. John or jsmith@contoso.com"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm mt-2"
+              id="searchUsersBtn"
+            >
+              Search
+            </button>
+            <!-- Optional: a small status label -->
+            <span id="searchStatus" class="text-muted ms-2"></span>
+          </div>
+
+          <!-- Search Results Table -->
+          <div
+            class="table-responsive mb-3"
+            style="max-height: 200px; overflow: auto"
+          >
+            <table class="table table-sm" id="userSearchResultsTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Populated by renderUserSearchResults() -->
+              </tbody>
+            </table>
+          </div>
+
+          <hr />
+
+          <!-- Manual User Addition (Collapsible) -->
+          <div class="mb-3">
+            <button class="btn btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#manualUserSection" aria-expanded="false" aria-controls="manualUserSection">
+              <i class="fas fa-chevron-right" id="manualUserChevron"></i> Add user manually
+            </button>
+            <div class="collapse mt-3" id="manualUserSection">
+              <div class="card card-body">
+                <div class="mb-2">
+                  <label for="newUserId" class="form-label"
+                    >User ID (AAD Object ID)</label
+                  >
+                  <input type="text" class="form-control" id="newUserId" />
+                </div>
+                <div class="mb-2">
+                  <label for="newUserDisplayName" class="form-label">Name</label>
+                  <input type="text" class="form-control" id="newUserDisplayName" />
+                </div>
+                <div class="mb-2">
+                  <label for="newUserEmail" class="form-label">Email</label>
+                  <input type="email" class="form-control" id="newUserEmail" />
+                </div>
+                <button type="button" id="manualAddUserBtn" class="btn btn-primary btn-sm">Add User</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- Approve Shared Document Modal -->
+<div class="modal fade" id="approveSharedModal" tabindex="-1" aria-labelledby="approveSharedModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="approveSharedModalLabel">Approve Shared Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="approveSharedModalBody">
+        <!-- Populated by JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-danger action-btn-wide me-1" id="approveSharedModalDenyBtn">Deny</button>
+        <button type="button" class="btn btn-sm btn-secondary action-btn-wide me-1" data-bs-dismiss="modal" id="approveSharedModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-sm btn-success action-btn-wide" id="approveSharedModalApproveBtn">Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 
 {% block scripts %}
+  {{ super() }}
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+    <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
+    <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
+  {% endif %}
   <!-- <script src="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.js"></script>
    LOCAL VERSION BELOW -->
    <script src="/static/js/simplemde/simplemde.min.js"></script>
@@ -517,11 +845,101 @@
     window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
     window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
+    window.enable_file_sharing = "{{ enable_file_sharing | tojson }}";
+    
+    // Pass current user ID for ownership checks
+    window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
 
+    // --- Filter toggle button logic ---
+    document.addEventListener("DOMContentLoaded", function() {
+      // Documents tab
+      var docsToggleBtn = document.getElementById("docs-filters-toggle-btn");
+      var docsCollapse = document.getElementById("docs-filters-collapse");
+      if (docsToggleBtn && docsCollapse) {
+        docsCollapse.addEventListener("show.bs.collapse", function() {
+          docsToggleBtn.textContent = "Hide Search/Filters";
+        });
+        docsCollapse.addEventListener("hide.bs.collapse", function() {
+          docsToggleBtn.textContent = "Show Search/Filters";
+        });
+      }
+      
+      // Initialize document selection functionality
+      const documentsTable = document.getElementById("documents-table");
+      if (documentsTable) {
+        // Make sure selection mode is initially off
+        documentsTable.classList.remove('selection-mode');
+      }
+      
+      // Initialize event delegation for document checkboxes
+      document.addEventListener('click', function(event) {
+        // Handle clicks on document checkboxes
+        if (event.target.classList.contains('document-checkbox')) {
+          const documentId = event.target.getAttribute('data-document-id');
+          if (window.updateSelectedDocuments) {
+            window.updateSelectedDocuments(documentId, event.target.checked);
+          }
+        }
+      });
+      // Prompts tab
+      var promptsToggleBtn = document.getElementById("prompts-filters-toggle-btn");
+      var promptsCollapse = document.getElementById("prompts-filters-collapse");
+      if (promptsToggleBtn && promptsCollapse) {
+        promptsCollapse.addEventListener("show.bs.collapse", function() {
+          promptsToggleBtn.textContent = "Hide Search/Filters";
+        });
+        promptsCollapse.addEventListener("hide.bs.collapse", function() {
+          promptsToggleBtn.textContent = "Show Search/Filters";
+        });
+      }
+
+      // Hide upload status and progress container unless needed
+      var uploadStatus = document.getElementById("upload-status");
+      var uploadProgress = document.getElementById("workspace-upload-progress-container");
+      if (uploadStatus) uploadStatus.style.display = "none";
+      if (uploadProgress) uploadProgress.style.display = "none";
+
+      // Show them only when content is set (for status) or children exist (for progress)
+      function showUploadStatusIfNeeded() {
+        if (uploadStatus && uploadStatus.textContent.trim() !== "") {
+          uploadStatus.style.display = "";
+        } else if (uploadStatus) {
+          uploadStatus.style.display = "none";
+        }
+        if (uploadProgress && uploadProgress.children.length > 0) {
+          uploadProgress.style.display = "";
+        } else if (uploadProgress) {
+          uploadProgress.style.display = "none";
+        }
+      }
+
+      // Patch the upload logic to call showUploadStatusIfNeeded after updates
+      // (This is a fallback in case the main upload JS doesn't already do this)
+      var origSetStatus = uploadStatus && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(uploadStatus), 'textContent')?.set;
+      if (uploadStatus && origSetStatus) {
+        Object.defineProperty(uploadStatus, 'textContent', {
+          set: function(value) {
+            origSetStatus.call(this, value);
+            showUploadStatusIfNeeded();
+          },
+          get: function() {
+            return origSetStatus.get ? origSetStatus.get.call(this) : this.innerText;
+          }
+        });
+      }
+      // Also observe DOM changes to the progress container
+      if (uploadProgress) {
+        var observer = new MutationObserver(showUploadStatusIfNeeded);
+        observer.observe(uploadProgress, { childList: true, subtree: false });
+      }
+      // Initial call
+      showUploadStatusIfNeeded();
+    });
   </script>
 
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-utils.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-documents.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
 

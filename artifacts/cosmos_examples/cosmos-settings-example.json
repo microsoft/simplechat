@@ -108,6 +108,8 @@
     "enable_public_workspaces": false,
     "require_member_of_create_public_workspace": false,
     "custom_logo_base64": "<base64-encoded-logo>",
-    "logo_version": 9
+    "logo_version": 9,
+    "custom_logo_dark_base64": "<base64-encoded-dark-logo>",
+    "logo_dark_version": 1
   }
   
