@@ -5,10 +5,10 @@ After a code change, update the version
 
 Example
 Before Code Changes
-APP_VERSION = "0.224.060"
+app.config['VERSION'] = "0.224.072"
 
 After Code Changes
-APP_VERSION = "0.224.061"
+app.config['VERSION'] = "0.224.073"
 
 Only increment the third set of digits
 
