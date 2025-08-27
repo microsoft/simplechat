@@ -47,11 +47,13 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
+from route_migration import bp_migration
 
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
 app.register_blueprint(plugin_validation_bp)
+app.register_blueprint(bp_migration)
 
 # Register OpenAPI routes
 register_openapi_routes(app)

@@ -197,8 +197,16 @@ bpap = Blueprint('admin_plugins', __name__)
 @login_required
 def get_user_plugins():
     user_id = get_current_user_id()
-    user_settings = get_user_settings(user_id)
-    plugins = user_settings.get('settings', {}).get('plugins', [])
+    
+    # Import the new personal actions functions
+    from functions_personal_actions import get_personal_actions, ensure_migration_complete
+    
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_migration_complete(user_id)
+    
+    # Get plugins from the new personal_actions container
+    plugins = get_personal_actions(user_id)
+    
     # Always mark user plugins as is_global: False
     for plugin in plugins:
         plugin['is_global'] = False
@@ -224,12 +232,23 @@ def get_user_plugins():
 def set_user_plugins():
     user_id = get_current_user_id()
     plugins = request.json if isinstance(request.json, list) else []
+    
+    # Import the new personal actions functions
+    from functions_personal_actions import save_personal_action, delete_personal_action, get_personal_actions
+    
     # Get global plugin names (case-insensitive)
     settings = get_settings()
     global_plugins = settings.get('semantic_kernel_plugins', [])
     global_plugin_names = set(p['name'].lower() for p in global_plugins if 'name' in p)
+    
+    # Get current personal actions to determine what to delete
+    current_actions = get_personal_actions(user_id)
+    current_action_names = set(action['name'] for action in current_actions)
+    
     # Filter out plugins whose name matches a global plugin name
     filtered_plugins = []
+    new_plugin_names = set()
+    
     for plugin in plugins:
         if plugin.get('name', '').lower() in global_plugin_names:
             continue  # Skip global plugins
@@ -263,11 +282,23 @@ def set_user_plugins():
         validation_error = validate_plugin(plugin)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
+        
         filtered_plugins.append(plugin)
-    user_settings = get_user_settings(user_id)
-    settings_to_update = user_settings.get('settings', {})
-    settings_to_update['plugins'] = filtered_plugins
-    update_user_settings(user_id, settings_to_update)
+        new_plugin_names.add(plugin['name'])
+    
+    # Save each plugin to the personal_actions container
+    try:
+        for plugin in filtered_plugins:
+            save_personal_action(user_id, plugin)
+        
+        # Delete any plugins that are no longer in the list
+        plugins_to_delete = current_action_names - new_plugin_names
+        for plugin_name in plugins_to_delete:
+            delete_personal_action(user_id, plugin_name)
+            
+    except Exception as e:
+        current_app.logger.error(f"Error saving personal actions for user {user_id}: {e}")
+        return jsonify({'error': 'Failed to save plugins'}), 500
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
 
@@ -275,14 +306,16 @@ def set_user_plugins():
 @login_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
-    user_settings = get_user_settings(user_id)
-    plugins = user_settings.get('settings', {}).get('plugins', [])
-    new_plugins = [p for p in plugins if p['name'] != plugin_name]
-    if len(new_plugins) == len(plugins):
+    
+    # Import the new personal actions functions
+    from functions_personal_actions import delete_personal_action
+    
+    # Try to delete from personal_actions container
+    deleted = delete_personal_action(user_id, plugin_name)
+    
+    if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
-    settings_to_update = user_settings.get('settings', {})
-    settings_to_update['plugins'] = new_plugins
-    update_user_settings(user_id, settings_to_update)
+    
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
     return jsonify({'success': True})
 

@@ -143,6 +143,29 @@
   <div class="container">
     <h2>Personal Workspace</h2>
 
+    <!-- Migration Banner (Hidden by default) -->
+    <div id="migration-banner" class="alert alert-info alert-dismissible fade show" role="alert" style="display: none;">
+      <div class="d-flex align-items-center">
+        <i class="bi bi-arrow-up-circle me-2"></i>
+        <div class="flex-grow-1">
+          <strong>Data Migration Available</strong><br>
+          <small>We've found legacy agents and/or actions in your old settings. Click to migrate them to the new improved storage system for better performance and reliability.</small>
+        </div>
+        <div class="ms-3">
+          <button id="migrate-all-btn" class="btn btn-primary btn-sm me-2">
+            <i class="bi bi-arrow-up"></i> Migrate Now
+          </button>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      </div>
+      <div id="migration-progress" class="mt-2" style="display: none;">
+        <div class="progress" style="height: 4px;">
+          <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+        </div>
+        <small class="text-muted mt-1" id="migration-status-text">Preparing migration...</small>
+      </div>
+    </div>
+
     <!-- Nav Tabs -->
     <ul class="nav nav-tabs" id="workspaceTab" role="tablist">
       <li class="nav-item" role="presentation">
@@ -942,6 +965,7 @@
   <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
 
 {% endblock %}

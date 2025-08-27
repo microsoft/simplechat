@@ -160,3 +160,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 });
+
+// Expose fetchPlugins globally for migration script
+window.fetchPlugins = fetchPlugins;

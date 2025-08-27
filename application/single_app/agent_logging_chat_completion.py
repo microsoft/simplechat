@@ -348,8 +348,8 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     def _extract_from_new_messages(self, new_messages):
         """Extract tool invocations from newly added messages."""
         for message in new_messages:
+            # Check for function execution metadata
             if hasattr(message, 'metadata') and message.metadata:
-                # Check for function execution metadata
                 if 'function_name' in message.metadata or 'tool_name' in message.metadata:
                     tool_citation = {
                         "tool_name": message.metadata.get('function_name') or message.metadata.get('tool_name', 'unknown'),
@@ -358,6 +358,44 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                         "timestamp": datetime.datetime.utcnow().isoformat()
                     }
                     self.tool_invocations.append(tool_citation)
+            
+            # Check for OpenAPI function calls in message content
+            if hasattr(message, 'content') and message.content:
+                content = str(message.content)
+                # Look for OpenAPI plugin execution patterns (including errors)
+                openapi_patterns = [
+                    r"\[OpenAPI Plugin\] Calling operation: (\w+)",
+                    r"\[OpenAPI Plugin\] Successfully called (\w+)",
+                    r"\[OpenAPI Plugin\] HTTP error \d+ for (\w+)",
+                    r"\[OpenAPI Plugin\] Error calling (\w+):",
+                    r"Calling operation: (\w+) \((\w+) (.+?)\)",
+                    r"issue with the API call.*?(\w+)",
+                    r"unable to retrieve.*?information",
+                    r"API call.*?failed",
+                ]
+                
+                for pattern in openapi_patterns:
+                    matches = re.finditer(pattern, content, re.IGNORECASE)
+                    for match in matches:
+                        operation_id = match.group(1) if len(match.groups()) > 0 else 'openapi_operation'
+                        tool_citation = {
+                            "tool_name": f"openapi_{operation_id}",
+                            "function_arguments": "",
+                            "function_result": match.group()[:200],
+                            "timestamp": datetime.datetime.utcnow().isoformat()
+                        }
+                        self.tool_invocations.append(tool_citation)
+            
+            # Check for function call objects directly on the message
+            if hasattr(message, 'function_call') and message.function_call:
+                func_call = message.function_call
+                tool_citation = {
+                    "tool_name": getattr(func_call, 'name', 'unknown_function'),
+                    "function_arguments": str(getattr(func_call, 'arguments', {})),
+                    "function_result": "Function called",
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                self.tool_invocations.append(tool_citation)
     
     def _extract_from_kernel_state(self):
         """Extract tool invocations from kernel execution state."""
@@ -383,19 +421,52 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             
         # Look for common patterns that indicate tool usage
         tool_patterns = [
+            # SQL patterns
             (r"sqlschematest.*?executed", "sqlschematest"),
             (r"sqlquerytest.*?executed", "sqlquerytest"), 
             (r"Getting database schema", "sqlschematest"),
             (r"Executing.*?query", "sqlquerytest"),
             (r"Found \d+ tables", "sqlschematest"),
-            (r"SQL.*?executed", "sql_execution")
+            (r"SQL.*?executed", "sql_execution"),
+            
+            # OpenAPI patterns - successful calls
+            (r"\[OpenAPI Plugin\] Calling operation: (\w+)", "openapi_operation"),
+            (r"\[OpenAPI Plugin\] Successfully called (\w+)", "openapi_operation"),
+            (r"Calling operation: (\w+) \((\w+) (.+?)\)", "openapi_operation"),
+            (r"Successfully called (\w+)", "openapi_operation"),
+            
+            # OpenAPI patterns - error cases
+            (r"\[OpenAPI Plugin\] HTTP error \d+ for (\w+)", "openapi_error"),
+            (r"\[OpenAPI Plugin\] Error calling (\w+):", "openapi_error"),
+            (r"HTTP error \d+ for (\w+)", "openapi_error"),
+            (r"Error calling (\w+):", "openapi_error"),
+            (r"issue with the API call", "openapi_error"),
+            (r"unable to retrieve.*?information", "openapi_error"),
+            (r"API call.*?failed", "openapi_error"),
+            
+            # Generic function call patterns for OpenAPI
+            (r"call_operation\(.*?operation_id=['\"](\w+)['\"]", "openapi_call_operation"),
+            (r"(\w+)\s*\(.*?\)\s*executed", "generic_function_call"),
         ]
         
         for pattern, tool_name in tool_patterns:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
+                # For OpenAPI patterns, try to extract operation_id if available
+                if tool_name in ["openapi_operation", "openapi_error"] and len(match.groups()) > 0:
+                    operation_id = match.group(1)
+                    actual_tool_name = f"openapi_{operation_id}"
+                elif tool_name == "openapi_call_operation" and len(match.groups()) > 0:
+                    operation_id = match.group(1)
+                    actual_tool_name = f"openapi_{operation_id}"
+                elif tool_name in ["openapi_error"] and len(match.groups()) == 0:
+                    # Handle error patterns without operation_id
+                    actual_tool_name = "openapi_error"
+                else:
+                    actual_tool_name = tool_name
+                
                 tool_citation = {
-                    "tool_name": tool_name,
+                    "tool_name": actual_tool_name,
                     "function_arguments": "",
                     "function_result": match.group()[:200],
                     "timestamp": datetime.datetime.utcnow().isoformat()

@@ -18,6 +18,7 @@ from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from functions_settings import get_settings, get_user_settings
 from functions_appinsights import log_event, get_appinsights_logger
+from functions_authentication import get_current_user_id
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from flask import g
 import logging
@@ -344,6 +345,121 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     print("[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
+def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_id=None):
+    """
+    Load specific plugins by name for an agent.
+    
+    Args:
+        kernel: The Semantic Kernel instance
+        plugin_names: List of plugin names to load (from agent's actions_to_load)
+        mode_label: 'per-user' or 'global' for logging
+        user_id: User ID for per-user mode
+    """
+    if not plugin_names:
+        return
+        
+    print(f"[SK Loader] Loading {len(plugin_names)} agent-specific plugins: {plugin_names}")
+    
+    try:
+        # Get plugin manifests based on mode
+        if mode_label == "per-user":
+            from functions_personal_actions import get_personal_actions
+            if user_id:
+                all_plugin_manifests = get_personal_actions(user_id)
+                print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
+            else:
+                print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
+                all_plugin_manifests = []
+        else:
+            # Global mode - get from settings
+            settings = get_settings()
+            all_plugin_manifests = settings.get('semantic_kernel_plugins', [])
+            
+        # Filter manifests to only include requested plugins
+        plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
+        
+        if not plugin_manifests:
+            print(f"[SK Loader] Warning: No plugin manifests found for names: {plugin_names}")
+            print(f"[SK Loader] Available plugin names: {[p.get('name') for p in all_plugin_manifests]}")
+            return
+            
+        print(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests to load")
+        
+        # Load the filtered plugins
+        from semantic_kernel_plugins.plugin_loader import discover_plugins
+        discovered_plugins = discover_plugins()
+        
+        for manifest in plugin_manifests:
+            plugin_type = manifest.get('type')
+            name = manifest.get('name')
+            description = manifest.get('description', '')
+            
+            print(f"[SK Loader] Loading agent plugin: {name} (type: {plugin_type})")
+            
+            # Normalize for matching
+            def normalize(s):
+                return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
+            normalized_type = normalize(plugin_type)
+            
+            matched_class = None
+            for class_name, cls in discovered_plugins.items():
+                normalized_class = normalize(class_name)
+                if normalized_type == normalized_class or normalized_type in normalized_class:
+                    matched_class = cls
+                    break
+                    
+            if matched_class:
+                try:
+                    # Special handling for OpenAPI plugins
+                    if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
+                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+                        plugin = OpenApiPluginFactory.create_from_config(manifest)
+                        print(f"[SK Loader] Created OpenAPI plugin: {name}")
+                    else:
+                        # Standard plugin instantiation
+                        from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
+                        plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
+                            matched_class, manifest, name
+                        )
+                        
+                        if plugin_instance is None:
+                            plugin_instance = PluginErrorRecovery.create_fallback_plugin(name, plugin_type)
+                            
+                        if plugin_instance is None:
+                            raise Exception(f"Plugin creation failed: {'; '.join(instantiation_errors)}")
+                            
+                        plugin = plugin_instance
+                    
+                    # Add plugin to kernel
+                    from semantic_kernel.functions.kernel_plugin import KernelPlugin
+                    
+                    # Special handling for OpenAPI plugins with dynamic functions
+                    if hasattr(plugin, 'get_kernel_plugin'):
+                        print(f"[SK Loader] Using custom kernel plugin method for: {name}")
+                        kernel_plugin = plugin.get_kernel_plugin(name)
+                        kernel.add_plugin(kernel_plugin)
+                    else:
+                        # Standard plugin registration
+                        kernel.add_plugin(KernelPlugin.from_object(name, plugin, description=description))
+                    
+                    print(f"[SK Loader] Successfully loaded agent plugin: {name} (type: {plugin_type})")
+                    log_event(f"[SK Loader] Successfully loaded agent plugin: {name} (type: {plugin_type}) [{mode_label}]", 
+                            {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                            
+                except Exception as e:
+                    print(f"[SK Loader] Failed to load agent plugin {name}: {e}")
+                    log_event(f"[SK Loader] Failed to load agent plugin: {name}: {e}", 
+                            {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, 
+                            level=logging.ERROR, exceptionTraceback=True)
+            else:
+                print(f"[SK Loader] No matching plugin class found for: {name} (type: {plugin_type})")
+                log_event(f"[SK Loader] No matching plugin class found for: {name} (type: {plugin_type})", 
+                        {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+                        
+    except Exception as e:
+        print(f"[SK Loader] Error loading agent-specific plugins: {e}")
+        log_event(f"[SK Loader] Error loading agent-specific plugins: {e}", level=logging.ERROR, exceptionTraceback=True)
+
 def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global"):
     """
     DRY helper to load a single agent (default agent) for the kernel.
@@ -439,6 +555,14 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         return None, None
     if LoggingChatCompletionAgent and chat_service:
         print(f"[SK Loader] Creating LoggingChatCompletionAgent for {agent_config['name']}...")
+        
+        # Load agent-specific plugins into the kernel before creating the agent
+        if agent_config.get("actions_to_load"):
+            print(f"[SK Loader] Loading agent-specific plugins: {agent_config['actions_to_load']}")
+            # Get user_id directly from authentication when in per-user mode
+            user_id = get_current_user_id() if mode_label == "per-user" else None
+            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], mode_label, user_id=user_id)
+        
         try:
             kwargs = {
                 "name": agent_config["name"],
@@ -450,8 +574,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "display_name": agent_config.get('display_name') or agent_config.get('name') or "agent",
                 "default_agent": agent_config.get("default_agent", False)
             }
-            if agent_config.get("actions_to_load"):
-                kwargs["plugins"] = agent_config["actions_to_load"]
+            # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
             agent_objs[agent_config["name"]] = agent_obj
             print(f"[SK Loader] Successfully created agent {agent_config['name']}")
@@ -631,8 +754,14 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         level=logging.INFO
     )
     # Redis is now optional for per-user mode. If not present, state will not persist.
-    user_settings = get_user_settings(user_id).get('settings', {})
-    agents_cfg = user_settings.get('agents', [])
+    
+    # Load agents from personal_agents container
+    from functions_personal_agents import get_personal_agents, ensure_migration_complete
+    
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_migration_complete(user_id)
+    agents_cfg = get_personal_agents(user_id)
+    
     print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
     
     # Always mark user agents as is_global: False
@@ -655,15 +784,21 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         print(f"[SK Loader] After merging: {len(agents_cfg)} total agents")
         log_event(f"[SK Loader] Merged global agents into per-user agents: {[a.get('name') for a in agents_cfg]}", level=logging.INFO)
 
-    log_event(f"[SK Loader] Found {len(agents_cfg)} agents in user settings for user '{user_id}'.",
+    log_event(f"[SK Loader] Found {len(agents_cfg)} agents for user '{user_id}'.",
         extra={
             "user_id": user_id,
             "agents_count": len(agents_cfg),
-            "agents": agents_cfg,
-            "user_settings": user_settings
+            "agents": agents_cfg
         },
         level=logging.INFO)
-    plugin_manifests = user_settings.get('plugins', [])
+        
+    # Load plugins from personal_actions container
+    from functions_personal_actions import get_personal_actions, ensure_migration_complete
+    
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_migration_complete(user_id)
+    plugin_manifests = get_personal_actions(user_id)
+        
     # PATCH: Merge global plugins if enabled
     if merge_global:
         global_plugins = settings.get('semantic_kernel_plugins', [])
@@ -672,9 +807,40 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         all_plugins.update({p.get('name'): p for p in global_plugins})
         plugin_manifests = list(all_plugins.values())
         log_event(f"[SK Loader] Merged global plugins into per-user plugins: {[p.get('name') for p in plugin_manifests]}", level=logging.INFO)
-    # Load user+global plugins from merged list
-    load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="per-user")
-    # Only single-agent supported in per-user mode
+    
+    # DON'T load all user plugins globally - only load core plugins for per-user mode
+    # Agent-specific plugins will be loaded by the agent itself based on actions_to_load
+    # Only load core Semantic Kernel plugins here
+    if settings.get('enable_time_plugin', True):
+        load_time_plugin(kernel)
+        log_event("[SK Loader] Loaded Time plugin.", level=logging.INFO)
+
+    if settings.get('enable_fact_memory_plugin', True):
+        load_fact_memory_plugin(kernel)
+        log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
+
+    if settings.get('enable_math_plugin', True):
+        load_math_plugin(kernel)
+        log_event("[SK Loader] Loaded Math plugin.", level=logging.INFO)
+
+    if settings.get('enable_text_plugin', True):
+        load_text_plugin(kernel)
+        log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
+
+    if settings.get('enable_http_plugin', True):
+        load_http_plugin(kernel)
+        log_event("[SK Loader] Loaded HTTP plugin.", level=logging.INFO)
+
+    if settings.get('enable_wait_plugin', True):
+        load_wait_plugin(kernel)
+        log_event("[SK Loader] Loaded Wait plugin.", level=logging.INFO)
+
+    if settings.get('enable_default_embedding_model_plugin', True):
+        load_embedding_model_plugin(kernel, settings)
+        log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
+    
+    # Get selected agent from user settings (this still needs to be in user settings for UI state)
+    user_settings = get_user_settings(user_id).get('settings', {})
     selected_agent = user_settings.get('selected_agent')
     print(f"[SK Loader] User settings selected_agent: {selected_agent}")
     if isinstance(selected_agent, dict):

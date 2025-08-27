@@ -1109,8 +1109,8 @@ def register_route_backend_chats(app):
                 f"Running Semantic Kernel callable: {callable_obj.__name__}",
                 extra={
                     "callable_name": callable_obj.__name__,
-                    "args": args,
-                    "kwargs": kwargs
+                    "call_args": args,
+                    "call_kwargs": kwargs
                 }
             )
             runtime = kwargs.get("runtime", None)

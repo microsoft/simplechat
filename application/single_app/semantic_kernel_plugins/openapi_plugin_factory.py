@@ -34,7 +34,8 @@ class OpenApiPluginFactory:
         Raises:
             ValueError: If configuration is invalid
         """
-        base_url = config.get('base_url', '')
+        # Try both 'base_url' and 'endpoint' fields for backward compatibility
+        base_url = config.get('base_url') or config.get('endpoint', '')
         auth = cls._extract_auth_config(config)
         
         if not base_url:
@@ -42,6 +43,11 @@ class OpenApiPluginFactory:
         
         # Check if we have OpenAPI spec content directly in the config
         openapi_spec_content = config.get('openapi_spec_content')
+        
+        # Also check in additionalFields for compatibility
+        if not openapi_spec_content and 'additionalFields' in config:
+            openapi_spec_content = config['additionalFields'].get('openapi_spec_content')
+        
         if openapi_spec_content:
             return OpenApiPlugin(
                 base_url=base_url,

@@ -6,6 +6,18 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "Plugin unique identifier (UUID)"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "User ID that owns this personal plugin"
+        },
+        "last_updated": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        },
         "name": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]+$",

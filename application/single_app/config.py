@@ -91,7 +91,8 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = "0.224.048"
+APP_VERSION = "0.224.069"
+app.config['VERSION'] = APP_VERSION
 
 
 Session(app)
@@ -266,19 +267,6 @@ cosmos_public_prompts_container_name = "public_prompts"
 cosmos_public_prompts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_prompts_container_name,
     partition_key=PartitionKey(path="/id")
-)
-
-# Personal agents and plugins containers - partitioned by user_id
-cosmos_personal_agents_container_name = "personal_agents"
-cosmos_personal_agents_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_personal_agents_container_name,
-    partition_key=PartitionKey(path="/user_id")
-)
-
-cosmos_personal_plugins_container_name = "personal_plugins"
-cosmos_personal_plugins_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_personal_plugins_container_name,
-    partition_key=PartitionKey(path="/user_id")
 )
 
 cosmos_file_processing_container_name = "file_processing"
