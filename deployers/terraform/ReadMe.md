@@ -16,9 +16,8 @@ az account set -s '@AZURE_SUBSCRIPTION_ID'
 After logging into the target Azure subscription, execute the Initalize-AzureEnvironment.ps1 script.  This will configure items not set in the terraform script but is required for the remaining deployment steps.
 
 ```powershell
-Initialize-AzureEnvironment.ps1 -ResourceGroupName "myResourceGroup" -AzureRegion "eastus" -ACRName "myACR" -OpenAiName "myOpenAI" -AppName "myApp"
+Initialize-AzureEnvironment.ps1 -ResourceGroupName "myResourceGroup" -AzureRegion "eastus" -ACRName "myACR" -OpenAiName "myOpenAI"
 ```
-The outputs from this script should be used in the next step.
 
 ## Configure Terraform Secrets
  
@@ -28,7 +27,6 @@ Create a terraform.tfvars: Create a terraform.tfvars file (or provide via enviro
 ACR_LOGIN_SERVER = "your_acr_servername"
 ACR_USERNAME = "your_acr_username"
 ACR_PASSWORD = "your_acr_password"
-AZURE_CREDENTIALS = "credentials provided from prior step"
 
 # Optionally override other defaults
 # param_tenant_id = "your-actual-tenant-id"
@@ -64,7 +62,7 @@ acr_name = "acr8000"
 acr_resource_group_name = "sc-emma1-sbx1-rg"
 acr_username = "acr8000"
 acr_password = "@YOUR_ACR_PASSWORD"
-image_name = "rudy1simple-chat:2025-05-15_6"
+image_name = "simplechat:latest"
 
 #### SimpleChat Variables
 

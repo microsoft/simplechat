@@ -8,8 +8,7 @@ The `Initialize-AzureEnvironment.ps1` script performs the following tasks:
 2. Creates an Azure resource group if it does not already exist.
 3. Deploys an Azure Container Registry (ACR) and retrieves its credentials.
 4. Deploys an Azure OpenAI instance.
-5. Creates service principal for solution.
-6. Outputs configuration details required for GitHub Actions secrets.
+5. Outputs configuration details required for GitHub Actions secrets.
 
 .PARAMETER ResourceGroupName
 The name of the Azure resource group to create or use.
@@ -23,16 +22,10 @@ The name of the Azure Container Registry to create or use.
 .PARAMETER OpenAiName
 The name of the Azure OpenAI instance to create or use.
 
-.PARAMETER AppName
-The name of the Azure Active Directory (AAD) Service Principal to create or update.
-
-.PARAMETER ResetCredentialSecretIfExists
-(Optional) A boolean flag indicating whether to reset the Service Principal's credentials if it already exists. Defaults to `$false`.
-
 .EXAMPLE
-.\Initialize-AzureEnvironment.ps1 -ResourceGroupName "myResourceGroup" -AzureRegion "eastus" -ACRName "myACR" -OpenAiName "myOpenAI" -AppName "myApp"
+.\Initialize-AzureEnvironment.ps1 -ResourceGroupName "myResourceGroup" -AzureRegion "eastus" -ACRName "myACR" -OpenAiName "myOpenAI"
 
-This command initializes the Azure environment with the specified resource group, region, ACR, OpenAI instance, and Service Principal.
+This command initializes the Azure environment with the specified resource group, region, ACR, and OpenAI instance.
 
 .NOTES
 - Ensure that the Azure CLI is installed and available on the `PATH` before running this script.
@@ -50,12 +43,7 @@ param(
     [string]$ACRName,
 
     [Parameter(Mandatory = $true)]
-    [string]$OpenAiName,
-    
-    [Parameter(Mandatory = $true)]
-    [string]$AppName,
-
-    [bool]$ResetCredentialSecretIfExists = $false    
+    [string]$OpenAiName
 )
 
 # Ensure Azure CLI is installed
@@ -114,50 +102,35 @@ $acrLoginServer = az acr show --name $ACRName --resource-group $ResourceGroupNam
 # Step 4: Deploy Azure OpenAI instance
 $openAiExists = az cognitiveservices account show --name $OpenAiName --resource-group $ResourceGroupName --query "name" -o tsv 2>$null
 if (-not $openAiExists) {
-    az cognitiveservices account create `
-        --name $OpenAiName `
-        --resource-group $ResourceGroupName `
-        --kind OpenAI `
-        --sku S0 `
-        --location $AzureRegion `
-        --yes | Out-Null
-    Write-Host "Azure OpenAI instance '$OpenAiName' deployed."
+        $cmdOutput = az cognitiveservices account create `
+            --name $OpenAiName `
+            --resource-group $ResourceGroupName `
+            --kind OpenAI `
+            --sku S0 `
+            --location $AzureRegion `
+            --yes 2>&1
+        $exitCode = $LASTEXITCODE
+        $errMsg = $cmdOutput
+        if ($exitCode -ne 0) {
+            if ($errMsg -match "deleted"){
+                write-warning "Cognitive Services account '$OpenAiName' appears to be soft-deleted. Attempting recovery..."
+                $recoverOutput = az cognitiveservices account recover --name $OpenAiName --resource-group $ResourceGroupName --location $AzureRegion 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error "Failed to recover Cognitive Services account '$OpenAiName'. Error: $($recoverOutput | Out-String)"
+                    exit 1
+                } else {
+                    write-host "Recovered soft-deleted Cognitive Services account '$OpenAiName'."
+                }
+            } else {
+                write-error "Failed to create Cognitive Services account '$OpenAiName'. Error: $($errMsg | Out-String)"
+            }
+            
+        } else {
+            Write-Host "Azure OpenAI instance '$OpenAiName' deployed."
+        }    
 } else {
     Write-Warning "Azure OpenAI instance '$OpenAiName' already exists."
 }
-
-# Step 5: Create Service Principal used during deployment pipelines
-$existingApp = az ad app list --filter "displayName eq '$AppName'" | ConvertFrom-Json
-$showAppConfig = $false
-
-if ($existingApp.Count -gt 0) {
-    $existingAppId = $existingApp[0].appId
-    # application already exists - reset secret
-    if ($ResetCredentialSecretIfExists -eq $true){
-        $sp = az ad app credential reset --id $existingAppId --append  | ConvertFrom-Json 
-        Write-Host "Service Principal '$AppName' credentials reset."
-        $showAppConfig = $true
-    } else {
-        Write-Warning "Service principal '$AppName' already exists, but credentials were not reset."
-    }
-    $appId = $existingApp[0].appId
-    #$appObjectId = $existingApp[0].id
-} else {
-    # Create Azure AD Application
-    Write-Host "Creating Service Principal: $AppName..."
-    $sp = az ad sp create-for-rbac --name $AppName --role Contributor --scopes /subscriptions/$subscription | ConvertFrom-Json    
-    $showAppConfig = $true
-    $appId = $sp.appId
-    #$appObjectId = (az ad app list --filter "appId eq '$appId'" | ConvertFrom-Json)[0].id
-}
-
-# Step 6: Display output needed for GitHub Actions.
-$outputSP = @{
-    clientSecret = $sp.password
-    subscriptionId = $subscription
-    tenantId = $sp.tenant
-    clientId = $appId
-} | ConvertTo-Json
 
 Write-Host "***************************************************"
 Write-Host "The information provided below must be configured"
@@ -166,8 +139,5 @@ Write-Host "***************************************************"
 Write-Host "ACR_LOGIN_SERVER: $acrLoginServer"
 Write-Host "ACR_PASSWORD: $acrPassword"
 Write-Host "ACR_USERNAME: $acrUsername"
-if ($showAppConfig) {
-    Write-Host "AZURE_CREDENTIALS: $outputSP"
-}
 Write-Host "***************************************************"
 Write-Host "Azure environment initialization complete."
