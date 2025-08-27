@@ -321,6 +321,7 @@ resource "azurerm_storage_account" "sa" {
   access_tier              = "Hot"
   allow_nested_items_to_be_public =  false
   public_network_access_enabled = false # From script's allow-blob-public-access false
+  shared_access_key_enabled = true
   tags                     = local.common_tags
 }
 
