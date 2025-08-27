@@ -48,6 +48,15 @@ class BasePlugin(ABC):
     @abstractmethod
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         self.manifest = manifest or {}
+        self._enable_logging = True  # Enable plugin invocation logging by default
+
+    def enable_invocation_logging(self, enabled: bool = True):
+        """Enable or disable plugin invocation logging for this plugin."""
+        self._enable_logging = enabled
+
+    def is_logging_enabled(self) -> bool:
+        """Check if plugin invocation logging is enabled."""
+        return getattr(self, '_enable_logging', True)
 
     def get_functions(self) -> List[str]:
         """

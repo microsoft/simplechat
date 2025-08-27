@@ -1,4 +1,6 @@
 
+
+import json
 from pydantic import Field
 from semantic_kernel.agents import ChatCompletionAgent
 from functions_appinsights import log_event
@@ -38,37 +40,50 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             }
         )
     
-    def monkey_patch_kernel_functions(self):
-        """Monkey patch kernel functions to capture their execution."""
+    def patch_plugin_methods(self):
+        """Patch plugin methods to capture their execution for ALL plugins, logging command and output like SQLAgent."""
         if hasattr(self, 'kernel') and self.kernel and hasattr(self.kernel, 'plugins'):
             for plugin_name, plugin in self.kernel.plugins.items():
-                if 'sql' in plugin_name.lower():
-                    # Patch the execute_query and get_database_schema functions
-                    if hasattr(plugin, 'execute_query'):
-                        original_execute_query = plugin.execute_query
-                        def patched_execute_query(*args, **kwargs):
-                            try:
-                                result = original_execute_query(*args, **kwargs)
-                                # Log the execution
-                                query_arg = args[0] if args else kwargs.get('query', 'Unknown query')
-                                self.log_tool_execution('sqlquerytest', f"query: '{query_arg}'", f"Executed query successfully, result type: {type(result)}")
-                                return result
-                            except Exception as e:
-                                self.log_tool_execution('sqlquerytest', f"query: {args[0] if args else 'Unknown'}", f"Query failed: {str(e)}")
-                                raise
-                        plugin.execute_query = patched_execute_query
-                    
-                    if hasattr(plugin, 'get_database_schema'):
-                        original_get_schema = plugin.get_database_schema
-                        def patched_get_schema(*args, **kwargs):
-                            try:
-                                result = original_get_schema(*args, **kwargs)
-                                self.log_tool_execution('sqlschematest', f"include_system_tables: {kwargs.get('include_system_tables', False)}", f"Retrieved database schema successfully")
-                                return result
-                            except Exception as e:
-                                self.log_tool_execution('sqlschematest', f"schema request", f"Schema retrieval failed: {str(e)}")
-                                raise
-                        plugin.get_database_schema = patched_get_schema
+                for attr in dir(plugin):
+                    if attr.startswith('_') or attr in ['__class__', '__dict__', '__module__', '__weakref__']:
+                        continue
+                    method = getattr(plugin, attr)
+                    if callable(method):
+                        original_method = method
+                        def make_patched_method(attr_name, orig_method):
+                            def patched_method(*args, **kwargs):
+                                try:
+                                    result = orig_method(*args, **kwargs)
+                                    # Try to extract a meaningful command/operation string
+                                    command_str = attr_name
+                                    if args and hasattr(args[0], '__class__'):
+                                        command_str += f"({', '.join([str(a) for a in args])})"
+                                    elif kwargs:
+                                        command_str += f"({', '.join([f'{k}={v}' for k, v in kwargs.items()])})"
+                                    # Try to format the result for readability
+                                    result_str = str(result)
+                                    if isinstance(result, (list, dict)):
+                                        result_str = json.dumps(result, default=str)[:500]
+                                    else:
+                                        result_str = str(result)[:500]
+                                    self.log_tool_execution(
+                                        f"{plugin_name}.{attr_name}",
+                                        f"command: {command_str}",
+                                        f"output: {result_str}"
+                                    )
+                                    return result
+                                except Exception as e:
+                                    self.log_tool_execution(
+                                        f"{plugin_name}.{attr_name}",
+                                        f"command: {attr_name}",
+                                        f"Error: {str(e)}"
+                                    )
+                                    raise
+                            return patched_method
+                        try:
+                            setattr(plugin, attr, make_patched_method(attr, original_method))
+                        except Exception:
+                            continue
     
     def infer_sql_query_from_context(self, user_question, response_content):
         """Infer the likely SQL query based on user question and response."""
@@ -234,25 +249,30 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 "prompt": [m.content[:30] for m in args[0]] if args else None
             }
         )
-        
+
+        print(f"[Logging Agent Request] Agent: {self.name}")
+        print(f"[Logging Agent Request] Prompt: {[m.content[:30] for m in args[0]] if args else None}")
+
         # Store user question context for better tool detection
         if args and args[0] and hasattr(args[0][-1], 'content'):
             self._user_question = args[0][-1].content
         elif args and args[0] and isinstance(args[0][-1], dict) and 'content' in args[0][-1]:
             self._user_question = args[0][-1]['content']
         
-        # Apply monkey patching to capture function calls
+        # Apply patching to capture function calls
         try:
-            self.monkey_patch_kernel_functions()
+            self.patch_plugin_methods()
         except Exception as e:
-            log_event(f"[Agent Citations] Error applying monkey patches: {e}", level="WARNING")
+            log_event(f"[Agent Citations] Error applying plugin patches: {e}", level="WARNING")
         
         response = None
         try:
             # Store initial message count to detect new messages from tool usage
             initial_message_count = len(args[0]) if args and args[0] else 0
-            
             result = super().invoke(*args, **kwargs)
+
+            print(f"[Logging Agent Request] Result: {result}")
+            
             if hasattr(result, "__aiter__"):
                 # Streaming/async generator response
                 response_chunks = []
@@ -262,13 +282,21 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             else:
                 # Regular coroutine response
                 response = await result
-            
+
+            print(f"[Logging Agent Request] Response: {response}")
+
             # Store the response for analysis
             self._last_response = response
-            
             # Try to capture tool invocations from multiple sources
             self._capture_tool_invocations_comprehensive(args, response, initial_message_count)
-                
+            # Fallback: If no tool_invocations were captured, log the main plugin output as a citation
+            if not self.tool_invocations and response and hasattr(response, 'content'):
+                self.tool_invocations.append({
+                    "tool_name": getattr(self, 'name', 'unknown_agent'),
+                    "function_arguments": str(args[-1]) if args else "",
+                    "function_result": str(response.content)[:500],
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                })
             return response
         finally:
             usage = getattr(response, "usage", None)

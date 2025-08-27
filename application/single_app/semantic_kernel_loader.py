@@ -20,6 +20,8 @@ from functions_settings import get_settings, get_user_settings
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
+from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from flask import g
 import logging
 import importlib

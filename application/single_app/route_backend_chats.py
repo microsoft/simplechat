@@ -179,7 +179,7 @@ def register_route_backend_chats(app):
              return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
 
         # ---------------------------------------------------------------------
-# region        # 1) Load or create conversation
+        # 1) Load or create conversation
         # ---------------------------------------------------------------------
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
@@ -249,7 +249,7 @@ def register_route_backend_chats(app):
             print(f"New conversation - using legacy logic: {actual_chat_type}")
 
         # ---------------------------------------------------------------------
-# region        # 2) Append the user message to conversation immediately
+        # 2) Append the user message to conversation immediately
         # ---------------------------------------------------------------------
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
         
@@ -418,7 +418,7 @@ def register_route_backend_chats(app):
         cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
 
         # ---------------------------------------------------------------------
-# region        # 3) Check Content Safety (but DO NOT return 403).
+        # 3) Check Content Safety (but DO NOT return 403).
         #    If blocked, add a "safety" role message & skip GPT.
         # ---------------------------------------------------------------------
         blocked = False
@@ -524,7 +524,7 @@ def register_route_backend_chats(app):
                 print(f"[Content Safety] Unexpected error: {ex}")
 
         # ---------------------------------------------------------------------
-# region        # 4) Augmentation (Search, Bing, etc.) - Run *before* final history prep
+        # 4) Augmentation (Search, Bing, etc.) - Run *before* final history prep
         # ---------------------------------------------------------------------
         
         # Hybrid Search
@@ -882,7 +882,7 @@ def register_route_backend_chats(app):
                 }), 500
 
         # ---------------------------------------------------------------------
-# region        # 5) Prepare FINAL conversation history for GPT (including summarization)
+        # 5) Prepare FINAL conversation history for GPT (including summarization)
         # ---------------------------------------------------------------------
         conversation_history_for_api = []
         summary_of_older = ""
@@ -972,6 +972,14 @@ def register_route_backend_chats(app):
                 }
                 cosmos_messages_container.upsert_item(system_doc)
                 conversation_history_for_api.append(aug_msg) # Add to API context
+
+                # --- NEW: Save plugin output as agent citation ---
+                agent_citations_list.append({
+                    "tool_name": str(selected_agent.name) if selected_agent else "unknown_agent",
+                    "function_arguments": json.dumps(aug_msg, default=str),
+                    "function_result": aug_msg.get('content', ''),
+                    "timestamp": datetime.utcnow().isoformat()
+                })
 
 
             # Add the recent messages (user, assistant, relevant system/file messages)
@@ -1293,6 +1301,8 @@ def register_route_backend_chats(app):
                 )
                 for msg in conversation_history_for_api
             ]
+
+            print(f"[Agent] Agent message history: {agent_message_history}")
             # --- Fallback Chain Steps ---
             if enable_multi_agent_orchestration and all_agents and "orchestrator" in all_agents and not per_user_semantic_kernel:
                 def invoke_orchestrator():
@@ -1345,7 +1355,12 @@ def register_route_backend_chats(app):
                                 "tools": [inv.get('tool_name', 'unknown') for inv in tool_invocations]
                             }
                         )
-                    
+
+                        print(f"[Agent Citations] Agent used: {agent_used}")
+                        print(f"[Agent Citations] Extracted tool invocations: {tool_invocations}")
+                        for inv in tool_invocations:
+                            print(f"[Agent Citations] - Tool: {inv.get('tool_name', 'unknown')}, Args: {inv.get('function_arguments', 'none')}, Result: {inv.get('function_result', 'none')}")
+
                     # Store tool invocations globally to be accessed by the calling function
                     # Using a pattern similar to how other data flows through the system
                     agent_citations_list.extend(tool_invocations)
