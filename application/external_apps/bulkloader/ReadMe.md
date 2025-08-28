@@ -1,4 +1,6 @@
-# ReadMe.md
+# Simple Chat - Bulk Uploader
+
+Tool used to assist users with the bulk loading of documents into a group for use within Simple Chat application.
 
 ```python
 pip freeze > requirements.txt
