@@ -1343,27 +1343,55 @@ def register_route_backend_chats(app):
                     notice = None
                     agent_used = getattr(selected_agent, 'name', 'agent')
                     
-                    # Extract tool invocations for agent citations
-                    tool_invocations = []
-                    if hasattr(selected_agent, 'tool_invocations'):
-                        tool_invocations = selected_agent.tool_invocations
-                        log_event(
-                            f"[Agent Citations] Extracted {len(tool_invocations)} tool invocations from agent",
-                            extra={
-                                "agent": agent_used,
-                                "tool_count": len(tool_invocations),
-                                "tools": [inv.get('tool_name', 'unknown') for inv in tool_invocations]
-                            }
-                        )
+                    # Extract detailed plugin invocations for enhanced agent citations
+                    plugin_logger = get_plugin_logger()
+                    plugin_invocations = plugin_logger.get_recent_invocations()
+                    
+                    # Convert plugin invocations to citation format with detailed information
+                    detailed_citations = []
+                    for inv in plugin_invocations:
+                        # Handle timestamp formatting safely
+                        timestamp_str = None
+                        if inv.timestamp:
+                            if hasattr(inv.timestamp, 'isoformat'):
+                                timestamp_str = inv.timestamp.isoformat()
+                            else:
+                                timestamp_str = str(inv.timestamp)
+                        
+                        citation = {
+                            'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                            'function_name': inv.function_name,
+                            'plugin_name': inv.plugin_name,
+                            'function_arguments': inv.parameters,
+                            'function_result': inv.result,
+                            'duration_ms': inv.duration_ms,
+                            'timestamp': timestamp_str,
+                            'success': inv.success,
+                            'error_message': inv.error_message,
+                            'user_id': inv.user_id
+                        }
+                        detailed_citations.append(citation)
+                    
+                    log_event(
+                        f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations",
+                        extra={
+                            "agent": agent_used,
+                            "plugin_count": len(detailed_citations),
+                            "plugins": [f"{inv.plugin_name}.{inv.function_name}" for inv in plugin_invocations],
+                            "total_duration_ms": sum(inv.duration_ms for inv in plugin_invocations if inv.duration_ms)
+                        }
+                    )
 
-                        print(f"[Agent Citations] Agent used: {agent_used}")
-                        print(f"[Agent Citations] Extracted tool invocations: {tool_invocations}")
-                        for inv in tool_invocations:
-                            print(f"[Agent Citations] - Tool: {inv.get('tool_name', 'unknown')}, Args: {inv.get('function_arguments', 'none')}, Result: {inv.get('function_result', 'none')}")
+                    print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
+                    print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
+                    for citation in detailed_citations:
+                        print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
+                        print(f"  Parameters: {citation['function_arguments']}")
+                        print(f"  Result: {citation['function_result']}")
+                        print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
 
-                    # Store tool invocations globally to be accessed by the calling function
-                    # Using a pattern similar to how other data flows through the system
-                    agent_citations_list.extend(tool_invocations)
+                    # Store detailed citations globally to be accessed by the calling function
+                    agent_citations_list.extend(detailed_citations)
                     
                     if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                         # If the agent response indicates fallback mode
