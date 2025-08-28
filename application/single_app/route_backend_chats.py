@@ -7,6 +7,7 @@ from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecut
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel_fact_memory_store import FactMemoryStore
 from semantic_kernel_loader import initialize_semantic_kernel
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 import builtins
 import asyncio, types
 import json
@@ -1302,7 +1303,6 @@ def register_route_backend_chats(app):
                 for msg in conversation_history_for_api
             ]
 
-            print(f"[Agent] Agent message history: {agent_message_history}")
             # --- Fallback Chain Steps ---
             if enable_multi_agent_orchestration and all_agents and "orchestrator" in all_agents and not per_user_semantic_kernel:
                 def invoke_orchestrator():

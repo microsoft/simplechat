@@ -2,6 +2,7 @@ from typing import Dict, Any, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from azure.storage.queue import QueueClient
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from azure.identity import DefaultAzureCredential
 
 class QueueStoragePlugin(BasePlugin):
@@ -48,6 +49,7 @@ class QueueStoragePlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return ["send_message"]
 
+    @plugin_function_logger("QueueStoragePlugin")
     @kernel_function(description="Send a message to the configured Azure Storage Queue.")
     def send_message(self, message: str) -> str:
         resp = self.queue_client.send_message(message)

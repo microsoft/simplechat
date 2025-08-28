@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 from datetime import timedelta
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from config import *
 import json
 import logging
@@ -228,6 +229,7 @@ class LogAnalyticsPlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return [m["name"] for m in self._metadata["methods"]]
     
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Return a dictionary of all tables and their schemas (column names and types, including Properties virtual columns) in the connected Azure Log Analytics workspace. This combines list_tables and get_table_schema for efficient schema discovery.")
     def get_all_table_schemas(self) -> Dict[str, Dict[str, str]]:
         """
@@ -244,6 +246,7 @@ class LogAnalyticsPlugin(BasePlugin):
         logging.debug(f"[LA] get_all_table_schemas: {list(all_schemas.keys())}")
         return all_schemas
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Return the names of all tables in the connected Azure Log Analytics workspace that have data in the last 365 days. Use this function first to discover which tables are available before attempting to query or get schemas for specific tables.")
     def list_tables(self) -> Any:
         logging.debug("[LA] Listing tables")
@@ -299,6 +302,7 @@ class LogAnalyticsPlugin(BasePlugin):
             logging.debug(f"[LA] list_tables output could not be JSON serialized: {e}")
         return tables
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Get the schema (column names and data types) for a specific table. Call this multiple times looping through tables discovered by list_tables to discover valid columns and data types before constructing or validating queries, ensuring that all column names used in queries are correct and exist in the table.")
     def get_table_schema(self, table_name: str) -> Any:
         logging.debug(f"[LA] Getting schema for table: {table_name}")
@@ -389,6 +393,7 @@ class LogAnalyticsPlugin(BasePlugin):
                 logging.debug(f"[LA] get_table_schema: Could not extract keys for {dyn_col}: {e}")
         return schema
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Execute a KQL (Kusto Query Language) query against a specific table in the Log Analytics workspace and return the results as a list of rows (each as a dictionary of column values). Use this function after discovering available tables and their schemas to retrieve data. Accepts an optional timespan parameter to limit the query window as a timedelta, tuple of datetimes, or number of hours. Limitations on returns should be specified in the query (ex: take N). Always provide user_id to enable saving the query to Cosmos DB for user history tracking.")
     def run_query(
         self,
@@ -476,6 +481,7 @@ class LogAnalyticsPlugin(BasePlugin):
             if user_id:
                 self._save_query_history_to_cosmos(user_id, query)
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Summarize a result set for LLM consumption, including row count and column names.")
     def summarize_results(self, results: List[Dict[str, Any]]) -> str:
         if not results:
@@ -484,6 +490,7 @@ class LogAnalyticsPlugin(BasePlugin):
         summary = f"Rows: {len(results)}\nColumns: {', '.join(columns)}\nSample: {results[0]}"
         return summary
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Return the last N queries run by this plugin instance. They should be numbered for the user to allow easy selection.")
     def get_query_history(self, limit: int = 20, user_id: Optional[str] = None) -> List[str]:
         if not user_id:
@@ -544,6 +551,7 @@ class LogAnalyticsPlugin(BasePlugin):
         self.additional_fields['query_history'] = []
         return []
 
+    @plugin_function_logger("LogAnalyticsPlugin")
     @kernel_function(description="Validate a KQL query for basic safety and allowed patterns.")
     def validate_query(self, query: str) -> bool:
         # Basic validation: block dangerous commands, allow only select/read queries

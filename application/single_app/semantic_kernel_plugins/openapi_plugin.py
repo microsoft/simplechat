@@ -54,6 +54,7 @@ import logging
 from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
 class OpenApiPlugin(BasePlugin):
     def __init__(self, 
@@ -207,6 +208,7 @@ class OpenApiPlugin(BasePlugin):
         # Expose all operationIds as functions (for UI listing)
         return [m["name"] for m in self._metadata["methods"]] + ["call_operation"]
     
+    @plugin_function_logger("OpenApiPlugin")
     @kernel_function(
         description="List all available API operations with their details including operation IDs, descriptions, and parameters"
     )
@@ -214,6 +216,7 @@ class OpenApiPlugin(BasePlugin):
         """Get a list of all available operations with their details."""
         return self._metadata["methods"]
     
+    @plugin_function_logger("OpenApiPlugin")
     @kernel_function(
         description="List just the names of all available API operations"
     )
@@ -310,7 +313,10 @@ class OpenApiPlugin(BasePlugin):
                     # Get operation description
                     description = op_data.get("description", op_data.get("summary", f"{op_method.upper()} {op_path}"))
                     
-                    # Add kernel_function decorator
+                    # Apply plugin function logger decorator FIRST for detailed logging
+                    operation_function = plugin_function_logger("OpenApiPlugin")(operation_function)
+                    
+                    # Then add kernel_function decorator
                     operation_function = kernel_function(description=description)(operation_function)
                     return operation_function
                 
@@ -552,6 +558,7 @@ class OpenApiPlugin(BasePlugin):
         self.function_calls.append(call_data)
         logging.info(f"[OpenAPI Plugin] Tracked function call: {operation_id} ({duration:.3f}s) -> {url}")
 
+    @plugin_function_logger("OpenApiPlugin")
     @kernel_function(
         description="Call any OpenAPI operation by operation_id and parameters. Example: call_operation(operation_id='getUserById', user_id='123')"
     )
