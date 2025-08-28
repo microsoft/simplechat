@@ -150,7 +150,7 @@ def delete_user_agent(agent_name):
         found = any(a.get('name') == global_selected_name for a in remaining_agents)
         if not found:
             return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-    
+  
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 

@@ -35,3 +35,4 @@ flask_session
 /package-lock.json
 /package.json
 application/single_app/static/.DS_Store
+application/external_apps/bulkloader/map.csv
