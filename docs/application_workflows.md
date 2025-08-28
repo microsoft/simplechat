@@ -1,7 +1,7 @@
 # Simple Chat - Application workflows
 
-- [Content Safety](#content-safety)
-- [Add your data (RAG Ingestion)](#add-your-data)
+- [Content Safety](#content-safety---workflow)
+- [Add your data (RAG Ingestion)](#add-your-data-rag-ingestion)
 
 - [Return to Main](../README.md)
 

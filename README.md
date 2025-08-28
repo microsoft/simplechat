@@ -18,7 +18,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 - [Roadmap (as of 8/20/25)](https://github.com/microsoft/simplechat/discussions/133)
 - [Application Workflow](./docs/application_workflows.md)
   - [Content Safety](./docs/application_workflows.md#content-safety---workflow)
-  - [Add your data (RAG Ingestion)](./docs/application_workflows.md#add-your-data)
+  - [Add your data (RAG Ingestion)](./docs/application_workflows.md#add-your-data-rag-ingestion)
 - [Demos](./docs/demos.md)
   - [Upload document and review metadata](./docs/demos.md#upload-document-and-review-metadata)
   - [Classify document and chat with content](./docs/demos.md#classify-document-and-chat-with-content)
