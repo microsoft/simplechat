@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from functions_appinsights import log_event
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
 # Helper class to wrap results with metadata
 class ResultWithMetadata:
@@ -216,6 +217,7 @@ class SQLSchemaPlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return ["get_database_schema", "get_table_schema", "get_table_list", "get_relationships"]
 
+    @plugin_function_logger("SQLSchemaPlugin")
     @kernel_function(description="Get complete database schema including all tables, columns, and relationships")
     def get_database_schema(
         self, 
@@ -331,6 +333,7 @@ class SQLSchemaPlugin(BasePlugin):
             raise
 
     @kernel_function(description="Get detailed schema for a specific table")
+    @plugin_function_logger("SQLSchemaPlugin")
     def get_table_schema(self, table_name: str) -> ResultWithMetadata:
         """Get detailed schema for a specific table"""
         try:
@@ -347,6 +350,7 @@ class SQLSchemaPlugin(BasePlugin):
             raise
 
     @kernel_function(description="Get list of all tables in the database")
+    @plugin_function_logger("SQLSchemaPlugin")
     def get_table_list(
         self, 
         include_system_tables: bool = False,

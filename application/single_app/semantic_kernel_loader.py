@@ -349,7 +349,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
 
 def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_id=None):
     """
-    Load specific plugins by name for an agent.
+    Load specific plugins by name for an agent with enhanced logging.
     
     Args:
         kernel: The Semantic Kernel instance
@@ -363,6 +363,9 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
     print(f"[SK Loader] Loading {len(plugin_names)} agent-specific plugins: {plugin_names}")
     
     try:
+        # Create logged plugin loader for enhanced logging
+        logged_loader = create_logged_plugin_loader(kernel)
+        
         # Get plugin manifests based on mode
         if mode_label == "per-user":
             from functions_personal_actions import get_personal_actions
@@ -387,7 +390,78 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             
         print(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests to load")
         
-        # Load the filtered plugins
+        # Use logged plugin loader for enhanced logging
+        print(f"[SK Loader] Using logged plugin loader for enhanced logging")
+        results = logged_loader.load_multiple_plugins(plugin_manifests, user_id)
+        
+        successful_count = sum(1 for success in results.values() if success)
+        total_count = len(results)
+        
+        print(f"[SK Loader] Logged plugin loader results: {successful_count}/{total_count} successful")
+        if results:
+            for plugin_name, success in results.items():
+                print(f"[SK Loader] Plugin {plugin_name}: {'SUCCESS' if success else 'FAILED'}")
+        
+        log_event(
+            f"[SK Loader] Agent-specific plugins loaded: {successful_count}/{total_count} with enhanced logging [{mode_label}]",
+            extra={
+                "mode": mode_label,
+                "user_id": user_id,
+                "requested_plugins": plugin_names,
+                "successful_plugins": [name for name, success in results.items() if success],
+                "failed_plugins": [name for name, success in results.items() if not success],
+                "total_plugins": total_count
+            },
+            level=logging.INFO
+        )
+        
+        # Fallback to original method if logged loader fails completely
+        if successful_count == 0 and total_count > 0:
+            print(f"[SK Loader] WARNING: Logged plugin loader failed for all plugins, falling back to original method")
+            log_event("[SK Loader] Falling back to original plugin loading method for agent plugins", level=logging.WARNING)
+            _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
+        else:
+            print(f"[SK Loader] Logged plugin loader completed successfully: {successful_count}/{total_count}")
+        
+    except Exception as e:
+        log_event(
+            f"[SK Loader] Error in agent-specific plugin loading: {e}",
+            extra={"error": str(e), "mode": mode_label, "user_id": user_id, "plugin_names": plugin_names},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        
+        # Fallback to original method
+        log_event("[SK Loader] Falling back to original plugin loading method due to error", level=logging.WARNING)
+        try:
+            # Get plugin manifests again for fallback
+            if mode_label == "per-user":
+                from functions_personal_actions import get_personal_actions
+                if user_id:
+                    all_plugin_manifests = get_personal_actions(user_id)
+                else:
+                    all_plugin_manifests = []
+            else:
+                settings = get_settings()
+                all_plugin_manifests = settings.get('semantic_kernel_plugins', [])
+                
+            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
+            _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
+        except Exception as fallback_error:
+            log_event(
+                f"[SK Loader] Fallback plugin loading also failed: {fallback_error}",
+                extra={"error": str(fallback_error), "mode": mode_label, "user_id": user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True
+            )
+
+
+def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
+    """
+    Original agent plugin loading method as fallback.
+    """
+    try:
+        # Load the filtered plugins using original method
         from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()
         
@@ -395,8 +469,6 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             plugin_type = manifest.get('type')
             name = manifest.get('name')
             description = manifest.get('description', '')
-            
-            print(f"[SK Loader] Loading agent plugin: {name} (type: {plugin_type})")
             
             # Normalize for matching
             def normalize(s):
@@ -619,6 +691,9 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    # Create logged plugin loader for enhanced logging
+    logged_loader = create_logged_plugin_loader(kernel)
+    
     if settings.get('enable_time_plugin', True):
         load_time_plugin(kernel)
         log_event("[SK Loader] Loaded Time plugin.", level=logging.INFO)
@@ -680,9 +755,54 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             log_event(f"[SK Loader] Failed to load static Embedding Model Plugin: {e}", level=logging.WARNING)
     else:
         log_event("[SK Loader] Default EmbeddingModelPlugin not enabled in settings.", level=logging.INFO)
+    
     if not plugin_manifests:
         log_event(f"[SK Loader] No plugins to load for {mode_label} mode.", level=logging.INFO)
         return
+    
+    # Use the logged plugin loader for custom plugins
+    try:
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+        except Exception:
+            pass  # User ID is optional for plugin loading
+        
+        # Load plugins with enhanced logging
+        results = logged_loader.load_multiple_plugins(plugin_manifests, user_id)
+        
+        successful_count = sum(1 for success in results.values() if success)
+        total_count = len(results)
+        
+        log_event(
+            f"[SK Loader] Loaded {successful_count}/{total_count} custom plugins with invocation logging enabled [{mode_label}]",
+            extra={
+                "mode": mode_label,
+                "successful_plugins": [name for name, success in results.items() if success],
+                "failed_plugins": [name for name, success in results.items() if not success],
+                "total_plugins": total_count,
+                "user_id": user_id
+            },
+            level=logging.INFO
+        )
+        
+    except Exception as e:
+        log_event(
+            f"[SK Loader] Error loading plugins with logged loader for {mode_label} mode: {e}", 
+            extra={"error": str(e), "mode": mode_label}, 
+            level=logging.ERROR, 
+            exceptionTraceback=True
+        )
+        
+        # Fallback to original plugin loading method
+        log_event("[SK Loader] Falling back to original plugin loading method", level=logging.WARNING)
+        _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label)
+
+
+def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label="global"):
+    """
+    Original plugin loading method as fallback.
+    """
     try:
         from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()

@@ -42,6 +42,9 @@ class LoggedPluginLoader:
         plugin_name = manifest.get('name')
         plugin_type = manifest.get('type')
         
+        # Debug logging
+        log_event(f"[Logged Plugin Loader] Starting to load plugin: {plugin_name} (type: {plugin_type})")
+        
         if not plugin_name:
             self.logger.error("Plugin manifest missing required 'name' field")
             return False
@@ -58,7 +61,12 @@ class LoggedPluginLoader:
             
             # Auto-wrap plugin functions with logging
             if isinstance(plugin_instance, BasePlugin):
+                print(f"[Logged Plugin Loader] Wrapping functions for BasePlugin: {plugin_name}")
+                log_event(f"[Logged Plugin Loader] Wrapping functions for BasePlugin: {plugin_name}")
                 self._wrap_plugin_functions(plugin_instance, plugin_name)
+            else:
+                print(f"[Logged Plugin Loader] Plugin {plugin_name} is not a BasePlugin: {type(plugin_instance)}")
+                log_event(f"[Logged Plugin Loader] Plugin {plugin_name} is not a BasePlugin: {type(plugin_instance)}")
             
             # Register the plugin with the kernel
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
@@ -102,17 +110,45 @@ class LoggedPluginLoader:
             return self._create_python_plugin(manifest)
         elif plugin_type == 'custom':
             return self._create_custom_plugin(manifest)
+        elif plugin_type in ['sql_schema', 'sql_query']:
+            return self._create_sql_plugin(manifest)
         else:
             self.logger.warning(f"Unknown plugin type: {plugin_type} for plugin: {plugin_name}")
             return None
     
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
+        plugin_name = manifest.get('name')
+        print(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}")
+        
         try:
             from semantic_kernel_plugins.openapi_plugin import OpenApiPlugin
-            return OpenApiPlugin(manifest)
+            print(f"[Logged Plugin Loader] Successfully imported OpenApiPlugin")
+            
+            # Extract required parameters from manifest
+            base_url = manifest.get('base_url', '')
+            auth = manifest.get('auth', {})
+            openapi_spec_content = manifest.get('openapi_spec_content')
+            openapi_spec_path = manifest.get('openapi_spec_path')
+            
+            print(f"[Logged Plugin Loader] Creating OpenAPI plugin with base_url: {base_url}")
+            
+            plugin_instance = OpenApiPlugin(
+                base_url=base_url,
+                auth=auth,
+                manifest=manifest,
+                openapi_spec_path=openapi_spec_path,
+                openapi_spec_content=openapi_spec_content
+            )
+            print(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance")
+            return plugin_instance
         except ImportError as e:
+            print(f"[Logged Plugin Loader] ImportError creating OpenAPI plugin: {e}")
             self.logger.error(f"Failed to import OpenApiPlugin: {e}")
+            return None
+        except Exception as e:
+            print(f"[Logged Plugin Loader] General error creating OpenAPI plugin: {e}")
+            self.logger.error(f"Failed to create OpenAPI plugin: {e}")
             return None
     
     def _create_python_plugin(self, manifest: Dict[str, Any]):
@@ -138,10 +174,41 @@ class LoggedPluginLoader:
         self.logger.warning(f"Custom plugin type not yet implemented: {manifest}")
         return None
     
+    def _create_sql_plugin(self, manifest: Dict[str, Any]):
+        """Create a SQL plugin instance."""
+        plugin_type = manifest.get('type')
+        
+        try:
+            if plugin_type == 'sql_schema':
+                from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
+                return SQLSchemaPlugin(manifest)
+            elif plugin_type == 'sql_query':
+                from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
+                return SQLQueryPlugin(manifest)
+            else:
+                self.logger.error(f"Unknown SQL plugin type: {plugin_type}")
+                return None
+        except ImportError as e:
+            self.logger.error(f"Failed to import SQL plugin class for {plugin_type}: {e}")
+            return None
+    
     def _wrap_plugin_functions(self, plugin_instance, plugin_name: str):
         """Wrap all kernel functions in a plugin with logging."""
+        print(f"[Logged Plugin Loader] Checking logging status for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Checking logging status for plugin: {plugin_name}")
+        
         if not hasattr(plugin_instance, 'is_logging_enabled') or not plugin_instance.is_logging_enabled():
+            print(f"[Logged Plugin Loader] Plugin {plugin_name} does not have logging enabled")
+            log_event(f"[Logged Plugin Loader] Plugin {plugin_name} does not have logging enabled")
             return
+        
+        print(f"[Logged Plugin Loader] Starting to wrap functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin: {plugin_name}")
+        wrapped_count = 0
+        
+        # Debug: List all attributes
+        all_attrs = [attr for attr in dir(plugin_instance) if not attr.startswith('_')]
+        print(f"[Logged Plugin Loader] Plugin {plugin_name} has {len(all_attrs)} public attributes: {all_attrs[:10]}...")
         
         # Find and wrap all kernel functions
         for attr_name in dir(plugin_instance):
@@ -149,6 +216,12 @@ class LoggedPluginLoader:
                 continue
                 
             attr = getattr(plugin_instance, attr_name)
+            
+            # Debug: Check each callable attribute
+            if callable(attr):
+                has_sk_function = hasattr(attr, '__sk_function__')
+                sk_function_value = getattr(attr, '__sk_function__', None) if has_sk_function else None
+                print(f"[Logged Plugin Loader] Function {attr_name}: callable=True, has___sk_function__={has_sk_function}, value={sk_function_value}")
             
             # Check if it's a kernel function
             if (callable(attr) and 
@@ -161,7 +234,12 @@ class LoggedPluginLoader:
                 # Replace the method on the instance
                 setattr(plugin_instance, attr_name, logged_method)
                 
-                self.logger.debug(f"Wrapped function {plugin_name}.{attr_name} with logging")
+                wrapped_count += 1
+                print(f"[Logged Plugin Loader] Wrapped function {plugin_name}.{attr_name} with logging")
+                log_event(f"[Logged Plugin Loader] Wrapped function {plugin_name}.{attr_name} with logging")
+        
+        print(f"[Logged Plugin Loader] Wrapped {wrapped_count} functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Wrapped {wrapped_count} functions for plugin: {plugin_name}")
     
     def _create_logged_method(self, original_method, plugin_name: str, function_name: str):
         """Create a logged wrapper for a plugin method."""

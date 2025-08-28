@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from functions_appinsights import log_event
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
 # Helper class to wrap results with metadata
 class ResultWithMetadata:
@@ -222,6 +223,7 @@ class SQLQueryPlugin(BasePlugin):
         return ["execute_query", "execute_scalar", "validate_query"]
 
     @kernel_function(description="Execute a SQL query and return results")
+    @plugin_function_logger("SQLQueryPlugin")
     def execute_query(
         self, 
         query: str,
@@ -300,6 +302,7 @@ class SQLQueryPlugin(BasePlugin):
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Execute a query that returns a single value")
+    @plugin_function_logger("SQLQueryPlugin")
     def execute_scalar(
         self, 
         query: str,
@@ -358,6 +361,7 @@ class SQLQueryPlugin(BasePlugin):
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Validate a SQL query without executing it")
+    @plugin_function_logger("SQLQueryPlugin")
     def validate_query(self, query: str) -> ResultWithMetadata:
         """Validate a SQL query without executing it"""
         try:
