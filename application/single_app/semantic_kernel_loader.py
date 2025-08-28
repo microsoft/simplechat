@@ -88,8 +88,8 @@ def first_if_comma(val):
         return val
 
 def resolve_agent_config(agent, settings):
-    print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
-    #print(f"[SK Loader] Agent config: {agent}")
+    #print(f"Debug: [SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
+    #print(f"Debug: [SK Loader] Agent config: {agent}")
     
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -195,7 +195,7 @@ def resolve_agent_config(agent, settings):
         # Agent has some GPT config - merge with global GPT config for missing values
         print(f"[SK Loader] Using agent GPT config merged with global GPT config")
         merged = merge_fields(u_gpt, g_gpt)
-        #print(f"[SK Loader] Merged result: {merged}")
+        #print(f"Debug: [SK Loader] Merged result: {merged}")
         endpoint, key, deployment, api_version = merged
     elif global_apim_enabled and any_filled(*g_apim):
         # Use global APIM if enabled and has values
@@ -280,6 +280,27 @@ def load_embedding_model_plugin(kernel: Kernel, settings):
             description="Provides text embedding functions using the configured embedding model."
         )
 
+def load_core_plugins_only(kernel: Kernel, settings):
+    """Load only core plugins for model-only conversations without agents."""
+    print("[SK Loader] Loading core plugins only for model-only mode...")
+    log_event("[SK Loader] Loading core plugins only for model-only mode...", level=logging.INFO)
+    
+    if settings.get('enable_time_plugin', True):
+        load_time_plugin(kernel)
+        log_event("[SK Loader] Loaded Time plugin.", level=logging.INFO)
+
+    if settings.get('enable_fact_memory_plugin', True):
+        load_fact_memory_plugin(kernel)
+        log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
+
+    if settings.get('enable_math_plugin', True):
+        load_math_plugin(kernel)
+        log_event("[SK Loader] Loaded Math plugin.", level=logging.INFO)
+
+    if settings.get('enable_text_plugin', True):
+        load_text_plugin(kernel)
+        log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
+
 # =================== Semantic Kernel Initialization ===================
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     print("[SK Loader] Initializing Semantic Kernel and plugins...")
@@ -320,10 +341,10 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
         log_event(f"[SK Loader] Global mode - stored builtins.kernel_agents: {type(kernel_agents)} with {len(kernel_agents) if kernel_agents else 0} agents", level=logging.INFO)
         
     if kernel and not kernel_agents:
-        print("[SK Loader] Failed to load Agents - kernel_agents is None or empty!")
+        print("[SK Loader] No agents loaded - proceeding in model-only mode")
         log_event(
-            "[SK Loader] Failed to load Agents - kernel_agents is None or empty!",
-            level=logging.ERROR
+            "[SK Loader] No agents loaded - proceeding in model-only mode",
+            level=logging.INFO
         )
     elif kernel_agents:
         agent_names = []
@@ -875,6 +896,27 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     log_event("[SK Loader] Per-user Semantic Kernel mode enabled. Loading user-specific plugins and agents.", 
         level=logging.INFO
     )
+    
+    # Early check: Get user settings to see if agents are enabled and if an agent is selected
+    user_settings = get_user_settings(user_id).get('settings', {})
+    enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+    selected_agent = user_settings.get('selected_agent')
+    
+    # If agents are disabled or no agent is selected, skip agent loading entirely
+    if not enable_agents:
+        print(f"[SK Loader] User {user_id} has agents disabled. Proceeding in model-only mode.")
+        log_event(f"[SK Loader] User {user_id} has agents disabled. Proceeding in model-only mode.", level=logging.INFO)
+        # Still load core plugins for basic functionality
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+        
+    if not selected_agent:
+        print(f"[SK Loader] User {user_id} has no agent selected. Proceeding in model-only mode.")
+        log_event(f"[SK Loader] User {user_id} has no agent selected. Proceeding in model-only mode.", level=logging.INFO)
+        # Still load core plugins for basic functionality
+        load_core_plugins_only(kernel, settings)
+        return kernel, None
+    
     # Redis is now optional for per-user mode. If not present, state will not persist.
     
     # Load agents from personal_agents container
@@ -1008,14 +1050,15 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                     f"[SK Loader] User {user_id} No agent found matching global selected agent: {global_selected_agent_name}",
                     level=logging.WARNING
                 )
-    # If still not found, use first agent
+    # If still not found, DON'T use first agent - only load when explicitly selected
     if agent_cfg is None and agents_cfg:
-        print(f"[SK Loader] User {user_id} No user or global selected agent found. Using first agent: {agents_cfg[0].get('name')}")
-        agent_cfg = agents_cfg[0]
+        print(f"[SK Loader] User {user_id} No agent selected. Proceeding in model-only mode - no agents loaded.")
         log_event(
-            f"[SK Loader] User {user_id} No user or global selected agent found. Using first agent: {agent_cfg.get('name')}",
-            level=logging.WARNING
+            f"[SK Loader] User {user_id} No agent selected. Proceeding in model-only mode - no agents loaded.",
+            level=logging.INFO
         )
+        return kernel, None
+        
     if agent_cfg is None:
         print(f"[SK Loader] User {user_id} No agent found to load for user. Proceeding in kernel-only mode (per-user).")
         log_event("[SK Loader] No agent found to load for user. Proceeding in kernel-only mode (per-user).", level=logging.INFO)

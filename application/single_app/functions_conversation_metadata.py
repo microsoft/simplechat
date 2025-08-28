@@ -161,8 +161,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 #print(f"Debug: Updated existing primary context: {existing_primary}")
             else:
                 # Different workspace - this should become a secondary context
-                #print(f"Debug: Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "
-                #      f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
+                #print(f"Debug: Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
                 # We'll handle this in the secondary context logic below
                 primary_context = None  # Don't set as primary, will be added as secondary
         else:
