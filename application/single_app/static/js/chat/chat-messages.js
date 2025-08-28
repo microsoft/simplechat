@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { docScopeSelect, getDocumentMetadata } from "./chat-documents.js";
+import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -664,6 +664,25 @@ export function actuallySendMessage(finalMessageToSend) {
     }
   }
 
+  // Determine the correct doc_scope, especially when "all" is selected but a specific document is chosen
+  let effectiveDocScope = docScopeSelect ? docScopeSelect.value : "all";
+  
+  // If scope is "all" but a specific document is selected, determine the actual scope of that document
+  if (effectiveDocScope === "all" && selectedDocumentId) {
+    const documentMetadata = getDocumentMetadata(selectedDocumentId);
+    if (documentMetadata) {
+      // Check which list the document belongs to
+      if (personalDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "personal";
+      } else if (groupDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "group";
+      } else if (publicDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "public";
+      }
+      console.log(`Document ${selectedDocumentId} scope detected as: ${effectiveDocScope}`);
+    }
+  }
+
   // Fallback: if group_id is null/empty, use window.activeGroupId
   const finalGroupId = group_id || window.activeGroupId || null;
   fetch("/api/chat", {
@@ -680,7 +699,7 @@ export function actuallySendMessage(finalMessageToSend) {
       classifications: classificationsToSend,
       bing_search: bingSearchEnabled,
       image_generation: imageGenEnabled,
-      doc_scope: docScopeSelect ? docScopeSelect.value : "all",
+      doc_scope: effectiveDocScope,
       chat_type: chat_type,
       active_group_id: finalGroupId, // for backward compatibility
       model_deployment: modelDeployment,
