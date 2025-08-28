@@ -977,7 +977,7 @@ def register_route_backend_chats(app):
 
                 # --- NEW: Save plugin output as agent citation ---
                 agent_citations_list.append({
-                    "tool_name": str(selected_agent.name) if selected_agent else "unknown_agent",
+                    "tool_name": str(selected_agent.name) if selected_agent else "All Citations",
                     "function_arguments": json.dumps(aug_msg, default=str),
                     "function_result": aug_msg.get('content', ''),
                     "timestamp": datetime.utcnow().isoformat()
@@ -1342,7 +1342,7 @@ def register_route_backend_chats(app):
                 def agent_success(result):
                     msg = str(result)
                     notice = None
-                    agent_used = getattr(selected_agent, 'name', 'agent')
+                    agent_used = getattr(selected_agent, 'name', 'All Plugins')
                     
                     # Extract detailed plugin invocations for enhanced agent citations
                     plugin_logger = get_plugin_logger()

@@ -12,6 +12,7 @@ import {
   selectConversation,
   addConversationToList
 } from "./chat-conversations.js";
+import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { escapeHtml, isColorLight } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
@@ -794,6 +795,10 @@ export function actuallySendMessage(finalMessageToSend) {
             );
             const titleEl = convoItem.querySelector(".conversation-title");
             if (titleEl) titleEl.textContent = data.conversation_title;
+            
+            // Update sidebar conversation title in real-time
+            updateSidebarConversationTitle(currentConversationId, data.conversation_title);
+            
             updated = true;
           }
           // Update Classifications

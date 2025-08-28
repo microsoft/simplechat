@@ -292,7 +292,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             # Fallback: If no tool_invocations were captured, log the main plugin output as a citation
             if not self.tool_invocations and response and hasattr(response, 'content'):
                 self.tool_invocations.append({
-                    "tool_name": getattr(self, 'name', 'unknown_agent'),
+                    "tool_name": getattr(self, 'name', 'All Citations'),
                     "function_arguments": str(args[-1]) if args else "",
                     "function_result": str(response.content)[:500],
                     "timestamp": datetime.datetime.utcnow().isoformat()

@@ -273,26 +273,47 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
   
   if (toolArgsEl) {
     // Handle empty or no parameters more gracefully
+    let argsContent = "";
+    
     try {
       let parsedArgs;
       if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
-        toolArgsEl.textContent = "No parameters required";
+        argsContent = "No parameters required";
       } else {
         parsedArgs = JSON.parse(toolArgs);
         // Check if it's an empty object
         if (typeof parsedArgs === 'object' && Object.keys(parsedArgs).length === 0) {
-          toolArgsEl.textContent = "No parameters required";
+          argsContent = "No parameters required";
         } else {
-          toolArgsEl.textContent = JSON.stringify(parsedArgs, null, 2);
+          argsContent = JSON.stringify(parsedArgs, null, 2);
         }
       }
     } catch (e) {
       // If it's not valid JSON, check if it's an object representation
       if (toolArgs === "[object Object]" || !toolArgs || toolArgs.trim() === "") {
-        toolArgsEl.textContent = "No parameters required";
+        argsContent = "No parameters required";
       } else {
-        toolArgsEl.textContent = toolArgs;
+        argsContent = toolArgs;
       }
+    }
+    
+    // Add truncation with expand/collapse if content is long
+    if (argsContent.length > 300 && argsContent !== "No parameters required") {
+      const truncatedContent = argsContent.substring(0, 300);
+      const remainingContent = argsContent.substring(300);
+      
+      toolArgsEl.innerHTML = `
+        <div class="args-content position-relative">
+          <span class="args-truncated">${escapeHtml(truncatedContent)}</span><span class="args-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
+          <button class="btn btn-link p-0 ms-2 expand-args-btn" 
+                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
+                  onclick="toggleArgsExpansion(this)">
+            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
+          </button>
+        </div>
+      `;
+    } else {
+      toolArgsEl.textContent = argsContent;
     }
   }
   
@@ -535,6 +556,25 @@ function escapeHtml(text) {
 window.toggleResultExpansion = function(button) {
   const resultContent = button.closest('.result-content');
   const remaining = resultContent.querySelector('.result-remaining');
+  const icon = button.querySelector('i');
+  
+  if (remaining.style.display === 'none') {
+    // Expand
+    remaining.style.display = 'inline';
+    icon.className = 'bi bi-chevron-up';
+    button.title = 'Show less';
+  } else {
+    // Collapse
+    remaining.style.display = 'none';
+    icon.className = 'bi bi-chevron-down';
+    button.title = 'Show more';
+  }
+};
+
+// Global function to toggle arguments expansion (called from inline onclick)
+window.toggleArgsExpansion = function(button) {
+  const argsContent = button.closest('.args-content');
+  const remaining = argsContent.querySelector('.args-remaining');
   const icon = button.querySelector('i');
   
   if (remaining.style.display === 'none') {
