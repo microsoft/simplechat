@@ -24,6 +24,16 @@ const promptSelectionContainer = document.getElementById(
 );
 const chatbox = document.getElementById("chatbox");
 const modelSelect = document.getElementById("model-select");
+const stopBtn = document.getElementById("stop-btn");
+let currentChatAbortController = null;
+let isRequestInFlight = false;
+
+function setInFlightState(inFlight) {
+  isRequestInFlight = inFlight;
+  if (sendBtn) sendBtn.disabled = inFlight;
+  if (stopBtn) stopBtn.style.display = inFlight ? "inline-block" : "none";
+  if (userInput) userInput.disabled = inFlight;
+}
 
 function createCitationsHtml(
   hybridCitations = [],
@@ -394,6 +404,9 @@ export function sendMessage() {
     console.error("User input element not found.");
     return;
   }
+  if (isRequestInFlight) {
+    return; // Prevent parallel sends while one is in flight
+  }
   let userText = userInput.value.trim();
   let promptText = "";
   let combinedMessage = "";
@@ -443,6 +456,10 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.value = "";
   userInput.style.height = "";
   showLoadingIndicatorInChatbox();
+  setInFlightState(true);
+
+  // Create a new AbortController for this request
+  currentChatAbortController = new AbortController();
 
   const modelDeployment = modelSelect?.value;
 
@@ -489,6 +506,7 @@ export function actuallySendMessage(finalMessageToSend) {
   fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: currentChatAbortController.signal,
     body: JSON.stringify({
       message: finalMessageToSend,
       conversation_id: currentConversationId,
@@ -526,6 +544,8 @@ export function actuallySendMessage(finalMessageToSend) {
     .then((data) => {
       // Only successful responses reach here
       hideLoadingIndicatorInChatbox();
+      setInFlightState(false);
+      currentChatAbortController = null;
 
       console.log("--- Data received from /api/chat ---");
       console.log("Full data object:", data);
@@ -615,6 +635,16 @@ export function actuallySendMessage(finalMessageToSend) {
     })
     .catch((error) => {
       hideLoadingIndicatorInChatbox();
+      const wasAborted = error && (error.name === "AbortError" || error.message === "The user aborted a request.");
+      if (wasAborted) {
+        setInFlightState(false);
+        currentChatAbortController = null;
+        showToast("Generation stopped.", "warning");
+        return;
+      }
+
+      setInFlightState(false);
+      currentChatAbortController = null;
       console.error("Error sending message:", error);
 
       // Display specific error messages based on status or content
@@ -701,6 +731,16 @@ function attachCodeBlockCopyButtons(parentElement) {
 
 if (sendBtn) {
   sendBtn.addEventListener("click", sendMessage);
+}
+
+if (stopBtn) {
+  stopBtn.addEventListener("click", () => {
+    if (currentChatAbortController) {
+      try { currentChatAbortController.abort(); } catch (e) {}
+    }
+    hideLoadingIndicatorInChatbox();
+    setInFlightState(false);
+  });
 }
 
 if (userInput) {
