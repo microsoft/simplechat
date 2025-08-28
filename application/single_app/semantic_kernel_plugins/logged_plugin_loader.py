@@ -122,29 +122,17 @@ class LoggedPluginLoader:
         print(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}")
         
         try:
-            from semantic_kernel_plugins.openapi_plugin import OpenApiPlugin
-            print(f"[Logged Plugin Loader] Successfully imported OpenApiPlugin")
+            from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+            print(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory")
             
-            # Extract required parameters from manifest
-            base_url = manifest.get('base_url', '')
-            auth = manifest.get('auth', {})
-            openapi_spec_content = manifest.get('openapi_spec_content')
-            openapi_spec_path = manifest.get('openapi_spec_path')
+            print(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory with manifest: {manifest}")
             
-            print(f"[Logged Plugin Loader] Creating OpenAPI plugin with base_url: {base_url}")
-            
-            plugin_instance = OpenApiPlugin(
-                base_url=base_url,
-                auth=auth,
-                manifest=manifest,
-                openapi_spec_path=openapi_spec_path,
-                openapi_spec_content=openapi_spec_content
-            )
-            print(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance")
+            plugin_instance = OpenApiPluginFactory.create_from_config(manifest)
+            print(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance using factory")
             return plugin_instance
         except ImportError as e:
             print(f"[Logged Plugin Loader] ImportError creating OpenAPI plugin: {e}")
-            self.logger.error(f"Failed to import OpenApiPlugin: {e}")
+            self.logger.error(f"Failed to import OpenApiPluginFactory: {e}")
             return None
         except Exception as e:
             print(f"[Logged Plugin Loader] General error creating OpenAPI plugin: {e}")
