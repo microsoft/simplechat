@@ -1,6 +1,5 @@
 
 import json
-import logging
 from pydantic import Field
 from semantic_kernel.agents import ChatCompletionAgent
 from functions_appinsights import log_event
@@ -46,9 +45,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         Plugin logging is now handled by the @plugin_function_logger decorator system.
         Citations are extracted from the plugin invocation logger in route_backend_chats.py.
         """
-        log_event(f"[Agent Logging] Skipping plugin method patching - using plugin invocation logger instead", 
-                 extra={"agent_name": getattr(self, 'name', 'unknown')}, 
-                 level=logging.DEBUG)
+        print(f"[Agent Logging] Skipping plugin method patching - using plugin invocation logger instead")
         pass
     
     def infer_sql_query_from_context(self, user_question, response_content):
@@ -135,12 +132,8 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             }
         )
 
-        log_event("[Logging Agent Request] Agent invoke started", 
-                 extra={
-                     "agent": self.name,
-                     "prompt_preview": [m.content[:30] for m in args[0]] if args else None
-                 }, 
-                 level=logging.DEBUG)
+        print(f"[Logging Agent Request] Agent: {self.name}")
+        print(f"[Logging Agent Request] Prompt: {[m.content[:30] for m in args[0]] if args else None}")
 
         # Store user question context for better tool detection
         if args and args[0] and hasattr(args[0][-1], 'content'):
@@ -154,12 +147,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             initial_message_count = len(args[0]) if args and args[0] else 0
             result = super().invoke(*args, **kwargs)
 
-            log_event("[Logging Agent Request] Result received", 
-                     extra={
-                         "agent": self.name,
-                         "result_type": type(result).__name__
-                     }, 
-                     level=logging.DEBUG)
+            print(f"[Logging Agent Request] Result: {result}")
             
             if hasattr(result, "__aiter__"):
                 # Streaming/async generator response
@@ -171,13 +159,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 # Regular coroutine response
                 response = await result
 
-            log_event("[Logging Agent Request] Response received", 
-                     extra={
-                         "agent": self.name,
-                         "response_type": type(response).__name__,
-                         "response_preview": str(response)[:100] if response else None
-                     }, 
-                     level=logging.DEBUG)
+            print(f"[Logging Agent Request] Response: {response}")
 
             # Store the response for analysis
             self._last_response = response

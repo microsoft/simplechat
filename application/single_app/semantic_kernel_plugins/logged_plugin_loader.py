@@ -63,12 +63,14 @@ class LoggedPluginLoader:
             
             # Auto-wrap plugin functions with logging
             if isinstance(plugin_instance, BasePlugin):
-                print(f"[Logged Plugin Loader] Wrapping functions for BasePlugin: {plugin_name}")
-                log_event(f"[Logged Plugin Loader] Wrapping functions for BasePlugin: {plugin_name}")
+                log_event(f"[Logged Plugin Loader] Wrapping functions for BasePlugin", 
+                         extra={"plugin_name": plugin_name}, 
+                         level=logging.DEBUG)
                 self._wrap_plugin_functions(plugin_instance, plugin_name)
             else:
-                print(f"[Logged Plugin Loader] Plugin {plugin_name} is not a BasePlugin: {type(plugin_instance)}")
-                log_event(f"[Logged Plugin Loader] Plugin {plugin_name} is not a BasePlugin: {type(plugin_instance)}")
+                log_event(f"[Logged Plugin Loader] Plugin is not a BasePlugin", 
+                         extra={"plugin_name": plugin_name, "plugin_type": type(plugin_instance).__name__}, 
+                         level=logging.WARNING)
             
             # Register the plugin with the kernel
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
@@ -121,29 +123,39 @@ class LoggedPluginLoader:
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
         plugin_name = manifest.get('name')
-        print(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
         
         try:
             from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
-            print(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory")
+            log_event(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory", level=logging.DEBUG)
             
-            print(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory with manifest: {manifest}")
+            log_event(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory", 
+                     extra={"plugin_name": plugin_name, "manifest": manifest}, 
+                     level=logging.DEBUG)
             
             plugin_instance = OpenApiPluginFactory.create_from_config(manifest)
-            print(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance using factory")
+            log_event(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance using factory", 
+                     extra={"plugin_name": plugin_name}, 
+                     level=logging.INFO)
             
             # For OpenAPI plugins, we need to wrap the dynamically created functions
             if plugin_instance:
-                print(f"[Logged Plugin Loader] Wrapping dynamically created OpenAPI functions for: {plugin_name}")
+                log_event(f"[Logged Plugin Loader] Wrapping dynamically created OpenAPI functions", 
+                         extra={"plugin_name": plugin_name}, 
+                         level=logging.DEBUG)
                 self._wrap_openapi_plugin_functions(plugin_instance)
             
             return plugin_instance
         except ImportError as e:
-            print(f"[Logged Plugin Loader] ImportError creating OpenAPI plugin: {e}")
+            log_event(f"[Logged Plugin Loader] ImportError creating OpenAPI plugin", 
+                     extra={"plugin_name": plugin_name, "error": str(e)}, 
+                     level=logging.ERROR)
             self.logger.error(f"Failed to import OpenApiPluginFactory: {e}")
             return None
         except Exception as e:
-            print(f"[Logged Plugin Loader] General error creating OpenAPI plugin: {e}")
+            log_event(f"[Logged Plugin Loader] General error creating OpenAPI plugin", 
+                     extra={"plugin_name": plugin_name, "error": str(e)}, 
+                     level=logging.ERROR)
             self.logger.error(f"Failed to create OpenAPI plugin: {e}")
             return None
     
@@ -190,21 +202,30 @@ class LoggedPluginLoader:
     
     def _wrap_plugin_functions(self, plugin_instance, plugin_name: str):
         """Wrap all kernel functions in a plugin with logging."""
-        print(f"[Logged Plugin Loader] Checking logging status for plugin: {plugin_name}")
-        log_event(f"[Logged Plugin Loader] Checking logging status for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Checking logging status for plugin", 
+                 extra={"plugin_name": plugin_name}, 
+                 level=logging.DEBUG)
         
         if not hasattr(plugin_instance, 'is_logging_enabled') or not plugin_instance.is_logging_enabled():
-            print(f"[Logged Plugin Loader] Plugin {plugin_name} does not have logging enabled")
-            log_event(f"[Logged Plugin Loader] Plugin {plugin_name} does not have logging enabled")
+            log_event(f"[Logged Plugin Loader] Plugin does not have logging enabled", 
+                     extra={"plugin_name": plugin_name}, 
+                     level=logging.WARNING)
             return
         
-        print(f"[Logged Plugin Loader] Starting to wrap functions for plugin: {plugin_name}")
-        log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin", 
+                 extra={"plugin_name": plugin_name}, 
+                 level=logging.DEBUG)
         wrapped_count = 0
         
         # Debug: List all attributes
         all_attrs = [attr for attr in dir(plugin_instance) if not attr.startswith('_')]
-        print(f"[Logged Plugin Loader] Plugin {plugin_name} has {len(all_attrs)} public attributes: {all_attrs[:10]}...")
+        log_event(f"[Logged Plugin Loader] Plugin attribute analysis", 
+                 extra={
+                     "plugin_name": plugin_name, 
+                     "total_public_attributes": len(all_attrs),
+                     "sample_attributes": all_attrs[:10]
+                 }, 
+                 level=logging.DEBUG)
         
         # Find and wrap all kernel functions
         for attr_name in dir(plugin_instance):
@@ -217,7 +238,15 @@ class LoggedPluginLoader:
             if callable(attr):
                 has_sk_function = hasattr(attr, '__sk_function__')
                 sk_function_value = getattr(attr, '__sk_function__', None) if has_sk_function else None
-                print(f"[Logged Plugin Loader] Function {attr_name}: callable=True, has___sk_function__={has_sk_function}, value={sk_function_value}")
+                log_event(f"[Logged Plugin Loader] Function analysis", 
+                         extra={
+                             "plugin_name": plugin_name,
+                             "function_name": attr_name,
+                             "callable": True,
+                             "has_sk_function": has_sk_function,
+                             "sk_function_value": sk_function_value
+                         }, 
+                         level=logging.DEBUG)
             
             # Check if it's a kernel function
             is_kernel_function = False
@@ -233,7 +262,9 @@ class LoggedPluginLoader:
                   attr_name in ['listAPIs', 'getMetrics', 'getProviders', 'getProvider', 'getAPI', 'getServiceAPI', 'getServices'] and
                   hasattr(plugin_instance, 'base_url')):  # OpenAPI plugins have base_url
                 is_kernel_function = True
-                print(f"[Logged Plugin Loader] Detected OpenAPI function {attr_name} for enhanced logging")
+                log_event(f"[Logged Plugin Loader] Detected OpenAPI function for enhanced logging", 
+                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
+                         level=logging.DEBUG)
             
             if is_kernel_function:
                 # Create a logged wrapper
@@ -243,168 +274,28 @@ class LoggedPluginLoader:
                 setattr(plugin_instance, attr_name, logged_method)
                 
                 wrapped_count += 1
-                print(f"[Logged Plugin Loader] Wrapped function {plugin_name}.{attr_name} with logging")
-                log_event(f"[Logged Plugin Loader] Wrapped function {plugin_name}.{attr_name} with logging")
+                log_event(f"[Logged Plugin Loader] Wrapped function with logging", 
+                         extra={"plugin_name": plugin_name, "function_name": attr_name}, 
+                         level=logging.INFO)
         
-        # CRITICAL: For OpenAPI plugins, also wrap the kernel plugin functions
-        if hasattr(plugin_instance, 'base_url') and hasattr(plugin_instance, 'get_kernel_plugin'):
-            try:
-                print(f"[Logged Plugin Loader] Wrapping kernel plugin functions for OpenAPI plugin: {plugin_name}")
-                kernel_plugin = plugin_instance.get_kernel_plugin()
-                print(f"[Logged Plugin Loader] Kernel plugin created with {len(kernel_plugin.functions)} functions")
-                print(f"[Logged Plugin Loader] Available kernel functions: {list(kernel_plugin.functions.keys())}")
-                
-                # Wrap functions in the kernel plugin
-                for func_name, kernel_func in kernel_plugin.functions.items():
-                    print(f"[Logged Plugin Loader] Checking kernel function: {func_name}")
-                    # Target the actual kernel functions that Semantic Kernel calls
-                    if func_name in ['call_operation', 'get_available_operations', 'list_available_apis']:
-                        print(f"[Logged Plugin Loader] Wrapping kernel function: {func_name}")
-                        print(f"[Logged Plugin Loader] Kernel function type: {type(kernel_func)}")
-                        print(f"[Logged Plugin Loader] Kernel function attributes: {dir(kernel_func)}")
-                        
-                        # Try to find the actual function method
-                        original_func = None
-                        if hasattr(kernel_func, 'function'):
-                            original_func = kernel_func.function
-                        elif hasattr(kernel_func, '_function'):
-                            original_func = kernel_func._function
-                        elif hasattr(kernel_func, 'method'):
-                            original_func = kernel_func.method
-                        elif hasattr(kernel_func, '_method'):
-                            original_func = kernel_func._method
-                        else:
-                            # Fall back to getting the function from the plugin instance
-                            original_func = getattr(plugin_instance, func_name, None)
-                            
-                        if original_func and callable(original_func):
-                            print(f"[Logged Plugin Loader] Found original function: {type(original_func)}")
-                            logged_kernel_func = self._create_logged_method(original_func, plugin_name, func_name)
-                            
-                            # Try to replace the function in the kernel function object
-                            if hasattr(kernel_func, 'function'):
-                                kernel_func.function = logged_kernel_func
-                            elif hasattr(kernel_func, '_function'):
-                                kernel_func._function = logged_kernel_func
-                            elif hasattr(kernel_func, 'method'):
-                                kernel_func.method = logged_kernel_func
-                            elif hasattr(kernel_func, '_method'):
-                                kernel_func._method = logged_kernel_func
-                            else:
-                                # Fall back to replacing on the plugin instance
-                                setattr(plugin_instance, func_name, logged_kernel_func)
-                            
-                            # ALSO wrap the kernel function's invoke method for direct SK calls
-                            if hasattr(kernel_func, 'invoke'):
-                                print(f"[Logged Plugin Loader] Also wrapping kernel function invoke method for: {func_name}")
-                                original_invoke = kernel_func.invoke
-                                
-                                # Create a wrapper for the invoke method
-                                def create_invoke_wrapper(orig_invoke, plugin_nm, func_nm):
-                                    async def logged_invoke(*args, **kwargs):
-                                        print(f"🚀 [DEBUG] Kernel function invoke called: {plugin_nm}.{func_nm}")
-                                        print(f"🚀 [DEBUG] Invoke args: {args}")
-                                        print(f"🚀 [DEBUG] Invoke kwargs: {kwargs}")
-                                        
-                                        import time
-                                        start_time = time.time()
-                                        try:
-                                            result = await orig_invoke(*args, **kwargs)
-                                            duration = time.time() - start_time
-                                            print(f"🚀 [DEBUG] Kernel invoke result: {result}")
-                                            print(f"🚀 [DEBUG] Kernel invoke duration: {duration:.3f}s")
-                                            return result
-                                        except Exception as e:
-                                            duration = time.time() - start_time
-                                            print(f"🚀 [DEBUG] Kernel invoke error: {e}")
-                                            print(f"🚀 [DEBUG] Kernel invoke duration: {duration:.3f}s")
-                                            raise
-                                    return logged_invoke
-                                
-                                kernel_func.invoke = create_invoke_wrapper(original_invoke, plugin_name, func_name)
-                                print(f"[Logged Plugin Loader] Wrapped kernel invoke method for: {func_name}")
-                                
-                            wrapped_count += 1
-                            print(f"[Logged Plugin Loader] Successfully wrapped kernel function {plugin_name}.{func_name}")
-                        else:
-                            print(f"[Logged Plugin Loader] Could not find callable function for: {func_name}")
-                    else:
-                        print(f"[Logged Plugin Loader] Skipping kernel function: {func_name} (not in target list)")
-                        
-            except Exception as e:
-                print(f"[Logged Plugin Loader] Error wrapping kernel plugin functions: {e}")
-                import traceback
-                print(f"[Logged Plugin Loader] Traceback: {traceback.format_exc()}")
-                log_event(f"[Logged Plugin Loader] Error wrapping kernel plugin functions: {e}")
+        # DISABLED: OpenAPI kernel plugin wrapping to prevent excessive logging
+        # Plugin logging is now handled by the @plugin_function_logger decorator system
+        log_event(f"[Logged Plugin Loader] Skipping OpenAPI kernel function wrapping to avoid duplication with decorator logging", 
+                 extra={"plugin_name": plugin_name}, 
+                 level=logging.DEBUG)
         
-        print(f"[Logged Plugin Loader] Wrapped {wrapped_count} functions for plugin: {plugin_name}")
-        log_event(f"[Logged Plugin Loader] Wrapped {wrapped_count} functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Function wrapping completed", 
+                 extra={"plugin_name": plugin_name, "wrapped_count": wrapped_count}, 
+                 level=logging.INFO)
     
     def _create_logged_method(self, original_method, plugin_name: str, function_name: str):
-        """Create a logged wrapper for a plugin method."""
-        import time
-        import functools
-        from semantic_kernel_plugins.plugin_invocation_logger import log_plugin_invocation
-        
-        @functools.wraps(original_method)
-        def logged_wrapper(*args, **kwargs):
-            # Add immediate debug logging to see if wrapper is called
-            print(f"🚀 [DEBUG] Plugin function called: {plugin_name}.{function_name}")
-            log_event(f"🚀 [DEBUG] Plugin function called: {plugin_name}.{function_name}")
-            
-            start_time = time.time()
-            
-            # Prepare parameters (skip 'self' for methods)
-            parameters = {}
-            if args and hasattr(args[0], '__class__'):
-                # This is a method call, skip 'self'
-                parameters.update({f"arg_{i}": arg for i, arg in enumerate(args[1:])})
-            else:
-                parameters.update({f"arg_{i}": arg for i, arg in enumerate(args)})
-            parameters.update(kwargs)
-            
-            print(f"🔧 [DEBUG] Calling original method: {plugin_name}.{function_name} with params: {parameters}")
-            
-            try:
-                result = original_method(*args, **kwargs)
-                end_time = time.time()
-                
-                print(f"✅ [DEBUG] Method completed successfully: {plugin_name}.{function_name}")
-                
-                # Log successful invocation
-                log_plugin_invocation(
-                    plugin_name=plugin_name,
-                    function_name=function_name,
-                    parameters=parameters,
-                    result=result,
-                    start_time=start_time,
-                    end_time=end_time,
-                    success=True
-                )
-                
-                return result
-                
-            except Exception as e:
-                end_time = time.time()
-                
-                print(f"❌ [DEBUG] Method failed: {plugin_name}.{function_name} - {str(e)}")
-                
-                # Log failed invocation
-                log_plugin_invocation(
-                    plugin_name=plugin_name,
-                    function_name=function_name,
-                    parameters=parameters,
-                    result=None,
-                    start_time=start_time,
-                    end_time=end_time,
-                    success=False,
-                    error_message=str(e)
-                )
-                
-                # Re-raise the exception
-                raise
-        
-        return logged_wrapper
+        """
+        DISABLED: Plugin logging wrapper to prevent duplication.
+        Plugin logging is now handled by the @plugin_function_logger decorator system.
+        This method now returns the original method unchanged to avoid double-logging.
+        """
+        # Return the original method unchanged since logging is handled by decorators
+        return original_method
     
     def _register_plugin_with_kernel(self, plugin_instance, plugin_name: str):
         """Register the plugin with the Semantic Kernel."""
@@ -473,7 +364,9 @@ class LoggedPluginLoader:
         after the plugin is fully created.
         """
         plugin_name = getattr(plugin_instance, 'display_name', 'OpenAPI')
-        print(f"[Logged Plugin Loader] Starting to wrap OpenAPI functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] Starting to wrap OpenAPI functions for plugin", 
+                 extra={"plugin_name": plugin_name}, 
+                 level=logging.DEBUG)
         
         wrapped_count = 0
         
@@ -506,8 +399,15 @@ class LoggedPluginLoader:
                     
             if is_kernel_function:
                 
-                print(f"[Logged Plugin Loader] Found OpenAPI function to wrap: {attr_name}")
-                print(f"[Logged Plugin Loader] Function details: callable={callable(attr_value)}, has___sk_function__={hasattr(attr_value, '__sk_function__')}, is_bound_method={hasattr(attr_value, '__self__')}")
+                log_event(f"[Logged Plugin Loader] Found OpenAPI function to wrap", 
+                         extra={
+                             "plugin_name": plugin_name,
+                             "function_name": attr_name,
+                             "callable": callable(attr_value),
+                             "has_sk_function": hasattr(attr_value, '__sk_function__'),
+                             "is_bound_method": hasattr(attr_value, '__self__')
+                         }, 
+                         level=logging.DEBUG)
                 
                 # Create a wrapped version of the function
                 original_func = attr_value
@@ -520,12 +420,15 @@ class LoggedPluginLoader:
                         # Extract user context if available
                         user_context = self._get_user_context()
                         
-                        print(f"[Plugin Function Logger] === OpenAPI Function Call Start ===")
-                        print(f"[Plugin Function Logger] Plugin: {plugin_name}")
-                        print(f"[Plugin Function Logger] Function: {func_name}")
-                        print(f"[Plugin Function Logger] User: {user_context.get('user_id', 'unknown')}")
-                        print(f"[Plugin Function Logger] Timestamp: {datetime.now().isoformat()}")
-                        print(f"[Plugin Function Logger] Parameters: {kwargs}")
+                        log_event(f"[Plugin Function Logger] OpenAPI Function Call Start", 
+                                 extra={
+                                     "plugin": plugin_name,
+                                     "function": func_name,
+                                     "user_id": user_context.get('user_id', 'unknown'),
+                                     "timestamp": datetime.now().isoformat(),
+                                     "parameters": kwargs
+                                 }, 
+                                 level=logging.INFO)
                         
                         try:
                             # Call the original function
@@ -534,9 +437,17 @@ class LoggedPluginLoader:
                             # Calculate execution time
                             execution_time = time.time() - start_time
                             
-                            print(f"[Plugin Function Logger] Result: {str(result)[:500]}{'...' if len(str(result)) > 500 else ''}")
-                            print(f"[Plugin Function Logger] Execution time: {execution_time:.3f}s")
-                            print(f"[Plugin Function Logger] Status: SUCCESS")
+                            result_preview = str(result)[:500] + ('...' if len(str(result)) > 500 else '')
+                            
+                            log_event(f"[Plugin Function Logger] OpenAPI Function Call Success", 
+                                     extra={
+                                         "plugin": plugin_name,
+                                         "function": func_name,
+                                         "result_preview": result_preview,
+                                         "execution_time": execution_time,
+                                         "status": "SUCCESS"
+                                     }, 
+                                     level=logging.INFO)
                             
                             # Log to Application Insights if logger is available
                             if hasattr(self, 'logger'):
@@ -557,9 +468,16 @@ class LoggedPluginLoader:
                             
                         except Exception as e:
                             execution_time = time.time() - start_time
-                            print(f"[Plugin Function Logger] ERROR: {str(e)}")
-                            print(f"[Plugin Function Logger] Execution time: {execution_time:.3f}s")
-                            print(f"[Plugin Function Logger] Status: FAILED")
+                            
+                            log_event(f"[Plugin Function Logger] OpenAPI Function Call Failed", 
+                                     extra={
+                                         "plugin": plugin_name,
+                                         "function": func_name,
+                                         "error": str(e),
+                                         "execution_time": execution_time,
+                                         "status": "FAILED"
+                                     }, 
+                                     level=logging.ERROR)
                             
                             # Log error to Application Insights if logger is available
                             if hasattr(self, 'logger'):
@@ -577,8 +495,6 @@ class LoggedPluginLoader:
                                 )
                             
                             raise
-                        finally:
-                            print(f"[Plugin Function Logger] === OpenAPI Function Call End ===")
                     
                     # Preserve the original function's metadata
                     wrapper.__name__ = func_name
@@ -596,8 +512,19 @@ class LoggedPluginLoader:
                 setattr(plugin_instance, attr_name, wrapped_func)
                 wrapped_count += 1
                 
-        print(f"[Logged Plugin Loader] Wrapped {wrapped_count} OpenAPI functions for plugin: {plugin_name}")
+        log_event(f"[Logged Plugin Loader] OpenAPI function wrapping completed", 
+                 extra={"plugin_name": plugin_name, "wrapped_count": wrapped_count}, 
+                 level=logging.INFO)
         return wrapped_count
+    
+    def _get_user_context(self) -> Dict[str, Any]:
+        """Get current user context for logging."""
+        try:
+            from functions_authentication import get_current_user_id
+            user_id = get_current_user_id()
+            return {"user_id": user_id}
+        except Exception:
+            return {"user_id": "unknown"}
 
 
 def create_logged_plugin_loader(kernel: Kernel) -> LoggedPluginLoader:

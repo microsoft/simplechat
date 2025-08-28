@@ -89,7 +89,7 @@ def first_if_comma(val):
 
 def resolve_agent_config(agent, settings):
     print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
-    print(f"[SK Loader] Agent config: {agent}")
+    #print(f"[SK Loader] Agent config: {agent}")
     
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -176,11 +176,11 @@ def resolve_agent_config(agent, settings):
     u_gpt = get_user_gpt()
     g_gpt = get_global_gpt()
     
-    print(f"[SK Loader] Config sources:")
-    print(f"  u_apim: {u_apim}")
-    print(f"  g_apim: {g_apim}")
-    print(f"  u_gpt: {u_gpt}")
-    print(f"  g_gpt: {g_gpt}")
+    # print(f"[SK Loader] Config sources:")
+    # print(f"  u_apim: {u_apim}")
+    # print(f"  g_apim: {g_apim}")
+    # print(f"  u_gpt: {u_gpt}")
+    # print(f"  g_gpt: {g_gpt}")
 
     if user_apim_enabled and any_filled(*u_apim):
         # User APIM is enabled and has values
@@ -195,7 +195,7 @@ def resolve_agent_config(agent, settings):
         # Agent has some GPT config - merge with global GPT config for missing values
         print(f"[SK Loader] Using agent GPT config merged with global GPT config")
         merged = merge_fields(u_gpt, g_gpt)
-        print(f"[SK Loader] Merged result: {merged}")
+        #print(f"[SK Loader] Merged result: {merged}")
         endpoint, key, deployment, api_version = merged
     elif global_apim_enabled and any_filled(*g_apim):
         # Use global APIM if enabled and has values

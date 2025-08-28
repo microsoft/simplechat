@@ -71,31 +71,50 @@ class PluginInvocationLogger:
         """Log detailed invocation information to terminal."""
         try:
             status = "SUCCESS" if invocation.success else "ERROR"
-            print(f"[Plugin Invocation {status}] {invocation.plugin_name}.{invocation.function_name}")
             
-            # Show parameters
+            # Keep minimal print for real-time monitoring
+            print(f"[Plugin {status}] {invocation.plugin_name}.{invocation.function_name} ({invocation.duration_ms:.1f}ms)")
+            
+            # Comprehensive structured logging for production
+            log_data = {
+                "plugin_name": invocation.plugin_name,
+                "function_name": invocation.function_name,
+                "duration_ms": invocation.duration_ms,
+                "success": invocation.success,
+                "user_id": invocation.user_id,
+                "timestamp": invocation.timestamp
+            }
+            
             if invocation.parameters:
-                print(f"  Parameters: {invocation.parameters}")
-            else:
-                print(f"  Parameters: none")
+                log_data["parameter_count"] = len(invocation.parameters)
+                # Sanitize parameters for logging
+                sanitized_params = {}
+                for key, value in invocation.parameters.items():
+                    if isinstance(value, str) and len(value) > 100:
+                        sanitized_params[key] = f"{value[:100]}... [truncated]"
+                    else:
+                        sanitized_params[key] = str(value)[:100]
+                log_data["parameters"] = sanitized_params
             
-            # Show result or error
             if invocation.success:
-                result_str = str(invocation.result)
-                if len(result_str) > 300:
-                    print(f"  Result: {result_str[:300]}... [truncated to 300 chars]")
-                else:
-                    print(f"  Result: {result_str}")
+                if invocation.result:
+                    result_str = str(invocation.result)
+                    log_data["result_preview"] = result_str[:200] + "..." if len(result_str) > 200 else result_str
+                    log_data["result_type"] = type(invocation.result).__name__
+                
+                log_event(f"Plugin function executed successfully", 
+                         extra=log_data, 
+                         level=logging.INFO)
             else:
-                print(f"  Error: {invocation.error_message}")
-            
-            print(f"  Duration: {invocation.duration_ms:.2f}ms")
-            print(f"  User: {invocation.user_id or 'unknown'}")
-            print(f"  Timestamp: {invocation.timestamp}")
-            print("") # Empty line for readability
-            
+                log_data["error_message"] = invocation.error_message
+                log_event(f"Plugin function execution failed", 
+                         extra=log_data, 
+                         level=logging.ERROR)
+                         
         except Exception as e:
-            print(f"[Plugin Invocation] Error logging to terminal: {e}")
+            log_event(f"[Plugin Invocation] Error logging to terminal", 
+                     extra={"error_message": str(e)}, 
+                     level=logging.ERROR)
     
     def _log_to_appinsights(self, invocation: PluginInvocation):
         """Log invocation to Application Insights."""
@@ -276,14 +295,18 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
 def plugin_function_logger(plugin_name: str):
     """Decorator to automatically log plugin function invocations."""
     def decorator(func: Callable) -> Callable:
-        print(f"[Plugin Function Logger] Decorating function: {func.__name__} for plugin: {plugin_name}")
+        log_event(f"[Plugin Function Logger] Decorating function for plugin", 
+                 extra={"function_name": func.__name__, "plugin_name": plugin_name}, 
+                 level=logging.DEBUG)
         
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             start_time = time.time()
             function_name = func.__name__
             
-            print(f"[Plugin Function Logger] CALLING: {plugin_name}.{function_name}")
+            log_event(f"[Plugin Function Logger] Function call started", 
+                     extra={"plugin_name": plugin_name, "function_name": function_name}, 
+                     level=logging.DEBUG)
             
             # Prepare parameters (combine args and kwargs)
             parameters = {}
@@ -297,7 +320,14 @@ def plugin_function_logger(plugin_name: str):
             
             # Enhanced logging: Show parameters
             param_str = ", ".join([f"{k}={v}" for k, v in parameters.items()]) if parameters else "no parameters"
-            print(f"[Plugin Function Logger] PARAMETERS: {plugin_name}.{function_name}({param_str})")
+            log_event(f"[Plugin Function Logger] Function parameters", 
+                     extra={
+                         "plugin_name": plugin_name,
+                         "function_name": function_name,
+                         "parameters": parameters,
+                         "param_string": param_str
+                     }, 
+                     level=logging.DEBUG)
             
             try:
                 result = func(*args, **kwargs)
@@ -306,8 +336,15 @@ def plugin_function_logger(plugin_name: str):
                 
                 # Enhanced logging: Show result and timing
                 result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
-                print(f"[Plugin Function Logger] RESULT: {plugin_name}.{function_name} -> {result_preview}")
-                print(f"[Plugin Function Logger] TIMING: {plugin_name}.{function_name} completed in {duration_ms:.2f}ms")
+                log_event(f"[Plugin Function Logger] Function completed successfully", 
+                         extra={
+                             "plugin_name": plugin_name,
+                             "function_name": function_name,
+                             "result_preview": result_preview,
+                             "duration_ms": duration_ms,
+                             "full_function_name": f"{plugin_name}.{function_name}"
+                         }, 
+                         level=logging.INFO)
                 
                 log_plugin_invocation(
                     plugin_name=plugin_name,
@@ -326,7 +363,15 @@ def plugin_function_logger(plugin_name: str):
                 duration_ms = (end_time - start_time) * 1000
                 
                 # Enhanced logging: Show error and timing
-                print(f"[Plugin Function Logger] ERROR: {plugin_name}.{function_name} failed after {duration_ms:.2f}ms: {str(e)}")
+                log_event(f"[Plugin Function Logger] Function failed with error", 
+                         extra={
+                             "plugin_name": plugin_name,
+                             "function_name": function_name,
+                             "duration_ms": duration_ms,
+                             "error_message": str(e),
+                             "full_function_name": f"{plugin_name}.{function_name}"
+                         }, 
+                         level=logging.ERROR)
                 
                 log_plugin_invocation(
                     plugin_name=plugin_name,
