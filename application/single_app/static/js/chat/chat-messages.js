@@ -104,8 +104,26 @@ function createCitationsHtml(
     agentCitations.forEach((cite, index) => {
       // Agent citation format: { tool_name, function_arguments, function_result, timestamp }
       const displayText = cite.tool_name || `Tool ${index + 1}`;
-      const toolResult = cite.function_result || "No result";
-      const toolArgs = cite.function_arguments || "";
+      
+      // Handle function arguments properly - convert object to JSON string
+      let toolArgs = "";
+      if (cite.function_arguments) {
+        if (typeof cite.function_arguments === 'object') {
+          toolArgs = JSON.stringify(cite.function_arguments);
+        } else {
+          toolArgs = cite.function_arguments;
+        }
+      }
+      
+      // Handle function result properly - convert object to JSON string
+      let toolResult = "No result";
+      if (cite.function_result) {
+        if (typeof cite.function_result === 'object') {
+          toolResult = JSON.stringify(cite.function_result);
+        } else {
+          toolResult = cite.function_result;
+        }
+      }
       citationsHtml += `
               <a href="#"
                  class="btn btn-sm citation-button agent-citation-link"

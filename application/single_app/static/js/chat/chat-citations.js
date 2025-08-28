@@ -272,22 +272,71 @@ export function showAgentCitationModal(toolName, toolArgs, toolResult) {
   }
   
   if (toolArgsEl) {
-    // Try to format JSON if it's JSON, otherwise display as-is
+    // Handle empty or no parameters more gracefully
     try {
-      const parsedArgs = JSON.parse(toolArgs || "{}");
-      toolArgsEl.textContent = JSON.stringify(parsedArgs, null, 2);
+      let parsedArgs;
+      if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
+        toolArgsEl.textContent = "No parameters required";
+      } else {
+        parsedArgs = JSON.parse(toolArgs);
+        // Check if it's an empty object
+        if (typeof parsedArgs === 'object' && Object.keys(parsedArgs).length === 0) {
+          toolArgsEl.textContent = "No parameters required";
+        } else {
+          toolArgsEl.textContent = JSON.stringify(parsedArgs, null, 2);
+        }
+      }
     } catch (e) {
-      toolArgsEl.textContent = toolArgs || "No arguments";
+      // If it's not valid JSON, check if it's an object representation
+      if (toolArgs === "[object Object]" || !toolArgs || toolArgs.trim() === "") {
+        toolArgsEl.textContent = "No parameters required";
+      } else {
+        toolArgsEl.textContent = toolArgs;
+      }
     }
   }
   
   if (toolResultEl) {
-    // Try to format JSON if it's JSON, otherwise display as-is
+    // Handle result formatting and truncation with expand/collapse
+    let resultContent = "";
+    
     try {
-      const parsedResult = JSON.parse(toolResult || "{}");
-      toolResultEl.textContent = JSON.stringify(parsedResult, null, 2);
+      let parsedResult;
+      if (!toolResult || toolResult === "" || toolResult === "{}") {
+        resultContent = "No result";
+      } else if (toolResult === "[object Object]") {
+        resultContent = "No result data available";
+      } else {
+        // Try to parse as JSON first
+        try {
+          parsedResult = JSON.parse(toolResult);
+          resultContent = JSON.stringify(parsedResult, null, 2);
+        } catch (parseError) {
+          // If not JSON, treat as string
+          resultContent = toolResult;
+        }
+      }
     } catch (e) {
-      toolResultEl.textContent = toolResult || "No result";
+      resultContent = toolResult || "No result";
+    }
+    
+    // Add truncation with expand/collapse if content is long
+    if (resultContent.length > 300) {
+      const truncatedContent = resultContent.substring(0, 300);
+      const remainingContent = resultContent.substring(300);
+      
+      toolResultEl.innerHTML = `
+        <div class="result-content position-relative">
+          <span class="result-truncated">${escapeHtml(truncatedContent)}</span><span class="result-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
+          <button class="btn btn-link p-0 ms-2 expand-result-btn" 
+                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
+                  onclick="toggleResultExpansion(this)">
+            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
+          </button>
+        </div>
+      `;
+    } else {
+      toolResultEl.textContent = resultContent;
     }
   }
 
@@ -474,4 +523,30 @@ if (chatboxEl) {
     // No specific JS handling needed here unless you want to add tracking etc.
   });
 }
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Global function to toggle result expansion (called from inline onclick)
+window.toggleResultExpansion = function(button) {
+  const resultContent = button.closest('.result-content');
+  const remaining = resultContent.querySelector('.result-remaining');
+  const icon = button.querySelector('i');
+  
+  if (remaining.style.display === 'none') {
+    // Expand
+    remaining.style.display = 'inline';
+    icon.className = 'bi bi-chevron-up';
+    button.title = 'Show less';
+  } else {
+    // Collapse
+    remaining.style.display = 'none';
+    icon.className = 'bi bi-chevron-down';
+    button.title = 'Show more';
+  }
+};
 // ---------------------------------------
