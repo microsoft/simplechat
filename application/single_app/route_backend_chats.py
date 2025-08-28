@@ -70,6 +70,7 @@ def register_route_backend_chats(app):
         agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
         system_messages_for_augmentation = [] # Collect system messages from search/bing
         search_results = []
+        selected_agent = None  # Initialize selected_agent early to prevent NameError
         # --- Configuration ---
         # History / Summarization Settings
         raw_conversation_history_limit = settings.get('conversation_history_limit', 6)
