@@ -173,7 +173,7 @@
   <div id="sidebar-user-account" class="border-top p-3 position-absolute bottom-0 start-0 end-0" style="background: inherit; z-index: 1050;">
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
       <div class="dropdown">
-        <a class="nav-link dropdown-toggle p-0 d-flex align-items-center" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
+        <a class="nav-link dropdown-toggle p-0 d-flex align-items-center w-100" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
           {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
           <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
             {% if profile_image %}
@@ -184,9 +184,9 @@
               <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
             {% endif %}
           </div>
-          <div class="d-flex flex-column justify-content-center" style="line-height: 1;">
-            <span class="fw-semibold" style="font-size: 1rem;">{{ session['user'].get('name', 'User') }}</span>
-            <span class="text-muted" style="font-size: 0.75rem;">
+          <div class="d-flex flex-column justify-content-center flex-grow-1" style="line-height: 1; min-width: 0;">
+            <span class="fw-semibold text-truncate" style="font-size: 1rem;" title="{{ session['user'].get('name', 'User') }}">{{ session['user'].get('name', 'User') }}</span>
+            <span class="text-muted text-truncate" style="font-size: 0.75rem;">
               {% if 'Admin' in session['user']['roles'] %}
                 Admin account
               {% else %}

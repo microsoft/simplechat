@@ -1,6 +1,5 @@
-
-// workspace_plugins.js (refactored to use plugin_common.js)
-import { renderPluginsTable, toggleAuthFields, populatePluginTypes, showPluginModal, validatePluginManifest } from '../plugin_common.js';
+// workspace_plugins.js (refactored to use plugin_common.js and new multi-step modal)
+import { renderPluginsTable, ensurePluginsTableInRoot, validatePluginManifest } from '../plugin_common.js';
 import { showToast } from "../chat/chat-toast.js"
 
 const root = document.getElementById('workspace-plugins-root');
@@ -17,19 +16,24 @@ async function fetchPlugins() {
   renderLoading();
   try {
     const res = await fetch('/api/user/plugins');
-    if (!res.ok) throw new Error('Failed to load plugins');
+    if (!res.ok) throw new Error('Failed to load actions');
     const plugins = await res.json();
+    
+    // Ensure table template is in place
+    ensurePluginsTableInRoot();
+    
     renderPluginsTable({
       plugins,
       tbodySelector: '#plugins-table-body',
       onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
       onDelete: name => deletePlugin(name)
     });
+    
+    // Set up the create action button
     const createPluginBtn = document.getElementById('create-plugin-btn');
     if (createPluginBtn) {
       createPluginBtn.onclick = () => {
-        console.log('[WORKSPACE PLUGINS] New Plugin button clicked');
-        //showToast('Workspace: New Plugin button clicked', 'info');
+        console.log('[WORKSPACE ACTIONS] New Action button clicked');
         openPluginModal();
       };
     }
@@ -39,165 +43,123 @@ async function fetchPlugins() {
 }
 
 function openPluginModal(plugin = null) {
-  const modalEl = document.getElementById('plugin-modal');
-  if (!modalEl) return alert('Plugin modal not found.');
-  // Fields
-  const nameField = document.getElementById('plugin-name');
-  const typeField = document.getElementById('plugin-type');
-  const descField = document.getElementById('plugin-description');
-  const endpointField = document.getElementById('plugin-endpoint');
-  const authTypeField = document.getElementById('plugin-auth-type');
-  const authKeyField = document.getElementById('plugin-auth-key');
-  const authIdentityField = document.getElementById('plugin-auth-identity');
-  const authTenantIdField = document.getElementById('plugin-auth-tenant-id');
-  const metadataField = document.getElementById('plugin-metadata');
-  const additionalFieldsField = document.getElementById('plugin-additional-fields');
-  const errorDiv = document.getElementById('plugin-modal-error');
-  // Auth field groups and labels
-  const authKeyGroup = document.getElementById('auth-key-group');
-  const authIdentityGroup = document.getElementById('auth-identity-group');
-  const authTenantIdGroup = document.getElementById('auth-tenantid-group');
-  const authKeyLabel = document.getElementById('auth-key-label');
-  const authIdentityLabel = document.getElementById('auth-identity-label');
-  const authTenantIdLabel = document.getElementById('auth-tenantid-label');
-
-  // Attach auth type toggle
-  authTypeField.onchange = () => toggleAuthFields({
-    authTypeSelect: authTypeField,
-    authKeyGroup,
-    authIdentityGroup,
-    authTenantIdGroup,
-    authKeyLabel,
-    authIdentityLabel,
-    authTenantIdLabel
-  });
-
-  // Show modal with shared logic
-  showPluginModal({
-    plugin,
-    populateTypes: () => populatePluginTypes({ endpoint: '/api/user/plugins/types', typeSelect: typeField }),
-    nameField,
-    typeField,
-    descField,
-    endpointField,
-    authTypeField,
-    authKeyField,
-    authIdentityField,
-    authTenantIdField,
-    metadataField,
-    additionalFieldsField,
-    errorDiv,
-    modalEl,
-    afterShow: () => {
-      // Save handler
-      document.getElementById('save-plugin-btn').onclick = async (event) => {
-        event.preventDefault();
-        // Always get the latest typeField from the DOM in case it was replaced
-        const currentTypeField = document.getElementById('plugin-type');
-        // Parse JSON fields
-        let metadataObj = {};
-        let additionalFieldsObj = {};
-        try {
-          metadataObj = metadataField.value.trim() ? JSON.parse(metadataField.value) : {};
-          if (typeof metadataObj !== 'object' || Array.isArray(metadataObj)) throw new Error('Metadata must be a JSON object');
-        } catch (e) {
-          errorDiv.textContent = 'Metadata: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        try {
-          additionalFieldsObj = additionalFieldsField.value.trim() ? JSON.parse(additionalFieldsField.value) : {};
-          if (typeof additionalFieldsObj !== 'object' || Array.isArray(additionalFieldsObj)) throw new Error('Additional Fields must be a JSON object');
-        } catch (e) {
-          errorDiv.textContent = 'Additional Fields: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        // Build plugin object
-        const authType = authTypeField.value;
-        const auth = { type: authType };
-        if (authType === 'key') {
-          auth.key = authKeyField.value.trim();
-        } else if (authType === 'identity') {
-          auth.identity = authIdentityField.value.trim();
-        } else if (authType === 'servicePrincipal') {
-          auth.identity = authIdentityField.value.trim();
-          auth.key = authKeyField.value.trim();
-          auth.tenantId = authTenantIdField.value.trim();
-        }
-        // For 'user', no extra fields
-        const selectedType = currentTypeField ? currentTypeField.value.trim() : '';
-        console.log('[PLUGIN SAVE] Selected type:', selectedType);
-        if (!selectedType) {
-          errorDiv.textContent = 'Please select a plugin type.';
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        const newPlugin = {
-          name: nameField.value.trim(),
-          type: selectedType,
-          description: descField.value.trim(),
-          endpoint: endpointField.value.trim(),
-          auth,
-          metadata: metadataObj,
-          additionalFields: additionalFieldsObj
-        };
-        // Validate with JSON schema (Ajv)
-        try {
-          const valid = await validatePluginManifest(newPlugin);
-          if (!valid) {
-            errorDiv.textContent = 'Validation error: Invalid plugin data.';
-            errorDiv.classList.remove('d-none');
-            return;
-          }
-        } catch (e) {
-          errorDiv.textContent = 'Schema validation failed: ' + e.message;
-          errorDiv.classList.remove('d-none');
-          return;
-        }
-        // Save
-        try {
-          // Get all plugins, update or add
-          const res = await fetch('/api/user/plugins');
-          if (!res.ok) throw new Error('Failed to load plugins');
-          let plugins = await res.json();
-          const idx = plugins.findIndex(p => p.name === newPlugin.name);
-          if (idx >= 0) {
-            plugins[idx] = newPlugin;
-          } else {
-            plugins.push(newPlugin);
-          }
-          const saveRes = await fetch('/api/user/plugins', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(plugins)
-          });
-          if (!saveRes.ok) throw new Error('Failed to save plugin');
-          bootstrap.Modal.getInstance(modalEl).hide();
-          fetchPlugins();
-        } catch (e) {
-          errorDiv.textContent = e.message;
-          errorDiv.classList.remove('d-none');
-        }
-      };
-    }
-  });
-}
-
-async function deletePlugin(name) {
-  try {
-    const res = await fetch(`/api/user/plugins/${encodeURIComponent(name)}`, {
-      method: 'DELETE'
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'Failed to delete plugin');
-    }
-    fetchPlugins();
-  } catch (e) {
-    renderError(e.message);
+  // Use the new multi-step modal
+  if (window.pluginModalStepper) {
+    const modal = window.pluginModalStepper.showModal(plugin);
+    
+    // Set up save handler
+    setupSaveHandler(plugin, modal);
+  } else {
+    alert('Action modal not available. Please refresh the page.');
   }
 }
 
-// Initial load
-if (root) fetchPlugins();
+function setupSaveHandler(plugin, modal) {
+  const saveBtn = document.getElementById('save-plugin-btn');
+  if (saveBtn) {
+    // Remove any existing handlers
+    saveBtn.onclick = null;
+    
+    saveBtn.onclick = async (event) => {
+      event.preventDefault();
+      
+      try {
+        // Get form data from the stepper
+        const formData = window.pluginModalStepper.getFormData();
+        
+        // Validate with JSON schema
+        const valid = await validatePluginManifest(formData);
+        if (!valid) {
+          window.pluginModalStepper.showError('Validation error: Invalid action data.');
+          return;
+        }
+        
+        // Save the action
+        await savePlugin(formData, plugin);
+        
+        // Close modal and refresh
+        if (modal && typeof modal.hide === 'function') {
+          modal.hide();
+        } else {
+          bootstrap.Modal.getInstance(document.getElementById('plugin-modal')).hide();
+        }
+        
+        fetchPlugins();
+        showToast(plugin ? 'Action updated successfully' : 'Action created successfully', 'success');
+        
+      } catch (error) {
+        console.error('Error saving action:', error);
+        window.pluginModalStepper.showError(error.message);
+      }
+    };
+  }
+}
+
+async function savePlugin(pluginData, existingPlugin = null) {
+  // Get all plugins first
+  const res = await fetch('/api/user/plugins');
+  if (!res.ok) throw new Error('Failed to load existing actions');
+  
+  let plugins = await res.json();
+  
+  // Update or add the plugin
+  const existingIndex = plugins.findIndex(p => p.name === pluginData.name);
+  if (existingIndex >= 0) {
+    plugins[existingIndex] = pluginData;
+  } else {
+    plugins.push(pluginData);
+  }
+  
+  // Save back to server
+  const saveRes = await fetch('/api/user/plugins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(plugins)
+  });
+  
+  if (!saveRes.ok) {
+    throw new Error('Failed to save action');
+  }
+}
+
+async function deletePlugin(name) {
+  if (!confirm(`Are you sure you want to delete action "${name}"?`)) return;
+  
+  try {
+    const res = await fetch('/api/user/plugins');
+    if (!res.ok) throw new Error('Failed to load actions');
+    
+    let plugins = await res.json();
+    plugins = plugins.filter(p => p.name !== name);
+    
+    const saveRes = await fetch('/api/user/plugins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plugins)
+    });
+    
+    if (!saveRes.ok) throw new Error('Failed to delete action');
+    
+    fetchPlugins();
+    showToast(`Action "${name}" deleted successfully`, 'success');
+  } catch (e) {
+    showToast('Error deleting action: ' + e.message, 'danger');
+  }
+}
+
+// Initialize when the plugins tab is shown
+document.addEventListener('DOMContentLoaded', () => {
+  // Check if we're on the workspace page and the plugins tab exists
+  const pluginsTabBtn = document.getElementById('plugins-tab-btn');
+  if (pluginsTabBtn) {
+    pluginsTabBtn.addEventListener('shown.bs.tab', fetchPlugins);
+    
+    // If plugins tab is already active, load immediately
+    if (pluginsTabBtn.classList.contains('active')) {
+      fetchPlugins();
+    }
+  }
+});
+
+// Expose fetchPlugins globally for migration script
+window.fetchPlugins = fetchPlugins;

@@ -394,3 +394,6 @@ if (document.readyState === 'loading') {
   attachAgentTableEvents();
   fetchAgents();
 }
+
+// Expose fetchAgents globally for migration script
+window.fetchAgents = fetchAgents;
