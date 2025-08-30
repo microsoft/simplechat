@@ -3,19 +3,21 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from '../agents_common.js';
+import { AgentModalStepper } from '../agent_modal_stepper.js';
 
 // --- DOM Elements & Globals ---
-const agentSelect = document.getElementById('active-agent-select');
 const agentsTbody = document.getElementById('agents-table-body');
 const agentsErrorDiv = document.getElementById('workspace-agents-error');
 const createAgentBtn = document.getElementById('create-agent-btn');
+const agentsSearchInput = document.getElementById('agents-search');
 let agents = [];
+let filteredAgents = [];
 
 
 // --- Function Definitions ---
 function renderLoading() {
   if (agentsTbody) {
-    agentsTbody.innerHTML = `<tr class="table-loading-row"><td colspan="4"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading agents...</td></tr>`;
+    agentsTbody.innerHTML = `<tr class="table-loading-row"><td colspan="3"><div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>Loading agents...</td></tr>`;
   }
   if (agentsErrorDiv) agentsErrorDiv.innerHTML = '';
 }
@@ -27,6 +29,20 @@ function renderError(msg) {
   if (agentsTbody) {
     agentsTbody.innerHTML = '';
   }
+}
+
+function filterAgents(searchTerm) {
+  if (!searchTerm || !searchTerm.trim()) {
+    filteredAgents = agents;
+  } else {
+    const term = searchTerm.toLowerCase().trim();
+    filteredAgents = agents.filter(agent => {
+      const displayName = (agent.display_name || agent.name || '').toLowerCase();
+      const description = (agent.description || '').toLowerCase();
+      return displayName.includes(term) || description.includes(term);
+    });
+  }
+  renderAgentsTable(filteredAgents);
 }
 
 function renderAgentsTable(agentsList) {
@@ -51,71 +67,67 @@ function renderAgentsTable(agentsList) {
     agentsTbody.innerHTML = '';
     for (const agent of agentsList) {
       const tr = document.createElement('tr');
-      let selectedBadge = '';
-      let deleteBtnDisabled = '';
-      let deleteBtnTooltip = '';
-      if (selectedAgentName && agent.name && String(agent.name) === String(selectedAgentName)) {
-        selectedBadge = '<span class="badge bg-success">Selected</span>';
-        deleteBtnDisabled = 'disabled';
-        deleteBtnTooltip = 'title="Cannot delete selected agent"';
-      }
-      let actionButtons = '';
+      
+      // Create action buttons
+      let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${agent.name}" title="Chat with this agent">
+        <i class="bi bi-chat-dots me-1"></i>Chat
+      </button>`;
+      
       if (!agent.is_global) {
-        actionButtons = `
-          <button class="btn btn-sm btn-primary edit-agent-btn" data-name="${agent.name}">Edit</button>
-          <button class="btn btn-sm btn-danger ms-1 delete-agent-btn" data-name="${agent.name}" ${deleteBtnDisabled} ${deleteBtnTooltip}>Delete</button>
+        actionButtons += `
+          <button class="btn btn-sm btn-outline-secondary edit-agent-btn me-1" data-name="${agent.name}" title="Edit agent">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger delete-agent-btn" data-name="${agent.name}" title="Delete agent">
+            <i class="bi bi-trash"></i>
+          </button>
         `;
       }
+      
       tr.innerHTML = `
-        <td>${agent.name || ''}</td>
-        <td>${agent.display_name || ''}${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}</td>
-        <td>${selectedBadge}</td>
+        <td>
+          <strong>${agent.display_name || agent.name || ''}</strong>
+          ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
+        </td>
+        <td class="text-muted small">${agent.description || 'No description available'}</td>
         <td>${actionButtons}</td>
       `;
       agentsTbody.appendChild(tr);
     }
-    renderAgentSelectDropdown(agentsList, selectedAgentObj);
   }).catch(e => {
-    renderError('Could not load selected agent: ' + e.message);
-    // Fallback: render table without selected badge
+    renderError('Could not load agent settings: ' + e.message);
+    // Fallback: render table without settings
     agentsTbody.innerHTML = '';
     for (const agent of agentsList) {
       const tr = document.createElement('tr');
-      let actionButtons = '';
+      
+      // Create action buttons
+      let actionButtons = `<button class="btn btn-sm btn-primary chat-agent-btn me-1" data-name="${agent.name}" title="Chat with this agent">
+        <i class="bi bi-chat-dots me-1"></i>Chat
+      </button>`;
+      
       if (!agent.is_global) {
-        actionButtons = `
-          <button class="btn btn-sm btn-primary edit-agent-btn" data-name="${agent.name}">Edit</button>
-          <button class="btn btn-sm btn-danger ms-1 delete-agent-btn" data-name="${agent.name}">Delete</button>
+        actionButtons += `
+          <button class="btn btn-sm btn-outline-secondary edit-agent-btn me-1" data-name="${agent.name}" title="Edit agent">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger delete-agent-btn" data-name="${agent.name}" title="Delete agent">
+            <i class="bi bi-trash"></i>
+          </button>
         `;
       }
+      
       tr.innerHTML = `
-        <td>${agent.name || ''}</td>
-        <td>${agent.display_name || ''}${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}</td>
-        <td></td>
+        <td>
+          <strong>${agent.display_name || agent.name || ''}</strong>
+          ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
+        </td>
+        <td class="text-muted small">${agent.description || 'No description available'}</td>
         <td>${actionButtons}</td>
       `;
       agentsTbody.appendChild(tr);
     }
-    renderAgentSelectDropdown(agentsList);
   });
-}
-
-function renderAgentSelectDropdown(agentsList, selectedAgentObj) {
-  if (!agentSelect) return;
-  agentSelect.innerHTML = '';
-  if (!agentsList.length) {
-    agentSelect.disabled = true;
-    return;
-  }
-  let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
-  agentsList.forEach(agent => {
-    let opt = document.createElement('option');
-    opt.value = agent.name;
-    opt.textContent = (agent.display_name || agent.name) + (agent.is_global ? ' (Global)' : '');
-    if (agent.name === selectedAgentName) opt.selected = true;
-    agentSelect.appendChild(opt);
-  });
-  agentSelect.disabled = false;
 }
 
 async function fetchAgents() {
@@ -124,7 +136,8 @@ async function fetchAgents() {
     const res = await fetch('/api/user/agents');
     if (!res.ok) throw new Error('Failed to load agents');
     agents = await res.json();
-    renderAgentsTable(agents);
+    filteredAgents = agents; // Initialize filtered list
+    renderAgentsTable(filteredAgents);
   } catch (e) {
     renderError(e.message);
   }
@@ -134,36 +147,14 @@ function attachAgentTableEvents() {
   if (createAgentBtn) {
     createAgentBtn.onclick = () => openAgentModal();
   }
-  if (agentSelect && !agentSelect._handlerAttached) {
-    agentSelect.onchange = async function () {
-      const selectedName = agentSelect.value;
-      if (!selectedName) return;
-      agentSelect.disabled = true;
-      const selectedAgentObj = agents.find(a => a.name === selectedName);
-      if (!selectedAgentObj) {
-        alert('Failed to find selected agent object.');
-        agentSelect.disabled = false;
-        return;
-      }
-      try {
-        const resp = await fetch('/api/user/settings/selected_agent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selected_agent: { name: selectedAgentObj.name, is_global: !!selectedAgentObj.is_global } })
-        });
-        if (!resp.ok) {
-          alert('Failed to update selected agent.');
-          return;
-        }
-        fetchAgents();
-      } catch (err) {
-        alert('Failed to update selected agent.');
-      } finally {
-        agentSelect.disabled = false;
-      }
-    };
-    agentSelect._handlerAttached = true;
+  
+  // Search functionality
+  if (agentsSearchInput) {
+    agentsSearchInput.addEventListener('input', (e) => {
+      filterAgents(e.target.value);
+    });
   }
+  
   agentsTbody.addEventListener('click', function (e) {
     if (e.target.classList.contains('edit-agent-btn')) {
       const agent = agents.find(a => a.name === e.target.dataset.name);
@@ -174,7 +165,32 @@ function attachAgentTableEvents() {
       if (e.target.disabled) return;
       if (confirm(`Delete agent '${agent.name}'?`)) deleteAgent(agent.name);
     }
+    if (e.target.classList.contains('chat-agent-btn')) {
+      const agentName = e.target.dataset.name;
+      chatWithAgent(agentName);
+    }
   });
+}
+
+async function chatWithAgent(agentName) {
+  try {
+    // Set the selected agent
+    const resp = await fetch('/api/user/settings/selected_agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selected_agent: { name: agentName } })
+    });
+    
+    if (!resp.ok) {
+      throw new Error('Failed to select agent');
+    }
+    
+    // Navigate to chat page
+    window.location.href = '/chats';
+  } catch (err) {
+    console.error('Error selecting agent for chat:', err);
+    showToast('Error selecting agent for chat. Please try again.', 'error');
+  }
 }
 
 
@@ -183,6 +199,16 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
   const modalEl = document.getElementById('agentModal');
   if (!modalEl) return alert('Agent modal not found.');
   const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+  // Initialize stepper
+  if (!window.agentModalStepper) {
+    window.agentModalStepper = new AgentModalStepper();
+  }
+  
+  // Store agent data for use in stepper
+  window.agentModalStepper.currentAgent = agent;
+  
+  window.agentModalStepper.showModal(agent);
 
   // Clear error div on modal open
   const errorDiv = document.getElementById('agent-modal-error');
@@ -193,20 +219,6 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
 
   // Populate modal fields using shared helper
   agentsCommon.setAgentModalFields(agent || {}, { context: 'user' });
-
-  // Setup plugin select
-  const pluginSelect = document.getElementById('agent-plugins-to-load');
-  let availablePlugins = [];
-  try {
-    const resp = await fetch('/api/user/plugins');
-    if (resp.ok) {
-      availablePlugins = await resp.json();
-    }
-  } catch (e) {
-    availablePlugins = [];
-  }
-  agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-  agentsCommon.setSelectedPlugins(pluginSelect, agent?.actions_to_load || []);
 
   // Setup toggles using shared helpers
   agentsCommon.setupApimToggle(
@@ -261,7 +273,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
           newAgent.id = '';
         }
       }
-      newAgent.actions_to_load = agentsCommon.getSelectedPlugins(pluginSelect);
+      newAgent.actions_to_load = window.agentModalStepper ? window.agentModalStepper.getSelectedActionIds() : [];
       newAgent.is_global = false;
     } catch (e) {
       const msg = 'Additional Settings: ' + e.message;
@@ -324,11 +336,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
           if (!selectedAgentObj && settings.settings && settings.settings.selected_agent) {
             selectedAgentObj = settings.settings.selected_agent;
           }
-          let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
-          if (selectedAgentName && agentSelect) {
-            // Set the dropdown value to the selected agent
-            agentSelect.value = selectedAgentName;
-          }
+          // Note: selectedAgentName is available for future use if needed
         }
       } catch (e) {
         // Ignore errors, fallback to default behavior

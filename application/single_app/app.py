@@ -422,6 +422,21 @@ register_route_external_admin_settings(app)
 
 if __name__ == '__main__':
     settings = get_settings()
-    print(f"Starting Single App. Initializing clients...")
     initialize_clients(settings)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    
+    # Configure HTTPS with adhoc SSL certificate for local development
+    ssl_context = 'adhoc'
+    port = 5000
+    
+    try:
+        if ssl_context:
+            print(f"Starting server with HTTPS on https://localhost:{port}")
+        else:
+            print(f"Starting server with HTTP on http://localhost:{port}")
+        
+        app.run(host="0.0.0.0", port=port, debug=False, ssl_context=ssl_context)
+    except Exception as e:
+        print(f"HTTPS enabled but no valid certificates provided. Falling back to HTTP...")
+        port = 5000
+        print(f"Starting server with HTTP on http://localhost:{port}")
+        app.run(host="0.0.0.0", port=port, debug=False, ssl_context=None)

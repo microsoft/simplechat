@@ -5,7 +5,7 @@ import { showToast } from "./chat/chat-toast.js";
 export class PluginModalStepper {
   constructor() {
     this.currentStep = 1;
-    this.maxSteps = 4;
+    this.maxSteps = 5;
     this.selectedType = null;
     this.availableTypes = [];
     this.isEditMode = false;
@@ -46,6 +46,9 @@ export class PluginModalStepper {
     });
     
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
+    
+    // Set up display name to generated name conversion
+    this.setupNameGeneration();
     
     // Auto-generate action name when display name changes
     document.getElementById('plugin-display-name').addEventListener('input', (e) => {
@@ -102,6 +105,12 @@ export class PluginModalStepper {
       if (!res.ok) throw new Error('Failed to load action types');
       
       this.availableTypes = await res.json();
+      // Sort action types alphabetically by display name
+      this.availableTypes.sort((a, b) => {
+        const nameA = (a.display || a.displayName || a.type || a.name || '').toLowerCase();
+        const nameB = (b.display || b.displayName || b.type || b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
       this.filteredTypes = [...this.availableTypes]; // Initialize filtered types
     } catch (error) {
       console.error('Error loading action types:', error);
@@ -109,6 +118,31 @@ export class PluginModalStepper {
       this.availableTypes = [];
       this.filteredTypes = [];
     }
+  }
+
+  setupNameGeneration() {
+    const displayNameInput = document.getElementById('plugin-display-name');
+    const generatedNameInput = document.getElementById('plugin-name');
+    
+    if (displayNameInput && generatedNameInput) {
+      displayNameInput.addEventListener('input', () => {
+        const displayName = displayNameInput.value.trim();
+        const generatedName = this.generatePluginName(displayName);
+        generatedNameInput.value = generatedName;
+      });
+    }
+  }
+
+  generatePluginName(displayName) {
+    if (!displayName) return '';
+    
+    // Convert to lowercase, replace spaces with underscores, remove invalid characters
+    return displayName
+      .toLowerCase()
+      .replace(/\s+/g, '_')           // Replace spaces with underscores
+      .replace(/[^a-z0-9_-]/g, '')    // Remove invalid characters (keep only letters, numbers, underscores, hyphens)
+      .replace(/_{2,}/g, '_')         // Replace multiple underscores with single
+      .replace(/^_+|_+$/g, '');       // Remove leading/trailing underscores
   }
 
   populateActionTypeCards() {
@@ -222,6 +256,13 @@ export class PluginModalStepper {
       return displayName.includes(searchTerm) || description.includes(searchTerm);
     });
     
+    // Sort filtered types alphabetically by display name
+    this.filteredTypes.sort((a, b) => {
+      const nameA = (a.display || a.displayName || a.type || a.name || '').toLowerCase();
+      const nameB = (b.display || b.displayName || b.type || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+    
     // Reset to first page when filtering
     this.currentPage = 1;
     
@@ -332,6 +373,9 @@ export class PluginModalStepper {
       this.showConfigSectionForType();
       this.toggleOpenApiAuthFields();
       this.toggleGenericAuthFields();
+    } else if (stepNumber === 5) {
+      // Populate summary when reaching the summary step
+      this.populateSummary();
     }
   }
 
@@ -379,9 +423,24 @@ export class PluginModalStepper {
   }
 
   updateStepIndicator() {
-    document.querySelectorAll('.step-indicator').forEach((indicator, index) => {
+    // Scope to the plugin modal specifically
+    const modal = document.getElementById('plugin-modal');
+    if (!modal) {
+      console.warn('Plugin modal not found');
+      return;
+    }
+    
+    const indicators = modal.querySelectorAll('.step-indicator');
+    console.log('Updating step indicator. Current step:', this.currentStep, 'Found indicators:', indicators.length);
+    
+    indicators.forEach((indicator, index) => {
       const stepNum = index + 1;
       const circle = indicator.querySelector('.step-circle');
+      
+      if (!circle) {
+        console.warn('No step-circle found for indicator', index);
+        return;
+      }
       
       // Reset classes
       indicator.classList.remove('active', 'completed');
@@ -390,9 +449,11 @@ export class PluginModalStepper {
       if (stepNum < this.currentStep) {
         indicator.classList.add('completed');
         circle.classList.add('completed');
+        console.log('Step', stepNum, 'marked as completed');
       } else if (stepNum === this.currentStep) {
         indicator.classList.add('active');
         circle.classList.add('active');
+        console.log('Step', stepNum, 'marked as active');
       }
     });
   }
@@ -1062,20 +1123,55 @@ export class PluginModalStepper {
       const auth = plugin.auth || {};
       let authType = 'none';
       
-      // Map from our OpenAPI auth format to modal format
-      if (auth.type === 'api_key') {
+      // Map from our schema format to modal format
+      if (auth.type === 'key') {
+        // Determine the actual auth method from additionalFields
+        const authMethod = additionalFields.auth_method;
+        
+        if (authMethod === 'none' || !auth.key) {
+          authType = 'none';
+        } else if (additionalFields.api_key_location && additionalFields.api_key_name) {
+          // This is API key authentication
+          authType = 'api_key';
+          document.getElementById('plugin-auth-api-key-location').value = additionalFields.api_key_location || 'header';
+          document.getElementById('plugin-auth-api-key-name').value = additionalFields.api_key_name || '';
+          document.getElementById('plugin-auth-api-key-value').value = auth.key || '';
+        } else if (authMethod === 'bearer') {
+          authType = 'bearer';
+          document.getElementById('plugin-auth-bearer-token').value = auth.key || '';
+        } else if (authMethod === 'basic') {
+          authType = 'basic';
+          // Split the combined username:password format
+          const credentials = auth.key ? auth.key.split(':') : ['', ''];
+          document.getElementById('plugin-auth-basic-username').value = credentials[0] || '';
+          document.getElementById('plugin-auth-basic-password').value = credentials[1] || '';
+        } else if (authMethod === 'oauth2') {
+          authType = 'oauth2';
+          document.getElementById('plugin-auth-oauth2-token').value = auth.key || '';
+        } else {
+          // Default to API key if we have a key but no clear method
+          authType = 'api_key';
+          document.getElementById('plugin-auth-api-key-location').value = 'header';
+          document.getElementById('plugin-auth-api-key-name').value = 'X-API-Key';
+          document.getElementById('plugin-auth-api-key-value').value = auth.key || '';
+        }
+      } else if (auth.type === 'api_key') {
+        // Legacy format - still support it
         authType = 'api_key';
         document.getElementById('plugin-auth-api-key-location').value = auth.location || 'header';
         document.getElementById('plugin-auth-api-key-name').value = auth.name || '';
         document.getElementById('plugin-auth-api-key-value').value = auth.value || '';
       } else if (auth.type === 'bearer') {
+        // Legacy format - still support it
         authType = 'bearer';
         document.getElementById('plugin-auth-bearer-token').value = auth.token || '';
       } else if (auth.type === 'basic') {
+        // Legacy format - still support it
         authType = 'basic';
         document.getElementById('plugin-auth-basic-username').value = auth.username || '';
         document.getElementById('plugin-auth-basic-password').value = auth.password || '';
       } else if (auth.type === 'oauth2') {
+        // Legacy format - still support it
         authType = 'oauth2';
         document.getElementById('plugin-auth-oauth2-token').value = auth.access_token || '';
       }
@@ -1134,21 +1230,36 @@ export class PluginModalStepper {
       additionalFields.base_url = endpoint;
       
       const authType = document.getElementById('plugin-auth-type').value;
-      auth.type = authType;
       
       if (authType === 'api_key') {
-        auth.location = document.getElementById('plugin-auth-api-key-location').value;
-        auth.name = document.getElementById('plugin-auth-api-key-name').value.trim();
-        auth.value = document.getElementById('plugin-auth-api-key-value').value.trim();
+        // Map api_key to 'key' type for schema compliance
+        auth.type = 'key';
+        const apiKeyValue = document.getElementById('plugin-auth-api-key-value').value.trim();
+        auth.key = apiKeyValue;
+        
+        // Store API key configuration details in additionalFields instead of auth object
+        const apiKeyLocation = document.getElementById('plugin-auth-api-key-location').value;
+        const apiKeyName = document.getElementById('plugin-auth-api-key-name').value.trim();
+        additionalFields.api_key_location = apiKeyLocation;
+        additionalFields.api_key_name = apiKeyName;
       } else if (authType === 'bearer') {
-        auth.token = document.getElementById('plugin-auth-bearer-token').value.trim();
+        auth.type = 'key';  // Bearer tokens are also 'key' type in the schema
+        auth.key = document.getElementById('plugin-auth-bearer-token').value.trim();
+        additionalFields.auth_method = 'bearer';
       } else if (authType === 'basic') {
-        auth.username = document.getElementById('plugin-auth-basic-username').value.trim();
-        auth.password = document.getElementById('plugin-auth-basic-password').value.trim();
+        auth.type = 'key';  // Basic auth is also 'key' type in the schema
+        const username = document.getElementById('plugin-auth-basic-username').value.trim();
+        const password = document.getElementById('plugin-auth-basic-password').value.trim();
+        auth.key = `${username}:${password}`;  // Store as combined string
+        additionalFields.auth_method = 'basic';
       } else if (authType === 'oauth2') {
-        auth.access_token = document.getElementById('plugin-auth-oauth2-token').value.trim();
+        auth.type = 'key';  // OAuth2 is also 'key' type in the schema
+        auth.key = document.getElementById('plugin-auth-oauth2-token').value.trim();
+        additionalFields.auth_method = 'oauth2';
       } else if (authType === 'none') {
-        auth = {}; // No auth needed
+        auth.type = 'key';
+        auth.key = '';  // Empty key for no auth
+        additionalFields.auth_method = 'none';
       }
     } else if (isSqlVisible) {
       // Collect SQL plugin data
@@ -1323,6 +1434,230 @@ export class PluginModalStepper {
       .replace(/\s+/g, '_')         // Replace spaces with underscores
       .replace(/_+/g, '_')          // Replace multiple underscores with single
       .replace(/^_|_$/g, '');       // Remove leading and trailing underscores
+  }
+
+  populateSummary() {
+    // Get all form values
+    const displayName = document.getElementById('plugin-display-name').value.trim();
+    const generatedName = document.getElementById('plugin-name').value.trim();
+    const description = document.getElementById('plugin-description').value.trim();
+    const type = this.selectedType || '-';
+    
+    // Basic Information Section
+    document.getElementById('summary-plugin-display-name').textContent = displayName || '-';
+    document.getElementById('summary-plugin-name').textContent = generatedName || '-';
+    document.getElementById('summary-plugin-type').textContent = type;
+    document.getElementById('summary-plugin-description').textContent = description || '-';
+    
+    // Configuration Section
+    const endpoint = this.getEndpointValue();
+    document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+    
+    const authType = this.getAuthTypeValue();
+    document.getElementById('summary-plugin-auth').textContent = authType || 'None';
+    
+    // Connection method and database type (for SQL plugins)
+    const connectionMethod = this.getSqlConnectionMethod();
+    const connectionMethodRow = document.getElementById('summary-plugin-connection-method-row');
+    if (connectionMethod) {
+      document.getElementById('summary-plugin-connection-method').textContent = connectionMethod;
+      connectionMethodRow.style.display = '';
+    } else {
+      connectionMethodRow.style.display = 'none';
+    }
+    
+    const databaseType = this.getSqlDatabaseType();
+    const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
+    if (databaseType) {
+      document.getElementById('summary-plugin-database-type').textContent = databaseType;
+      databaseTypeRow.style.display = '';
+    } else {
+      databaseTypeRow.style.display = 'none';
+    }
+    
+    // Show/hide type-specific sections
+    this.populateOpenApiSummary();
+    this.populateSqlSummary();
+    this.populateAdvancedSummary();
+  }
+
+  getEndpointValue() {
+    // Check different endpoint fields based on plugin type
+    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+    const isSqlType = this.selectedType && (
+      this.selectedType.toLowerCase().includes('sql') || 
+      this.selectedType.toLowerCase() === 'sql_schema' ||
+      this.selectedType.toLowerCase() === 'sql_query'
+    );
+    
+    if (isOpenApiType) {
+      return document.getElementById('plugin-endpoint').value.trim();
+    } else if (isSqlType) {
+      return document.getElementById('sql-connection-string').value.trim();
+    } else {
+      return document.getElementById('plugin-generic-endpoint').value.trim();
+    }
+  }
+
+  getAuthTypeValue() {
+    // Check different auth fields based on plugin type
+    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+    const isSqlType = this.selectedType && (
+      this.selectedType.toLowerCase().includes('sql') || 
+      this.selectedType.toLowerCase() === 'sql_schema' ||
+      this.selectedType.toLowerCase() === 'sql_query'
+    );
+    
+    if (isOpenApiType) {
+      const authType = document.getElementById('plugin-auth-type').value;
+      return this.formatAuthType(authType);
+    } else if (isSqlType) {
+      const authType = document.getElementById('sql-auth-type').value;
+      return this.formatAuthType(authType);
+    } else {
+      const authType = document.getElementById('plugin-auth-type-generic').value;
+      return this.formatAuthType(authType);
+    }
+  }
+
+  formatAuthType(authType) {
+    const authTypeMap = {
+      'none': 'No Authentication',
+      'api_key': 'API Key',
+      'bearer': 'Bearer Token',
+      'basic': 'Basic Authentication',
+      'oauth2': 'OAuth2',
+      'windows': 'Windows Authentication',
+      'sql': 'SQL Authentication'
+    };
+    return authTypeMap[authType] || authType;
+  }
+
+  getSqlConnectionMethod() {
+    const methodRadio = document.querySelector('input[name="sql-connection-method"]:checked');
+    return methodRadio ? methodRadio.value : null;
+  }
+
+  getSqlDatabaseType() {
+    const typeRadio = document.querySelector('input[name="sql-database-type"]:checked');
+    return typeRadio ? typeRadio.value : null;
+  }
+
+  populateOpenApiSummary() {
+    const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+    const openApiSection = document.getElementById('summary-openapi-section');
+    
+    if (isOpenApiType) {
+      const fileInput = document.getElementById('plugin-openapi-file');
+      const fileName = fileInput.files.length > 0 ? fileInput.files[0].name : '-';
+      document.getElementById('summary-openapi-file').textContent = fileName;
+      
+      // Show API info if available
+      const infoElement = document.getElementById('openapi-info-content');
+      if (infoElement && infoElement.textContent.trim()) {
+        document.getElementById('summary-openapi-info').textContent = infoElement.textContent;
+        document.getElementById('summary-openapi-info-row').style.display = '';
+      } else {
+        document.getElementById('summary-openapi-info-row').style.display = 'none';
+      }
+      
+      openApiSection.style.display = '';
+    } else {
+      openApiSection.style.display = 'none';
+    }
+  }
+
+  populateSqlSummary() {
+    const isSqlType = this.selectedType && (
+      this.selectedType.toLowerCase().includes('sql') || 
+      this.selectedType.toLowerCase() === 'sql_schema' ||
+      this.selectedType.toLowerCase() === 'sql_query'
+    );
+    const sqlSection = document.getElementById('summary-sql-section');
+    
+    if (isSqlType) {
+      // SQL Plugin Type
+      const pluginTypeRadio = document.querySelector('input[name="sql-plugin-type"]:checked');
+      const pluginType = pluginTypeRadio ? pluginTypeRadio.value : '-';
+      document.getElementById('summary-sql-plugin-type').textContent = pluginType;
+      
+      // Optional SQL settings
+      this.populateSqlOptionalSetting('sql-read-only-checkbox', 'summary-sql-read-only', 'summary-sql-read-only-row');
+      this.populateSqlOptionalSetting('sql-max-rows', 'summary-sql-max-rows', 'summary-sql-max-rows-row');
+      this.populateSqlOptionalSetting('sql-timeout', 'summary-sql-timeout', 'summary-sql-timeout-row');
+      this.populateSqlOptionalSetting('sql-include-system-checkbox', 'summary-sql-include-system', 'summary-sql-include-system-row');
+      
+      sqlSection.style.display = '';
+    } else {
+      sqlSection.style.display = 'none';
+    }
+  }
+
+  populateSqlOptionalSetting(inputId, summaryId, rowId) {
+    const input = document.getElementById(inputId);
+    const summaryElement = document.getElementById(summaryId);
+    const rowElement = document.getElementById(rowId);
+    
+    if (input && summaryElement && rowElement) {
+      let value = '';
+      if (input.type === 'checkbox') {
+        value = input.checked ? 'Yes' : 'No';
+        if (input.checked) {
+          summaryElement.textContent = value;
+          rowElement.style.display = '';
+        } else {
+          rowElement.style.display = 'none';
+        }
+      } else {
+        value = input.value.trim();
+        if (value) {
+          summaryElement.textContent = value + (inputId.includes('timeout') ? ' seconds' : '');
+          rowElement.style.display = '';
+        } else {
+          rowElement.style.display = 'none';
+        }
+      }
+    }
+  }
+
+  populateAdvancedSummary() {
+    const advancedSection = document.getElementById('summary-advanced-section');
+    
+    // Check if there's any metadata or additional fields
+    const metadata = document.getElementById('plugin-metadata').value.trim();
+    const additionalFields = document.getElementById('plugin-additional-fields').value.trim();
+    
+    const hasMetadata = metadata.length > 0;
+    const hasAdditionalFields = additionalFields.length > 0;
+    
+    // Update has metadata/additional fields indicators
+    document.getElementById('summary-has-metadata').textContent = hasMetadata ? 'Yes' : 'No';
+    document.getElementById('summary-has-additional-fields').textContent = hasAdditionalFields ? 'Yes' : 'No';
+    
+    // Show/hide metadata preview
+    const metadataPreview = document.getElementById('summary-metadata-preview');
+    if (hasMetadata) {
+      document.getElementById('summary-metadata-content').textContent = metadata;
+      metadataPreview.style.display = '';
+    } else {
+      metadataPreview.style.display = 'none';
+    }
+    
+    // Show/hide additional fields preview
+    const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
+    if (hasAdditionalFields) {
+      document.getElementById('summary-additional-fields-content').textContent = additionalFields;
+      additionalFieldsPreview.style.display = '';
+    } else {
+      additionalFieldsPreview.style.display = 'none';
+    }
+    
+    // Show advanced section if there's any advanced content
+    if (hasMetadata || hasAdditionalFields) {
+      advancedSection.style.display = '';
+    } else {
+      advancedSection.style.display = 'none';
+    }
   }
 
   escapeHtml(str) {

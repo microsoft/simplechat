@@ -311,16 +311,16 @@ def register_route_backend_chats(app):
                 # Add scope-specific details
                 if document_scope == 'group' and active_group_id:
                     try:
-                        #print(f"Debug: Workspace search - looking up group for id: {active_group_id}")
+                        print(f"Debug: Workspace search - looking up group for id: {active_group_id}")
                         group_doc = find_group_by_id(active_group_id)
-                        #print(f"Debug: Workspace search group lookup result: {group_doc}")
+                        print(f"Debug: Workspace search group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
                             group_name = group_doc.get('name')
                             user_metadata['workspace_search']['group_name'] = group_name
-                            #print(f"Debug: Workspace search - set group_name to: {group_name}")
+                            print(f"Debug: Workspace search - set group_name to: {group_name}")
                         else:
-                            #print(f"Debug: Workspace search - no group found or no name for id: {active_group_id}")
+                            print(f"Debug: Workspace search - no group found or no name for id: {active_group_id}")
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
@@ -403,9 +403,9 @@ def register_route_backend_chats(app):
             }
             
             # Debug: Print the complete metadata being saved
-            # #print(f"Debug: Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
-            # #print(f"Debug: Final chat_context for message: {user_metadata['chat_context']}")
-            # #print(f"Debug: document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
+            # print(f"Debug: Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+            # print(f"Debug: Final chat_context for message: {user_metadata['chat_context']}")
+            # print(f"Debug: document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
             
             # Note: Message-level chat_type will be updated after document search
             
@@ -765,8 +765,8 @@ def register_route_backend_chats(app):
             
             # Update the message-level chat_type in user_metadata
             user_metadata['chat_context']['chat_type'] = message_chat_type
-            #print(f"Debug: Set message-level chat_type to: {message_chat_type}")
-            #print(f"Debug: hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
+            print(f"Debug: Set message-level chat_type to: {message_chat_type}")
+            print(f"Debug: hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
             
             # Add context-specific information based on message chat type
             if message_chat_type == 'group' and active_group_id:
@@ -774,19 +774,19 @@ def register_route_backend_chats(app):
                 # We may have already fetched this in workspace_search section
                 if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
                     user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
-                    #print(f"Debug: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
+                    print(f"Debug: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
                 else:
                     try:
-                        #print(f"Debug: Chat context - looking up group for id: {active_group_id}")
+                        print(f"Debug: Chat context - looking up group for id: {active_group_id}")
                         group_doc = find_group_by_id(active_group_id)
-                        #print(f"Debug: Chat context group lookup result: {group_doc}")
+                        print(f"Debug: Chat context group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
                             group_title = group_doc.get('name')
                             user_metadata['chat_context']['group_name'] = group_title
-                            #print(f"Debug: Chat context - set group_name to: {group_title}")
+                            print(f"Debug: Chat context - set group_name to: {group_title}")
                         else:
-                            #print(f"Debug: Chat context - no group found or no name for id: {active_group_id}")
+                            print(f"Debug: Chat context - no group found or no name for id: {active_group_id}")
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
@@ -801,16 +801,16 @@ def register_route_backend_chats(app):
                     user_metadata['chat_context']['workspace_context'] = f"Public Document: {user_metadata['workspace_search']['document_name']}"
                 else:
                     user_metadata['chat_context']['workspace_context'] = "Public Workspace"
-                #print(f"Debug: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
+                print(f"Debug: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
             # For personal chat type or Model, no additional context needed beyond conversation_id
             
             # Update the user message document with the final metadata
             user_message_doc['metadata'] = user_metadata
-            #print(f"Debug: Updated message metadata with chat_type: {message_chat_type}")
+            print(f"Debug: Updated message metadata with chat_type: {message_chat_type}")
             
             # Update the user message in Cosmos DB with the final chat_type information
             cosmos_messages_container.upsert_item(user_message_doc)
-            #print(f"Debug: User message re-saved to Cosmos DB with updated chat_context")
+            print(f"Debug: User message re-saved to Cosmos DB with updated chat_context")
 
             # Image Generation
             if image_gen_enabled:

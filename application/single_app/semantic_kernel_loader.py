@@ -88,8 +88,8 @@ def first_if_comma(val):
         return val
 
 def resolve_agent_config(agent, settings):
-    #print(f"Debug: [SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
-    #print(f"Debug: [SK Loader] Agent config: {agent}")
+    print(f"Debug: [SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
+    print(f"Debug: [SK Loader] Agent config: {agent}")
     
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -195,7 +195,7 @@ def resolve_agent_config(agent, settings):
         # Agent has some GPT config - merge with global GPT config for missing values
         print(f"[SK Loader] Using agent GPT config merged with global GPT config")
         merged = merge_fields(u_gpt, g_gpt)
-        #print(f"Debug: [SK Loader] Merged result: {merged}")
+        print(f"Debug: [SK Loader] Merged result: {merged}")
         endpoint, key, deployment, api_version = merged
     elif global_apim_enabled and any_filled(*g_apim):
         # Use global APIM if enabled and has values
@@ -402,11 +402,16 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             all_plugin_manifests = settings.get('semantic_kernel_plugins', [])
             
         # Filter manifests to only include requested plugins
-        plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
+        # Check both 'name' and 'id' fields to support both UUID and name references
+        plugin_manifests = [
+            p for p in all_plugin_manifests 
+            if p.get('name') in plugin_names or p.get('id') in plugin_names
+        ]
         
         if not plugin_manifests:
-            print(f"[SK Loader] Warning: No plugin manifests found for names: {plugin_names}")
+            print(f"[SK Loader] Warning: No plugin manifests found for names/IDs: {plugin_names}")
             print(f"[SK Loader] Available plugin names: {[p.get('name') for p in all_plugin_manifests]}")
+            print(f"[SK Loader] Available plugin IDs: {[p.get('id') for p in all_plugin_manifests]}")
             return
             
         print(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests to load")

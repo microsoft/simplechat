@@ -1,50 +1,88 @@
 <!-- Dynamic Agent Modal -->
 <div class="modal fade" id="agentModal" tabindex="-1" aria-labelledby="agentModalLabel" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="agentModalLabel">Add Agent</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body">
-        <div class="alert alert-info py-2 small" role="note">
-          <strong>Note:</strong> If a value is not provided for an inheritable property, it will be inherited from the first selected model.
-        </div>
-        <div class="mb-3">
-          <label for="agent-name" class="form-label">Name <span class="text-danger" title="Required">*</span></label>
-          <input type="text" class="form-control" id="agent-name" required pattern="^[^\s]+$" name="agent_name" />
-        </div>
-        <div class="mb-3">
-          <label for="agent-display-name" class="form-label">Display Name <span class="text-danger" title="Required">*</span></label>
-          <input type="text" class="form-control" id="agent-display-name" name="agent_display_name" required />
-        </div>
-        <div class="mb-3">
-          <label for="agent-description" class="form-label">Description <span class="text-danger" title="Required">*</span></label>
-          <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear agent description enables the orchestrator (default agent) to select the right agent for the task, essential for precise, efficient delegation."></i>
-          <input type="text" class="form-control" id="agent-description" />
-        </div>
-        <div class="mb-3">
-          <label for="agent-instructions" class="form-label">Instructions <span class="text-danger" title="Required">*</span></label>
-          <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent’s behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
-          <textarea class="form-control" id="agent-instructions" rows="2"></textarea>
-        </div>
-        <!-- Custom Connection Toggle -->
-        <div class="d-flex align-items-center mb-3" id="agent-custom-connection-toggle">
-          <label for="agent-custom-connection" class="form-label mb-0 me-2">Custom Connection</label>
-          <div class="form-check form-switch">
-            <input class="form-check-input" type="checkbox" id="agent-custom-connection" />
-            <label class="form-check-label" for="agent-custom-connection"></label>
+      
+      <!-- Progress Steps Indicator -->
+      <div class="modal-body pb-0">
+        <div class="d-flex justify-content-between mb-4">
+          <div class="step-indicator" data-step="1">
+            <div class="step-circle active">1</div>
+            <div class="step-label">Basic Info</div>
+          </div>
+          <div class="step-indicator" data-step="2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Model & Connection</div>
+          </div>
+          <div class="step-indicator" data-step="3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Instructions</div>
+          </div>
+          <div class="step-indicator" data-step="4">
+            <div class="step-circle">4</div>
+            <div class="step-label">Actions</div>
+          </div>
+          <div class="step-indicator" data-step="5">
+            <div class="step-circle">5</div>
+            <div class="step-label">Advanced</div>
+          </div>
+          <div class="step-indicator" data-step="6">
+            <div class="step-circle">6</div>
+            <div class="step-label">Summary</div>
           </div>
         </div>
-        <!-- Global Model Dropdown (hidden when custom connection is ON) -->
-        <div class="mb-3" id="agent-global-model-group">
-          <label for="agent-global-model-select" class="form-label">Select Global Model</label>
-          <select class="form-select" id="agent-global-model-select">
-            <option value="">Loading models...</option>
-          </select>
+      </div>
+
+      <div class="modal-body pt-0">
+        <!-- Step 1: Basic Information -->
+        <div class="agent-step" id="agent-step-1">
+          <h6 class="mb-3">Basic Information</h6>
+          <div class="mb-3">
+            <label for="agent-display-name" class="form-label">Display Name <span class="text-danger" title="Required">*</span></label>
+            <input type="text" class="form-control" id="agent-display-name" name="agent_display_name" required />
+            <div class="form-text">Human-readable name for this agent. The agent name will be generated automatically.</div>
+          </div>
+          <div class="mb-3">
+            <label for="agent-description" class="form-label">Description <span class="text-danger" title="Required">*</span></label>
+            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear agent description enables the orchestrator (default agent) to select the right agent for the task, essential for precise, efficient delegation."></i>
+            <textarea class="form-control" id="agent-description" rows="3" placeholder="Describe what this agent does and when to use it..."></textarea>
+          </div>
+          <!-- Hidden field to store generated name -->
+          <input type="hidden" id="agent-name" name="agent_name" />
         </div>
+
+        <!-- Step 2: Model & Connection -->
+        <div class="agent-step d-none" id="agent-step-2">
+          <h6 class="mb-3">Model & Connection</h6>
+          
+          <!-- Model Selection -->
+          <div class="mb-3" id="agent-global-model-group">
+            <label for="agent-global-model-select" class="form-label">Select Model <span class="text-danger" title="Required">*</span></label>
+            <select class="form-select" id="agent-global-model-select">
+              <option value="">Loading models...</option>
+            </select>
+          </div>
+
+          <!-- Custom Connection Toggle -->
+          <div class="d-flex align-items-center mb-3" id="agent-custom-connection-toggle">
+            <label for="agent-custom-connection" class="form-label mb-0 me-2">Custom Connection</label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="agent-custom-connection" />
+              <label class="form-check-label" for="agent-custom-connection"></label>
+            </div>
+            <div class="form-text ms-2">Override global model connection settings</div>
+          </div>
+
           <!-- Custom Connection Fields (shown only when custom connection is ON) -->
-          <div id="agent-custom-connection-fields">
+          <div id="agent-custom-connection-fields" class="d-none">
+            <div class="alert alert-info py-2 small" role="note">
+              <strong>Note:</strong> If a value is not provided for an inheritable property, it will be inherited from the selected model.
+            </div>
+            
             <div class="d-flex align-items-center mb-3">
               <label for="agent-enable-apim" class="form-label mb-0 me-2">Enable APIM Integration</label>
               <div class="form-check form-switch">
@@ -52,82 +90,685 @@
                 <label class="form-check-label" for="agent-enable-apim"></label>
               </div>
             </div>
+            
             <div id="agent-gpt-fields">
               <div class="mb-3">
                 <label for="agent-gpt-endpoint" class="form-label">Azure OpenAI GPT Endpoint</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-gpt-endpoint" placeholder="https://" />
               </div>
               <div class="mb-3">
                 <label for="agent-gpt-key" class="form-label">Azure OpenAI GPT Key</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-gpt-key" />
               </div>
               <div class="mb-3">
                 <label for="agent-gpt-deployment" class="form-label">GPT Deployment</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-gpt-deployment" />
               </div>
               <div class="mb-3">
                 <label for="agent-gpt-api-version" class="form-label">GPT API Version</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-gpt-api-version" />
               </div>
             </div>
-            <div id="agent-apim-fields" style="display:none;">
+            
+            <div id="agent-apim-fields" class="d-none">
               <div class="mb-3">
                 <label for="agent-apim-endpoint" class="form-label">APIM GPT Endpoint</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-apim-endpoint" placeholder="https://" />
               </div>
               <div class="mb-3">
                 <label for="agent-apim-subscription-key" class="form-label">APIM Subscription Key</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-apim-subscription-key" />
               </div>
               <div class="mb-3">
                 <label for="agent-apim-deployment" class="form-label">APIM Deployment</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-apim-deployment" />
               </div>
               <div class="mb-3">
                 <label for="agent-apim-api-version" class="form-label">APIM API Version</label>
-                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the first selected model.">Inheritable</span>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-apim-api-version" />
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- Advanced Toggle -->
-          <div class="d-flex align-items-center mb-3">
-            <label for="agent-advanced-toggle" class="form-label mb-0 me-2">Advanced</label>
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" id="agent-advanced-toggle" />
-              <label class="form-check-label" for="agent-advanced-toggle"></label>
+        <!-- Step 3: Instructions -->
+        <div class="agent-step d-none" id="agent-step-3">
+          <h6 class="mb-3">Instructions</h6>
+          <div class="mb-3">
+            <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
+            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent's behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
+            <textarea class="form-control" id="agent-instructions" rows="8" placeholder="Define how this agent should behave, what it should do, and any specific guidelines it should follow..."></textarea>
+            <div class="form-text">
+              <strong>Tips:</strong> Be specific about the agent's role, capabilities, and limitations. Include examples of good behavior if relevant.
             </div>
           </div>
-          <!-- Advanced Section (hidden by default) -->
-          <div id="agent-advanced-section" style="display:none;">
-            <div class="mb-3">
-              <label for="agent-plugins-to-load" class="form-label">Plugins Whitelist</label>
-              <select class="form-select" id="agent-plugins-to-load" multiple size="6">
-                <!-- Options will be populated dynamically by JS -->
-              </select>
-              <div class="form-text">Hold Ctrl (Windows) or Cmd (Mac) to select multiple plugins.</div>
+        </div>
+
+        <!-- Step 4: Action Selection -->
+        <div class="agent-step d-none" id="agent-step-4">
+          <!-- Header Section -->
+          <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #17a2b8, #138496);">
+              <div class="d-flex align-items-center">
+                <i class="bi bi-lightning-charge me-2"></i>
+                <div>
+                  <h6 class="mb-0">Available Actions</h6>
+                  <small class="opacity-75">Select actions this agent can use to help users</small>
+                </div>
+              </div>
             </div>
-            <div class="mb-3">
-              <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
-              <textarea class="form-control" id="agent-additional-settings" rows="2" placeholder='{}'></textarea>
+            <div class="card-body">
+              <!-- Search and Filter Controls -->
+              <div class="row mb-3">
+                <div class="col-md-8">
+                  <div class="input-group">
+                    <span class="input-group-text bg-light"><i class="bi bi-search"></i></span>
+                    <input type="search" class="form-control" id="agent-action-search" placeholder="Search actions by name, description, or type...">
+                    <button class="btn btn-outline-secondary" type="button" id="agent-action-clear-search" title="Clear search">
+                      <i class="bi bi-x-circle"></i>
+                    </button>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <select class="form-select" id="agent-action-type-filter">
+                    <option value="">All Types</option>
+                    <option value="openapi">OpenAPI</option>
+                    <option value="sql">SQL Database</option>
+                    <option value="custom">Custom</option>
+                    <!-- More options will be populated by JavaScript -->
+                  </select>
+                </div>
+              </div>
+              
+              <!-- Search Results Info -->
+              <div class="mb-3">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div class="text-muted small">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Click action cards to select them for your agent
+                  </div>
+                  <div id="agent-action-search-results" class="text-muted small">
+                    <span id="agent-action-results-count"></span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Quick Action Buttons -->
+              <div class="mb-3">
+                <div class="btn-group btn-group-sm" role="group" aria-label="Quick actions">
+                  <button type="button" class="btn btn-outline-primary" id="agent-select-all-visible">
+                    <i class="bi bi-check-all me-1"></i>Select All Visible
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary" id="agent-deselect-all">
+                    <i class="bi bi-x-circle me-1"></i>Deselect All
+                  </button>
+                  <button type="button" class="btn btn-outline-info" id="agent-toggle-selected-only">
+                    <i class="bi bi-eye me-1"></i>Show Selected Only
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
+          
+          <div id="agent-actions-container" class="row g-3">
+            <!-- Action cards will be populated by JavaScript -->
+          </div>
+          
+          <!-- No Results Message -->
+          <div id="agent-no-actions-message" class="text-center py-5 d-none">
+            <div class="card border-0 bg-light">
+              <div class="card-body">
+                <i class="bi bi-search display-4 text-muted"></i>
+                <p class="text-muted mt-3 mb-2">No actions found matching your search criteria</p>
+                <small class="text-muted">Try adjusting your search terms or filters</small>
+                <div class="mt-3">
+                  <button type="button" class="btn btn-outline-primary btn-sm" id="agent-reset-search">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Reset Search
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div id="agent-selected-actions-summary" class="mt-4 d-none">
+            <div class="card border-0 shadow-sm">
+              <div class="card-header bg-success text-white">
+                <i class="bi bi-check-circle me-2"></i>Selected Actions
+              </div>
+              <div class="card-body">
+                <div id="agent-selected-actions-list" class="d-flex flex-wrap gap-2">
+                  <!-- Selected action badges will be populated here -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5: Advanced -->
+        <div class="agent-step d-none" id="agent-step-5">
+          <h6 class="mb-3">Advanced Settings</h6>
+          <div class="mb-3">
+            <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
+            <textarea class="form-control" id="agent-additional-settings" rows="6" placeholder='{"example": "value"}'></textarea>
+            <div class="form-text">Optional additional configuration settings for this agent in JSON format.</div>
+          </div>
+        </div>
+
+        <!-- Step 6: Summary -->
+        <div class="agent-step d-none" id="agent-step-6">
+          <h6 class="mb-3">Agent Summary</h6>
+          
+          <!-- Basic Information Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #007bff, #0056b3);">
+              <i class="bi bi-info-circle me-2"></i>Basic Information
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Display Name:</label>
+                    <div id="summary-display-name" class="text-dark">-</div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Generated Name:</label>
+                    <div id="summary-name" class="text-dark">-</div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Description:</label>
+                    <div id="summary-description" class="text-dark">-</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Models & Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #ffc107, #e0a800);">
+              <i class="bi bi-gear me-2"></i>Models & Configuration
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Model:</label>
+                    <div id="summary-model" class="text-dark">-</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Custom Connection:</label>
+                    <div id="summary-custom-connection" class="text-dark">No</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Agent Type:</label>
+                    <div class="text-dark">
+                      <span class="badge bg-info">Custom Agent</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Instructions Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #28a745, #1e7e34);">
+              <i class="bi bi-file-text me-2"></i>Instructions
+            </div>
+            <div class="card-body">
+              <div id="summary-instructions" class="p-3 bg-light border rounded" style="max-height: 200px; overflow-y: auto; font-family: 'Courier New', monospace; white-space: pre-wrap;">-</div>
+            </div>
+          </div>
+          
+          <!-- Actions Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-actions-section">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #17a2b8, #138496);">
+              <i class="bi bi-lightning-charge me-2"></i>Available Actions
+              <span id="summary-actions-count-badge" class="badge bg-light text-dark ms-2">0</span>
+            </div>
+            <div class="card-body">
+              <div id="summary-actions-empty" class="text-center text-muted py-4">
+                <i class="bi bi-inbox display-6 opacity-50"></i>
+                <p class="mt-2 mb-0">No actions selected</p>
+                <small>Go back to step 4 to add actions to your agent</small>
+              </div>
+              <div id="summary-actions-list" class="row g-3" style="display: none;">
+                <!-- Action cards will be populated here -->
+              </div>
+            </div>
+          </div>
+          
+          <!-- Advanced Information Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white" style="background: linear-gradient(135deg, #6f42c1, #59359a);">
+              <i class="bi bi-sliders me-2"></i>Advanced Information
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Created:</label>
+                    <div class="text-dark" id="summary-created-date">Just now</div>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Scope:</label>
+                    <div class="text-dark">
+                      <span class="badge bg-secondary">Personal</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="agent-modal-error" class="alert alert-danger d-none"></div>
       </div>
+      
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary" id="agent-modal-save-btn">Save Agent</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="agent-modal-prev">Previous</button>
+        <button type="button" class="btn btn-outline-primary d-none" id="agent-modal-skip">Skip to End</button>
+        <button type="button" class="btn btn-primary" id="agent-modal-next">Next</button>
+        <button type="button" class="btn btn-success d-none" id="agent-modal-save-btn">Save Agent</button>
         <!-- Set as Selected Agent button is injected by JS only for edit mode -->
         <button type="button" class="btn btn-outline-success ms-2 d-none" id="agent-modal-set-selected-btn">Set as Selected Agent</button>
       </div>
     </div>
   </div>
 </div>
+
+<style>
+/* Step indicator styles for agent modal */
+.step-indicator {
+  text-align: center;
+  flex: 1;
+  position: relative;
+}
+
+.step-indicator:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 15px;
+  right: -50%;
+  width: 100%;
+  height: 2px;
+  background-color: #e9ecef;
+  z-index: 0;
+}
+
+.step-indicator.completed:not(:last-child)::after {
+  background-color: #198754;
+}
+
+.step-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #e9ecef;
+  color: #6c757d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  margin: 0 auto 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.step-circle.active {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.step-circle.completed {
+  background-color: #198754;
+  color: white;
+}
+
+.step-label {
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.step-indicator.active .step-label {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+.step-indicator.completed .step-label {
+  color: #198754;
+}
+
+/* Action selection cards */
+.agent-action-card {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid #dee2e6;
+  height: 100%;
+}
+
+.agent-action-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.agent-action-card.selected {
+  border-color: #198754;
+  background-color: #d1e7dd;
+}
+
+.agent-action-card .card-body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.agent-action-card .card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.agent-action-card .card-text {
+  font-size: 0.875rem;
+  color: #6c757d;
+  flex-grow: 1;
+}
+
+/* Description toggle functionality */
+.card-text-container .btn-link {
+  color: #0d6efd;
+  font-weight: 500;
+  text-decoration: none !important;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+}
+
+.card-text-container .btn-link:hover {
+  color: #0b5ed7;
+  text-decoration: underline !important;
+}
+
+.card-text-container .btn-link:focus {
+  box-shadow: none;
+  outline: none;
+}
+
+/* Dark mode support for description toggle */
+[data-bs-theme="dark"] .card-text-container .btn-link {
+  color: #86b7fe;
+}
+
+[data-bs-theme="dark"] .card-text-container .btn-link:hover {
+  color: #9ec5fe;
+}
+
+.agent-action-card .action-type-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.agent-action-card.selected .card-title {
+  color: #198754;
+}
+
+.agent-action-card.selected .card-text {
+  color: #146c43;
+}
+
+/* Selected actions summary */
+.selected-action-badge {
+  background-color: #198754;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.selected-action-badge:hover {
+  background-color: #dc3545;
+}
+
+.selected-action-badge .remove-icon {
+  margin-left: 0.5rem;
+  font-weight: bold;
+}
+
+/* Summary section styling */
+#agent-step-6 .card {
+  border: none !important;
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+}
+
+#agent-step-6 .card-header {
+  border-bottom: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.summary-item {
+  margin-bottom: 0.75rem;
+}
+
+.summary-item label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.summary-item div {
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+#summary-instructions {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  border: 1px solid #e9ecef;
+  background-color: #f8f9fa;
+}
+
+.summary-action-card {
+  border: 1px solid #e9ecef;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: #fff;
+  transition: all 0.2s ease;
+}
+
+.summary-action-card:hover {
+  box-shadow: 0 0.125rem 0.5rem rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.summary-action-card .action-title {
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.9rem;
+  margin-bottom: 0.25rem;
+}
+
+.summary-action-card .action-description {
+  color: #6c757d;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+#summary-actions-empty {
+  padding: 2rem 1rem;
+}
+
+#summary-actions-count-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Search and filter enhancements */
+#agent-action-search-results {
+  font-size: 0.875rem;
+}
+
+#agent-no-actions-message {
+  background-color: #f8f9fa;
+  border-radius: 0.5rem;
+  border: 1px dashed #dee2e6;
+}
+
+.agent-action-card.hidden {
+  display: none !important;
+}
+
+.agent-action-card.filtered-out {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Quick action buttons styling */
+.btn-group-sm .btn {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* Search input styling */
+#agent-action-search:focus {
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+#agent-action-clear-search {
+  border-left: none;
+}
+
+#agent-action-clear-search:hover {
+  background-color: #e9ecef;
+}
+
+/* Dark mode support */
+[data-bs-theme="dark"] .agent-action-card {
+  background-color: #343a40;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] .agent-action-card:hover {
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 0.2rem rgba(134, 183, 254, 0.25);
+}
+
+[data-bs-theme="dark"] .agent-action-card.selected {
+  border-color: #75b798;
+  background-color: #1e3a2e;
+}
+
+[data-bs-theme="dark"] .agent-action-card .card-text {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .agent-action-card.selected .card-title {
+  color: #75b798;
+}
+
+[data-bs-theme="dark"] .agent-action-card.selected .card-text {
+  color: #9fcea7;
+}
+
+[data-bs-theme="dark"] .selected-action-badge {
+  background-color: #198754;
+}
+
+[data-bs-theme="dark"] .selected-action-badge:hover {
+  background-color: #dc3545;
+}
+
+[data-bs-theme="dark"] #agent-step-6 .card {
+  background-color: #343a40;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] #summary-instructions {
+  background-color: #2d3237 !important;
+  border-color: #495057 !important;
+  color: #e9ecef !important;
+}
+
+[data-bs-theme="dark"] .bg-light {
+  background-color: #2d3237 !important;
+}
+
+/* Dark mode summary section improvements */
+[data-bs-theme="dark"] .summary-item label {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] .summary-item div {
+  color: #e9ecef !important;
+}
+
+[data-bs-theme="dark"] .summary-action-card {
+  background-color: #343a40 !important;
+  border-color: #495057 !important;
+  color: #e9ecef !important;
+}
+
+[data-bs-theme="dark"] .summary-action-card:hover {
+  background-color: #495057 !important;
+  box-shadow: 0 0.125rem 0.5rem rgba(255, 255, 255, 0.1) !important;
+}
+
+[data-bs-theme="dark"] .summary-action-card .action-title {
+  color: #f8f9fa !important;
+}
+
+[data-bs-theme="dark"] .summary-action-card .action-description {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] #summary-actions-empty {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] #summary-actions-empty i {
+  color: #6c757d !important;
+}
+
+/* Dark mode search enhancements */
+[data-bs-theme="dark"] #agent-no-actions-message {
+  background-color: #2d3237;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] #agent-action-clear-search:hover {
+  background-color: #495057;
+}
+
+[data-bs-theme="dark"] #agent-action-search:focus {
+  box-shadow: 0 0 0 0.2rem rgba(134, 183, 254, 0.25);
+}
+</style>

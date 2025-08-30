@@ -1219,3 +1219,51 @@ ol {
   margin-left: 0 !important;
   margin-right: 0 !important;
 }
+
+/* Dark mode styles for citations */
+[data-bs-theme="dark"] .citations-container {
+  border-top-color: #495057 !important;
+}
+
+[data-bs-theme="dark"] .citations-container a:hover {
+  background-color: #495057;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .citation-button {
+  background-color: #343a40;
+  border-color: #495057;
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .citation-button:hover {
+  background-color: #495057;
+  border-color: #6c757d;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .citations-container .hybrid-citation-link i,
+[data-bs-theme="dark"] .citations-container .web-citation-link i {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .citation-toggle-btn {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .citation-toggle-btn:hover {
+  color: #86b7fe;
+  background-color: #495057;
+  border-color: #6c757d;
+}
+
+[data-bs-theme="dark"] a.citation-link {
+  color: #86b7fe;
+}
+
+[data-bs-theme="dark"] a.citation-link:hover {
+  color: #b6d7ff;
+  background-color: #495057;
+  padding: 2px 4px;
+  border-radius: 3px;
+}

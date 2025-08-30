@@ -26,6 +26,10 @@
             <div class="step-circle">4</div>
             <div class="step-label">Advanced</div>
           </div>
+          <div class="step-indicator" data-step="5">
+            <div class="step-circle">5</div>
+            <div class="step-label">Summary</div>
+          </div>
         </div>
       </div>
 
@@ -439,6 +443,194 @@
           </div>
         </div>
 
+        <!-- Step 5: Summary -->
+        <div class="plugin-step d-none" id="plugin-step-5">
+          <h6 class="mb-4">Action Summary</h6>
+          
+          <!-- Basic Information Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-info-circle me-2"></i>Basic Information
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Display Name</label>
+                    <span class="fw-medium" id="summary-plugin-display-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Generated Name</label>
+                    <span class="fw-medium font-monospace" id="summary-plugin-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Type</label>
+                    <span class="fw-medium" id="summary-plugin-type">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-plugin-auth">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Description</label>
+                    <p class="mb-0" id="summary-plugin-description">-</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-cog me-2"></i>Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Endpoint</label>
+                    <span class="fw-medium font-monospace" id="summary-plugin-endpoint">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-plugin-connection-method-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Connection Method</label>
+                    <span class="fw-medium" id="summary-plugin-connection-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-plugin-database-type-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Database Type</label>
+                    <span class="fw-medium" id="summary-plugin-database-type">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OpenAPI Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-openapi-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #6f42c1 0%, #563d7c 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-file-code me-2"></i>OpenAPI Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Specification File</label>
+                    <span class="fw-medium font-monospace" id="summary-openapi-file">-</span>
+                  </div>
+                </div>
+                <div class="col-12" id="summary-openapi-info-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">API Information</label>
+                    <span class="fw-medium" id="summary-openapi-info">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SQL Database Configuration Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-sql-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-database me-2"></i>SQL Database Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Plugin Type</label>
+                    <span class="fw-medium" id="summary-sql-plugin-type">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-sql-read-only-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Read Only</label>
+                    <span class="fw-medium" id="summary-sql-read-only">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-sql-max-rows-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Rows</label>
+                    <span class="fw-medium" id="summary-sql-max-rows">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-sql-timeout-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-sql-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6" id="summary-sql-include-system-row" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Include System Tables</label>
+                    <span class="fw-medium" id="summary-sql-include-system">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Advanced Settings Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-advanced-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-sliders-h me-2"></i>Advanced Settings
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Has Metadata</label>
+                    <span class="fw-medium" id="summary-has-metadata">No</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Has Additional Fields</label>
+                    <span class="fw-medium" id="summary-has-additional-fields">No</span>
+                  </div>
+                </div>
+                <div class="col-12" id="summary-metadata-preview" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-2">Metadata Preview</label>
+                    <div class="border rounded p-3 bg-light" style="max-height: 150px; overflow-y: auto;">
+                      <code class="small" id="summary-metadata-content">-</code>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12" id="summary-additional-fields-preview" style="display: none;">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-2">Additional Fields Preview</label>
+                    <div class="border rounded p-3 bg-light" style="max-height: 150px; overflow-y: auto;">
+                      <code class="small" id="summary-additional-fields-content">-</code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="plugin-modal-error" class="alert alert-danger d-none"></div>
       </div>
       
@@ -672,5 +864,198 @@
   font-weight: 600;
   color: #495057;
   margin-bottom: 0.5rem;
+}
+
+/* Dark mode support for OpenAPI configuration section */
+[data-bs-theme="dark"] #openapi-config-section {
+  border-color: #495057;
+  background-color: #343a40;
+}
+
+[data-bs-theme="dark"] #openapi-config-section h6 {
+  color: #86b7fe;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] #openapi-info-display {
+  background-color: #1f3a4a;
+  border-color: #17a2b8;
+  color: #b3e5fc;
+}
+
+/* Dark mode support for SQL configuration section */
+[data-bs-theme="dark"] #sql-config-section {
+  border-color: #495057;
+  background-color: #343a40;
+}
+
+[data-bs-theme="dark"] .sql-connection-config,
+[data-bs-theme="dark"] .sql-auth-config,
+[data-bs-theme="dark"] .auth-section {
+  background-color: #2d3237;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] .config-section-label {
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] #sql-connection-examples {
+  background-color: #2d3237;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] #sql-connection-examples .example {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] #sql-connection-examples .example strong {
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] #sql-auth-info {
+  background-color: #1f3a4a;
+  border-color: #17a2b8;
+  color: #b3e5fc;
+}
+
+/* Dark mode button states for SQL configuration */
+[data-bs-theme="dark"] .btn-check:checked + .btn-outline-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .btn-check:checked + .btn-outline-info {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: #000000;
+}
+
+[data-bs-theme="dark"] .btn-check:checked + .btn-outline-success {
+  background-color: #198754;
+  border-color: #198754;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .btn-check:checked + .btn-outline-secondary {
+  background-color: #6c757d;
+  border-color: #6c757d;
+  color: #ffffff;
+}
+
+/* Dark mode outline button states */
+[data-bs-theme="dark"] .btn-outline-primary {
+  color: #86b7fe;
+  border-color: #86b7fe;
+}
+
+[data-bs-theme="dark"] .btn-outline-primary:hover {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .btn-outline-info {
+  color: #9eeaf9;
+  border-color: #9eeaf9;
+}
+
+[data-bs-theme="dark"] .btn-outline-info:hover {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: #000000;
+}
+
+[data-bs-theme="dark"] .btn-outline-success {
+  color: #75b798;
+  border-color: #75b798;
+}
+
+[data-bs-theme="dark"] .btn-outline-success:hover {
+  background-color: #198754;
+  border-color: #198754;
+  color: #ffffff;
+}
+
+[data-bs-theme="dark"] .btn-outline-secondary {
+  color: #adb5bd;
+  border-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .btn-outline-secondary:hover {
+  background-color: #6c757d;
+  border-color: #6c757d;
+  color: #ffffff;
+}
+
+/* Summary section styling */
+#plugin-step-5 .card-header {
+  border-bottom: none;
+  font-weight: 600;
+}
+
+#plugin-step-5 .card-body {
+  background-color: #f8f9fa;
+}
+
+#plugin-step-5 .card-body label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+#plugin-step-5 .fw-medium {
+  color: #2c3e50;
+}
+
+#plugin-step-5 .font-monospace {
+  background-color: #e9ecef;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+
+#summary-metadata-content,
+#summary-additional-fields-content {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Dark mode summary styling */
+[data-bs-theme="dark"] #plugin-step-5 .card {
+  background-color: #2b3035;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] #plugin-step-5 .card-body {
+  background-color: #343a40 !important;
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] #plugin-step-5 .card-body label {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] #plugin-step-5 .fw-medium {
+  color: #f8f9fa !important;
+}
+
+[data-bs-theme="dark"] #plugin-step-5 .font-monospace {
+  background-color: #495057 !important;
+  color: #f8f9fa !important;
+}
+
+[data-bs-theme="dark"] #summary-metadata-preview .bg-light,
+[data-bs-theme="dark"] #summary-additional-fields-preview .bg-light {
+  background-color: #2d3237 !important;
+  border-color: #495057 !important;
+  color: #e9ecef !important;
+}
+
+[data-bs-theme="dark"] #summary-metadata-content,
+[data-bs-theme="dark"] #summary-additional-fields-content {
+  color: #e9ecef !important;
 }
 </style>

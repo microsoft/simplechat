@@ -3,6 +3,7 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from '../agents_common.js';
+import { AgentModalStepper } from '../agent_modal_stepper.js';
 
 // --- Orchestration Settings Logic ---
 const maxRoundsGroup = document.getElementById('max_rounds_per_agent_group');
@@ -125,6 +126,12 @@ async function openAgentModal(agent = null) {
     const modalEl = document.getElementById('agentModal');
     if (!modalEl) return alert('Agent modal not found.');
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+    // Initialize stepper
+    if (!window.agentModalStepper) {
+        window.agentModalStepper = new AgentModalStepper();
+    }
+    window.agentModalStepper.showModal(agent);
 
     // Clear error div on modal open
     const errorDiv = document.getElementById('agent-modal-error');

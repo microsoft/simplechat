@@ -3,6 +3,8 @@ import { renderPluginsTable, ensurePluginsTableInRoot, validatePluginManifest } 
 import { showToast } from "../chat/chat-toast.js"
 
 const root = document.getElementById('workspace-plugins-root');
+let plugins = [];
+let filteredPlugins = [];
 
 function renderLoading() {
   root.innerHTML = `<div class="text-center p-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>`;
@@ -12,18 +14,42 @@ function renderError(msg) {
   root.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
 }
 
+function filterPlugins(searchTerm) {
+  if (!searchTerm || !searchTerm.trim()) {
+    filteredPlugins = plugins;
+  } else {
+    const term = searchTerm.toLowerCase().trim();
+    filteredPlugins = plugins.filter(plugin => {
+      const displayName = (plugin.display_name || plugin.name || '').toLowerCase();
+      const description = (plugin.description || '').toLowerCase();
+      return displayName.includes(term) || description.includes(term);
+    });
+  }
+  
+  // Ensure table template is in place
+  ensurePluginsTableInRoot();
+  
+  renderPluginsTable({
+    plugins: filteredPlugins,
+    tbodySelector: '#plugins-table-body',
+    onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
+    onDelete: name => deletePlugin(name)
+  });
+}
+
 async function fetchPlugins() {
   renderLoading();
   try {
     const res = await fetch('/api/user/plugins');
     if (!res.ok) throw new Error('Failed to load actions');
-    const plugins = await res.json();
+    plugins = await res.json();
+    filteredPlugins = plugins; // Initialize filtered list
     
     // Ensure table template is in place
     ensurePluginsTableInRoot();
     
     renderPluginsTable({
-      plugins,
+      plugins: filteredPlugins,
       tbodySelector: '#plugins-table-body',
       onEdit: name => openPluginModal(plugins.find(p => p.name === name)),
       onDelete: name => deletePlugin(name)
@@ -126,20 +152,17 @@ async function deletePlugin(name) {
   if (!confirm(`Are you sure you want to delete action "${name}"?`)) return;
   
   try {
-    const res = await fetch('/api/user/plugins');
-    if (!res.ok) throw new Error('Failed to load actions');
-    
-    let plugins = await res.json();
-    plugins = plugins.filter(p => p.name !== name);
-    
-    const saveRes = await fetch('/api/user/plugins', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(plugins)
+    const res = await fetch(`/api/user/plugins/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
     });
     
-    if (!saveRes.ok) throw new Error('Failed to delete action');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to delete action');
+    }
     
+    // Refresh the plugins list
     fetchPlugins();
     showToast(`Action "${name}" deleted successfully`, 'success');
   } catch (e) {
@@ -158,6 +181,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pluginsTabBtn.classList.contains('active')) {
       fetchPlugins();
     }
+  }
+  
+  // Setup search functionality
+  const pluginsSearchInput = document.getElementById('plugins-search');
+  if (pluginsSearchInput) {
+    pluginsSearchInput.addEventListener('input', (e) => {
+      filterPlugins(e.target.value);
+    });
   }
 });
 
