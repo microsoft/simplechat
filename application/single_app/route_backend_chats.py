@@ -1344,6 +1344,10 @@ def register_route_backend_chats(app):
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
                         
+                        # Get the actual model deployment used by the agent
+                        actual_model_deployment = getattr(selected_agent, 'deployment_name', None) or agent_used
+                        print(f"DEBUG: Agent '{agent_used}' using deployment: {actual_model_deployment}")
+                        
                         # Extract detailed plugin invocations for enhanced agent citations
                         plugin_logger = get_plugin_logger()
                         plugin_invocations = plugin_logger.get_recent_invocations()
@@ -1414,7 +1418,7 @@ def register_route_backend_chats(app):
                                 "Some advanced features may not be available. "
                                 "Please contact your administrator to configure Semantic Kernel for richer responses."
                             )
-                        return (msg, agent_used, "agent", notice)
+                        return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
                         print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(

@@ -672,10 +672,14 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "description": agent_config["description"] or agent_config["name"] or "This agent can be assigned to execute tasks and be part of a conversation as a generalist.",
                 "id": agent_config.get('id') or agent_config.get('name') or f"agent_1",
                 "display_name": agent_config.get('display_name') or agent_config.get('name') or "agent",
-                "default_agent": agent_config.get("default_agent", False)
+                "default_agent": agent_config.get("default_agent", False),
+                "deployment_name": agent_config["deployment"],
+                "azure_endpoint": agent_config["endpoint"],
+                "api_version": agent_config["api_version"]
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
+            
             agent_objs[agent_config["name"]] = agent_obj
             print(f"[SK Loader] Successfully created agent {agent_config['name']}")
             log_event(
@@ -1176,11 +1180,15 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "description": agent_config["description"] or agent_config["name"] or "This agent can be assigned to execute tasks and be part of a conversation as a generalist.",
                         "id": agent_config.get('id') or agent_config.get('name') or f"agent_1",
                         "display_name": agent_config.get('display_name') or agent_config.get('name') or "agent",
-                        "default_agent": agent_config.get("default_agent", False)
+                        "default_agent": agent_config.get("default_agent", False),
+                        "deployment_name": agent_config["deployment"],
+                        "azure_endpoint": agent_config["endpoint"],
+                        "api_version": agent_config["api_version"]
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
                     agent_obj = LoggingChatCompletionAgent(**kwargs)
+                    
                     # PATCH: Badge global agents
                     if agent_cfg.get('is_global'):
                         agent_obj.is_global = True
