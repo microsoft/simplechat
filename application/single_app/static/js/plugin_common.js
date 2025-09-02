@@ -60,7 +60,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, ensureTable = true}) {
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, ensureTable = true, isAdmin = false}) {
   console.log('Rendering plugins table with %d plugins', plugins.length);
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
@@ -79,7 +79,11 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, en
     const safeDesc = escapeHtml(plugin.description || 'No description available');
     let actionButtons = '';
     let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
-    if (!plugin.is_global) {
+    
+    // Show action buttons for:
+    // - Admin context: all actions (global and personal)
+    // - User context: only personal actions (not global)
+    if (isAdmin || !plugin.is_global) {
       actionButtons = `
         <div class="d-flex gap-1">
           <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">

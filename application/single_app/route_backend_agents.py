@@ -44,13 +44,26 @@ def get_user_agents():
     per_user = settings.get('per_user_semantic_kernel', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if per_user and merge_global:
-        global_agents = settings.get('semantic_kernel_agents', [])
+        # Import and get global agents from container
+        from functions_global_agents import get_global_agents
+        global_agents = get_global_agents()
         # Mark global agents
         for agent in global_agents:
             agent['is_global'] = True
-        # Workspace agents take precedence
-        all_agents = {a['name']: a for a in agents}
-        all_agents.update({a['name']: a for a in global_agents})
+        
+        # Merge agents using ID as key to avoid name conflicts
+        # This allows both personal and global agents with same name to coexist
+        all_agents = {}
+        
+        # Add personal agents first
+        for agent in agents:
+            key = f"personal_{agent.get('id', agent['name'])}"
+            all_agents[key] = agent
+            
+        # Add global agents
+        for agent in global_agents:
+            key = f"global_{agent.get('id', agent['name'])}"
+            all_agents[key] = agent
 
         return jsonify(list(all_agents.values()))
     else:
@@ -196,14 +209,17 @@ def set_selected_agent():
         if not agent_name:
             return jsonify({'error': 'Agent name is required.'}), 400
 
-        settings = get_settings()
-        agents = settings.get('semantic_kernel_agents', [])
+        # Import and get global agents from container
+        from functions_global_agents import get_global_agents
+        agents = get_global_agents()
+        
         # Check that the agent exists
         found = any(a.get('name') == agent_name for a in agents)
         if not found:
             return jsonify({'error': 'Agent not found.'}), 404
 
         # Set global_selected_agent field only
+        settings = get_settings()
         settings['global_selected_agent'] = { 'name': agent_name, 'is_global': True }
         update_settings(settings)
         log_event("Global selected agent set", extra={"action": "set-global-selected", "agent_name": agent_name, "user": str(get_current_user_id())})
@@ -220,8 +236,18 @@ def set_selected_agent():
 @admin_required
 def list_agents():
     try:
-        settings = get_settings()
-        agents = settings.get('semantic_kernel_agents', [])
+        # Use new global agents container
+        from functions_global_agents import get_global_agents
+        
+        agents = get_global_agents()
+        
+        # Ensure each agent has an actions_to_load field
+        for agent in agents:
+            if 'actions_to_load' not in agent:
+                agent['actions_to_load'] = []
+            # Mark as global agents
+            agent['is_global'] = True
+        
         log_event("List agents", extra={"action": "list", "user": str(get_current_user_id())})
         return jsonify(agents)
     except Exception as e:
@@ -233,8 +259,9 @@ def list_agents():
 @admin_required
 def add_agent():
     try:
-        settings = get_settings()
-        agents = settings.get('semantic_kernel_agents', [])
+        from functions_global_agents import get_global_agents, save_global_agent
+        
+        agents = get_global_agents()
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         new_agent['is_global'] = True
         validation_error = validate_agent(new_agent)
@@ -252,17 +279,22 @@ def add_agent():
             # If default_agent, ensure the static GUID is present (do not overwrite if already set)
             if not new_agent.get('id'):
                 new_agent['id'] = '15b0c92a-741d-42ff-ba0b-367c7ee0c848'
-        agents.append(new_agent)
+        
+        # Save to global agents container
+        result = save_global_agent(new_agent)
+        if not result:
+            return jsonify({'error': 'Failed to save agent.'}), 500
+        
         # Enforce that if there are agents, one must match global_selected_agent
         settings = get_settings()
         global_selected_agent = settings.get('global_selected_agent', {})
         global_selected_name = global_selected_agent.get('name')
-        if len(agents) > 0:
-            found = any(a.get('name') == global_selected_name for a in agents)
+        updated_agents = get_global_agents()
+        if len(updated_agents) > 0:
+            found = any(a.get('name') == global_selected_name for a in updated_agents)
             if not found:
                 return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-        settings['semantic_kernel_agents'] = agents
-        update_settings(settings)
+        
         log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in new_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -329,8 +361,9 @@ def update_agent_setting(setting_name):
 @admin_required
 def edit_agent(agent_name):
     try:
-        settings = get_settings()
-        agents = settings.get('semantic_kernel_agents', [])
+        from functions_global_agents import get_global_agents, save_global_agent
+        
+        agents = get_global_agents()
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         updated_agent['is_global'] = True
         validation_error = validate_agent(updated_agent)
@@ -341,34 +374,46 @@ def edit_agent(agent_name):
         if not (updated_agent.get('azure_openai_gpt_deployment') or updated_agent.get('azure_agent_apim_gpt_deployment')):
             log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent})
             return jsonify({'error': 'Agent must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
-        for i, a in enumerate(agents):
+        
+        # Find the agent to update
+        agent_found = False
+        for a in agents:
             if a['name'] == agent_name:
                 # Preserve the existing id
                 updated_agent['id'] = a.get('id')
-                agents[i] = updated_agent
-                # Enforce that if there are agents, one must match global_selected_agent
-                settings = get_settings()
-                global_selected_agent = settings.get('global_selected_agent', {})
-                global_selected_name = global_selected_agent.get('name')
-                if len(agents) > 0:
-                    found = any(a.get('name') == global_selected_name for a in agents)
-                    if not found:
-                        return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-                settings['semantic_kernel_agents'] = agents
-                update_settings(settings)
-                log_event(
-                    f"Agent {agent_name} edited",
-                    extra={
-                        "action": "edit", 
-                        "agent": {k: v for k, v in updated_agent.items() if k != 'id'},
-                        "user": str(get_current_user_id()),
-                    }
-                )
-                return jsonify({'success': True})
-        log_event("Edit agent failed: not found", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name})
+                agent_found = True
+                break
+        
+        if not agent_found:
+            log_event("Edit agent failed: not found", level=logging.WARNING, extra={"action": "edit", "agent_name": agent_name})
+            return jsonify({'error': 'Agent not found.'}), 404
+        
+        # Save the updated agent
+        result = save_global_agent(updated_agent)
+        if not result:
+            return jsonify({'error': 'Failed to save agent.'}), 500
+        
+        # Enforce that if there are agents, one must match global_selected_agent
+        settings = get_settings()
+        global_selected_agent = settings.get('global_selected_agent', {})
+        global_selected_name = global_selected_agent.get('name')
+        updated_agents = get_global_agents()
+        if len(updated_agents) > 0:
+            found = any(a.get('name') == global_selected_name for a in updated_agents)
+            if not found:
+                return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
+        
+        log_event(
+            f"Agent {agent_name} edited",
+            extra={
+                "action": "edit", 
+                "agent": {k: v for k, v in updated_agent.items() if k != 'id'},
+                "user": str(get_current_user_id()),
+            }
+        )
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
-        return jsonify({'error': 'Agent not found.'}), 404
+        return jsonify({'success': True})
     except Exception as e:
         log_event(f"Error editing agent: {e}", level=logging.ERROR, exceptionTraceback=True)
         return jsonify({'error': 'Failed to edit agent.'}), 500
@@ -378,14 +423,26 @@ def edit_agent(agent_name):
 @admin_required
 def delete_agent(agent_name):
     try:
-        settings = get_settings()
-        agents = settings.get('semantic_kernel_agents', [])
-        new_agents = [a for a in agents if a['name'] != agent_name]
-        if len(new_agents) == len(agents):
+        from functions_global_agents import get_global_agents, delete_global_agent
+        
+        agents = get_global_agents()
+        
+        # Find the agent to delete
+        agent_to_delete = None
+        for a in agents:
+            if a['name'] == agent_name:
+                agent_to_delete = a
+                break
+        
+        if not agent_to_delete:
             log_event("Delete agent failed: not found", level=logging.WARNING, extra={"action": "delete", "agent_name": agent_name})
             return jsonify({'error': 'Agent not found.'}), 404
-        settings['semantic_kernel_agents'] = new_agents
-        update_settings(settings)
+        
+        # Delete the agent
+        success = delete_global_agent(agent_to_delete['id'])
+        if not success:
+            return jsonify({'error': 'Failed to delete agent.'}), 500
+        
         log_event("Agent deleted", extra={"action": "delete", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
@@ -446,10 +503,14 @@ def orchestration_settings():
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
 
 def get_global_agent_settings(include_admin_extras=False):
+    from functions_global_agents import get_global_agents
+    
     settings = get_settings()
+    agents = get_global_agents()
+    
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({
-        "semantic_kernel_agents": settings.get("semantic_kernel_agents", []),
+        "semantic_kernel_agents": agents,
         "orchestration_type": settings.get("orchestration_type", "default_agent"),
         "enable_multi_agent_orchestration": settings.get("enable_multi_agent_orchestration", False),
         "max_rounds_per_agent": settings.get("max_rounds_per_agent", 1),

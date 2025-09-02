@@ -538,23 +538,6 @@ main {
     transform: translateY(-50%);
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .step-indicator .step-circle {
-        width: 32px;
-        height: 32px;
-        font-size: 0.875rem;
-    }
-    
-    .step-indicator .step-label {
-        font-size: 0.75rem;
-    }
-    
-    .action-type-card {
-        margin-bottom: 1rem;
-    }
-}
-
 /* Fix for modal backdrop in dark mode */
 [data-bs-theme="dark"] .modal-backdrop {
     background-color: rgba(0, 0, 0, 0.8);
@@ -677,39 +660,4 @@ main {
 /* Profile avatar in sidebar */
 #sidebar-profile-avatar {
     flex-shrink: 0; /* Prevent avatar from shrinking */
-}
-
-/* Responsive adjustments for sidebar user account */
-@media (max-width: 768px) {
-    #sidebar-user-account .fw-semibold {
-        font-size: 0.875rem !important;
-    }
-    
-    #sidebar-user-account .text-muted {
-        font-size: 0.6875rem !important;
-    }
-}
-
-/* Additional responsive adjustments for very narrow sidebars */
-@media (max-width: 576px) {
-    #sidebar-user-account {
-        padding: 0.5rem !important;
-    }
-    
-    #sidebar-user-account .fw-semibold {
-        font-size: 0.8125rem !important;
-    }
-    
-    #sidebar-user-account .text-muted {
-        font-size: 0.625rem !important;
-    }
-    
-    #sidebar-profile-avatar {
-        width: 24px !important;
-        height: 24px !important;
-    }
-    
-    #sidebar-profile-avatar .sidebar-initials {
-        font-size: 0.875rem !important;
-    }
 }

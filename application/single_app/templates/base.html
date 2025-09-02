@@ -205,8 +205,6 @@
         });
       }
     })();
-    // Set a global JS variable for mobile detection
-    window.isMobile = window.matchMedia("(max-width: 575.98px)").matches;
   </script>
   
   {% block head %}{% endblock %}
@@ -229,11 +227,6 @@
 
   <!-- Main Content Area -->
   <div class="container main-content{% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %} sidebar-padding{% endif %}" id="main-content">
-    <!-- Mobile sidebar toggle button (only visible on small screens when sidebar nav is enabled) -->
-    <button type="button" class="btn btn-outline-secondary d-sm-none mb-3 sidebar-nav-only"
-            onclick="toggleMobileSidebar()" style="display: none;">
-      <i class="bi bi-list"></i> Menu
-    </button>
     
     {% block content %}{% endblock %}
   </div>

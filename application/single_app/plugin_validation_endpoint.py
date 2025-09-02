@@ -266,8 +266,20 @@ def repair_plugin(plugin_name):
             plugin_manifest['metadata']['original_errors'] = instantiation_errors
             
             plugins[plugin_index] = plugin_manifest
-            settings['semantic_kernel_plugins'] = plugins
-            update_settings(settings)
+            # NOTE: Update container-based storage instead of legacy settings
+            from functions_global_actions import save_global_action
+            try:
+                # Save to container instead of settings
+                save_global_action(plugin_manifest)
+                # Remove from legacy settings if present
+                if 'semantic_kernel_plugins' in settings:
+                    del settings['semantic_kernel_plugins']
+                    update_settings(settings)
+            except Exception as e:
+                print(f"Error updating plugin in container storage: {e}")
+                # Fallback to settings update if container fails
+                settings['semantic_kernel_plugins'] = plugins
+                update_settings(settings)
             
             return jsonify({
                 'success': True,
@@ -291,8 +303,20 @@ def repair_plugin(plugin_name):
                 plugin_manifest['metadata']['repair_timestamp'] = health_report.get('timestamp')
                 
                 plugins[plugin_index] = plugin_manifest
-                settings['semantic_kernel_plugins'] = plugins
-                update_settings(settings)
+                # NOTE: Update container-based storage instead of legacy settings
+                from functions_global_actions import save_global_action
+                try:
+                    # Save to container instead of settings
+                    save_global_action(plugin_manifest)
+                    # Remove from legacy settings if present
+                    if 'semantic_kernel_plugins' in settings:
+                        del settings['semantic_kernel_plugins']
+                        update_settings(settings)
+                except Exception as e:
+                    print(f"Error updating plugin in container storage: {e}")
+                    # Fallback to settings update if container fails
+                    settings['semantic_kernel_plugins'] = plugins
+                    update_settings(settings)
                 
                 return jsonify({
                     'success': True,

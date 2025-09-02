@@ -87,13 +87,3 @@ body {
 [data-bs-theme="dark"] .navbar-light .nav-link {
   color: #e9ecef;
 }
-
-/* Always show sidebar nav and hide top nav on mobile */
-@media (max-width: 575.98px) {
-  #sidebar-nav {
-    display: block !important;
-  }
-  .top-nav-bar, nav.navbar.fixed-top {
-    display: none !important;
-  }
-}

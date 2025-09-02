@@ -64,7 +64,7 @@
 
         <!-- Step 3: Authentication & Configuration -->
         <div class="plugin-step d-none" id="plugin-step-3">
-          <h6 class="mb-3">API Configuration</h6>
+          <h6 class="mb-3" id="step-3-title">Configuration</h6>
           
           <!-- OpenAPI specific fields (will be shown/hidden based on plugin type) -->
           <div id="openapi-config-section" class="d-none">
@@ -76,7 +76,7 @@
             <div id="openapi-file-section" class="mb-3">
               <label for="plugin-openapi-file" class="form-label">OpenAPI Specification File <span class="text-danger">*</span></label>
               <input type="file" class="form-control" id="plugin-openapi-file" accept=".yaml,.yml,.json" />
-              <div class="form-text">
+              <div class="form-text" id="openapi-file-help">
                 Upload your OpenAPI specification file (YAML or JSON format, max 5MB).
                 <br><strong>Security:</strong> Files are automatically scanned for malicious content.
               </div>
@@ -626,6 +626,20 @@
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Changes Section -->
+          <div class="card mb-3 border-0 shadow-sm" id="summary-changes-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #20c997 0%, #17a085 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="fas fa-edit me-2"></i>Changes Made
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div id="summary-changes-content">
+                <p class="text-muted mb-0">No changes detected</p>
               </div>
             </div>
           </div>

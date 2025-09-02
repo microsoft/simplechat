@@ -85,7 +85,7 @@ configure_azure_monitor()
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
-    print(f"Application settings: {settings}")
+    print(f"DEBUG:Application settings: {settings}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured

@@ -44,14 +44,6 @@ function updateNavLayoutToggleText(navLayout) {
   });
 }
 
-/**
- * Mobile sidebar toggle functions
- * Handles showing/hiding sidebar on small screens
- */
-function toggleMobileSidebar() {
-  document.body.classList.toggle('sidebar-open');
-}
-
 // Initialize sidebar navigation functionality
 document.addEventListener('DOMContentLoaded', () => {
   // On click, toggle nav layout in user settings and reload
@@ -84,28 +76,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const effectiveLayout = userNavLayout === 'sidebar' || (!userNavLayout && adminDefault) ? 'sidebar' : 'top';
     updateNavLayoutToggleText(effectiveLayout);
   });
-
-  // Set up mobile sidebar toggle buttons
-  document.querySelectorAll('.sidebar-toggle, .mobile-sidebar-toggle').forEach(btn => {
-    btn.addEventListener('click', function(e) {
-      e.preventDefault();
-      toggleMobileSidebar();
-    });
-  });
-});
-
-// Close mobile sidebar when clicking outside on small screens
-document.addEventListener('click', function(e) {
-  if (window.innerWidth <= 576 && document.body.classList.contains('sidebar-nav-enabled')) {
-    const sidebar = document.getElementById('sidebar-nav');
-    const menuButton = e.target.closest('.sidebar-nav-only');
-    const sidebarContent = e.target.closest('#sidebar-nav');
-    
-    // If click is outside sidebar and not on menu button, close sidebar
-    if (!sidebarContent && !menuButton && document.body.classList.contains('sidebar-open')) {
-      document.body.classList.remove('sidebar-open');
-    }
-  }
 });
 
 // Export functions for use in other modules if needed
@@ -113,7 +83,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     getUserSettings,
     setUserNavLayout,
-    updateNavLayoutToggleText,
-    toggleMobileSidebar
+    updateNavLayoutToggleText
   };
 }

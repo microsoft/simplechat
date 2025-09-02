@@ -215,13 +215,27 @@ def get_user_plugins():
     settings = get_settings()
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if merge_global:
-        global_plugins = settings.get('semantic_kernel_plugins', [])
+        # Import and get global actions from container
+        from functions_global_actions import get_global_actions
+        global_plugins = get_global_actions()
         # Mark global plugins
         for plugin in global_plugins:
             plugin['is_global'] = True
-        # User plugins take precedence
-        all_plugins = {p['name']: p for p in plugins}
-        all_plugins.update({p['name']: p for p in global_plugins})
+        
+        # Merge plugins using ID as key to avoid name conflicts
+        # This allows both personal and global plugins with same name to coexist
+        all_plugins = {}
+        
+        # Add personal plugins first
+        for plugin in plugins:
+            key = f"personal_{plugin.get('id', plugin['name'])}"
+            all_plugins[key] = plugin
+            
+        # Add global plugins
+        for plugin in global_plugins:
+            key = f"global_{plugin.get('id', plugin['name'])}"
+            all_plugins[key] = plugin
+            
         return jsonify(list(all_plugins.values()))
     else:
         return jsonify(plugins)
@@ -392,8 +406,10 @@ def update_core_plugin_settings():
 @admin_required
 def list_plugins():
     try:
-        settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
+        # Use new global actions container
+        from functions_global_actions import get_global_actions
+        
+        plugins = get_global_actions()
         log_event("List plugins", extra={"action": "list", "user": str(getattr(request, 'user', 'unknown'))})
         return jsonify(plugins)
     except Exception as e:
@@ -405,8 +421,9 @@ def list_plugins():
 @admin_required
 def add_plugin():
     try:
-        settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
+        from functions_global_actions import get_global_actions, save_global_action
+        
+        plugins = get_global_actions()
         new_plugin = request.json
         
         # Strict validation with dynamic allowed types
@@ -438,9 +455,13 @@ def add_plugin():
             log_event("Add plugin failed: duplicate name", level=logging.WARNING, extra={"action": "add", "plugin": new_plugin})
             return jsonify({'error': 'Plugin with this name already exists.'}), 400
         
-        plugins.append(new_plugin)
-        settings['semantic_kernel_plugins'] = plugins
-        update_settings(settings)
+        # Assign a unique ID
+        plugin_id = str(uuid.uuid4())
+        new_plugin['id'] = plugin_id
+        
+        # Save to global actions container
+        save_global_action(new_plugin)
+        
         log_event("Plugin added", extra={"action": "add", "plugin": new_plugin, "user": str(getattr(request, 'user', 'unknown'))})
         
         # --- HOT RELOAD TRIGGER ---
@@ -455,8 +476,9 @@ def add_plugin():
 @admin_required
 def edit_plugin(plugin_name):
     try:
-        settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
+        from functions_global_actions import get_global_actions, save_global_action, delete_global_action
+        
+        plugins = get_global_actions()
         updated_plugin = request.json
         
         # Strict validation with dynamic allowed types
@@ -483,15 +505,30 @@ def edit_plugin(plugin_name):
         updated_plugin['metadata'] = merged.get('metadata', updated_plugin.get('metadata', {}))
         updated_plugin['additionalFields'] = merged.get('additionalFields', updated_plugin.get('additionalFields', {}))
         
-        for i, p in enumerate(plugins):
+        # Find the plugin by name and update it
+        found_plugin = None
+        for p in plugins:
             if p['name'] == plugin_name:
-                plugins[i] = updated_plugin
-                settings['semantic_kernel_plugins'] = plugins
-                update_settings(settings)
-                log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(getattr(request, 'user', 'unknown'))})
-                # --- HOT RELOAD TRIGGER ---
-                setattr(builtins, "kernel_reload_needed", True)
-                return jsonify({'success': True})
+                found_plugin = p
+                break
+        
+        if found_plugin:
+            # Preserve the existing ID if it exists
+            if 'id' in found_plugin:
+                updated_plugin['id'] = found_plugin['id']
+            else:
+                updated_plugin['id'] = str(uuid.uuid4())
+            
+            # Delete old and save updated
+            if 'id' in found_plugin:
+                delete_global_action(found_plugin['id'])
+            save_global_action(updated_plugin)
+            
+            log_event("Plugin edited", extra={"action": "edit", "plugin": updated_plugin, "user": str(getattr(request, 'user', 'unknown'))})
+            # --- HOT RELOAD TRIGGER ---
+            setattr(builtins, "kernel_reload_needed", True)
+            return jsonify({'success': True})
+        
         log_event("Edit plugin failed: not found", level=logging.WARNING, extra={"action": "edit", "plugin_name": plugin_name})
         return jsonify({'error': 'Plugin not found.'}), 404
     except Exception as e:
@@ -509,14 +546,25 @@ def get_admin_plugin_types():
 @admin_required
 def delete_plugin(plugin_name):
     try:
-        settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
-        new_plugins = [p for p in plugins if p['name'] != plugin_name]
-        if len(new_plugins) == len(plugins):
+        from functions_global_actions import get_global_actions, delete_global_action
+        
+        plugins = get_global_actions()
+        
+        # Find the plugin by name
+        plugin_to_delete = None
+        for p in plugins:
+            if p['name'] == plugin_name:
+                plugin_to_delete = p
+                break
+        
+        if plugin_to_delete is None:
             log_event("Delete plugin failed: not found", level=logging.WARNING, extra={"action": "delete", "plugin_name": plugin_name})
             return jsonify({'error': 'Plugin not found.'}), 404
-        settings['semantic_kernel_plugins'] = new_plugins
-        update_settings(settings)
+        
+        # Delete from container if it has an ID
+        if 'id' in plugin_to_delete:
+            delete_global_action(plugin_to_delete['id'])
+        
         log_event("Plugin deleted", extra={"action": "delete", "plugin_name": plugin_name, "user": str(getattr(request, 'user', 'unknown'))})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)

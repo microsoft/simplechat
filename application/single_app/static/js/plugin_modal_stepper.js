@@ -12,6 +12,7 @@ export class PluginModalStepper {
     this.currentPage = 1;
     this.itemsPerPage = 12;
     this.filteredTypes = [];
+    this.originalPlugin = null; // Store original state for change tracking
     
     this.bindEvents();
   }
@@ -63,6 +64,9 @@ export class PluginModalStepper {
   async showModal(plugin = null) {
     this.isEditMode = !!plugin;
     this.selectedType = plugin?.type || null;
+    
+    // Store original plugin state for change tracking
+    this.originalPlugin = plugin ? JSON.parse(JSON.stringify(plugin)) : null;
     
     // Reset modal state
     this.currentStep = 1;
@@ -420,6 +424,27 @@ export class PluginModalStepper {
     if (currentStepEl) {
       currentStepEl.classList.remove('d-none');
     }
+    
+    // Update step 3 title based on plugin type
+    if (stepNumber === 3) {
+      const titleEl = document.getElementById('step-3-title');
+      if (titleEl) {
+        const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+        const isSqlType = this.selectedType && (
+          this.selectedType.toLowerCase().includes('sql') || 
+          this.selectedType.toLowerCase() === 'sql_schema' ||
+          this.selectedType.toLowerCase() === 'sql_query'
+        );
+        
+        if (isOpenApiType) {
+          titleEl.textContent = 'API Configuration';
+        } else if (isSqlType) {
+          titleEl.textContent = 'Database Configuration';
+        } else {
+          titleEl.textContent = 'Configuration';
+        }
+      }
+    }
   }
 
   updateStepIndicator() {
@@ -529,8 +554,11 @@ export class PluginModalStepper {
           const fileInput = document.getElementById('plugin-openapi-file');
           const endpoint = document.getElementById('plugin-endpoint').value.trim();
           
-          // Validate file upload
-          if (!fileInput.files || fileInput.files.length === 0) {
+          // Validate OpenAPI specification - allow either uploaded file or existing spec content
+          const hasUploadedFile = fileInput.files && fileInput.files.length > 0;
+          const hasExistingSpec = fileInput.dataset.fileId && fileInput.dataset.specContent;
+          
+          if (!hasUploadedFile && !hasExistingSpec) {
             this.showError('OpenAPI specification file is required.');
             return false;
           }
@@ -721,7 +749,11 @@ export class PluginModalStepper {
     const statusDiv = document.getElementById('openapi-file-status');
     
     if (!file) {
+      // Clear any existing status when no file is selected
       statusDiv.innerHTML = '';
+      const fileInput = document.getElementById('plugin-openapi-file');
+      delete fileInput.dataset.fileId;
+      delete fileInput.dataset.specContent;
       return;
     }
 
@@ -1120,6 +1152,46 @@ export class PluginModalStepper {
       const additionalFields = plugin.additionalFields || {};
       document.getElementById('plugin-endpoint').value = plugin.endpoint || additionalFields.base_url || '';
       
+      // Handle existing OpenAPI specification content
+      if (additionalFields.openapi_spec_content) {
+        const fileInput = document.getElementById('plugin-openapi-file');
+        const statusDiv = document.getElementById('openapi-file-status');
+        const helpDiv = document.getElementById('openapi-file-help');
+        
+        // Store the existing spec data in the file input's dataset
+        fileInput.dataset.fileId = 'existing_' + plugin.name; // Generate a unique ID for existing content
+        fileInput.dataset.specContent = JSON.stringify(additionalFields.openapi_spec_content);
+        
+        // Update help text for editing mode
+        if (helpDiv) {
+          helpDiv.innerHTML = `
+            <strong>Editing mode:</strong> This action already has an OpenAPI specification. You can:
+            <br>• Keep the existing specification (no need to upload again)
+            <br>• Upload a new file to replace the existing specification
+            <br><strong>Security:</strong> Files are automatically scanned for malicious content.
+          `;
+        }
+        
+        // Show status that existing specification is loaded
+        statusDiv.innerHTML = `
+          <i class="bi bi-file-earmark-check me-2"></i>
+          Using existing OpenAPI specification
+          <br><small class="text-muted">You can upload a new file to replace it, or keep the existing one</small>
+        `;
+        statusDiv.className = 'mt-2 text-success';
+        
+        // If we have spec info, try to extract and display it
+        const specContent = additionalFields.openapi_spec_content;
+        if (specContent && specContent.info) {
+          this.displayOpenApiInfo({
+            title: specContent.info.title,
+            version: specContent.info.version,
+            description: specContent.info.description,
+            servers: specContent.servers || []
+          });
+        }
+      }
+      
       const auth = plugin.auth || {};
       let authType = 'none';
       
@@ -1177,6 +1249,67 @@ export class PluginModalStepper {
       }
       
       document.getElementById('plugin-auth-type').value = authType;
+    } else if (plugin.type && (plugin.type.toLowerCase().includes('sql') || plugin.type.toLowerCase() === 'sql_schema' || plugin.type.toLowerCase() === 'sql_query')) {
+      // Populate SQL fields
+      const additionalFields = plugin.additionalFields || {};
+      
+      // Database type - select the appropriate radio button
+      const databaseType = additionalFields.database_type || 'sqlserver';
+      const dbTypeRadio = document.getElementById(`sql-db-${databaseType}`);
+      if (dbTypeRadio) {
+        dbTypeRadio.checked = true;
+      }
+      
+      // Connection method (default to connection string)
+      // Note: The connection method might not be saved in the data, so we'll default to connection_string
+      const connectionMethodRadio = document.querySelector('input[name="sql-connection-method"][value="connection_string"]');
+      if (connectionMethodRadio) {
+        connectionMethodRadio.checked = true;
+      }
+      
+      // Build connection string from individual parameters if needed
+      let connectionString = plugin.endpoint || '';
+      if (!connectionString && additionalFields.server) {
+        // Build connection string from components
+        const server = additionalFields.server;
+        const database = additionalFields.database;
+        const driver = additionalFields.driver || 'ODBC Driver 17 for SQL Server';
+        
+        if (databaseType === 'azure_sql' || databaseType === 'sqlserver') {
+          connectionString = `Server=${server};Database=${database};Driver={${driver}};`;
+          if (additionalFields.username && additionalFields.password) {
+            connectionString += `Uid=${additionalFields.username};Pwd=${additionalFields.password};`;
+          }
+        } else if (databaseType === 'postgresql') {
+          connectionString = `Host=${server};Database=${database};`;
+          if (additionalFields.username && additionalFields.password) {
+            connectionString += `Username=${additionalFields.username};Password=${additionalFields.password};`;
+          }
+        } else if (databaseType === 'mysql') {
+          connectionString = `Server=${server};Database=${database};`;
+          if (additionalFields.username && additionalFields.password) {
+            connectionString += `Uid=${additionalFields.username};Pwd=${additionalFields.password};`;
+          }
+        }
+      }
+      
+      document.getElementById('sql-connection-string').value = connectionString;
+      
+      // Authentication
+      const auth = plugin.auth || {};
+      let sqlAuthType = 'username_password'; // Default for SQL plugins
+      
+      if (auth.type === 'user' || auth.type === 'username_password') {
+        sqlAuthType = 'username_password';
+        document.getElementById('sql-username').value = additionalFields.username || '';
+        document.getElementById('sql-password').value = additionalFields.password || '';
+      } else if (auth.type === 'integrated' || auth.type === 'windows') {
+        sqlAuthType = 'integrated';
+      } else if (auth.type === 'connection_string') {
+        sqlAuthType = 'connection_string';
+      }
+      
+      document.getElementById('sql-auth-type').value = sqlAuthType;
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -1216,10 +1349,12 @@ export class PluginModalStepper {
       // Collect OpenAPI-specific data
       endpoint = document.getElementById('plugin-endpoint').value.trim();
       
-      // Handle OpenAPI file upload
+      // Handle OpenAPI file upload or existing spec
       const fileInput = document.getElementById('plugin-openapi-file');
       const fileId = fileInput.dataset.fileId;
       const specContent = fileInput.dataset.specContent;
+      
+      // Check if we have either uploaded file data or existing spec content
       if (!fileId || !specContent) {
         throw new Error('Please upload an OpenAPI specification file');
       }
@@ -1479,6 +1614,7 @@ export class PluginModalStepper {
     this.populateOpenApiSummary();
     this.populateSqlSummary();
     this.populateAdvancedSummary();
+    this.populateChangesSummary();
   }
 
   getEndpointValue() {
@@ -1549,7 +1685,19 @@ export class PluginModalStepper {
     
     if (isOpenApiType) {
       const fileInput = document.getElementById('plugin-openapi-file');
-      const fileName = fileInput.files.length > 0 ? fileInput.files[0].name : '-';
+      let fileName;
+      
+      if (fileInput.files.length > 0) {
+        // New file uploaded
+        fileName = fileInput.files[0].name;
+      } else if (fileInput.dataset.fileId && fileInput.dataset.specContent) {
+        // Using existing specification (editing mode)
+        fileName = 'No changes (using existing specification)';
+      } else {
+        // No file at all
+        fileName = '-';
+      }
+      
       document.getElementById('summary-openapi-file').textContent = fileName;
       
       // Show API info if available
@@ -1620,6 +1768,133 @@ export class PluginModalStepper {
     }
   }
 
+  detectChanges() {
+    if (!this.isEditMode || !this.originalPlugin) {
+      return null;
+    }
+
+    const changes = {};
+    
+    try {
+      // Get current form values directly instead of using getFormData()
+      // which might fail due to validation requirements
+      const currentDisplayName = document.getElementById('plugin-display-name')?.value || '';
+      const currentName = document.getElementById('plugin-name')?.value || '';
+      const currentDescription = document.getElementById('plugin-description')?.value || '';
+      
+      // Get endpoint from the appropriate field based on plugin type
+      let currentEndpoint = '';
+      const isOpenApiType = this.selectedType && this.selectedType.toLowerCase().includes('openapi');
+      const isSqlType = this.selectedType && (
+        this.selectedType.toLowerCase().includes('sql') || 
+        this.selectedType.toLowerCase() === 'sql_schema' ||
+        this.selectedType.toLowerCase() === 'sql_query'
+      );
+      
+      if (isOpenApiType) {
+        currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
+      } else if (isSqlType) {
+        currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
+      } else {
+        currentEndpoint = document.getElementById('plugin-generic-endpoint')?.value || '';
+      }
+      
+      // Get authentication information
+      let currentAuthKey = '';
+      if (isOpenApiType) {
+        const authType = document.getElementById('plugin-auth-type')?.value || 'none';
+        if (authType === 'api_key') {
+          currentAuthKey = document.getElementById('plugin-auth-api-key-value')?.value || '';
+        } else if (authType === 'bearer') {
+          currentAuthKey = document.getElementById('plugin-auth-bearer-token')?.value || '';
+        } else if (authType === 'basic') {
+          const username = document.getElementById('plugin-auth-basic-username')?.value || '';
+          const password = document.getElementById('plugin-auth-basic-password')?.value || '';
+          currentAuthKey = username || password ? `${username}:${password}` : '';
+        } else if (authType === 'oauth2') {
+          currentAuthKey = document.getElementById('plugin-auth-oauth2-token')?.value || '';
+        }
+      } else {
+        currentAuthKey = document.getElementById('plugin-auth-key')?.value || '';
+      }
+      
+      // Get metadata and additional fields
+      const currentMetadata = document.getElementById('plugin-metadata')?.value || '{}';
+      const currentAdditionalFields = document.getElementById('plugin-additional-fields')?.value || '{}';
+      
+      // Compare basic fields
+      if (currentDisplayName !== (this.originalPlugin.displayName || '')) {
+        changes.displayName = {
+          before: this.originalPlugin.displayName || '',
+          after: currentDisplayName
+        };
+      }
+      
+      if (currentName !== (this.originalPlugin.name || '')) {
+        changes.name = {
+          before: this.originalPlugin.name || '',
+          after: currentName
+        };
+      }
+      
+      if (currentDescription !== (this.originalPlugin.description || '')) {
+        changes.description = {
+          before: this.originalPlugin.description || '',
+          after: currentDescription
+        };
+      }
+      
+      if (currentEndpoint !== (this.originalPlugin.endpoint || '')) {
+        changes.endpoint = {
+          before: this.originalPlugin.endpoint || '',
+          after: currentEndpoint
+        };
+      }
+      
+      // Compare authentication key (mask for security)
+      const originalAuthKey = (this.originalPlugin.auth && this.originalPlugin.auth.key) || '';
+      if (currentAuthKey !== originalAuthKey) {
+        changes.authKey = {
+          before: originalAuthKey ? '***' + originalAuthKey.slice(-4) : '(empty)',
+          after: currentAuthKey ? '***' + currentAuthKey.slice(-4) : '(empty)'
+        };
+      }
+      
+      // Compare metadata
+      try {
+        const originalMetadataStr = this.originalPlugin.metadata && Object.keys(this.originalPlugin.metadata).length > 0 ? 
+          JSON.stringify(this.originalPlugin.metadata, null, 2) : '{}';
+        if (currentMetadata !== originalMetadataStr) {
+          changes.metadata = {
+            before: originalMetadataStr,
+            after: currentMetadata
+          };
+        }
+      } catch (e) {
+        console.log('Metadata comparison error:', e);
+      }
+      
+      // Compare additional fields
+      try {
+        const originalAdditionalFieldsStr = this.originalPlugin.additionalFields && Object.keys(this.originalPlugin.additionalFields).length > 0 ? 
+          JSON.stringify(this.originalPlugin.additionalFields, null, 2) : '{}';
+        if (currentAdditionalFields !== originalAdditionalFieldsStr) {
+          changes.additionalFields = {
+            before: originalAdditionalFieldsStr,
+            after: currentAdditionalFields
+          };
+        }
+      } catch (e) {
+        console.log('Additional fields comparison error:', e);
+      }
+      
+      return Object.keys(changes).length > 0 ? changes : null;
+    } catch (error) {
+      console.error('Error detecting changes:', error);
+      return null;
+    }
+  }
+
   populateAdvancedSummary() {
     const advancedSection = document.getElementById('summary-advanced-section');
     
@@ -1627,8 +1902,25 @@ export class PluginModalStepper {
     const metadata = document.getElementById('plugin-metadata').value.trim();
     const additionalFields = document.getElementById('plugin-additional-fields').value.trim();
     
-    const hasMetadata = metadata.length > 0;
-    const hasAdditionalFields = additionalFields.length > 0;
+    // Check if metadata/additional fields actually contain meaningful data (not just empty objects)
+    let hasMetadata = false;
+    let hasAdditionalFields = false;
+    
+    try {
+      const metadataObj = JSON.parse(metadata || '{}');
+      hasMetadata = Object.keys(metadataObj).length > 0;
+    } catch (e) {
+      // If it's not valid JSON, consider it as having content if it's not empty
+      hasMetadata = metadata.length > 0 && metadata !== '{}';
+    }
+    
+    try {
+      const additionalFieldsObj = JSON.parse(additionalFields || '{}');
+      hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
+    } catch (e) {
+      // If it's not valid JSON, consider it as having content if it's not empty
+      hasAdditionalFields = additionalFields.length > 0 && additionalFields !== '{}';
+    }
     
     // Update has metadata/additional fields indicators
     document.getElementById('summary-has-metadata').textContent = hasMetadata ? 'Yes' : 'No';
@@ -1658,6 +1950,69 @@ export class PluginModalStepper {
     } else {
       advancedSection.style.display = 'none';
     }
+  }
+
+  populateChangesSummary() {
+    const changesSection = document.getElementById('summary-changes-section');
+    const changesContent = document.getElementById('summary-changes-content');
+    
+    // Detect changes
+    const changes = this.detectChanges();
+    
+    if (changes && Object.keys(changes).length > 0) {
+      // Show changes section
+      changesSection.style.display = '';
+      
+      // Build changes HTML
+      let changesHtml = '';
+      
+      for (const [field, change] of Object.entries(changes)) {
+        const fieldLabel = this.getFieldLabel(field);
+        changesHtml += `
+          <div class="mb-3">
+            <div class="fw-medium text-primary mb-1">${this.escapeHtml(fieldLabel)}</div>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <div class="small text-muted mb-1">Before:</div>
+                <div class="border rounded p-2 bg-light">
+                  <code class="small">${this.escapeHtml(change.before || '(empty)')}</code>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="small text-muted mb-1">After:</div>
+                <div class="border rounded p-2 bg-success-subtle">
+                  <code class="small">${this.escapeHtml(change.after || '(empty)')}</code>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+      
+      changesContent.innerHTML = changesHtml;
+    } else {
+      // Hide changes section if no changes
+      changesSection.style.display = 'none';
+    }
+  }
+
+  getFieldLabel(field) {
+    const labels = {
+      displayName: 'Display Name',
+      name: 'Generated Name',
+      description: 'Description',
+      endpoint: 'Endpoint/Connection',
+      authType: 'Authentication Type',
+      apiKey: 'API Key',
+      username: 'Username',
+      password: 'Password',
+      connectionMethod: 'Connection Method',
+      databaseType: 'Database Type',
+      openApiFile: 'OpenAPI Specification',
+      metadata: 'Metadata',
+      additionalFields: 'Additional Fields'
+    };
+    return labels[field] || field;
   }
 
   escapeHtml(str) {

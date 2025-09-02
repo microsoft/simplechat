@@ -65,11 +65,20 @@ export function getAgentModalFields(opts = {}) {
 		showToast('error', 'Additional Settings must be a valid JSON object.');
 		throw e;
 	}
-	// Actions handled here
+	// Actions handled here - support both old multiselect and new stepper action cards
 	const actionsSelect = root.getElementById('agent-plugins-to-load');
 	let actions_to_load = [];
+	
 	if (actionsSelect) {
+		// Old system - multiselect
 		actions_to_load = Array.from(actionsSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
+	} else {
+		// New system - stepper action cards
+		const selectedActionCards = root.querySelectorAll('.action-card.border-primary');
+		actions_to_load = Array.from(selectedActionCards).map(card => {
+			// Try ID first, then fall back to name
+			return card.getAttribute('data-action-id') || card.getAttribute('data-action-name');
+		}).filter(Boolean);
 	}
 
 	return {

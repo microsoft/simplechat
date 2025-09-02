@@ -45,6 +45,15 @@ function filterAgents(searchTerm) {
   renderAgentsTable(filteredAgents);
 }
 
+// --- Helper Functions ---
+
+function truncateDisplayName(displayName, maxLength = 12) {
+  if (!displayName || displayName.length <= maxLength) {
+    return displayName;
+  }
+  return displayName.substring(0, maxLength) + '...';
+}
+
 function renderAgentsTable(agentsList) {
   if (!agentsTbody) return;
   agentsTbody.innerHTML = '';
@@ -84,9 +93,11 @@ function renderAgentsTable(agentsList) {
         `;
       }
       
+      const truncatedDisplayName = truncateDisplayName(agent.display_name || agent.name || '');
+      
       tr.innerHTML = `
         <td>
-          <strong>${agent.display_name || agent.name || ''}</strong>
+          <strong>${truncatedDisplayName}</strong>
           ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
         </td>
         <td class="text-muted small">${agent.description || 'No description available'}</td>
@@ -117,9 +128,11 @@ function renderAgentsTable(agentsList) {
         `;
       }
       
+      const truncatedDisplayName = truncateDisplayName(agent.display_name || agent.name || '');
+      
       tr.innerHTML = `
         <td>
-          <strong>${agent.display_name || agent.name || ''}</strong>
+          <strong>${truncatedDisplayName}</strong>
           ${agent.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : ''}
         </td>
         <td class="text-muted small">${agent.description || 'No description available'}</td>
@@ -144,8 +157,16 @@ async function fetchAgents() {
 }
 
 function attachAgentTableEvents() {
+  console.log('Attaching agent table events');
+  
   if (createAgentBtn) {
-    createAgentBtn.onclick = () => openAgentModal();
+    console.log('Setting up create agent button event');
+    createAgentBtn.onclick = () => {
+      console.log('Create agent button clicked');
+      openAgentModal();
+    };
+  } else {
+    console.error('Create agent button not found');
   }
   
   // Search functionality
@@ -156,17 +177,28 @@ function attachAgentTableEvents() {
   }
   
   agentsTbody.addEventListener('click', function (e) {
-    if (e.target.classList.contains('edit-agent-btn')) {
-      const agent = agents.find(a => a.name === e.target.dataset.name);
+    console.log('Agent table clicked, target:', e.target);
+    
+    // Find the button element (could be the target or a parent)
+    const editBtn = e.target.closest('.edit-agent-btn');
+    const deleteBtn = e.target.closest('.delete-agent-btn');
+    const chatBtn = e.target.closest('.chat-agent-btn');
+    
+    if (editBtn) {
+      console.log('Edit agent button clicked, dataset:', editBtn.dataset);
+      const agent = agents.find(a => a.name === editBtn.dataset.name);
+      console.log('Found agent:', agent);
       openAgentModal(agent);
     }
-    if (e.target.classList.contains('delete-agent-btn')) {
-      const agent = agents.find(a => a.name === e.target.dataset.name);
-      if (e.target.disabled) return;
+    
+    if (deleteBtn) {
+      const agent = agents.find(a => a.name === deleteBtn.dataset.name);
+      if (deleteBtn.disabled) return;
       if (confirm(`Delete agent '${agent.name}'?`)) deleteAgent(agent.name);
     }
-    if (e.target.classList.contains('chat-agent-btn')) {
-      const agentName = e.target.dataset.name;
+    
+    if (chatBtn) {
+      const agentName = chatBtn.dataset.name;
       chatWithAgent(agentName);
     }
   });
@@ -195,181 +227,22 @@ async function chatWithAgent(agentName) {
 
 
 async function openAgentModal(agent = null, selectedAgentName = null) {
-  // Minimal, DRY modal logic using shared helpers
-  const modalEl = document.getElementById('agentModal');
-  if (!modalEl) return alert('Agent modal not found.');
-  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-
-  // Initialize stepper
-  if (!window.agentModalStepper) {
-    window.agentModalStepper = new AgentModalStepper();
-  }
+  console.log('openAgentModal called with agent:', agent);
   
-  // Store agent data for use in stepper
-  window.agentModalStepper.currentAgent = agent;
+  // Always re-initialize stepper with workspace context to ensure correct state
+  // This prevents issues when switching between workspace and admin contexts
+  console.log('Creating new AgentModalStepper for workspace');
+  window.agentModalStepper = new AgentModalStepper(false); // Pass isAdmin = false
   
-  window.agentModalStepper.showModal(agent);
-
-  // Clear error div on modal open
-  const errorDiv = document.getElementById('agent-modal-error');
-  if (errorDiv) {
-    errorDiv.textContent = '';
-    errorDiv.classList.add('d-none');
+  // Use the stepper to show the modal
+  try {
+    console.log('Calling showModal on AgentModalStepper');
+    await window.agentModalStepper.showModal(agent);
+    console.log('Modal should be visible now');
+  } catch (error) {
+    console.error('Error opening agent modal:', error);
+    showToast('Error opening agent modal. Please try again.', 'error');
   }
-
-  // Populate modal fields using shared helper
-  agentsCommon.setAgentModalFields(agent || {}, { context: 'user' });
-
-  // Setup toggles using shared helpers
-  agentsCommon.setupApimToggle(
-    document.getElementById('agent-enable-apim'),
-    document.getElementById('agent-apim-fields'),
-    document.getElementById('agent-gpt-fields'),
-    () => agentsCommon.loadGlobalModelsForModal({
-      endpoint: '/api/user/agent/settings',
-      agent,
-      globalModelSelect: document.getElementById('agent-global-model-select'),
-      isGlobal: false,
-      customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
-      deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
-    })
-  );
-  agentsCommon.toggleCustomConnectionUI(
-    agentsCommon.shouldEnableCustomConnection(agent),
-    {
-      customFields: document.getElementById('agent-custom-connection-fields'),
-      globalModelGroup: document.getElementById('agent-global-model-group'),
-      advancedSection: document.getElementById('agent-advanced-section')
-    }
-  );
-  agentsCommon.toggleAdvancedUI(
-    agentsCommon.shouldExpandAdvanced(agent),
-    {
-      customFields: document.getElementById('agent-custom-connection-fields'),
-      globalModelGroup: document.getElementById('agent-global-model-group'),
-      advancedSection: document.getElementById('agent-advanced-section')
-    }
-  );
-
-  // Save handler
-  const saveBtn = document.getElementById('agent-modal-save-btn');
-  saveBtn.onclick = async () => {
-    let newAgent;
-    try {
-      newAgent = agentsCommon.getAgentModalFields({ context: 'user' });
-      // Only preserve id if editing; do not generate or strip id on create
-      if (agent && agent.id) newAgent.id = agent.id;
-      // If id is still not present, fetch a GUID from backend
-      if (!('id' in newAgent) || !newAgent.id) {
-        try {
-          const guidResp = await fetch('/api/agents/generate_id');
-          if (guidResp.ok) {
-            const guidData = await guidResp.json();
-            newAgent.id = guidData.id;
-          } else {
-            newAgent.id = '';
-          }
-        } catch (guidErr) {
-          newAgent.id = '';
-        }
-      }
-      newAgent.actions_to_load = window.agentModalStepper ? window.agentModalStepper.getSelectedActionIds() : [];
-      newAgent.is_global = false;
-    } catch (e) {
-      const msg = 'Additional Settings: ' + e.message;
-      errorDiv.textContent = msg;
-      errorDiv.classList.remove('d-none');
-      showToast(msg, 'danger');
-      return;
-    }
-    // Validate with JSON schema (Ajv)
-    try {
-      if (!window.validateAgent) {
-        window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
-      }
-      const valid = window.validateAgent(newAgent);
-      if (!valid) {
-        let errorMsg = 'Validation error: Invalid agent data.';
-        if (window.validateAgent.errors && window.validateAgent.errors.length) {
-          errorMsg += '\n' + window.validateAgent.errors.map(e => `${e.instancePath} ${e.message}`).join('\n');
-        }
-        errorDiv.textContent = errorMsg;
-        errorDiv.classList.remove('d-none');
-        showToast(errorMsg, 'danger');
-        return;
-      }
-    } catch (e) {
-      const msg = 'Schema validation failed: ' + e.message;
-      errorDiv.textContent = msg;
-      errorDiv.classList.remove('d-none');
-      showToast(msg, 'danger');
-      return;
-    }
-    try {
-      // Save agent (POST or PUT depending on context, here always POST for user agents)
-      const res = await fetch('/api/user/agents');
-      let agents = [];
-      if (res.ok) {
-        agents = await res.json();
-      }
-      // If editing, replace; else, add
-      const idx = agent ? agents.findIndex(a => a.id === agent.id) : -1;
-      if (idx >= 0) {
-        agents[idx] = newAgent;
-      } else {
-        agents.push(newAgent);
-      }
-      const saveRes = await fetch('/api/user/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(agents)
-      });
-      if (!saveRes.ok) throw new Error('Failed to save agent');
-      modal.hide();
-      // After saving, re-fetch user settings and set dropdown to selected agent
-      await fetchAgents();
-      try {
-        const settingsRes = await fetch('/api/user/settings');
-        if (settingsRes.ok) {
-          const settings = await settingsRes.json();
-          let selectedAgentObj = settings.selected_agent;
-          if (!selectedAgentObj && settings.settings && settings.settings.selected_agent) {
-            selectedAgentObj = settings.settings.selected_agent;
-          }
-          // Note: selectedAgentName is available for future use if needed
-        }
-      } catch (e) {
-        // Ignore errors, fallback to default behavior
-      }
-    } catch (e) {
-      errorDiv.textContent = e.message;
-      errorDiv.classList.remove('d-none');
-      showToast(e.message, 'danger');
-    }
-  };
-  // Attach shared toggle handlers after shared helpers
-  const customConnectionToggle = document.getElementById('agent-custom-connection');
-  const advancedToggle = document.getElementById('agent-advanced-toggle');
-  const modalElements = {
-    customFields: document.getElementById('agent-custom-connection-fields'),
-    globalModelGroup: document.getElementById('agent-global-model-group'),
-    advancedSection: document.getElementById('agent-advanced-section')
-  };
-  agentsCommon.attachCustomConnectionToggleHandler(
-    customConnectionToggle,
-    agent,
-    modalElements,
-    () => agentsCommon.loadGlobalModelsForModal({
-      endpoint: '/api/user/agent/settings',
-      agent,
-      globalModelSelect: document.getElementById('agent-global-model-select'),
-      isGlobal: false,
-      customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
-      deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
-    })
-  );
-  agentsCommon.attachAdvancedToggleHandler(advancedToggle, modalElements);
-  modal.show();
 }
 
 async function deleteAgent(name) {

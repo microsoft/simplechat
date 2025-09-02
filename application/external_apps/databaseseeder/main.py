@@ -182,7 +182,7 @@ def main():
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), settings_file_path)
 
     #azure_openai_gpt_key = settings_json_from_file['azure_openai_gpt_key']
-    print(f"Debug: azure_openai_gpt_key: {azure_openai_gpt_key}")
+    print(f"DEBUG: azure_openai_gpt_key: {azure_openai_gpt_key}")
     # Single value modification example
     #settings_json["azure_openai_gpt_key"] = f"{azure_openai_gpt_key}" # Example modification
 
