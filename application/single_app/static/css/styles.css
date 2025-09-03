@@ -538,23 +538,6 @@ main {
     transform: translateY(-50%);
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .step-indicator .step-circle {
-        width: 32px;
-        height: 32px;
-        font-size: 0.875rem;
-    }
-    
-    .step-indicator .step-label {
-        font-size: 0.75rem;
-    }
-    
-    .action-type-card {
-        margin-bottom: 1rem;
-    }
-}
-
 /* Fix for modal backdrop in dark mode */
 [data-bs-theme="dark"] .modal-backdrop {
     background-color: rgba(0, 0, 0, 0.8);

@@ -47,3 +47,5 @@ pyodbc>=4.0.0
 PyMySQL>=1.0.0
 azure-monitor-opentelemetry==1.6.13
 psycopg2-binary==2.9.10
+cython
+pyyaml==6.0.2

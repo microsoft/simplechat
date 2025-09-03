@@ -47,10 +47,35 @@ export async function populateAgentDropdown() {
         const selectedAgent = await fetchSelectedAgent();
         populateAgentSelect(agentSelect, agents, selectedAgent);
         agentSelect.onchange = async function() {
-            const selectedName = agentSelect.value;
-            const selectedAgentObj = agents.find(a => a.name === selectedName);
+            const selectedValue = agentSelect.value;
+            console.log('DEBUG: Agent dropdown changed to:', selectedValue);
+            console.log('DEBUG: Available agents:', agents);
+            
+            // Parse the selected value to extract name and global status
+            let selectedAgentObj = null;
+            if (selectedValue.startsWith('global_')) {
+                const agentName = selectedValue.substring(7); // Remove 'global_' prefix
+                selectedAgentObj = agents.find(a => a.name === agentName && a.is_global === true);
+            } else if (selectedValue.startsWith('personal_')) {
+                const agentName = selectedValue.substring(9); // Remove 'personal_' prefix
+                selectedAgentObj = agents.find(a => a.name === agentName && a.is_global === false);
+            } else {
+                // Fallback for agents without prefix (backwards compatibility)
+                selectedAgentObj = agents.find(a => a.name === selectedValue);
+            }
+            
+            console.log('DEBUG: Found agent object:', selectedAgentObj);
+            
             if (selectedAgentObj) {
-                await setSelectedAgent({ name: selectedAgentObj.name, is_global: !!selectedAgentObj.is_global });
+                const payload = { name: selectedAgentObj.name, is_global: !!selectedAgentObj.is_global };
+                console.log('DEBUG: Setting selected agent payload:', payload);
+                console.log('DEBUG: Agent is_global flag:', selectedAgentObj.is_global);
+                console.log('DEBUG: !!selectedAgentObj.is_global:', !!selectedAgentObj.is_global);
+                
+                await setSelectedAgent(payload);
+                console.log('DEBUG: Agent selection saved successfully');
+            } else {
+                console.log('DEBUG: No agent found with value:', selectedValue);
             }
         };
     } catch (e) {

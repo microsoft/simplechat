@@ -246,7 +246,7 @@ class SQLSchemaPlugin(BasePlugin):
             
             # Get tables list
             tables_query = self._get_tables_query(include_system_tables, table_filter)
-            #print(f"Debug: [SQLSchemaPlugin] Executing tables query: {tables_query}")
+            print(f"DEBUG: [SQLSchemaPlugin] Executing tables query: {tables_query}")
             cursor.execute(tables_query)
             tables = cursor.fetchall()
             

@@ -60,7 +60,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, ensureTable = true}) {
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, ensureTable = true, isAdmin = false}) {
   console.log('Rendering plugins table with %d plugins', plugins.length);
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
@@ -75,20 +75,29 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, en
   plugins.forEach(plugin => {
     const tr = document.createElement('tr');
     const safeName = escapeHtml(plugin.name);
-    const safeType = escapeHtml(plugin.type);
-    const safeDesc = escapeHtml(plugin.description || '');
+    const safeDisplayName = escapeHtml(plugin.display_name || plugin.name);
+    const safeDesc = escapeHtml(plugin.description || 'No description available');
     let actionButtons = '';
     let globalBadge = plugin.is_global ? ' <span class="badge bg-info text-dark">Global</span>' : '';
-    if (!plugin.is_global) {
+    
+    // Show action buttons for:
+    // - Admin context: all actions (global and personal)
+    // - User context: only personal actions (not global)
+    if (isAdmin || !plugin.is_global) {
       actionButtons = `
-        <button type="button" class="btn btn-sm btn-secondary me-1 edit-plugin-btn" data-plugin-name="${safeName}">Edit</button>
-        <button type="button" class="btn btn-sm btn-danger delete-plugin-btn" data-plugin-name="${safeName}">Delete</button>
+        <div class="d-flex gap-1">
+          <button type="button" class="btn btn-sm btn-outline-secondary edit-plugin-btn" data-plugin-name="${safeName}" title="Edit action">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-danger delete-plugin-btn" data-plugin-name="${safeName}" title="Delete action">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
       `;
     }
     tr.innerHTML = `
-      <td>${safeName}${globalBadge}</td>
-      <td>${safeType}</td>
-      <td>${safeDesc}</td>
+      <td><strong>${safeDisplayName}</strong>${globalBadge}</td>
+      <td class="text-muted small">${safeDesc}</td>
       <td>${actionButtons}</td>
     `;
     tbody.appendChild(tr);

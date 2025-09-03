@@ -91,7 +91,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = "0.224.112"
+app.config['VERSION'] = "0.226.082"
 
 Session(app)
 
@@ -316,6 +316,18 @@ cosmos_group_actions_container_name = "group_actions"
 cosmos_group_actions_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_actions_container_name,
     partition_key=PartitionKey(path="/group_id")
+)
+
+cosmos_global_agents_container_name = "global_agents"
+cosmos_global_agents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_global_agents_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_global_actions_container_name = "global_actions"
+cosmos_global_actions_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_global_actions_container_name,
+    partition_key=PartitionKey(path="/id")
 )
 
 cosmos_agent_facts_container_name = "agent_facts"

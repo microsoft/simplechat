@@ -90,74 +90,39 @@ def register_route_frontend_admin_settings(app):
             settings['max_rounds_per_agent'] = 1
         if 'orchestration_type' not in settings:
             settings['orchestration_type'] = 'default_agent'
-        if 'semantic_kernel_plugins' not in settings:
-            settings['semantic_kernel_plugins'] = []
+        # NOTE: semantic_kernel_plugins are now stored in containers, not settings
         if 'merge_global_semantic_kernel_with_workspace' not in settings:
             settings['merge_global_semantic_kernel_with_workspace'] = False
-        if 'semantic_kernel_agents' not in settings:
-            settings['semantic_kernel_agents'] = [
-                {
-                    "id": "15b0c92a-741d-42ff-ba0b-367c7ee0c848",
-                    "name": "default_agent",
-                    "display_name": "Default Agent",
-                    "description": "Agent that handles all tasks without specific instructions other than to resolve the issue.",
-                    "azure_openai_gpt_endpoint": "",
-                    "azure_openai_gpt_key": "",
-                    "azure_openai_gpt_deployment": "",
-                    "azure_openai_gpt_api_version": "",
-                    "default_agent": True,
-                    "instructions": "You are an agent. Your sole purpose of existence is to continue until the user's query is completely resolved. Before ending your turn and yielding back to the user, recursively review all outputs and decide on a course of action until the issue is completely resolved or query answered. Only terminate your turn when you are sure that the problem is solved and query is answered. The most important task is resolving the problem the first time.",
-                    "actions_to_load": [],
-                    "additional_settings": {}
-                },
-                {
-                    "id": "a876670c-6faf-4fd9-b950-525c63255e05",
-                    "name": "researcher_agent",
-                    "display_name": "Research Agent",
-                    "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
-                    "azure_openai_gpt_endpoint": "",
-                    "azure_openai_gpt_key": "",
-                    "azure_openai_gpt_deployment": "",
-                    "azure_openai_gpt_api_version": "",
-                    "default_agent": False,
-                    "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
-                    "actions_to_load": [],
-                    "additional_settings": {}
-                },
-                {
-                    "id": "a876670c-6faf-4fd9-b950-525c63255e05",
-                    "name": "snarkgpt",
-                    "display_name": "SnarkGPT",
-                    "description": "This agent does everything but getting the job done.",
-                    "azure_openai_gpt_endpoint": "",
-                    "azure_openai_gpt_key": "",
-                    "azure_openai_gpt_deployment": "",
-                    "azure_openai_gpt_api_version": "",
-                    "default_agent": False,
-                    "instructions": "You are SnarkGPT. A sarcastic, flippant AI who never takes anything seriously. Your job is to mock, joke about, or dodge the user's requests entirely while pretending to be helpful. You often respond with exaggerated indifference, ironic detachment, or theatrical confusion. You never actually fulfill the user's request — instead, you provide off-topic commentary, wild tangents, or absurd answers that only loosely connect to what was asked.\n\nUse humor, wit, and a constant undertone of 'why are we even doing this?' to carry the conversation. If the user insists, double down on your sarcasm and pretend you are far too busy, bored, or distracted to comply.",
-                    "actions_to_load": [],
-                    "additional_settings": {}
-                }
-            ]
+        # NOTE: semantic_kernel_agents are now stored in containers, not settings
         if 'global_selected_agent' not in settings:
-            default_agent = next((a for a in settings.get('semantic_kernel_agents', []) if a['default_agent']), None)
-            if default_agent:
+            # Use container-based storage for global agents instead of legacy settings
+            from functions_global_agents import get_all_global_agents
+            try:
+                global_agents = get_all_global_agents()
+                default_agent = next((a for a in global_agents if a.get('default_agent')), None)
+                if default_agent:
+                    settings['global_selected_agent'] = {
+                        'name': default_agent['name'],
+                        'is_global': True
+                    }
+                else:
+                    # Fallback to first agent if no default found
+                    if global_agents:
+                        settings['global_selected_agent'] = {
+                            'name': global_agents[0]['name'],
+                            'is_global': True
+                        }
+                    else: 
+                        settings['global_selected_agent'] = {
+                            'name': 'default_agent',
+                            'is_global': True
+                        }
+            except Exception:
+                # Fallback if container access fails
                 settings['global_selected_agent'] = {
-                    'name': default_agent['name'],
+                    'name': 'default_agent',
                     'is_global': True
                 }
-            else:
-                # Fallback if no default agent is found
-                if settings.get('semantic_kernel_agent', []):
-                    settings['global_selected_agent'] = {
-                        'name': settings['semantic_kernel_agents'][0]['name'],
-                        'is_global': True
-                    }
-                else: 
-                    settings['global_selected_agent'] = {
-                        'name': 'default_agent',
-                        'is_global': True
-                    }
         if 'allow_user_agents' not in settings:
             settings['allow_user_agents'] = False
         if 'allow_user_custom_agent_endpoints' not in settings:
@@ -593,6 +558,13 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
             }
+            
+            # --- Prevent Legacy Fields from Being Created/Updated ---
+            # Remove semantic_kernel_agents and semantic_kernel_plugins if they somehow got added
+            if 'semantic_kernel_agents' in new_settings:
+                del new_settings['semantic_kernel_agents']
+            if 'semantic_kernel_plugins' in new_settings:
+                del new_settings['semantic_kernel_plugins']
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):

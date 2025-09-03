@@ -26,7 +26,8 @@ async function loadPlugins() {
             tbodySelector: '#admin-plugins-table-body',
             onEdit: name => editPlugin(name),
             onDelete: name => deletePlugin(name),
-            ensureTable: false
+            ensureTable: false,
+            isAdmin: true
         });
     } catch (error) {
         console.error('Error loading actions:', error);

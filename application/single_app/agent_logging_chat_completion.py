@@ -12,14 +12,23 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     display_name: str | None = Field(default=None)
     default_agent: bool = Field(default=False)
     tool_invocations: list = Field(default_factory=list)
+    deployment_name: str | None = Field(default=None)
+    azure_endpoint: str | None = Field(default=None)
+    api_version: str | None = Field(default=None)
 
-    def __init__(self, *args, display_name=None, default_agent=False, **kwargs):
+    def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, **kwargs):
         # Remove these from kwargs so the base class doesn't see them
         kwargs.pop('display_name', None)
         kwargs.pop('default_agent', None)
+        kwargs.pop('deployment_name', None)
+        kwargs.pop('azure_endpoint', None)
+        kwargs.pop('api_version', None)
         super().__init__(*args, **kwargs)
         self.display_name = display_name
         self.default_agent = default_agent
+        self.deployment_name = deployment_name
+        self.azure_endpoint = azure_endpoint
+        self.api_version = api_version
         # tool_invocations is now properly declared as a Pydantic field
 
     def log_tool_execution(self, tool_name, arguments=None, result=None):

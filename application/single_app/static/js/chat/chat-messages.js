@@ -177,16 +177,18 @@ export function loadMessages(conversationId) {
           const arg6 = msg.hybrid_citations; // Get value
           const arg7 = msg.web_search_citations; // Get value
           const arg8 = msg.agent_citations; // Get value
-          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}`);
+          const arg9 = msg.agent_display_name; // Get agent display name
+          const arg10 = msg.agent_name; // Get agent name
+          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}, agent_display: ${arg9}`);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
           appendMessage("File", msg);
         } else if (msg.role === "image") {
-          appendMessage("image", msg.content, msg.model_deployment_name);
+          appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
         } else if (msg.role === "safety") {
-          appendMessage("safety", msg.content);
+          appendMessage("safety", msg.content, null, msg.id, false, [], [], [], null, null);
         }
       });
     })
@@ -204,7 +206,9 @@ export function appendMessage(
   augmented = false,
   hybridCitations = [],
   webCitations = [],
-  agentCitations = []
+  agentCitations = [],
+  agentDisplayName = null,
+  agentName = null
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -243,9 +247,15 @@ export function appendMessage(
     messageClass = "ai-message";
     avatarAltText = "AI Avatar";
     avatarImg = "/static/images/ai-avatar.png";
-    senderLabel = modelName
-      ? `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`
-      : "AI";
+    
+    // Use agent display name if available, otherwise show AI with model
+    if (agentDisplayName) {
+      senderLabel = agentDisplayName;
+    } else if (modelName) {
+      senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+    } else {
+      senderLabel = "AI";
+    }
 
     // Parse content
     let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
@@ -444,9 +454,16 @@ export function appendMessage(
     } else if (sender === "image") {
       // Make sure this matches the case used in loadMessages/actuallySendMessage
       messageClass = "image-message"; // Use a distinct class if needed, or reuse ai-message
-      senderLabel = modelName
-        ? `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`
-        : "Image"; // Or just "Image"
+      
+      // Use agent display name if available, otherwise show AI with model
+      if (agentDisplayName) {
+        senderLabel = agentDisplayName;
+      } else if (modelName) {
+        senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+      } else {
+        senderLabel = "Image";
+      }
+      
       avatarImg = "/static/images/ai-avatar.png"; // Or a specific image icon
       avatarAltText = "Generated Image";
       messageContentHtml = `<img src="${messageContent}" alt="Generated Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" />`;
@@ -776,7 +793,9 @@ export function actuallySendMessage(finalMessageToSend) {
           data.augmented, // Pass augmented flag
           data.hybrid_citations, // Pass hybrid citations
           data.web_search_citations, // Pass web citations
-          data.agent_citations // Pass agent citations
+          data.agent_citations, // Pass agent citations
+          data.agent_display_name, // Pass agent display name
+          data.agent_name // Pass agent name
         );
       }
       // Show kernel fallback notice if present
@@ -789,7 +808,13 @@ export function actuallySendMessage(finalMessageToSend) {
           "image",
           data.image_url,
           data.model_deployment_name,
-          data.message_id
+          null, // messageId
+          false, // augmented
+          [], // hybridCitations
+          [], // webCitations
+          [], // agentCitations
+          data.agent_display_name, // Pass agent display name
+          data.agent_name // Pass agent name
         );
       }
 
@@ -872,7 +897,13 @@ export function actuallySendMessage(finalMessageToSend) {
             `**Categories triggered**: ${categories}\n` +
             `**Reason**: ${reasonMsg}`,
           null, // No model name for safety message
-          error.data.message_id // Use message_id if provided in error
+          error.data.message_id, // Use message_id if provided in error
+          false, // augmented
+          [], // hybridCitations
+          [], // webCitations
+          [], // agentCitations
+          null, // agentDisplayName
+          null // agentName
         );
       } else {
         // Show specific embedding error if present, or if status is 500 (embedding backend error)
@@ -880,13 +911,29 @@ export function actuallySendMessage(finalMessageToSend) {
         if (errMsg.includes("embedding") || error.status === 500) {
           appendMessage(
             "Error",
-            "There was an issue with the embedding process. Please check with an admin on embedding configuration."
+            "There was an issue with the embedding process. Please check with an admin on embedding configuration.",
+            null, // No model name for error message
+            null, // No message ID for error
+            false, // augmented
+            [], // hybridCitations
+            [], // webCitations
+            [], // agentCitations
+            null, // agentDisplayName
+            null // agentName
           );
         } else {
           // General error message
           appendMessage(
             "Error",
-            `Could not get a response. ${error.message || ""}`
+            `Could not get a response. ${error.message || ""}`,
+            null, // No model name for error message
+            null, // No message ID for error
+            false, // augmented
+            [], // hybridCitations
+            [], // webCitations
+            [], // agentCitations
+            null, // agentDisplayName
+            null // agentName
           );
         }
       }
@@ -970,22 +1017,65 @@ if (promptSelect) {
 
 // Helper function to update user message ID after backend response
 function updateUserMessageId(tempId, realId) {
+  console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
+  
   // Find the message with the temporary ID
   const messageDiv = document.querySelector(`[data-message-id="${tempId}"]`);
   if (messageDiv) {
     // Update the data-message-id attribute
     messageDiv.setAttribute('data-message-id', realId);
+    console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
     
-    // Update the buttons' data-message-id attributes
-    const copyBtn = messageDiv.querySelector('.copy-user-btn');
-    const metadataToggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
+    // Update ALL elements with the temporary ID to ensure consistency
+    const elementsToUpdate = [
+      messageDiv.querySelector('.copy-user-btn'),
+      messageDiv.querySelector('.metadata-toggle-btn'),
+      ...messageDiv.querySelectorAll(`[data-message-id="${tempId}"]`),
+      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`)
+    ];
     
-    if (copyBtn) {
-      copyBtn.setAttribute('data-message-id', realId);
+    let updateCount = 0;
+    elementsToUpdate.forEach(element => {
+      if (element) {
+        // Update data-message-id attribute
+        if (element.hasAttribute('data-message-id')) {
+          element.setAttribute('data-message-id', realId);
+          updateCount++;
+        }
+        
+        // Update aria-controls attribute for metadata toggles
+        if (element.hasAttribute('aria-controls')) {
+          const ariaControls = element.getAttribute('aria-controls');
+          if (ariaControls.includes(tempId)) {
+            const newAriaControls = ariaControls.replace(tempId, realId);
+            element.setAttribute('aria-controls', newAriaControls);
+            updateCount++;
+          }
+        }
+      }
+    });
+    
+    // Update metadata container IDs
+    const metadataContainer = messageDiv.querySelector(`[id*="${tempId}"]`);
+    if (metadataContainer) {
+      const oldId = metadataContainer.id;
+      const newId = oldId.replace(tempId, realId);
+      metadataContainer.id = newId;
+      console.log(`✅ Updated metadata container ID: ${oldId} -> ${newId}`);
+      updateCount++;
     }
-    if (metadataToggleBtn) {
-      metadataToggleBtn.setAttribute('data-message-id', realId);
+    
+    console.log(`✅ Updated ${updateCount} elements with new message ID`);
+    
+    // Verify the update was successful
+    const verifyDiv = document.querySelector(`[data-message-id="${realId}"]`);
+    if (verifyDiv) {
+      console.log(`✅ ID update verification successful: ${realId} found in DOM`);
+    } else {
+      console.error(`❌ ID update verification failed: ${realId} not found in DOM`);
     }
+  } else {
+    console.error(`❌ Message div with temp ID ${tempId} not found for update`);
   }
 }
 
@@ -1021,11 +1111,31 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
 
 // Function to toggle user message metadata drawer
 function toggleUserMessageMetadata(messageDiv, messageId) {
+  console.log(`🔀 Toggling metadata for message: ${messageId}`);
+  
+  // Validate that we're not using a temporary ID
+  if (messageId && messageId.startsWith('temp_user_')) {
+    console.error(`❌ Metadata toggle called with temporary ID: ${messageId}`);
+    console.log(`🔍 Checking if real ID is available in DOM...`);
+    
+    // Try to find the real ID from the message div
+    const actualMessageId = messageDiv.getAttribute('data-message-id');
+    if (actualMessageId && actualMessageId !== messageId && !actualMessageId.startsWith('temp_user_')) {
+      console.log(`✅ Found real ID in DOM: ${actualMessageId}, using that instead`);
+      messageId = actualMessageId;
+    } else {
+      console.error(`❌ No valid real ID found, metadata toggle may fail`);
+    }
+  }
+  
   const toggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
   const metadataContainer = messageDiv.querySelector(`#${targetId}`);
   
-  if (!metadataContainer) return;
+  if (!metadataContainer) {
+    console.error(`❌ Metadata container not found for targetId: ${targetId}`);
+    return;
+  }
   
   const isExpanded = metadataContainer.style.display !== "none";
   
@@ -1038,6 +1148,7 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     toggleBtn.setAttribute("aria-expanded", false);
     toggleBtn.title = "Show metadata";
     toggleBtn.innerHTML = '<i class="bi bi-info-circle"></i>';
+    console.log(`✅ Metadata hidden for ${messageId}`);
   } else {
     // Show the metadata
     metadataContainer.style.display = "block";
@@ -1047,9 +1158,11 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     
     // Load metadata if not already loaded
     if (metadataContainer.innerHTML.includes('Loading metadata...')) {
+      console.log(`🔄 Loading metadata content for ${messageId}`);
       loadUserMessageMetadata(messageId, metadataContainer);
     }
     
+    console.log(`✅ Metadata shown for ${messageId}`);
     // Note: Removed scrollChatToBottom() to prevent jumping when expanding metadata
   }
   
@@ -1065,21 +1178,46 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 
 // Function to load user message metadata into the drawer
 function loadUserMessageMetadata(messageId, container, retryCount = 0) {
+  console.log(`🔍 Loading metadata for message ID: ${messageId} (attempt ${retryCount + 1})`);
+  
+  // Validate message ID to catch temporary IDs early
   if (!messageId || messageId === "null" || messageId === "undefined") {
+    console.error(`❌ Invalid message ID: ${messageId}`);
     container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
     return;
+  }
+  
+  // Check for temporary IDs which indicate a bug
+  if (messageId.startsWith('temp_user_')) {
+    console.error(`❌ Attempting to load metadata with temporary ID: ${messageId}`);
+    console.error(`This indicates the updateUserMessageId function didn't work properly`);
+    
+    if (retryCount < 2) {
+      // Short retry for temp IDs in case the real ID update is still in progress
+      console.log(`🔄 Retrying metadata load for temp ID in 100ms (attempt ${retryCount + 1}/3)`);
+      setTimeout(() => {
+        loadUserMessageMetadata(messageId, container, retryCount + 1);
+      }, 100);
+      return;
+    } else {
+      container.innerHTML = '<div class="text-danger">Message metadata unavailable (temporary ID not updated).</div>';
+      return;
+    }
   }
   
   // Fetch message metadata from the backend
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
+      console.log(`📡 Metadata API response for ${messageId}: ${response.status}`);
+      
       if (!response.ok) {
         if (response.status === 404 && retryCount < 3) {
-          // Message might not be fully saved yet, retry after a delay
-          console.log(`Message ${messageId} not found, retrying in ${(retryCount + 1) * 500}ms (attempt ${retryCount + 1}/3)`);
+          // Message might not be fully saved yet, retry with exponential backoff
+          const delay = Math.min((retryCount + 1) * 500, 2000); // Cap at 2 seconds
+          console.log(`⏳ Message ${messageId} not found, retrying in ${delay}ms (attempt ${retryCount + 1}/3)`);
           setTimeout(() => {
             loadUserMessageMetadata(messageId, container, retryCount + 1);
-          }, (retryCount + 1) * 500); // 500ms, 1s, 1.5s delays
+          }, delay);
           return;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1088,11 +1226,13 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
     })
     .then(data => {
       if (data) {
+        console.log(`✅ Successfully loaded metadata for ${messageId}`);
         container.innerHTML = formatMetadataForDrawer(data);
       }
     })
     .catch(error => {
-      console.error("Error fetching message metadata:", error);
+      console.error(`❌ Error fetching message metadata for ${messageId}:`, error);
+      
       if (retryCount >= 3) {
         container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
       } else {

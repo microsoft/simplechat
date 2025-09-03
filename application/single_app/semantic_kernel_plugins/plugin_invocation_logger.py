@@ -30,6 +30,7 @@ class PluginInvocation:
     user_id: Optional[str]
     timestamp: str
     success: bool
+    conversation_id: Optional[str] = None
     error_message: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -186,6 +187,25 @@ class PluginInvocationLogger:
         user_invocations = [inv for inv in self.invocations if inv.user_id == user_id]
         return user_invocations[-limit:] if user_invocations else []
     
+    def get_invocations_for_conversation(self, user_id: str, conversation_id: str, limit: int = 50) -> List[PluginInvocation]:
+        """Get recent plugin invocations for a specific user and conversation."""
+        conversation_invocations = [
+            inv for inv in self.invocations 
+            if inv.user_id == user_id and inv.conversation_id == conversation_id
+        ]
+        return conversation_invocations[-limit:] if conversation_invocations else []
+    
+    def clear_invocations_for_conversation(self, user_id: str, conversation_id: str):
+        """Clear plugin invocations for a specific user and conversation.
+        
+        This ensures each message only shows citations for tools executed 
+        during that specific interaction, not accumulated from the entire conversation.
+        """
+        self.invocations = [
+            inv for inv in self.invocations 
+            if not (inv.user_id == user_id and inv.conversation_id == conversation_id)
+        ]
+    
     def get_plugin_stats(self) -> Dict[str, Any]:
         """Get statistics about plugin usage."""
         if not self.invocations:
@@ -268,12 +288,21 @@ def get_plugin_logger() -> PluginInvocationLogger:
 def log_plugin_invocation(plugin_name: str, function_name: str, 
                          parameters: Dict[str, Any], result: Any,
                          start_time: float, end_time: float, 
-                         success: bool = True, error_message: Optional[str] = None):
+                         success: bool = True, error_message: Optional[str] = None,
+                         conversation_id: Optional[str] = None):
     """Convenience function to log a plugin invocation."""
     try:
         user_id = get_current_user_id()
     except Exception:
         user_id = None
+    
+    # Try to get conversation_id from Flask context if not provided
+    if conversation_id is None:
+        try:
+            from flask import g
+            conversation_id = getattr(g, 'conversation_id', None)
+        except Exception:
+            conversation_id = None
     
     invocation = PluginInvocation(
         plugin_name=plugin_name,
@@ -284,6 +313,7 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         end_time=end_time,
         duration_ms=(end_time - start_time) * 1000,
         user_id=user_id,
+        conversation_id=conversation_id,
         timestamp=datetime.utcnow().isoformat(),
         success=success,
         error_message=error_message

@@ -8,7 +8,7 @@
 
   <style>
     /* Force fixed layout so columns don't expand when content changes */
-    #documents-table, #prompts-table { /* Apply to both tables */
+    #documents-table, #prompts-table, #agents-table { /* Apply to all tables */
       table-layout: fixed;
       width: 100%;
     }
@@ -90,6 +90,29 @@
         width: 150px; /* Adjust as needed for buttons */
     }
 
+    /* --- Agents Table Styles --- */
+    #agents-table th:nth-child(1), /* Display Name */
+    #agents-table td:nth-child(1) {
+        width: 25%; /* Agent name column */
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        min-width: 120px;
+    }
+    #agents-table th:nth-child(2), /* Description */
+    #agents-table td:nth-child(2) {
+        width: 55%; /* Description column - largest */
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        min-width: 200px;
+    }
+    #agents-table th:nth-child(3), /* Actions */
+    #agents-table td:nth-child(3) {
+        width: 20%; /* Actions column */
+        min-width: 120px;
+    }
+
     /* Style for the classification badge */
     .classification-badge {
         display: inline-block;
@@ -108,7 +131,7 @@
     }
 
     /* Align table cells vertically */
-    #documents-table td, #prompts-table td {
+    #documents-table td, #prompts-table td, #agents-table td {
         vertical-align: middle;
     }
 
@@ -473,24 +496,17 @@
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="mb-0 d-flex align-items-center gap-2">
                   Your Agents
-                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
                 </h5>
                 <button class="btn btn-success btn-sm" id="create-agent-btn">New Agent</button>
               </div>
-              <div class="mb-3 row align-items-center">
-                <label for="active-agent-select" class="col-sm-3 col-form-label">Selected Agent:</label>
-                <div class="col-sm-5">
-                  <select id="active-agent-select" class="form-select form-select-sm"></select>
-                </div>
-                <div class="col-sm-4">
-                  <span id="active-agent-select-msg" class="text-muted small"></span>
-                </div>
+              <div class="mb-3">
+                <input type="search" class="form-control" id="agents-search" placeholder="Search agents by name or description...">
               </div>
               <table class="table table-striped" id="agents-table">
-                <thead><tr><th>Name</th><th>Display Name</th><th>Selected</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Display Name</th><th>Description</th><th>Actions</th></tr></thead>
                 <tbody id="agents-table-body">
                   <tr class="table-loading-row">
-                    <td colspan="4">
+                    <td colspan="3">
                       <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
                       Loading agents...
                     </td>
@@ -525,12 +541,14 @@
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="mb-0 d-flex align-items-center gap-2">
                   Your Actions
-                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Actions Guide</a>
                 </h5>
                 <button class="btn btn-success btn-sm" id="create-plugin-btn">New Action</button>
               </div>
+              <div class="mb-3">
+                <input type="search" class="form-control" id="plugins-search" placeholder="Search actions by name or description...">
+              </div>
               <table class="table table-striped" id="plugins-table">
-                <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Display Name</th><th>Description</th><th style="width: 140px;">Actions</th></tr></thead>
                 <tbody id="plugins-table-body">
                   <!-- Populated by JS -->
                 </tbody>

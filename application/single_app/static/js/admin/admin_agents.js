@@ -3,6 +3,7 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import * as agentsCommon from '../agents_common.js';
+import { AgentModalStepper } from '../agent_modal_stepper.js';
 
 // --- Orchestration Settings Logic ---
 const maxRoundsGroup = document.getElementById('max_rounds_per_agent_group');
@@ -126,29 +127,17 @@ async function openAgentModal(agent = null) {
     if (!modalEl) return alert('Agent modal not found.');
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
+    // Always re-initialize stepper with admin context to ensure correct state
+    // This prevents issues when switching between workspace and admin contexts
+    window.agentModalStepper = new AgentModalStepper(true); // Pass isAdmin = true
+    window.agentModalStepper.showModal(agent);
+
     // Clear error div on modal open
     const errorDiv = document.getElementById('agent-modal-error');
     if (errorDiv) {
         errorDiv.textContent = '';
         errorDiv.style.display = 'none';
     }
-
-    // Populate modal fields using shared helper
-    agentsCommon.setAgentModalFields(agent || {}, { context: 'admin' });
-
-    // Setup plugin select
-    const pluginSelect = document.getElementById('agent-plugins-to-load');
-    let availablePlugins = [];
-    try {
-        const resp = await fetch('/api/admin/plugins');
-        if (resp.ok) {
-            availablePlugins = await resp.json();
-        }
-    } catch (e) {
-        availablePlugins = [];
-    }
-    agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-    agentsCommon.setSelectedPlugins(pluginSelect, agent?.actions_to_load || []);
 
 
     // Setup toggles using shared helpers
@@ -317,72 +306,6 @@ function handleAgentTableClick(e) {
             if (confirm(`Are you sure you want to delete agent '${agents[idx].name}'?`)) {
                 deleteAgent(idx);
             }
-        } else {
-            availablePlugins = [];
-        }
-        agentsCommon.populatePluginMultiSelect(pluginSelect, availablePlugins);
-        if (agent && Array.isArray(agent.actions_to_load)) {
-            agentsCommon.setSelectedPlugins(pluginSelect, agent.actions_to_load);
-        } else {
-            agentsCommon.setSelectedPlugins(pluginSelect, []);
-        }
-
-        // --- Shared Modal Logic ---
-        const customConnectionToggle = document.getElementById('agent-custom-connection');
-        const customConnectionFields = document.getElementById('agent-custom-connection-fields');
-        const globalModelGroup = document.getElementById('agent-global-model-group');
-        const globalModelSelect = document.getElementById('agent-global-model-select');
-        const advancedToggle = document.getElementById('agent-advanced-toggle');
-        const advancedSection = document.getElementById('agent-advanced-section');
-        const modalElements = {
-            customFields: customConnectionFields,
-            globalModelGroup: globalModelGroup,
-            advancedSection: advancedSection
-        };
-        // Custom Connection Toggle
-        let customEnabled = agentsCommon.shouldEnableCustomConnection(agent);
-        customConnectionToggle.checked = customEnabled;
-        agentsCommon.toggleCustomConnectionUI(customEnabled, modalElements);
-        customConnectionToggle.onchange = function () {
-            agentsCommon.toggleCustomConnectionUI(this.checked, modalElements);
-            if (!this.checked) {
-                loadGlobalModels();
-            }
-        };
-        // Advanced Toggle
-        let expandAdvanced = agentsCommon.shouldExpandAdvanced(agent);
-        advancedToggle.checked = expandAdvanced;
-        agentsCommon.toggleAdvancedUI(expandAdvanced, modalElements);
-        advancedToggle.onchange = function () {
-            agentsCommon.toggleAdvancedUI(this.checked, modalElements);
-        };
-        // Global Model Dropdown
-        async function loadGlobalModels() {
-            const endpoint = '/api/admin/agent/settings';
-            const { models, selectedModel, apimEnabled } = await agentsCommon.fetchAndGetAvailableModels(endpoint, agent);
-            agentsCommon.populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
-            globalModelSelect.onchange = function () {
-                const selected = models.find(m => m.deployment === this.value || m.name === this.value || m.id === this.value);
-                if (selected) {
-                    if (apimEnabled) {
-                        document.getElementById('agent-apim-deployment').value = selected.deployment || '';
-                        document.getElementById('agent-gpt-endpoint').value = '';
-                        document.getElementById('agent-gpt-key').value = '';
-                        document.getElementById('agent-gpt-deployment').value = '';
-                        document.getElementById('agent-gpt-api-version').value = '';
-                    } else {
-                        document.getElementById('agent-gpt-endpoint').value = selected.endpoint || '';
-                        document.getElementById('agent-gpt-key').value = selected.key || '';
-                        document.getElementById('agent-gpt-deployment').value = selected.deployment || selected.name || '';
-                        document.getElementById('agent-gpt-api-version').value = selected.api_version || '';
-                        document.getElementById('agent-apim-deployment').value = '';
-                    }
-                }
-            };
-        }
-        // Initial model load if not using custom connection
-        if (!customEnabled) {
-            loadGlobalModels();
         }
     }
 }
