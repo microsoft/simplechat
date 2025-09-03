@@ -218,10 +218,10 @@ class OpenApiPlugin(BasePlugin):
     
     @plugin_function_logger("OpenApiPlugin")
     @kernel_function(
-        description="List just the names of all available API operations"
+        description="List all available API operations with their exact operation IDs and descriptions. Use this to see what operations you can call."
     )
     def list_available_apis(self) -> str:
-        """List all available API operation names."""
+        """List all available API operation names with exact operation IDs."""
         operations = [m["name"] for m in self._metadata["methods"]]
         api_info = self.openapi.get("info", {})
         api_title = api_info.get("title", "API")
@@ -229,17 +229,22 @@ class OpenApiPlugin(BasePlugin):
         
         result = f"Available API operations for {api_title}:\n"
         if api_description:
-            result += f"Description: {api_description}\n\n"
+            result += f"Description: {api_description}\n"
+            result += f"**Warning**: If you want to be notified about changes in advance please join our [Slack channel](https://join.slack.com/t/mermade/shared_invite/zt-g78g7xir-MLE_CTCcXCdfJfG3CJe9qA).\n"
+            result += f"Client sample: [[Demo]](https://apis.guru/simple-ui) [[Repo]](https://github.com/APIs-guru/simple-ui)\n\n"
         
         result += "Operations:\n"
         for i, op_name in enumerate(operations, 1):
             # Find the operation details
             op_details = next((m for m in self._metadata["methods"] if m["name"] == op_name), {})
             description = op_details.get("description", "")
-            result += f"{i}. {op_name}"
-            if description:
-                result += f" - {description}"
-            result += "\n"
+            result += f"{i}. **{op_name}** - {description}\n"
+            if op_name == "getMetrics":
+                result += f"   Use this for API directory metrics and statistics\n"
+            elif op_name == "listAPIs":
+                result += f"   Use this to list all APIs in the directory\n"
+        
+        result += f"\n**Important**: Use exact operation names when calling operations. For example, use 'getMetrics' not 'getAppMetrics'."
         
         return result
     
@@ -939,6 +944,45 @@ class OpenApiPlugin(BasePlugin):
                 try:
                     result = response.json()
                     print(f"DEBUG: Successfully parsed JSON response")
+                    
+                    # Check response size and truncate if too large to prevent context overflow
+                    result_str = str(result)
+                    result_size = len(result_str)
+                    MAX_RESPONSE_SIZE = 50000  # ~50k characters to stay well under token limits
+                    
+                    if result_size > MAX_RESPONSE_SIZE:
+                        print(f"DEBUG: Response too large ({result_size} chars), truncating to {MAX_RESPONSE_SIZE} chars")
+                        logging.warning(f"[OpenAPI Plugin] Large response ({result_size} chars) truncated to prevent context overflow")
+                        
+                        # If it's a list, take only the first few items
+                        if isinstance(result, list) and len(result) > 5:
+                            truncated_result = {
+                                "truncated": True,
+                                "original_count": len(result),
+                                "showing_first": 5,
+                                "data": result[:5],
+                                "note": f"Response truncated - showing first 5 of {len(result)} items to prevent context overflow"
+                            }
+                            result = truncated_result
+                        # If it's a dict with a list property, truncate the list
+                        elif isinstance(result, dict):
+                            # Create a copy to avoid "dictionary changed size during iteration" error
+                            result_copy = result.copy()
+                            for key, value in result_copy.items():
+                                if isinstance(value, list) and len(value) > 5:
+                                    result[key] = value[:5]
+                                    result[f"{key}_truncated"] = True
+                                    result[f"{key}_original_count"] = len(value)
+                            result["truncation_note"] = "Large arrays truncated to prevent context overflow"
+                        # If still too large, create a summary
+                        if len(str(result)) > MAX_RESPONSE_SIZE:
+                            result = {
+                                "truncated": True,
+                                "original_size_chars": result_size,
+                                "summary": "Response too large for context - use more specific queries",
+                                "note": "Consider using API parameters to filter results"
+                            }
+                    
                     logging.info(f"[OpenAPI Plugin] Successfully called {operation_id} - JSON response received")
                     if isinstance(result, dict) and len(result) < 10:
                         logging.info(f"[OpenAPI Plugin] Response preview: {result}")
@@ -1076,6 +1120,7 @@ class OpenApiPlugin(BasePlugin):
         operation_path = None
         operation_method = None
         
+        # Try exact match first
         for path, ops in self.openapi.get("paths", {}).items():
             for method, op in ops.items():
                 if op.get("operationId") == operation_id:
@@ -1086,6 +1131,45 @@ class OpenApiPlugin(BasePlugin):
                     break
             if operation_found:
                 break
+        
+        # If not found, try common operation name variations
+        if not operation_found:
+            available_ops = [op.get("operationId") for path_ops in self.openapi.get("paths", {}).values() 
+                           for op in path_ops.values() if op.get("operationId")]
+            
+            # Try removing common prefixes/suffixes
+            variations = [
+                operation_id.replace("getApp", "get"),  # getAppMetrics -> getMetrics
+                operation_id.replace("App", ""),        # getAppMetrics -> getMetrics
+                operation_id.replace("get", ""),        # getMetrics -> Metrics
+                operation_id.lower(),                   # Case insensitive
+                operation_id.capitalize(),              # First letter caps
+            ]
+            
+            # Try fuzzy matching
+            for variation in variations:
+                for available_op in available_ops:
+                    if available_op and (variation == available_op or 
+                                       variation.lower() == available_op.lower() or
+                                       available_op.endswith(variation) or
+                                       variation in available_op.lower()):
+                        logging.info(f"[OpenAPI Plugin] Found fuzzy match: '{operation_id}' -> '{available_op}'")
+                        operation_id = available_op  # Update to use the correct operation ID
+                        
+                        # Find the matched operation
+                        for path, ops in self.openapi.get("paths", {}).items():
+                            for method, op in ops.items():
+                                if op.get("operationId") == available_op:
+                                    operation_found = True
+                                    operation_data = op
+                                    operation_path = path
+                                    operation_method = method
+                                    break
+                            if operation_found:
+                                break
+                        break
+                if operation_found:
+                    break
         
         if not operation_found:
             error_msg = f"Operation '{operation_id}' not found in OpenAPI specification"

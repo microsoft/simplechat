@@ -50,7 +50,7 @@ export async function showConversationDetails(conversationId) {
     `;
     
     // Render the metadata
-    content.innerHTML = renderConversationMetadata(metadata);
+    content.innerHTML = renderConversationMetadata(metadata, conversationId);
     
   } catch (error) {
     console.error('Error fetching conversation details:', error);
@@ -69,9 +69,10 @@ export async function showConversationDetails(conversationId) {
 /**
  * Render conversation metadata as HTML
  * @param {Object} metadata - The conversation metadata object
+ * @param {string} conversationId - The conversation ID
  * @returns {string} HTML string
  */
-function renderConversationMetadata(metadata) {
+function renderConversationMetadata(metadata, conversationId) {
   const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal' } = metadata;
   
   // Organize tags by category
@@ -102,6 +103,9 @@ function renderConversationMetadata(metadata) {
           </div>
           <div class="card-body">
             <div class="row g-2">
+              <div class="col-sm-6">
+                <strong>Conversation ID:</strong> <code class="text-muted">${conversationId}</code>
+              </div>
               <div class="col-sm-6">
                 <strong>Last Updated:</strong> ${formatDate(last_updated)}
               </div>

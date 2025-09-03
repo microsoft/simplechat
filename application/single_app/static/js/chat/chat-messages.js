@@ -177,16 +177,18 @@ export function loadMessages(conversationId) {
           const arg6 = msg.hybrid_citations; // Get value
           const arg7 = msg.web_search_citations; // Get value
           const arg8 = msg.agent_citations; // Get value
-          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}`);
+          const arg9 = msg.agent_display_name; // Get agent display name
+          const arg10 = msg.agent_name; // Get agent name
+          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}, agent_display: ${arg9}`);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
           appendMessage("File", msg);
         } else if (msg.role === "image") {
-          appendMessage("image", msg.content, msg.model_deployment_name);
+          appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
         } else if (msg.role === "safety") {
-          appendMessage("safety", msg.content);
+          appendMessage("safety", msg.content, null, msg.id, false, [], [], [], null, null);
         }
       });
     })
@@ -204,7 +206,9 @@ export function appendMessage(
   augmented = false,
   hybridCitations = [],
   webCitations = [],
-  agentCitations = []
+  agentCitations = [],
+  agentDisplayName = null,
+  agentName = null
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -243,9 +247,15 @@ export function appendMessage(
     messageClass = "ai-message";
     avatarAltText = "AI Avatar";
     avatarImg = "/static/images/ai-avatar.png";
-    senderLabel = modelName
-      ? `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`
-      : "AI";
+    
+    // Use agent display name if available, otherwise show AI with model
+    if (agentDisplayName) {
+      senderLabel = agentDisplayName;
+    } else if (modelName) {
+      senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+    } else {
+      senderLabel = "AI";
+    }
 
     // Parse content
     let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
@@ -435,9 +445,16 @@ export function appendMessage(
     } else if (sender === "image") {
       // Make sure this matches the case used in loadMessages/actuallySendMessage
       messageClass = "image-message"; // Use a distinct class if needed, or reuse ai-message
-      senderLabel = modelName
-        ? `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`
-        : "Image"; // Or just "Image"
+      
+      // Use agent display name if available, otherwise show AI with model
+      if (agentDisplayName) {
+        senderLabel = agentDisplayName;
+      } else if (modelName) {
+        senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+      } else {
+        senderLabel = "Image";
+      }
+      
       avatarImg = "/static/images/ai-avatar.png"; // Or a specific image icon
       avatarAltText = "Generated Image";
       messageContentHtml = `<img src="${messageContent}" alt="Generated Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" />`;
@@ -758,7 +775,9 @@ export function actuallySendMessage(finalMessageToSend) {
           data.augmented, // Pass augmented flag
           data.hybrid_citations, // Pass hybrid citations
           data.web_search_citations, // Pass web citations
-          data.agent_citations // Pass agent citations
+          data.agent_citations, // Pass agent citations
+          data.agent_display_name, // Pass agent display name
+          data.agent_name // Pass agent name
         );
       }
       // Show kernel fallback notice if present
@@ -771,7 +790,13 @@ export function actuallySendMessage(finalMessageToSend) {
           "image",
           data.image_url,
           data.model_deployment_name,
-          data.message_id
+          null, // messageId
+          false, // augmented
+          [], // hybridCitations
+          [], // webCitations
+          [], // agentCitations
+          data.agent_display_name, // Pass agent display name
+          data.agent_name // Pass agent name
         );
       }
 
@@ -854,7 +879,13 @@ export function actuallySendMessage(finalMessageToSend) {
             `**Categories triggered**: ${categories}\n` +
             `**Reason**: ${reasonMsg}`,
           null, // No model name for safety message
-          error.data.message_id // Use message_id if provided in error
+          error.data.message_id, // Use message_id if provided in error
+          false, // augmented
+          [], // hybridCitations
+          [], // webCitations
+          [], // agentCitations
+          null, // agentDisplayName
+          null // agentName
         );
       } else {
         // Show specific embedding error if present, or if status is 500 (embedding backend error)
@@ -862,13 +893,29 @@ export function actuallySendMessage(finalMessageToSend) {
         if (errMsg.includes("embedding") || error.status === 500) {
           appendMessage(
             "Error",
-            "There was an issue with the embedding process. Please check with an admin on embedding configuration."
+            "There was an issue with the embedding process. Please check with an admin on embedding configuration.",
+            null, // No model name for error message
+            null, // No message ID for error
+            false, // augmented
+            [], // hybridCitations
+            [], // webCitations
+            [], // agentCitations
+            null, // agentDisplayName
+            null // agentName
           );
         } else {
           // General error message
           appendMessage(
             "Error",
-            `Could not get a response. ${error.message || ""}`
+            `Could not get a response. ${error.message || ""}`,
+            null, // No model name for error message
+            null, // No message ID for error
+            false, // augmented
+            [], // hybridCitations
+            [], // webCitations
+            [], // agentCitations
+            null, // agentDisplayName
+            null // agentName
           );
         }
       }

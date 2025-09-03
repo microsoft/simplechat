@@ -61,6 +61,15 @@ def register_route_backend_chats(app):
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
             
+            # Store conversation_id in Flask context for plugin logger access
+            g.conversation_id = conversation_id
+            
+            # Clear plugin invocations at start of message processing to ensure
+            # each message only shows citations for tools executed during that specific interaction
+            from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+            plugin_logger = get_plugin_logger()
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+            
             # Validate chat_type
             if chat_type not in ('user', 'group'):
                 chat_type = 'user'
@@ -1350,7 +1359,8 @@ def register_route_backend_chats(app):
                         
                         # Extract detailed plugin invocations for enhanced agent citations
                         plugin_logger = get_plugin_logger()
-                        plugin_invocations = plugin_logger.get_recent_invocations()
+                        # CRITICAL FIX: Filter by user_id and conversation_id to prevent cross-conversation contamination
+                        plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
                         
                         # Convert plugin invocations to citation format with detailed information
                         detailed_citations = []
@@ -1569,6 +1579,23 @@ def register_route_backend_chats(app):
             # ---------------------------------------------------------------------
             # 7) Save GPT response (or error message)
             # ---------------------------------------------------------------------
+            
+            # Determine the actual model used and agent information
+            actual_model_used = final_model_used
+            agent_display_name = None
+            agent_name = None
+            
+            if selected_agent:
+                # When using an agent, use the agent's actual model deployment
+                if hasattr(selected_agent, 'deployment_name') and selected_agent.deployment_name:
+                    actual_model_used = selected_agent.deployment_name
+                
+                # Get agent display information
+                if hasattr(selected_agent, 'display_name'):
+                    agent_display_name = selected_agent.display_name
+                if hasattr(selected_agent, 'name'):
+                    agent_name = selected_agent.name
+            
             assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
             assistant_doc = {
                 'id': assistant_message_id,
@@ -1582,10 +1609,28 @@ def register_route_backend_chats(app):
                 'web_search_citations': bing_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
                 'user_message': user_message,
-                'model_deployment_name': final_model_used,
+                'model_deployment_name': actual_model_used,
+                'agent_display_name': agent_display_name,
+                'agent_name': agent_name,
                 'metadata': {} # Used by SK
             }
             cosmos_messages_container.upsert_item(assistant_doc)
+
+            # Update the user message metadata with the actual model used
+            # This ensures the UI shows the correct model in the metadata panel
+            try:
+                user_message_doc = cosmos_messages_container.read_item(
+                    item=user_message_id, 
+                    partition_key=conversation_id
+                )
+                
+                # Update the model selection in metadata to show actual model used
+                if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
+                    user_message_doc['metadata']['model_selection']['selected_model'] = actual_model_used
+                    cosmos_messages_container.upsert_item(user_message_doc)
+                    
+            except Exception as e:
+                print(f"Warning: Could not update user message metadata: {e}")
 
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
@@ -1605,7 +1650,7 @@ def register_route_backend_chats(app):
                     active_group_id=active_group_id,
                     document_scope=document_scope,
                     selected_document_id=selected_document_id,
-                    model_deployment=final_model_used,
+                    model_deployment=actual_model_used,
                     hybrid_search_enabled=hybrid_search_enabled,
                     bing_search_enabled=bing_search_enabled,
                     image_gen_enabled=image_gen_enabled,
@@ -1634,7 +1679,9 @@ def register_route_backend_chats(app):
                 'conversation_id': conversation_id,
                 'conversation_title': conversation_item['title'], # Send updated title
                 'classification': conversation_item.get('classification', []), # Send classifications if any
-                'model_deployment_name': final_model_used,
+                'model_deployment_name': actual_model_used,
+                'agent_display_name': agent_display_name,
+                'agent_name': agent_name,
                 'message_id': assistant_message_id,
                 'user_message_id': user_message_id,  # Include the user message ID
                 'blocked': False, # Explicitly false if we got this far

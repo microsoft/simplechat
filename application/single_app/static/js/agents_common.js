@@ -491,13 +491,32 @@ export function populateAgentSelect(selectEl, agents, selectedAgentObj) {
 		selectEl.disabled = true;
 		return;
 	}
+	
+	console.log('DEBUG: populateAgentSelect called with agents:', agents);
+	console.log('DEBUG: Number of agents:', agents.length);
+	agents.forEach((agent, index) => {
+		console.log(`DEBUG: Agent ${index}: name="${agent.name}", is_global=${agent.is_global}, display_name="${agent.display_name}"`);
+	});
+	
 	let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
+	console.log('DEBUG: Selected agent name:', selectedAgentName);
+	
 	agents.forEach(agent => {
 		let opt = document.createElement('option');
-		opt.value = agent.name;
+		// Use unique value that combines name and global status to distinguish between personal and global agents with same name
+		opt.value = agent.is_global ? `global_${agent.name}` : `personal_${agent.name}`;
 		opt.textContent = (agent.display_name || agent.name) + (agent.is_global ? ' (Global)' : '');
-		if (agent.name === selectedAgentName) opt.selected = true;
+		// For selection matching, check if this agent matches the selected agent (by name and global status)
+		if (selectedAgentObj && typeof selectedAgentObj === 'object') {
+			if (agent.name === selectedAgentObj.name && agent.is_global === selectedAgentObj.is_global) {
+				opt.selected = true;
+			}
+		} else if (agent.name === selectedAgentName && !agent.is_global) {
+			// Default to personal agent if just name is provided
+			opt.selected = true;
+		}
 		selectEl.appendChild(opt);
+		console.log(`DEBUG: Added option: value="${opt.value}", text="${opt.textContent}", selected=${opt.selected}`);
 	});
 	selectEl.disabled = false;
 }

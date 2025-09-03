@@ -206,16 +206,40 @@ function attachAgentTableEvents() {
 
 async function chatWithAgent(agentName) {
   try {
-    // Set the selected agent
+    console.log('DEBUG: chatWithAgent called with agentName:', agentName);
+    console.log('DEBUG: Available agents:', agents);
+    
+    // Find the agent to get its is_global status
+    const agent = agents.find(a => a.name === agentName);
+    console.log('DEBUG: Found agent:', agent);
+    
+    if (!agent) {
+      throw new Error('Agent not found');
+    }
+    
+    console.log('DEBUG: Agent is_global flag:', agent.is_global);
+    console.log('DEBUG: !!agent.is_global:', !!agent.is_global);
+    
+    // Set the selected agent with proper is_global flag
+    const payloadData = { 
+      selected_agent: { 
+        name: agentName, 
+        is_global: !!agent.is_global 
+      } 
+    };
+    console.log('DEBUG: Sending payload:', payloadData);
+    
     const resp = await fetch('/api/user/settings/selected_agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ selected_agent: { name: agentName } })
+      body: JSON.stringify(payloadData)
     });
     
     if (!resp.ok) {
       throw new Error('Failed to select agent');
     }
+    
+    console.log('DEBUG: Agent selection saved successfully');
     
     // Navigate to chat page
     window.location.href = '/chats';
