@@ -294,7 +294,7 @@ def get_settings():
         'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings
-        'video_indexer_endpoint': 'https://api.videoindexer.ai',
+        'video_indexer_endpoint': video_indexer_endpoint,
         'video_indexer_location': '',
         'video_indexer_account_id': '',
         'video_indexer_api_key': '',
@@ -305,8 +305,8 @@ def get_settings():
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service
-        "speech_service_endpoint": "https://eastus.api.cognitive.microsoft.com",
-        "speech_service_location": "eastus",
+        "speech_service_endpoint": '',
+        "speech_service_location": '',
         "speech_service_locale": "en-US",
         "speech_service_key": ""
     }

@@ -570,7 +570,7 @@ def register_route_frontend_admin_settings(app):
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
 
                 # Video file settings with Azure Video Indexer Settings
-                'video_indexer_endpoint': form_data.get('video_indexer_endpoint', 'https://api.videoindexer.ai').strip(),
+                'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
                 'video_indexer_location': form_data.get('video_indexer_location', '').strip(),
                 'video_indexer_account_id': form_data.get('video_indexer_account_id', '').strip(),
                 'video_indexer_api_key': form_data.get('video_indexer_api_key', '').strip(),

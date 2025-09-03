@@ -133,6 +133,9 @@ if AZURE_ENVIRONMENT == "custom":
 else:
     AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 
+# Commercial Azure Video Indexer Endpoint
+video_indexer_endpoint = "https://api.videoindexer.ai"
+
 WORD_CHUNK_SIZE = 400
 
 if AZURE_ENVIRONMENT == "usgovernment":
@@ -141,7 +144,9 @@ if AZURE_ENVIRONMENT == "usgovernment":
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+    video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
+
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
     authority = CUSTOM_IDENTITY_URL_VALUE

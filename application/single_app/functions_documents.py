@@ -359,6 +359,17 @@ def process_video_document(
             raise ValueError("no video ID returned")
         print(f"[VIDEO] UPLOAD OK, videoId={vid}", flush=True)
         update_callback(status=f"VIDEO: uploaded id={vid}")
+        try:
+            # Update the document's metadata with the video indexer ID
+            update_document(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id,
+                video_indexer_id=vid
+            )
+        except Exception as e:
+            print(f"[VIDEO] Failed to update document metadata with video_indexer_id: {e}", flush=True)
+
     except Exception as e:
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
@@ -1444,8 +1455,29 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             
         # Get the file name from the document to use for blob deletion
         file_name = document_item.get('file_name')
-        
-        # First try to delete from blob storage
+        file_ext = os.path.splitext(file_name)[1].lower() if file_name else None
+
+        # First try to delete video from Video Indexer if applicable
+        if file_ext in ('.mp4', '.mov', '.avi', '.mkv', '.flv'):
+            try:
+                settings = get_settings()
+                vi_ep = settings.get("video_indexer_endpoint")
+                vi_loc = settings.get("video_indexer_location")
+                vi_acc = settings.get("video_indexer_account_id")
+                token = get_video_indexer_account_token(settings)
+                # You need to store the video ID in the document metadata when uploading
+                video_id = document_item.get("video_indexer_id")
+                if video_id:
+                    delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
+                    resp = requests.delete(delete_url, timeout=60)
+                    resp.raise_for_status()
+                    print(f"Deleted video from Video Indexer: {video_id}")
+                else:
+                    print("No video_indexer_id found in document metadata; skipping Video Indexer deletion.")
+            except Exception as e:
+                print(f"Error deleting video from Video Indexer: {e}")
+
+        # Second try to delete from blob storage
         try:
             if file_name:
                 delete_from_blob_storage(document_id, user_id, file_name, group_id, public_workspace_id)
