@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/Plugin",
+  "definitions": {
+    "Plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Plugin unique identifier (UUID)"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "User ID that owns this personal plugin"
+        },
+        "last_updated": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "Alphanumeric, underscore, and dash only"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Human-readable display name for the plugin"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["key", "identity", "user", "servicePrincipal"],
+              "description": "Auth type must be 'key', 'user', 'identity', or 'servicePrincipal'"
+            },
+            "key": {
+              "type": "string"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "tenantId": {
+              "type": "string"
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary metadata",
+          "additionalProperties": true
+        },
+        "additionalFields": {
+          "type": "object",
+          "description": "Arbitrary additional fields",
+          "additionalProperties": true
+        }
+      },
+      "required": ["name", "type", "description", "endpoint", "auth", "metadata", "additionalFields"],
+      "title": "Plugin"
+    }
+  }
+}

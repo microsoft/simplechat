@@ -1,7 +1,7 @@
 /* css/styles.css */
 
 body {
-    font-family: Arial, sans-serif;
+    font-family: var(--bs-font-sans-serif);
     margin: 0;
     padding: 0;
 }
@@ -26,13 +26,20 @@ main {
     --bs-body-color: #e9ecef;
 }
 
-[data-bs-theme="dark"] .navbar-light {
-    background-color: #343a40 !important;
+/* Theme-based logo visibility */
+[data-bs-theme="light"] .d-dark-mode-only {
+    display: none !important;
 }
 
-[data-bs-theme="dark"] .navbar-light .navbar-brand,
-[data-bs-theme="dark"] .navbar-light .nav-link {
-    color: #e9ecef;
+[data-bs-theme="dark"] .d-light-mode-only {
+    display: none !important;
+}
+
+/* Logo transition support */
+.navbar-brand img, 
+#sidebar-logo,
+#sidebar-logo-dark {
+    transition: opacity 0.2s ease-in-out;
 }
 
 [data-bs-theme="dark"] .card {
@@ -98,25 +105,611 @@ main {
     border-color: #6c757d !important;
 }
 
-/* Dark mode toggle styles */
-.dark-mode-toggle {
-    cursor: pointer;
-    padding: 0.25rem;
+/* Dark mode styles for agent and plugin modals */
+[data-bs-theme="dark"] .modal-header {
+    background-color: #212529;
+    border-bottom: 1px solid #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .modal-footer {
+    background-color: #212529;
+    border-top: 1px solid #495057;
+}
+
+[data-bs-theme="dark"] .modal-body {
+    background-color: #212529;
+    color: #e9ecef;
+}
+
+/* Fix for form elements in dark mode */
+[data-bs-theme="dark"] .form-control {
+    background-color: #343a40;
+    border-color: #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .form-control:focus {
+    background-color: #343a40;
+    border-color: #86b7fe;
+    color: #e9ecef;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+[data-bs-theme="dark"] .form-control::placeholder {
+    color: #6c757d;
+}
+
+[data-bs-theme="dark"] .form-select {
+    background-color: #343a40;
+    border-color: #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .form-select:focus {
+    background-color: #343a40;
+    border-color: #86b7fe;
+    color: #e9ecef;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Fix for form switches in dark mode */
+[data-bs-theme="dark"] .form-check-input {
+    background-color: #6c757d;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+[data-bs-theme="dark"] .form-check-input:focus {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Fix for badges in dark mode */
+[data-bs-theme="dark"] .badge.bg-secondary {
+    background-color: #495057 !important;
+    color: #e9ecef !important;
+}
+
+/* Fix for alerts in dark mode */
+[data-bs-theme="dark"] .alert-info {
+    background-color: #1a4971;
+    border-color: #1e5a8a;
+    color: #b8daff;
+}
+
+[data-bs-theme="dark"] .alert-danger {
+    background-color: #722d2d;
+    border-color: #8b3635;
+    color: #f5c2c7;
+}
+
+/* Plugin/Agent modal step indicator dark mode styles */
+[data-bs-theme="dark"] .step-indicator .step-circle {
+    background-color: #495057;
+    color: #adb5bd;
+    border: 2px solid #495057;
+}
+
+[data-bs-theme="dark"] .step-indicator .step-circle.active {
+    background-color: #0d6efd;
+    color: #ffffff;
+    border-color: #0d6efd;
+}
+
+[data-bs-theme="dark"] .step-indicator .step-circle.completed {
+    background-color: #198754;
+    color: #ffffff;
+    border-color: #198754;
+}
+
+[data-bs-theme="dark"] .step-indicator .step-label {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .step-indicator.active .step-label {
+    color: #e9ecef;
+}
+
+/* Action type cards in plugin modal dark mode */
+[data-bs-theme="dark"] .action-type-card {
+    background-color: #343a40;
+    border: 1px solid #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .action-type-card:hover {
+    background-color: #495057;
+    border-color: #6c757d;
+}
+
+[data-bs-theme="dark"] .action-type-card.selected {
+    background-color: #1e3a5f;
+    border-color: #0d6efd;
+}
+
+[data-bs-theme="dark"] .action-type-card .card-title {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .action-type-card .card-text {
+    color: #adb5bd;
+}
+
+/* Fix for form text (help text) in dark mode */
+[data-bs-theme="dark"] .form-text {
+    color: #6c757d;
+}
+
+/* Fix for dropdown menus in dark mode */
+[data-bs-theme="dark"] .dropdown-menu {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .dropdown-item {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .dropdown-item:hover,
+[data-bs-theme="dark"] .dropdown-item:focus {
+    background-color: #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .dropdown-divider {
+    border-top-color: #495057;
+}
+
+/* Fix for tooltips in dark mode */
+[data-bs-theme="dark"] .tooltip .tooltip-inner {
+    background-color: #343a40;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .tooltip.bs-tooltip-top .tooltip-arrow::before {
+    border-top-color: #343a40;
+}
+
+[data-bs-theme="dark"] .tooltip.bs-tooltip-bottom .tooltip-arrow::before {
+    border-bottom-color: #343a40;
+}
+
+[data-bs-theme="dark"] .tooltip.bs-tooltip-start .tooltip-arrow::before {
+    border-left-color: #343a40;
+}
+
+[data-bs-theme="dark"] .tooltip.bs-tooltip-end .tooltip-arrow::before {
+    border-right-color: #343a40;
+}
+
+/* Fix for connection configuration sections in modals */
+[data-bs-theme="dark"] .connection-config-section {
+    background-color: #2d3237;
+    border: 1px solid #495057;
+    border-radius: 0.375rem;
+}
+
+[data-bs-theme="dark"] .connection-config-header {
+    background-color: #343a40;
+    border-bottom: 1px solid #495057;
+    color: #e9ecef;
+}
+
+/* Fix for step progress lines (if any) */
+[data-bs-theme="dark"] .step-connector {
+    background-color: #495057;
+}
+
+[data-bs-theme="dark"] .step-connector.completed {
+    background-color: #198754;
+}
+
+/* Fix for button groups in dark mode */
+[data-bs-theme="dark"] .btn-group .btn-outline-secondary {
+    border-color: #495057;
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .btn-group .btn-outline-secondary:hover {
+    background-color: #495057;
+    border-color: #6c757d;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .btn-group .btn-outline-secondary.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+    color: #ffffff;
+}
+
+/* Fix for list groups in dark mode */
+[data-bs-theme="dark"] .list-group-item {
+    background-color: #343a40;
+    border-color: #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .list-group-item:hover {
+    background-color: #495057;
+}
+
+[data-bs-theme="dark"] .list-group-item.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Fix for progress bars in dark mode */
+[data-bs-theme="dark"] .progress {
+    background-color: #495057;
+}
+
+[data-bs-theme="dark"] .progress-bar {
+    background-color: #0d6efd;
+}
+
+/* Fix for input groups in dark mode */
+[data-bs-theme="dark"] .input-group-text {
+    background-color: #495057;
+    border-color: #495057;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .input-group .form-control {
+    border-color: #495057;
+}
+
+/* Fix for close button in dark mode */
+[data-bs-theme="dark"] .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Fix for nav tabs in modals (if any) */
+[data-bs-theme="dark"] .nav-tabs {
+    border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link {
+    color: #adb5bd;
+    border-color: transparent;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link:hover {
+    color: #e9ecef;
+    border-color: #495057 #495057 transparent;
+}
+
+[data-bs-theme="dark"] .nav-tabs .nav-link.active {
+    color: #e9ecef;
+    background-color: #212529;
+    border-color: #495057 #495057 #212529;
+}
+
+/* Fix for accordion components in dark mode */
+[data-bs-theme="dark"] .accordion-item {
+    background-color: #343a40;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .accordion-button {
+    background-color: #343a40;
+    color: #e9ecef;
+    border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .accordion-button:not(.collapsed) {
+    background-color: #2d3237;
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .accordion-button::after {
+    filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+[data-bs-theme="dark"] .accordion-body {
+    background-color: #343a40;
+    color: #e9ecef;
+}
+
+/* Base styles for modal step indicators and action cards */
+.step-indicator {
+    text-align: center;
+    flex: 1;
+    position: relative;
+}
+
+.step-indicator .step-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-weight: bold;
+    margin: 0 auto 8px auto;
+    background-color: #e9ecef;
+    color: #6c757d;
+    border: 2px solid #e9ecef;
+    transition: all 0.3s ease;
+}
+
+.step-indicator .step-circle.active {
+    background-color: #0d6efd;
+    color: #ffffff;
+    border-color: #0d6efd;
+}
+
+.step-indicator .step-circle.completed {
+    background-color: #198754;
+    color: #ffffff;
+    border-color: #198754;
+}
+
+.step-indicator .step-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.step-indicator.active .step-label {
+    color: #212529;
+    font-weight: 600;
+}
+
+/* Action type cards */
+.action-type-card {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 1rem;
     height: 100%;
-}
-
-.dark-mode-toggle:hover {
-    opacity: 0.8;
-}
-
-/* Ensure nav-link containing dark mode toggle is aligned with other nav links */
-.nav-item .nav-link.dark-mode-toggle {
     display: flex;
-    align-items: center;
-    height: 100%;
-    padding-top: 0;
-    padding-bottom: 0;
+    flex-direction: column;
+    text-decoration: none;
+    color: inherit;
+    background-color: #ffffff;
+}
+
+.action-type-card:hover {
+    background-color: #f8f9fa;
+    border-color: #adb5bd;
+    text-decoration: none;
+    color: inherit;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.action-type-card.selected {
+    background-color: #e7f3ff;
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.action-type-card .card-title {
+    color: #212529;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.action-type-card .card-text {
+    color: #6c757d;
+    font-size: 0.875rem;
+    flex-grow: 1;
+}
+
+/* Connection type buttons */
+.connection-type-btn {
+    border: 2px solid #dee2e6;
+    background-color: #ffffff;
+    color: #495057;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    transition: all 0.3s ease;
+    text-align: center;
+    cursor: pointer;
+    margin: 0.25rem;
+}
+
+.connection-type-btn:hover {
+    border-color: #0d6efd;
+    background-color: #f8f9fa;
+}
+
+.connection-type-btn.active {
+    border-color: #0d6efd;
+    background-color: #0d6efd;
+    color: #ffffff;
+}
+
+/* Schema plugin settings styling */
+.schema-plugin-dropdown {
+    position: relative;
+}
+
+.schema-plugin-dropdown .dropdown-toggle::after {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .step-indicator .step-circle {
+        width: 32px;
+        height: 32px;
+        font-size: 0.875rem;
+    }
+    
+    .step-indicator .step-label {
+        font-size: 0.75rem;
+    }
+    
+    .action-type-card {
+        margin-bottom: 1rem;
+    }
+}
+
+/* Fix for modal backdrop in dark mode */
+[data-bs-theme="dark"] .modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+/* Connection string text area styling */
+.connection-string-container {
+    position: relative;
+}
+
+.connection-string-container textarea {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.875rem;
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* Parameter input styling for API configuration */
+.parameter-input-group {
+    margin-bottom: 0.75rem;
+}
+
+.parameter-input-group .input-group-text {
+    min-width: 120px;
+    text-align: left;
+    font-weight: 500;
+}
+
+/* Advanced section toggle styling */
+.advanced-toggle-section {
+    border-top: 1px solid #dee2e6;
+    padding-top: 1rem;
+    margin-top: 1.5rem;
+}
+
+[data-bs-theme="dark"] .advanced-toggle-section {
+    border-top-color: #495057;
+}
+
+/* Plugin selection multi-select styling */
+.plugin-selection-container {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+}
+
+[data-bs-theme="dark"] .plugin-selection-container {
+    border-color: #495057;
+    background-color: #343a40;
+}
+
+.plugin-selection-item {
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    border-radius: 0.25rem;
+    transition: background-color 0.2s ease;
+}
+
+.plugin-selection-item:hover {
+    background-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .plugin-selection-item:hover {
+    background-color: #495057;
+}
+
+.plugin-selection-item.selected {
+    background-color: #e7f3ff;
+    color: #0d6efd;
+}
+
+[data-bs-theme="dark"] .plugin-selection-item.selected {
+    background-color: #1e3a5f;
+    color: #86b7fe;
+}
+
+/* Sidebar user account section - handle long usernames */
+#sidebar-user-account {
+    min-width: 0; /* Allow flex shrinking */
+}
+
+#sidebar-user-account .nav-link {
+    min-width: 0; /* Allow flex shrinking */
+    max-width: 100%; /* Prevent overflow */
+}
+
+#sidebar-user-account .fw-semibold,
+#sidebar-user-account .text-muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+/* Ensure the flex container doesn't overflow */
+#sidebar-user-account .d-flex {
+    min-width: 0; /* This is crucial for text-truncate to work */
+}
+
+/* Dark mode adjustments for sidebar user account */
+[data-bs-theme="dark"] #sidebar-user-account {
+    background-color: inherit;
+    border-top-color: #495057;
+}
+
+[data-bs-theme="dark"] #sidebar-user-account .nav-link {
+    color: #e9ecef;
+}
+
+[data-bs-theme="dark"] #sidebar-user-account .nav-link:hover {
+    color: #ffffff;
+}
+
+[data-bs-theme="dark"] #sidebar-user-account .text-muted {
+    color: #adb5bd !important;
+}
+
+/* Profile avatar in sidebar */
+#sidebar-profile-avatar {
+    flex-shrink: 0; /* Prevent avatar from shrinking */
+}
+
+/* Responsive adjustments for sidebar user account */
+@media (max-width: 768px) {
+    #sidebar-user-account .fw-semibold {
+        font-size: 0.875rem !important;
+    }
+    
+    #sidebar-user-account .text-muted {
+        font-size: 0.6875rem !important;
+    }
+}
+
+/* Additional responsive adjustments for very narrow sidebars */
+@media (max-width: 576px) {
+    #sidebar-user-account {
+        padding: 0.5rem !important;
+    }
+    
+    #sidebar-user-account .fw-semibold {
+        font-size: 0.8125rem !important;
+    }
+    
+    #sidebar-user-account .text-muted {
+        font-size: 0.625rem !important;
+    }
+    
+    #sidebar-profile-avatar {
+        width: 24px !important;
+        height: 24px !important;
+    }
+    
+    #sidebar-profile-avatar .sidebar-initials {
+        font-size: 0.875rem !important;
+    }
 }

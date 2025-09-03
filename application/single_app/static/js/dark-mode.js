@@ -1,17 +1,24 @@
-// Dark mode functionality
+// Dark Mode Functionality
 const USER_SETTINGS_KEY_DARK_MODE = 'darkModeEnabled';
 const LOCAL_STORAGE_THEME_KEY = 'simplechat-theme';
 
 // DOM Elements
-const darkModeToggle = document.getElementById('darkModeToggle');
-const lightModeIcon = document.getElementById('lightModeIcon');
-const darkModeIcon = document.getElementById('darkModeIcon');
-const lightModeContainer = lightModeIcon ? lightModeIcon.parentElement : null;
-const darkModeContainer = darkModeIcon ? darkModeIcon.parentElement : null;
 const htmlRoot = document.getElementById('htmlRoot');
 
-// Save user setting to API
-async function saveUserSetting(settingsToUpdate) {
+// Support multiple dark mode toggles (top nav, sidebar, etc)
+function getAllDarkModeToggles() {
+  return Array.from(document.querySelectorAll('.dark-mode-toggle'));
+}
+
+function getToggleParts(toggle) {
+  return {
+    lightText: toggle.querySelector('#topNavSwitchToLightText, #sidebarSwitchToLightText'),
+    darkText: toggle.querySelector('#topNavSwitchToDarkText, #sidebarSwitchToDarkText')
+  };
+}
+
+// Save dark mode setting to API
+async function saveDarkModeSetting(settingsToUpdate) {
     try {
         const response = await fetch('/api/user/settings', {
             method: 'POST',
@@ -31,16 +38,21 @@ async function saveUserSetting(settingsToUpdate) {
 }
 
 // Function to toggle dark mode
-function toggleDarkMode() {
-    const isDarkMode = htmlRoot.getAttribute('data-bs-theme') === 'dark';
+function toggleDarkMode(e) {
+    e && e.preventDefault && e.preventDefault();
+    const currentTheme = htmlRoot.getAttribute('data-bs-theme');
+    const isDarkMode = currentTheme === 'dark';
     const newMode = isDarkMode ? 'light' : 'dark';
-    
+
+    // Debug: log toggle
+    console.log('Toggling dark mode. Current:', currentTheme, 'New:', newMode);
+
     // Update the theme
     setThemeMode(newMode);
-    
+
     // Save the preference to localStorage and API
     localStorage.setItem(LOCAL_STORAGE_THEME_KEY, newMode);
-    saveUserSetting({ [USER_SETTINGS_KEY_DARK_MODE]: newMode === 'dark' });
+    saveDarkModeSetting({ [USER_SETTINGS_KEY_DARK_MODE]: newMode === 'dark' });
 }
 
 // Apply theme mode and update UI
@@ -49,17 +61,22 @@ function setThemeMode(mode) {
     if (htmlRoot) {
         htmlRoot.setAttribute('data-bs-theme', mode);
     }
-    
-    // Update icons and text if they exist
-    if (lightModeContainer && darkModeContainer) {
+
+    // Update all toggles' icons and text
+    getAllDarkModeToggles().forEach(toggle => {
+        const { lightText, darkText } = getToggleParts(toggle);
         if (mode === 'dark') {
-            lightModeContainer.classList.add('d-none');
-            darkModeContainer.classList.remove('d-none');
+            // In dark mode, show "Light Mode" (to switch back to light), hide "Dark Mode"
+            if (lightText) lightText.classList.remove('d-none');
+            if (darkText) darkText.classList.add('d-none');
         } else {
-            lightModeContainer.classList.remove('d-none');
-            darkModeContainer.classList.add('d-none');
+            // In light mode, show "Dark Mode" (to switch to dark), hide "Light Mode"
+            if (lightText) lightText.classList.add('d-none');
+            if (darkText) darkText.classList.remove('d-none');
         }
-    }
+        // Always ensure the toggle itself is visible
+        if (toggle && toggle.classList) toggle.classList.remove('d-none');
+    });
 }
 
 // Load dark mode preference
@@ -102,11 +119,28 @@ async function loadDarkModePreference() {
 
 // Initialize dark mode
 document.addEventListener('DOMContentLoaded', () => {
-    if (darkModeToggle) {
-        // Add click event listener to toggle
-        darkModeToggle.addEventListener('click', toggleDarkMode);
-        
-        // Load user preference (to sync with server)
-        loadDarkModePreference();
-    }
+    // Add click event listeners to all dark mode toggles
+    getAllDarkModeToggles().forEach(toggle => {
+        toggle.addEventListener('click', toggleDarkMode);
+    });
+    
+    // Load user preference (to sync with server)
+    loadDarkModePreference();
+    
+    // Ensure UI is in sync on load
+    const currentTheme = localStorage.getItem(LOCAL_STORAGE_THEME_KEY) || 
+                        (typeof appSettings !== 'undefined' && appSettings.enable_dark_mode_default ? 'dark' : 'light');
+    setThemeMode(currentTheme);
 });
+
+// Export functions for use in other modules if needed
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        toggleDarkMode,
+        setThemeMode,
+        loadDarkModePreference,
+        getAllDarkModeToggles,
+        getToggleParts,
+        saveDarkModeSetting
+    };
+}

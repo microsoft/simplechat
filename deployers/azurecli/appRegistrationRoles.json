@@ -38,5 +38,13 @@
     "id": "e9b4823f-d17a-44f1-9d71-0f2c0ee45656",
     "isEnabled": true,
     "value": "Admin"
+  },
+  {
+    "allowedMemberTypes": [ "User", "Application" ],
+    "description": "Allows External API access.",
+    "displayName": "ExternalApi",
+    "id": "12345678-abcd-efgh-ijkl-mnopqrstuvwx",
+    "isEnabled": true,
+    "value": "Admin"
   }
 ]

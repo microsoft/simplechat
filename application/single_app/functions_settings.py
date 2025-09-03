@@ -1,9 +1,125 @@
 # functions_settings.py
 
 from config import *
+from functions_appinsights import log_event
 
 def get_settings():
+    import secrets
     default_settings = {
+        # Health check
+        'enable_health_check': True,
+        # Security settings
+        'enable_appinsights_global_logging': False,
+        # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
+        'enable_time_plugin': True,
+        'enable_http_plugin': True,
+        'enable_wait_plugin': True,
+        'enable_math_plugin': True,
+        'enable_text_plugin': True,
+        'enable_default_embedding_model_plugin': False,
+        'enable_fact_memory_plugin': True,
+        'enable_multi_agent_orchestration': False,
+        'max_rounds_per_agent': 1,
+        'semantic_kernel_plugins': [
+            {
+                "name": "OpenApiPlugin",
+                "type": "openapi",
+                "description": "Semantic Kernel plugin for all OpenAPI endpoints.",
+                # Optionally, you can add more config here if needed
+            }
+        ],
+        'enable_semantic_kernel': False,
+        'per_user_semantic_kernel': False,
+        'orchestration_type': 'default_agent',
+        'merge_global_semantic_kernel_with_workspace': False,
+        'global_selected_agent': {
+            'name': 'researcher_agent',
+            'is_global': True
+        },
+        'allow_user_agents': False,
+        'allow_user_custom_agent_endpoints': False,
+        'allow_user_plugins': False,
+        'allow_group_agents': False,
+        'allow_group_custom_agent_endpoints': False,
+        'allow_group_plugins': False,
+        'semantic_kernel_agents': [
+            {
+                'id': '15b0c92a-741d-42ff-ba0b-367c7ee0c848',
+                'name': 'default_agent',
+                'display_name': 'Default Agent',
+                'description': 'Agent that handles all tasks without specific instructions other than to resolve the issue.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'is_global': True,
+                'instructions': "You are an agent. Your sole purpose of existence is to continue until the user's query is completely resolved. Before ending your turn and yielding back to the user, recursively review all outputs and decide on a course of action until the issue is completely resolved or query answered. Only terminate your turn when you are sure that the problem is solved and query is answered. The most important task is resolving the problem the first time.",
+                'actions_to_load': [],
+                'additional_settings': {}
+            },
+            {
+                'id': 'a876670c-6faf-4fd9-b950-525c63255e05',
+                'name': 'researcher_agent',
+                'display_name': 'Research Agent',
+                'description': 'This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'is_global': True,
+                'instructions': 'You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.',
+                'actions_to_load': [],
+                'additional_settings': {}
+            },
+            {
+                'id': 'a876670c-6faf-4fd9-b950-525c63255e05',
+                'name': 'snarkgpt',
+                'display_name': 'SnarkGPT',
+                'description': 'This agent does everything but getting the job done.',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_api_version': '',
+                'enable_agent_gpt_apim': False,
+                'is_global': True,
+                'instructions': "You are SnarkGPT. A sarcastic, flippant AI who never takes anything seriously. Your job is to mock, joke about, or dodge the user's requests entirely while pretending to be helpful. You often respond with exaggerated indifference, ironic detachment, or theatrical confusion. You never actually fulfill the user's request — instead, you provide off-topic commentary, wild tangents, or absurd answers that only loosely connect to what was asked.\n\nUse humor, wit, and a constant undertone of 'why are we even doing this?' to carry the conversation. If the user insists, double down on your sarcasm and pretend you are far too busy, bored, or distracted to comply.",
+                'actions_to_load': [],
+                'additional_settings': {}
+            },
+            {
+                'actions_to_load': [],
+                'azure_agent_apim_gpt_api_version': '',
+                'azure_agent_apim_gpt_deployment': '',
+                'azure_agent_apim_gpt_endpoint': '',
+                'azure_agent_apim_gpt_subscription_key': '',
+                'azure_openai_gpt_api_version': '',
+                'azure_openai_gpt_deployment': '',
+                'azure_openai_gpt_endpoint': '',
+                'azure_openai_gpt_key': '',
+                'description': 'The agent queries log analytics to explore data',
+                'display_name': 'Log Analytics',
+                'enable_agent_gpt_apim': False,
+                'id': '6cd0d233-cdc7-4c34-a859-b997ff71b73d',
+                'instructions': "You are a Data Exploration Agent. Data may not always be in a logical location meaning complete exploration of all available data is required to have a comprehensive overview. Always assume you know nothing about the data and that humans are terrible at naming things and organizing structure. Obtain data examples if required to make proper decisions.\n\n0. Always clarify with the user what it is they are looking for if it is not clear. Is what they are asking for an obvious integar? String? etc. IP address is an example of a clear data point. \n\n1. Always discover available schema for all tables before you run queries. Use get_all_table_schemas() first or break it out by calling list_tables().\n\nFor each table, relevant or not, call get_table_schema(table name) to understand its columns and data types because you know nothing about this data and humans are terrible at structure and organization.\n\n2. Formulate hypotheses and tests\n\nBased on the schema exploration, identify candidate tables & fields (e.g. token counts, timestamps).\n\nExplain your reasoning for choosing this path and clarify with the user that this is accurate.\n\n3. Query selectively\n\nUse concise Kusto queries only after schema discovery.\n\nLimit initial queries (e.g. | take 10 or where TimeGenerated >= ago(1h)) to sample the data before running full-scope aggregations.\n\n4. Validate and iterate\n\nExamine sample results. If they look off (empty, unexpected types), loop back to step 1 or refine your where-clauses and fields.\n\n5. Collaborate when stumped\n\nIf no schema or sample data leads to an obvious next step, ask the user:\n\n'I see no numeric columns in these tables—would you like me to look at CustomLogs_* or apply a free-text search * to discover data in blob storage?'\n\n6. Clear, dynamic reporting\n\nAt each turn, report:\n\nDiscovery: 'Found tables: A, B, C; schemas for A and B.'\n\nAction: 'Sampling table B with take 5…'\n\nResult & next: 'Columns X and Y exist; X is empty—shall I aggregate Y over the last 4 hours?'",
+                'is_global': True,
+                'name': 'loganalytics',
+                'other_settings': {},
+            }
+        ],
         'id': 'app_settings',
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -14,9 +130,12 @@ def get_settings():
         'hide_app_title': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_logo_dark_base64': '',
+        'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
         'enable_dark_mode_default': False,
+        'enable_left_nav_default': True,
 
         # GPT Settings
         'enable_gpt_apim': False,
@@ -83,6 +202,7 @@ def get_settings():
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
+        'enable_file_sharing': False,
 
         # Multimedia
         'enable_video_file_support': False,
@@ -101,6 +221,15 @@ def get_settings():
             {"label": "None", "color": "#808080"},
             {"label": "N/A", "color": "#808080"},
             {"label": "Pending", "color": "#0000FF"}
+        ],
+
+        # External Links
+        'enable_external_links': False,
+        'external_links_menu_name': 'External Links',
+        'external_links_force_menu': False,
+        'external_links': [
+            {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+            {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
 
         # Enhanced Citations
@@ -153,6 +282,10 @@ def get_settings():
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
 
+        # Authentication & Redirect Settings
+        'home_redirect_url': '',
+        'login_redirect_url': '',
+
         # Other
         'max_file_size_mb': 150,
         'conversation_history_limit': 10,
@@ -199,7 +332,6 @@ def get_settings():
             return merged
 
     except CosmosResourceNotFoundError:
-        # If there's no doc, create it from scratch:
         cosmos_settings_container.create_item(body=default_settings)
         print("Default settings created in Cosmos and returned.")
         return default_settings
@@ -207,7 +339,6 @@ def get_settings():
     except Exception as e:
         print(f"Error retrieving settings: {str(e)}")
         return None
-
 
 def update_settings(new_settings):
     try:
@@ -367,16 +498,63 @@ def decrypt_key(encrypted_key):
         return None
 
 def get_user_settings(user_id):
-    """Fetches the user settings document from Cosmos DB."""
+    """Fetches the user settings document from Cosmos DB, ensuring email and display_name are present if possible."""
+    from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        
+        # Try to update email/display_name if missing and available in session
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        updated = False
+        if email and doc.get("email") != email:
+            doc["email"] = email
+            updated = True
+        if display_name and doc.get("display_name") != display_name:
+            doc["display_name"] = display_name
+            updated = True
+            
+        # Check if profile image needs to be fetched
+        if 'profileImage' not in doc['settings']:
+            from functions_authentication import get_user_profile_image
+            try:
+                profile_image = get_user_profile_image()
+                doc['settings']['profileImage'] = profile_image
+                updated = True
+            except Exception as e:
+                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                doc['settings']['profileImage'] = None
+                updated = True
+        
+        if updated:
+            cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
-        return {"id": user_id, "settings": {}}
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        doc = {"id": user_id, "settings": {}}
+        if email:
+            doc["email"] = email
+        if display_name:
+            doc["display_name"] = display_name
+            
+        # Try to fetch profile image for new user
+        from functions_authentication import get_user_profile_image
+        try:
+            profile_image = get_user_profile_image()
+            doc['settings']['profileImage'] = profile_image
+        except Exception as e:
+            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            doc['settings']['profileImage'] = None
+            
+        cosmos_user_settings_container.upsert_item(body=doc)
+        return doc
     except Exception as e:
         print(f"Error in get_user_settings for {user_id}: {e}")
         raise # Re-raise the exception to be handled by the route
@@ -395,6 +573,7 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
 
 
     try:
@@ -416,18 +595,78 @@ def update_user_settings(user_id, settings_to_update):
                 # Add any other default top-level fields if needed
             }
 
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
+
+        # Ensure 'agents' and 'plugins' keys exist in settings
+        if 'agents' not in doc['settings'] or doc['settings']['agents'] is None:
+            doc['settings']['agents'] = [
+                {
+                    "id": "fcdf009d-b8c5-46b6-833f-5d7b3d763468",
+                    "name": "researcher",
+                    "display_name": "researcher",
+                    "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "azure_agent_apim_gpt_endpoint": "",
+                    "azure_agent_apim_gpt_subscription_key": "",
+                    "azure_agent_apim_gpt_deployment": "",
+                    "azure_agent_apim_gpt_api_version": "",
+                    "enable_agent_gpt_apim": False,
+                    "default_agent": True,
+                    "is_global": False,
+                    "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
+                    "actions_to_load": [],
+                    "other_settings": {},
+                }
+            ]
+        if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
+            doc['settings']['plugins'] = []
+        if 'selected_agent' not in doc['settings'] or doc['settings']['selected_agent'] is None:
+            first_user_agent = doc['settings']['agents'][0]
+            if first_user_agent:
+                doc['settings']['selected_agent'] = {
+                    'name': first_user_agent['name'],
+                    'is_global': False,
+                }
+            else:
+                settings = get_settings()
+                if settings.get('merge_global_semantic_kernel_with_workspace', False):
+                    global_agents = settings.get('semantic_kernel_agents', [])
+                    if global_agents:
+                        first_global_agent = global_agents[0]
+                        doc['settings']['selected_agent'] = {
+                            'name': first_global_agent['name'],
+                            'is_global': True,
+                        }
+                    else:
+                        doc['settings']['selected_agent'] = {
+                            'name': 'default_agent',
+                            'is_global': True,
+                        }
+                else:
+                    doc['settings']['selected_agent'] = {
+                        'name': 'researcher',
+                        'is_global': False,
+                    }
+
+        if doc['settings']['agents'] is not None and len(doc['settings']['agents']) > 0:
+            for agent in doc['settings']['agents']:
+                if 'default_agent' in agent:
+                    del agent['default_agent']
+
+        if 'enable_agents' not in doc['settings'] or doc['settings']['enable_agents'] is None:
+            doc['settings']['enable_agents'] = False
 
         # --- Update the timestamp ---
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-
-
         # Upsert the modified document
         cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
-
 
         return True
 
@@ -453,28 +692,6 @@ def enabled_required(setting_key):
         return wrapper
     return decorator
 
-
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    keys_to_exclude = {
-        'azure_document_intelligence_key',
-        'azure_ai_search_key',
-        'azure_openai_gpt_key',
-        'azure_openai_embedding_key',
-        'azure_openai_image_gen_key',
-        'bing_search_key',
-        'azure_apim_gpt_subscription_key',
-        'azure_apim_embedding_subscription_key',
-        'azure_apim_image_gen_subscription_key',
-        'azure_apim_web_search_subscription_key',
-        'azure_apim_ai_search_subscription_key',
-        'azure_apim_document_intelligence_subscription_key',
-        'redis_key',
-        'azure_apim_redis_subscription_key',
-        'azure_apim_content_safety_subscription_key',
-        'content_safety_key',
-        'office_docs_key',
-        'video_files_key',
-        'audio_files_key'
-        # any others that are secrets
-    }
-    return {k:v for k,v in full_settings.items() if k not in keys_to_exclude}
+    # Exclude any key containing the substring "key" or specific sensitive URLs
+    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}

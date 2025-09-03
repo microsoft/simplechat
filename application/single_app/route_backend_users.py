@@ -61,20 +61,45 @@ def register_route_backend_users(app):
             return jsonify(results), 200
 
         except requests.exceptions.RequestException as e:
-             print(f"Graph API request failed: {e}")
-             # Try to get more details from response if available
-             error_details = "Unknown error"
-             if e.response is not None:
-                 try:
-                     error_details = e.response.json()
-                 except ValueError: # Handle cases where response is not JSON
-                     error_details = e.response.text
-             return jsonify({
-                 "error": "Graph API request failed",
-                 "details": error_details
-             }), getattr(e.response, 'status_code', 500) # Use response status code if available
+            print(f"Graph API request failed: {e}")
+            # Try to get more details from response if available
+            error_details = "Unknown error"
+            if e.response is not None:
+                try:
+                    error_details = e.response.json()
+                except ValueError: # Handle cases where response is not JSON
+                    error_details = e.response.text
+            return jsonify({
+                "error": "Graph API request failed",
+                "details": error_details
+            }), getattr(e.response, 'status_code', 500) # Use response status code if available
 
-
+    @app.route("/api/user/info/<user_id>", methods=["GET"])
+    @login_required
+    @user_required
+    def api_get_user_info(user_id):
+        """
+        Get user info (email, display_name) by user_id (oid).
+        """
+        # Directly query Cosmos for the user document by id (oid)
+        from config import cosmos_user_settings_container
+        try:
+            user_doc = cosmos_user_settings_container.read_item(
+                item=user_id,
+                partition_key=user_id
+            )
+            print(f"[DEBUG] /api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            return jsonify({
+                "user_id": user_id,
+                "email": user_doc.get("email", ""),
+                "display_name": user_doc.get("display_name", "")
+            }), 200
+        except Exception as e:
+            print(f"[ERROR] /api/user/info/{user_id} failed: {e}", flush=True)
+            return jsonify({
+                "error": f"User not found for oid {user_id}"
+            }), 404
+    
     @app.route('/api/user/settings', methods=['GET', 'POST'])
     @login_required
     @user_required # Assuming this decorator confirms a valid user exists
@@ -118,7 +143,7 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment'} # Add others as needed
+                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 'navLayout', 'profileImage', 'enable_agents'} # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")
@@ -152,5 +177,32 @@ def register_route_backend_users(app):
             print(f"Error retrieving settings for user {user_id}: {e}")
             return jsonify({"error": "Failed to retrieve user settings"}), 500
 
-
-
+    @app.route('/api/user/profile-image/<user_id>', methods=['GET'])
+    @login_required
+    @user_required
+    def get_user_profile_image_api(user_id):
+        """
+        Get profile image for a specific user by user_id (oid).
+        Returns only the profile image data to protect user privacy.
+        """
+        from config import cosmos_user_settings_container
+        try:
+            user_doc = cosmos_user_settings_container.read_item(
+                item=user_id,
+                partition_key=user_id
+            )
+            
+            # Extract profile image from settings
+            profile_image = user_doc.get("settings", {}).get("profileImage", None)
+            
+            return jsonify({
+                "user_id": user_id,
+                "profile_image": profile_image
+            }), 200
+            
+        except Exception as e:
+            print(f"[ERROR] /api/user/profile-image/{user_id} failed: {e}", flush=True)
+            return jsonify({
+                "error": f"User profile image not found for oid {user_id}",
+                "profile_image": None
+            }), 404

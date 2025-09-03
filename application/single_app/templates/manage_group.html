@@ -8,6 +8,10 @@
 
 <div class="container">
   <h2>Manage Group</h2>
+  <form method="POST" action="/set_active_group" style="display:inline;">
+    <input type="hidden" name="group_id" value="{{ group_id }}">
+    <button type="submit" class="btn btn-outline-primary btn-sm mb-3">Go to Group Workspace</button>
+  </form>
   <div id="groupInfoContainer" class="mb-3">
     <!-- Group name, description, etc. loaded via JS -->
   </div>

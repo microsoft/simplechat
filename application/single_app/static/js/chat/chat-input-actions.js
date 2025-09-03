@@ -32,7 +32,10 @@ export function resetFileButton() {
 
   if (fileBtn) {
     fileBtn.classList.remove("active");
-    fileBtn.querySelector(".file-btn-text").textContent = "";
+    const fileBtnText = fileBtn.querySelector(".file-btn-text");
+    if (fileBtnText) {
+      fileBtnText.textContent = "File";
+    }
   }
 
   if (uploadBtn) {
@@ -46,6 +49,15 @@ export function resetFileButton() {
 
 export function uploadFileToConversation(file) {
   const uploadingIndicatorEl = showFileUploadingMessage();
+  
+  // Update the file button to show "Uploading..." state
+  const fileBtn = document.getElementById("choose-file-btn");
+  if (fileBtn) {
+    const fileBtnText = fileBtn.querySelector(".file-btn-text");
+    if (fileBtnText) {
+      fileBtnText.textContent = "Uploading...";
+    }
+  }
 
   const formData = new FormData();
   formData.append("file", file);
@@ -244,8 +256,19 @@ if (fileInputEl) {
     if (file) {
       fileBtn.classList.add("active");
       fileBtn.querySelector(".file-btn-text").textContent = file.name;
-      uploadBtn.style.display = "block";
       cancelFileSelection.style.display = "inline";
+      
+      // Hide the upload button since we're auto-uploading
+      uploadBtn.style.display = "none";
+      
+      // Automatically upload the file
+      if (!currentConversationId) {
+        createNewConversation(() => {
+          uploadFileToConversation(file);
+        });
+      } else {
+        uploadFileToConversation(file);
+      }
     } else {
       resetFileButton();
     }

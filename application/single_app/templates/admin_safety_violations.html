@@ -14,9 +14,9 @@
     }
 
     /* Adjust column widths as needed */
-    #safetyLogsTable th:nth-child(1), /* User ID */
+    #safetyLogsTable th:nth-child(1), /* User */
     #safetyLogsTable td:nth-child(1) {
-      width: 120px;
+      width: 200px;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
@@ -116,14 +116,12 @@
     <thead>
       <tr>
         <!-- ID is intentionally hidden, but we keep the rest read-only in the table. -->
-        <th>User ID</th>
+        <th>User</th>
         <th>Message</th>
         <th>Triggered Categories</th>
         <th>Status</th>
         <th>Action</th>
         <th>Notes</th>
-        <th>Created</th>
-        <th>Last Updated</th>
         <th>Edit</th>
       </tr>
     </thead>
@@ -173,7 +171,7 @@
 
         <!-- Read-only fields as plain text -->
         <div class="mb-3">
-          <label class="form-label fw-bold">User ID:</label>
+          <label class="form-label fw-bold">User:</label>
           <p id="editUserId" class="form-control-plaintext"></p>
         </div>
 
@@ -251,6 +249,54 @@
         .replace(/'/g, "&#39;");
   }
 
+  // User lookup cache to avoid repeated API calls
+  const userCache = {};
+
+  // Function to lookup user info by ID
+  async function lookupUserInfo(userId) {
+    if (!userId) return { display_name: 'Unknown User', email: '' };
+    
+    // Check cache first
+    if (userCache[userId]) {
+      return userCache[userId];
+    }
+
+    try {
+      const response = await fetch(`/api/user/info/${userId}`);
+      if (response.ok) {
+        const userInfo = await response.json();
+        const userData = {
+          display_name: userInfo.display_name || 'Unknown User',
+          email: userInfo.email || ''
+        };
+        userCache[userId] = userData;
+        return userData;
+      }
+    } catch (error) {
+      console.warn('Failed to lookup user info for:', userId, error);
+    }
+    
+    // Fallback
+    const fallback = { display_name: 'Unknown User', email: '' };
+    userCache[userId] = fallback;
+    return fallback;
+  }
+
+  // Function to format user display (Name + Email)
+  function formatUserDisplay(userInfo, userId) {
+    if (!userInfo || (!userInfo.display_name && !userInfo.email)) {
+      return userId || 'Unknown User';
+    }
+    
+    const name = userInfo.display_name || 'Unknown User';
+    const email = userInfo.email;
+    
+    if (email) {
+      return `${name} (${email})`;
+    }
+    return name;
+  }
+
   // State variables
   let currentPage = 1;
   let pageSize = 10; // Default page size
@@ -313,18 +359,17 @@
     const categories = (log.triggered_categories || [])
                           .map(cat => `${cat.category}(s=${cat.severity})`)
                           .join(", ");
-    const createdVal = log.created_at ? new Date(log.created_at).toLocaleString() : "N/A";
-    const updatedVal = log.last_updated ? new Date(log.last_updated).toLocaleString() : "N/A";
 
+    // Create user cell placeholder - will be updated with user lookup
+    const userCell = $("<td></td>").attr('title', log.user_id || "").text("Loading...");
+    
     // Build cells using jQuery's .append() and .text() for safety
-    row.append($("<td></td>").attr('title', log.user_id || "").text(log.user_id || "N/A"));
+    row.append(userCell);
     row.append($("<td></td>").text(log.message || ""));
     row.append($("<td></td>").text(categories));
     row.append($("<td></td>").text(log.status || "New"));
     row.append($("<td></td>").text(log.action || "None"));
     row.append($("<td class='text-truncate'></td>").attr('title', log.notes || "").text(log.notes || "")); // Add text-truncate for notes, rely on hover style
-    row.append($("<td></td>").text(createdVal));
-    row.append($("<td></td>").text(updatedVal));
 
     // Edit button
     const editBtn = $("<button class='btn btn-primary btn-sm'><i class='bi bi-pencil-fill'></i></button>")
@@ -333,6 +378,13 @@
         openEditModal(log); // Pass the whole log object
     });
     row.append($("<td></td>").append(editBtn));
+
+    // Lookup user info asynchronously and update the cell
+    lookupUserInfo(log.user_id).then(userInfo => {
+      const userDisplayText = formatUserDisplay(userInfo, log.user_id);
+      userCell.text(userDisplayText);
+      userCell.attr('title', userDisplayText);
+    });
 
     tableBody.append(row);
   }
@@ -422,8 +474,12 @@
                           .map(cat => `${cat.category}(s=${cat.severity})`)
                           .join(", ");
 
-    // Populate read-only fields
-    $("#editUserId").text(log.user_id || "N/A");
+    // Populate read-only fields - lookup user info
+    lookupUserInfo(log.user_id).then(userInfo => {
+      const userDisplayText = formatUserDisplay(userInfo, log.user_id);
+      $("#editUserId").text(userDisplayText);
+    });
+    
     $("#editMessage").text(log.message || "");
     $("#editCategories").text(categories || "None");
 

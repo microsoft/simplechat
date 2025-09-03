@@ -4,9 +4,58 @@
 {% block title %}
     Profile - {{ app_settings.app_title }}
 {% endblock %}
+
+{% block head %}
+<style>
+    .profile-image {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid #dee2e6;
+    }
+    .profile-image-placeholder {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background-color: #6c757d;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 3rem;
+        font-weight: bold;
+        border: 3px solid #dee2e6;
+    }
+    .profile-header {
+        display: flex;
+        align-items: center;
+        gap: 2rem;
+        margin-bottom: 2rem;
+    }
+    .profile-info {
+        flex: 1;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 
 <h2>User Profile</h2>
+
+<div class="profile-header">
+    <div id="profile-image-container">
+        <!-- Profile image will be loaded here -->
+    </div>
+    <div class="profile-info">
+        <h4>{{ user.get('name', 'N/A') }}</h4>
+        <p class="text-muted">{{ user.get('preferred_username', 'N/A') }}</p>
+        <button id="refresh-profile-image" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-arrow-clockwise"></i> Get Profile Image from Entra
+        </button>
+    </div>
+</div>
+
 <table class="table">
     <tr>
         <th>Name:</th>
@@ -23,5 +72,131 @@
 </table>
 
 <p>Version: {{ config['VERSION'] }}</p>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadUserProfileImage();
+    
+    document.getElementById('refresh-profile-image').addEventListener('click', function() {
+        refreshProfileImage();
+    });
+});
+
+function loadUserProfileImage() {
+    // Get user settings to check for profile image
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            const profileImage = data.settings?.profileImage;
+            displayProfileImage(profileImage);
+        })
+        .catch(error => {
+            console.error('Error loading profile image:', error);
+            displayProfileImage(null);
+        });
+}
+
+function displayProfileImage(profileImageData) {
+    const container = document.getElementById('profile-image-container');
+    const userName = '{{ user.get("name", "User") }}';
+    
+    if (profileImageData) {
+        container.innerHTML = `<img src="${profileImageData}" alt="Profile Image" class="profile-image">`;
+    } else {
+        // Show initials placeholder
+        const initials = window.ProfileImage ? window.ProfileImage.getInitials(userName) : userName.split(' ').map(name => name.charAt(0)).join('').toUpperCase().substring(0, 2);
+        container.innerHTML = `<div class="profile-image-placeholder">${initials}</div>`;
+    }
+}
+
+function refreshProfileImage() {
+    const button = document.getElementById('refresh-profile-image');
+    const originalText = button.innerHTML;
+    
+    // Show loading state
+    button.innerHTML = '<i class="bi bi-arrow-clockwise spinning"></i> Refreshing...';
+    button.disabled = true;
+    
+    // Use the global ProfileImage utility if available
+    if (window.ProfileImage && window.ProfileImage.refresh) {
+        window.ProfileImage.refresh()
+            .then(data => {
+                displayProfileImage(data.profileImage);
+                showSuccessToast(data.message);
+            })
+            .catch(error => {
+                console.error('Error refreshing profile image:', error);
+                alert('Error refreshing profile image: ' + error.message);
+            })
+            .finally(() => {
+                // Restore button state
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+    } else {
+        // Fallback to direct API call
+        fetch('/api/profile/image/refresh', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayProfileImage(data.profileImage);
+                showSuccessToast(data.message);
+            } else {
+                console.error('Error refreshing profile image:', data.error);
+                alert('Error refreshing profile image: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error refreshing profile image:', error);
+            alert('Error refreshing profile image: ' + error.message);
+        })
+        .finally(() => {
+            // Restore button state
+            button.innerHTML = originalText;
+            button.disabled = false;
+        });
+    }
+}
+
+function showSuccessToast(message) {
+    // Show success message
+    const toast = document.createElement('div');
+    toast.className = 'toast align-items-center text-white bg-success border-0';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    document.body.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove toast after it's hidden
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+</script>
+
+<style>
+.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
 
 {% endblock %}

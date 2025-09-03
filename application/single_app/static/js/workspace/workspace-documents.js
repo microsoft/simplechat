@@ -21,6 +21,14 @@ const uploadBtn = document.getElementById("upload-btn");
 const uploadStatusSpan = document.getElementById("upload-status");
 const docMetadataModalEl = document.getElementById("docMetadataModal") ? new bootstrap.Modal(document.getElementById("docMetadataModal")) : null;
 const docMetadataForm = document.getElementById("doc-metadata-form");
+const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
+const deleteSelectedBtn = document.getElementById("delete-selected-btn");
+const removeSelectedBtn = document.getElementById("remove-selected-btn");
+const bulkActionsColumn = document.getElementById("bulk-actions");
+
+// Selection mode variables
+let selectionModeActive = false;
+let selectedDocuments = new Set();
 
 // --- Filter elements ---
 const docsSearchInput = document.getElementById('docs-search-input');
@@ -87,6 +95,14 @@ if (docsApplyFiltersBtn) {
         docsAbstractFilter = docsAbstractFilterInput ? docsAbstractFilterInput.value.trim() : '';
 
         docsCurrentPage = 1; // Reset to first page
+        fetchUserDocuments();
+    });
+}
+
+// Listen for shared only filter change (optional: auto-apply on change)
+if (docsSharedOnlyFilter) {
+    docsSharedOnlyFilter.addEventListener('change', () => {
+        docsCurrentPage = 1;
         fetchUserDocuments();
     });
 }
@@ -203,100 +219,162 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
     });
 }
 
+/**
+* Upload files utility for workspace.
+* @param {FileList|File[]} files - The files to upload.
+*/
+async function uploadWorkspaceFiles(files) {
+   if (!files || files.length === 0) {
+       alert("Please select at least one file to upload.");
+       return;
+   }
+
+   uploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
+
+   // Per-file progress container
+   const progressContainer = document.getElementById("workspace-upload-progress-container");
+   if (progressContainer) progressContainer.innerHTML = "";
+
+   let completed = 0;
+   let failed = 0;
+
+   // Helper to create a unique ID for each file
+   function makeId(file) {
+       return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
+   }
+
+   // Helper to create progress bar/status for a file
+   function createProgressBar(file, id) {
+       const wrapper = document.createElement('div');
+       wrapper.className = 'mb-2';
+       wrapper.id = id + '-wrapper';
+       wrapper.innerHTML = `
+         <div class="progress" style="height: 10px;" title="Status: Uploading ${escapeHtml(file.name)} (0%)">
+           <div id="${id}" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+         </div>
+         <div class="text-muted text-end small" id="${id}-text">Uploading ${escapeHtml(file.name)} (0%)</div>
+       `;
+       return wrapper;
+   }
+
+   // Upload each file individually with progress
+   Array.from(files).forEach(file => {
+       const id = makeId(file);
+       if (progressContainer) progressContainer.appendChild(createProgressBar(file, id));
+
+       const progressBar = document.getElementById(id);
+       const statusText = document.getElementById(id + '-text');
+
+       const formData = new FormData();
+       formData.append("file", file, file.name);
+
+       const xhr = new XMLHttpRequest();
+       xhr.open("POST", "/api/documents/upload", true);
+
+       xhr.upload.onprogress = function (e) {
+           if (e.lengthComputable) {
+               const percent = Math.round((e.loaded / e.total) * 100);
+               if (progressBar) {
+                   progressBar.style.width = percent + '%';
+                   progressBar.setAttribute('aria-valuenow', percent);
+               }
+               if (statusText) {
+                   statusText.textContent = `Uploading ${file.name} (${percent}%)`;
+               }
+           }
+       };
+
+       xhr.onload = function () {
+           if (xhr.status >= 200 && xhr.status < 300) {
+               if (progressBar) {
+                   progressBar.classList.remove('bg-info');
+                   progressBar.classList.add('bg-success');
+                   progressBar.classList.remove('progress-bar-animated');
+               }
+               if (statusText) {
+                   statusText.textContent = `Uploaded ${file.name} (100%)`;
+               }
+               completed++;
+           } else {
+               if (progressBar) {
+                   progressBar.classList.remove('bg-info');
+                   progressBar.classList.add('bg-danger');
+                   progressBar.classList.remove('progress-bar-animated');
+               }
+               if (statusText) {
+                   statusText.textContent = `Failed to upload ${file.name}`;
+               }
+               failed++;
+           }
+           // Update summary status
+           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           if (completed + failed === files.length) {
+               fileInput.value = '';
+               docsCurrentPage = 1;
+               fetchUserDocuments();
+               // Clear upload progress bars after all uploads and table refresh
+               if (progressContainer) progressContainer.innerHTML = '';
+           }
+       };
+
+       xhr.onerror = function () {
+           if (progressBar) {
+               progressBar.classList.remove('bg-info');
+               progressBar.classList.add('bg-danger');
+               progressBar.classList.remove('progress-bar-animated');
+           }
+           if (statusText) {
+               statusText.textContent = `Failed to upload ${file.name}`;
+           }
+           failed++;
+           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           if (completed + failed === files.length) {
+               fileInput.value = '';
+               docsCurrentPage = 1;
+               fetchUserDocuments();
+               if (progressContainer) progressContainer.innerHTML = '';
+           }
+       };
+
+       xhr.send(formData);
+   });
+}
+
 // Upload Button Handler
-if (uploadBtn && fileInput && uploadStatusSpan) {
-    uploadBtn.addEventListener("click", async () => {
-        const files = fileInput.files;
-        if (!files || files.length === 0) {
-            alert("Please select at least one file to upload.");
-            return;
+const uploadArea = document.getElementById("upload-area");
+if (fileInput && uploadArea && uploadStatusSpan) {
+    // Auto-upload on file selection
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+            uploadWorkspaceFiles(fileInput.files);
         }
+    });
 
-        uploadBtn.disabled = true;
-        uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Preparing...`;
-        uploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
-
-        const formData = new FormData();
-        const filesToUpload = [];
-        let filesProcessed = 0;
-
-        for (const file of files) {
-            filesProcessed++;
-            uploadStatusSpan.textContent = `Preparing file: ${escapeHtml(file.name)} (${filesProcessed}/${files.length})...`;
-            filesToUpload.push(file);
+    // Click on area triggers file input
+    uploadArea.addEventListener("click", (e) => {
+        // Only trigger if not clicking the hidden input itself
+        if (e.target !== fileInput) {
+            fileInput.click();
         }
+    });
 
-         if (filesToUpload.length === 0) {
-            uploadStatusSpan.textContent = "No files selected or processed.";
-            uploadBtn.disabled = false;
-            uploadBtn.innerHTML = "Upload Document(s)";
-            fileInput.value = "";
-            return;
-        }
-
-        filesToUpload.forEach(file => {
-            formData.append("file", file, file.name);
-        });
-
-        uploadStatusSpan.textContent = `Uploading ${filesToUpload.length} file(s)...`;
-        uploadBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Uploading...`;
-
-        try {
-            const response = await fetch("/api/documents/upload", {
-                method: "POST",
-                body: formData,
-            });
-            const data = await response.json();
-            if (!response.ok) {
-                 throw new Error(data.error || `Server responded with status ${response.status}`);
-            }
-
-            const docIds = data.document_ids || (data.document_id ? [data.document_id] : []);
-            const successCount = docIds.length;
-            const totalUploaded = filesToUpload.length;
-
-            if (successCount > 0) {
-                console.log(`Successfully started server processing for ${successCount} document(s).`);
-                // Reset filters and go to page 1 after successful upload to ensure user sees the new docs
-                // Simulate click on clear button to reset all filters and state
-                 if (docsClearFiltersBtn) {
-                    docsClearFiltersBtn.click(); // This also triggers fetchUserDocuments
-                 } else {
-                    // Fallback if clear button isn't found for some reason
-                    docsSearchTerm = '';
-                    docsClassificationFilter = '';
-                    docsAuthorFilter = '';
-                    docsKeywordsFilter = '';
-                    docsAbstractFilter = '';
-                    if(docsSearchInput) docsSearchInput.value = '';
-                    if(docsClassificationFilterSelect) docsClassificationFilterSelect.value = '';
-                    if(docsAuthorFilterInput) docsAuthorFilterInput.value = '';
-                    if(docsKeywordsFilterInput) docsKeywordsFilterInput.value = '';
-                    if(docsAbstractFilterInput) docsAbstractFilterInput.value = '';
-                    docsCurrentPage = 1;
-                    fetchUserDocuments(); // Fetch potentially updated list
-                 }
-
-                // Start polling for status (do this *after* initiating the fetch for the updated list)
-                docIds.forEach(docId => pollDocumentStatus(docId));
-            }
-
-            let finalMessage = "";
-            if (successCount === totalUploaded) finalMessage += `Uploaded ${successCount} file(s) for processing. `;
-            else if (successCount < totalUploaded) finalMessage += `Server accepted ${successCount}/${totalUploaded} uploaded file(s). `;
-            if (data.errors && data.errors.length > 0) finalMessage += ` Server errors: ${data.errors.join(', ')}`;
-
-            uploadStatusSpan.textContent = finalMessage.trim() || "Upload processed.";
-            fileInput.value = ""; // Clear file input
-
-        } catch (err) {
-            console.error("Upload failed:", err);
-            const errorMsg = `Upload failed: ${err.message || "Unknown network or server error"}`;
-            alert(errorMsg);
-            uploadStatusSpan.textContent = errorMsg;
-        } finally {
-            uploadBtn.disabled = false;
-            uploadBtn.innerHTML = "Upload Document(s)";
+    // Drag-and-drop support
+    uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("dragover");
+        uploadArea.style.borderColor = "#0d6efd";
+    });
+    uploadArea.addEventListener("dragleave", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        uploadArea.style.borderColor = "";
+    });
+    uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        uploadArea.style.borderColor = "";
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            uploadWorkspaceFiles(e.dataTransfer.files);
         }
     });
 }
@@ -337,6 +415,10 @@ function fetchUserDocuments() {
     if (docsAbstractFilter) {
         params.append('abstract', docsAbstractFilter); // Assumes backend uses 'abstract'
     }
+    // Add shared only filter
+    if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+        params.append('shared_only', 'true');
+    }
 
     console.log("Fetching documents with params:", params.toString()); // Debugging: Check params
 
@@ -372,7 +454,15 @@ function fetchUserDocuments() {
                      });
                  }
             } else {
-                data.documents.forEach(doc => renderDocumentRow(doc));
+                // If backend does not support shared_only, filter client-side as fallback
+                let docs = data.documents;
+                if (docsSharedOnlyFilter && docsSharedOnlyFilter.checked) {
+                    docs = docs.filter(doc =>
+                        Array.isArray(doc.shared_user_ids) && doc.shared_user_ids.length > 0
+                    );
+                }
+                window.lastFetchedDocs = docs;
+                docs.forEach(doc => renderDocumentRow(doc));
             }
             renderDocsPaginationControls(data.page, data.page_size, data.total_count);
         })
@@ -404,8 +494,25 @@ function renderDocumentRow(doc) {
 
     const docRow = document.createElement("tr");
     docRow.id = `doc-row-${docId}`;
-    docRow.innerHTML = `
+    docRow.classList.add("document-row");
+    
+    // Check if current user is the owner of the document
+    const currentUserId = window.current_user_id; // This should be set in the template
+    const isOwner = doc.user_id === currentUserId;
+    
+    let sharedUserEntry = null;
+    if (!isOwner) {
+        // Non-owner with shared access: check approval status
+        sharedUserEntry = (doc.shared_user_ids || []).find(
+            entry => entry.startsWith(currentUserId + ",")
+        );
+    }
+    
+    // First column with checkbox and expand/collapse
+    let firstColumnHtml = `
         <td class="align-middle">
+            <input type="checkbox" class="document-checkbox" data-document-id="${docId}" style="display: none;">
+            <span class="expand-collapse-container">
             ${isComplete && !hasError ?
                 `<button class="btn btn-link p-0" onclick="window.toggleDetails('${docId}')" title="Show/Hide Details">
                     <span id="arrow-icon-${docId}" class="bi bi-chevron-right"></span>
@@ -413,21 +520,136 @@ function renderDocumentRow(doc) {
                     (hasError ? `<span class="text-danger" title="Processing Error: ${escapeHtml(docStatus)}"><i class="bi bi-exclamation-triangle-fill"></i></span>`
                              : `<span class="text-muted" title="Processing: ${escapeHtml(docStatus)} (${pct.toFixed(0)}%)"><i class="bi bi-hourglass-split"></i></span>`)
             }
+            </span>
         </td>
+    `;
+    
+    // Create the actions dropdown menu
+    let actionsDropdown = '';
+    let chatButton = '';
+    
+    // Chat button for everyone with access (outside dropdown)
+    if (isComplete && !hasError && (isOwner || (!sharedUserEntry || sharedUserEntry.endsWith(",approved")))) {
+        chatButton = `
+            <button class="btn btn-sm btn-primary me-1 action-btn-wide text-start"
+                onclick="window.redirectToChat('${docId}')"
+                title="Open Chat for Document"
+                aria-label="Open Chat for Document: ${escapeHtml(doc.file_name || 'Untitled')}"
+            >
+                <i class="bi bi-chat-dots-fill me-1" aria-hidden="true"></i>
+                Chat
+            </button>
+        `;
+    }
+    
+    if (isComplete && !hasError) {
+        actionsDropdown = `
+        <div class="dropdown action-dropdown d-inline-block">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item select-btn" href="#" onclick="window.toggleSelectionMode(); return false;">
+                    <i class="bi bi-check-square me-2"></i>Select
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" onclick="window.onEditDocument('${docId}'); return false;">
+                    <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
+                </a></li>
+        `;
+        
+        // Add Extract Metadata option if enabled
+        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+            actionsDropdown += `
+                <li><a class="dropdown-item" href="#" onclick="window.onExtractMetadata('${docId}', event); return false;">
+                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                </a></li>
+            `;
+        }
+        
+        // Add Search in Chat option
+        actionsDropdown += `
+            <li><a class="dropdown-item" href="#" onclick="window.redirectToChat('${docId}'); return false;">
+                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
+            </a></li>
+        `;
+        
+        if (isOwner) {
+            // Owner actions
+            if (window.enable_file_sharing === true || window.enable_file_sharing === "true") {
+                const shareCount = doc.shared_user_ids && doc.shared_user_ids.length > 0 ? doc.shared_user_ids.length : 0;
+                actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="#" onclick="window.shareDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <i class="bi bi-share-fill me-2"></i>Share
+                    <span class="badge bg-secondary ms-1">${shareCount}</span>
+                </a></li>
+                `;
+            }
+            
+            actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>
+            `;
+        } else if (sharedUserEntry && !sharedUserEntry.endsWith(",not_approved")) {
+            // Non-owner with approved access: show Remove option
+            actionsDropdown += `
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.removeSelfFromDocument('${docId}', event); return false;">
+                    <i class="bi bi-x-circle-fill me-2"></i>Remove
+                </a></li>
+            `;
+        }
+        
+        actionsDropdown += `
+            </ul>
+        </div>
+        `;
+    } else if (isOwner) {
+        // Only owners can delete incomplete/error documents
+        actionsDropdown = `
+        <div class="dropdown action-dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item text-danger" href="#" onclick="window.deleteDocument('${docId}', event); return false;">
+                    <i class="bi bi-trash-fill me-2"></i>Delete
+                </a></li>
+            </ul>
+        </div>
+        `;
+    }
+    
+    // Approval button for shared documents that need approval
+    let approvalButton = '';
+    if (!isOwner && sharedUserEntry && sharedUserEntry.endsWith(",not_approved")) {
+        approvalButton = `
+            <button class="btn btn-sm btn-success me-1 action-btn-wide text-start"
+                onclick="window.approveSharedDocument('${docId}', this, '${escapeHtml(doc.owner_id || doc.user_id)}')"
+                title="Approve access to this shared document"
+                aria-label="Approve access to shared document: ${escapeHtml(doc.file_name || 'Untitled')}"
+            >
+                <i class="bi bi-check-circle me-1" aria-hidden="true"></i>
+                Approve
+            </button>
+        `;
+    }
+    
+    // Complete row HTML
+    docRow.innerHTML = `
+        ${firstColumnHtml}
         <td class="align-middle" title="${escapeHtml(doc.file_name || "")}">${escapeHtml(doc.file_name || "")}</td>
         <td class="align-middle" title="${escapeHtml(doc.title || "")}">${escapeHtml(doc.title || "N/A")}</td>
         <td class="align-middle">
-            <button class="btn btn-sm btn-danger" onclick="window.deleteDocument('${docId}', event)" title="Delete Document">
-                <i class="bi bi-trash-fill"></i>
-            </button>
-            ${isComplete && !hasError ?
-                `<button class="btn btn-sm btn-primary ms-1" onclick="window.redirectToChat('${docId}')" title="Search in Chat">
-                    <i class="bi bi-chat-dots-fill"></i> Chat
-                    </button>` :
-                ''
-            }
+            ${approvalButton}
+            ${chatButton}
+            ${actionsDropdown}
         </td>
     `;
+    docRow.__docData = doc; // Attach the full doc object for modal use
     documentsTableBody.appendChild(docRow);
 
     // Only add details row if complete and no error
@@ -473,7 +695,7 @@ function renderDocumentRow(doc) {
                          <button class="btn btn-sm btn-info" onclick="window.onEditDocument('${docId}')" title="Edit Metadata">
                             <i class="bi bi-pencil-fill"></i> Edit Metadata
                          </button>
-        `;
+            `;
 
         // Check window flag before rendering extract button - CORRECTED CHECK
         if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
@@ -692,6 +914,11 @@ function pollDocumentStatus(documentId) {
                     clearInterval(intervalId);
                     activePolls.delete(documentId);
                     if (statusRow) { statusRow.remove(); } // Remove the progress/status row
+                    // Wait 5 seconds, then reload the table to show the detail button
+                    setTimeout(() => {
+                        const docRow = document.getElementById(`doc-row-${documentId}`);
+                        if (docRow) fetchUserDocuments();
+                    }, 5000);
 
                      if (docRow) { // Found the main row, let's replace it with the final version
                         const parent = docRow.parentNode;
@@ -953,6 +1180,54 @@ window.deleteDocument = function(documentId, event) {
         });
 }
 
+window.removeSelfFromDocument = function(documentId, event) {
+    if (!confirm("Are you sure you want to remove yourself from this shared document? You will no longer have access to it.")) return;
+
+    const removeBtn = event ? event.target.closest('button') : null;
+    if (removeBtn) {
+        removeBtn.disabled = true;
+        removeBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+    }
+
+    fetch(`/api/documents/${documentId}/remove-self`, { method: "DELETE" })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => Promise.reject(data)).catch(() => Promise.reject({ error: `Server responded with status ${response.status}` }));
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log("Successfully removed from document:", data);
+            // Remove the document row from the table since user no longer has access
+            const docRow = document.getElementById(`doc-row-${documentId}`);
+            const detailsRow = document.getElementById(`details-row-${documentId}`);
+            const statusRow = document.getElementById(`status-row-${documentId}`);
+            if (docRow) docRow.remove();
+            if (detailsRow) detailsRow.remove();
+            if (statusRow) statusRow.remove();
+
+            // Refresh if the table body becomes empty OR to update pagination total count
+            if (documentsTableBody && documentsTableBody.childElementCount === 0) {
+                fetchUserDocuments(); // Refresh to show 'No documents' message and correct pagination
+            } else {
+                fetchUserDocuments(); // Refresh to update pagination potentially
+            }
+
+            // Show success message
+            if (window.showToast) {
+                window.showToast('Successfully removed from shared document', 'success');
+            }
+        })
+        .catch(error => {
+            console.error("Error removing self from document:", error);
+            alert("Error removing yourself from document: " + (error.error || error.message || "Unknown error"));
+            // Re-enable button only if it still exists
+            if (removeBtn && document.body.contains(removeBtn)) {
+                removeBtn.disabled = false;
+                removeBtn.innerHTML = '<i class="bi bi-x-circle"></i>';
+            }
+        });
+}
 
 window.redirectToChat = function(documentId) {
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
@@ -960,3 +1235,342 @@ window.redirectToChat = function(documentId) {
 
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;
+
+// ------------- Document Selection Functions -------------
+
+// Toggle selection mode
+window.toggleSelectionMode = function() {
+    selectionModeActive = !selectionModeActive;
+    
+    const documentsTable = document.getElementById("documents-table");
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    
+    if (selectionModeActive) {
+        // Enter selection mode
+        documentsTable.classList.add('selection-mode');
+        
+        // Show checkboxes and hide expand buttons
+        checkboxes.forEach(checkbox => {
+            checkbox.style.display = 'inline-block';
+        });
+        
+        expandContainers.forEach(container => {
+            container.style.display = 'none';
+        });
+        
+        // Show bulk actions
+        if (bulkActionsColumn) {
+            bulkActionsColumn.style.display = 'inline-block';
+        }
+    } else {
+        // Exit selection mode
+        documentsTable.classList.remove('selection-mode');
+        
+        // Hide checkboxes and show expand buttons
+        checkboxes.forEach(checkbox => {
+            checkbox.style.display = 'none';
+            checkbox.checked = false;
+        });
+        
+        expandContainers.forEach(container => {
+            container.style.display = 'inline-block';
+        });
+        
+        // Hide bulk actions and buttons
+        if (bulkActionsColumn) {
+            bulkActionsColumn.style.display = 'none';
+        }
+        if (deleteSelectedBtn) {
+            deleteSelectedBtn.style.display = 'none';
+        }
+        if (removeSelectedBtn) {
+            removeSelectedBtn.style.display = 'none';
+        }
+        
+        // Clear selected documents
+        selectedDocuments.clear();
+    }
+};
+
+// Update selected documents
+window.updateSelectedDocuments = function(documentId, isSelected) {
+    if (isSelected) {
+        selectedDocuments.add(documentId);
+    } else {
+        selectedDocuments.delete(documentId);
+    }
+    
+    // Show/hide appropriate action buttons based on selection
+    updateBulkActionButtons();
+};
+
+// Update bulk action buttons visibility
+function updateBulkActionButtons() {
+    if (selectedDocuments.size > 0) {
+        // At least one document is selected
+        if (deleteSelectedBtn) {
+            deleteSelectedBtn.style.display = 'inline-block';
+        }
+        
+        // Check if any selected documents are shared (for remove button)
+        const hasSharedDocuments = Array.from(selectedDocuments).some(docId => {
+            const docRow = document.getElementById(`doc-row-${docId}`);
+            if (docRow && docRow.__docData) {
+                const doc = docRow.__docData;
+                return doc.user_id !== window.current_user_id;
+            }
+            return false;
+        });
+        
+        if (removeSelectedBtn) {
+            removeSelectedBtn.style.display = hasSharedDocuments ? 'inline-block' : 'none';
+        }
+    } else {
+        // No documents selected
+        if (deleteSelectedBtn) {
+            deleteSelectedBtn.style.display = 'none';
+        }
+        if (removeSelectedBtn) {
+            removeSelectedBtn.style.display = 'none';
+        }
+    }
+}
+
+// Delete selected documents
+window.deleteSelectedDocuments = function() {
+    if (selectedDocuments.size === 0) return;
+    
+    if (!confirm(`Are you sure you want to delete ${selectedDocuments.size} document(s)? This action cannot be undone.`)) {
+        return;
+    }
+    
+    const documentIds = Array.from(selectedDocuments);
+    let completed = 0;
+    let failed = 0;
+    
+    // Process each document deletion sequentially
+    documentIds.forEach(docId => {
+        fetch(`/api/documents/${docId}`, { method: "DELETE" })
+            .then(response => {
+                if (response.ok) {
+                    completed++;
+                    const docRow = document.getElementById(`doc-row-${docId}`);
+                    const detailsRow = document.getElementById(`details-row-${docId}`);
+                    const statusRow = document.getElementById(`status-row-${docId}`);
+                    if (docRow) docRow.remove();
+                    if (detailsRow) detailsRow.remove();
+                    if (statusRow) statusRow.remove();
+                } else {
+                    failed++;
+                }
+                
+                // Update status when all operations complete
+                if (completed + failed === documentIds.length) {
+                    if (failed > 0) {
+                        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+                    } else {
+                        alert(`Successfully deleted ${completed} document(s).`);
+                    }
+                    
+                    // Refresh the documents list
+                    fetchUserDocuments();
+                    
+                    // Exit selection mode
+                    window.toggleSelectionMode();
+                }
+            })
+            .catch(error => {
+                failed++;
+                console.error("Error deleting document:", error);
+                
+                // Update status when all operations complete
+                if (completed + failed === documentIds.length) {
+                    alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+                    
+                    // Refresh the documents list
+                    fetchUserDocuments();
+                    
+                    // Exit selection mode
+                    window.toggleSelectionMode();
+                }
+            });
+    });
+};
+
+// Remove self from selected shared documents
+window.removeSelectedDocuments = function() {
+    if (selectedDocuments.size === 0) return;
+    
+    if (!confirm(`Are you sure you want to remove yourself from ${selectedDocuments.size} shared document(s)? You will no longer have access to them.`)) {
+        return;
+    }
+    
+    const documentIds = Array.from(selectedDocuments);
+    let completed = 0;
+    let failed = 0;
+    
+    // Process each document removal sequentially
+    documentIds.forEach(docId => {
+        const docRow = document.getElementById(`doc-row-${docId}`);
+        if (docRow && docRow.__docData && docRow.__docData.user_id !== window.current_user_id) {
+            // This is a shared document, remove self
+            fetch(`/api/documents/${docId}/remove-self`, { method: "DELETE" })
+                .then(response => {
+                    if (response.ok) {
+                        completed++;
+                        const detailsRow = document.getElementById(`details-row-${docId}`);
+                        const statusRow = document.getElementById(`status-row-${docId}`);
+                        if (docRow) docRow.remove();
+                        if (detailsRow) detailsRow.remove();
+                        if (statusRow) statusRow.remove();
+                    } else {
+                        failed++;
+                    }
+                    
+                    checkCompletion();
+                })
+                .catch(error => {
+                    failed++;
+                    console.error("Error removing from document:", error);
+                    checkCompletion();
+                });
+        } else {
+            // Skip documents that aren't shared
+            completed++;
+            checkCompletion();
+        }
+    });
+    
+    function checkCompletion() {
+        // Update status when all operations complete
+        if (completed + failed === documentIds.length) {
+            if (failed > 0) {
+                alert(`Removed yourself from ${completed} document(s), but failed for ${failed} document(s).`);
+            } else {
+                alert(`Successfully removed yourself from ${completed} document(s).`);
+            }
+            
+            // Refresh the documents list
+            fetchUserDocuments();
+            
+            // Exit selection mode
+            window.toggleSelectionMode();
+        }
+    }
+};
+
+// Add event listeners for selection functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Delete selected button
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', window.deleteSelectedDocuments);
+    }
+    
+    // Remove selected button
+    if (removeSelectedBtn) {
+        removeSelectedBtn.addEventListener('click', window.removeSelectedDocuments);
+    }
+    
+    // Delegate event listener for checkboxes (they're dynamically created)
+    if (documentsTableBody) {
+        documentsTableBody.addEventListener('change', function(event) {
+            if (event.target.classList.contains('document-checkbox')) {
+                const documentId = event.target.getAttribute('data-document-id');
+                window.updateSelectedDocuments(documentId, event.target.checked);
+            }
+        });
+    }
+});
+
+// Approve shared document handler
+window.approveSharedDocument = async function(documentId, btn, ownerOid) {
+    let ownerInfo = { display_name: "the owner", email: "" };
+    if (ownerOid) {
+        try {
+            const resp = await fetch(`/api/user/info/${ownerOid}`);
+            if (resp.ok) {
+                const data = await resp.json();
+                ownerInfo.display_name = data.display_name || data.displayName || "the owner";
+                ownerInfo.email = data.email || "";
+            }
+        } catch (e) {}
+    }
+    let msg = `This file was shared with you by <strong>${escapeHtml(ownerInfo.display_name)}</strong>`;
+    if (ownerInfo.email) msg += ` (<span class="text-muted">${escapeHtml(ownerInfo.email)}</span>)`;
+    msg += ".<br>Do you want to approve access to this shared document?";
+
+    // Populate and show the modal
+    const modalEl = document.getElementById("approveSharedModal");
+    const modalBody = document.getElementById("approveSharedModalBody");
+    const approveBtn = document.getElementById("approveSharedModalApproveBtn");
+    const cancelBtn = document.getElementById("approveSharedModalCancelBtn");
+    const denyBtn = document.getElementById("approveSharedModalDenyBtn");
+    if (!modalEl || !modalBody || !approveBtn || !denyBtn) {
+        alert("Approval modal not found in the page.");
+        return;
+    }
+    modalBody.innerHTML = msg;
+    approveBtn.disabled = false;
+    approveBtn.innerHTML = "Approve";
+    denyBtn.disabled = false;
+    denyBtn.innerHTML = "Deny";
+    // Remove previous event listeners
+    approveBtn.onclick = null;
+    cancelBtn.onclick = null;
+    denyBtn.onclick = null;
+
+    // Approve action
+    approveBtn.onclick = async function() {
+        approveBtn.disabled = true;
+        approveBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Approving...`;
+        try {
+            const response = await fetch(`/api/documents/${documentId}/approve-share`, { method: "POST" });
+            const data = await response.json();
+            if (response.ok) {
+                if (window.showToast) window.showToast('Document access approved', 'success');
+                // Hide modal
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                fetchUserDocuments();
+            } else {
+                alert(data.error || "Failed to approve document");
+                approveBtn.disabled = false;
+                approveBtn.innerHTML = "Approve";
+            }
+        } catch (err) {
+            alert("Error approving document: " + (err.error || err.message || "Unknown error"));
+            approveBtn.disabled = false;
+            approveBtn.innerHTML = "Approve";
+        }
+    };
+
+    // Deny action
+    denyBtn.onclick = async function() {
+        denyBtn.disabled = true;
+        denyBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Denying...`;
+        try {
+            const response = await fetch(`/api/documents/${documentId}/remove-self`, { method: "DELETE" });
+            const data = await response.json();
+            if (response.ok) {
+                if (window.showToast) window.showToast('You denied access to this shared document', 'info');
+                bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+                fetchUserDocuments();
+            } else {
+                alert(data.error || "Failed to deny access");
+                denyBtn.disabled = false;
+                denyBtn.innerHTML = "Deny";
+            }
+        } catch (err) {
+            alert("Error denying access: " + (err.error || err.message || "Unknown error"));
+            denyBtn.disabled = false;
+            denyBtn.innerHTML = "Deny";
+        }
+    };
+
+    // Cancel just closes the modal
+    cancelBtn.onclick = function() {
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    };
+    // Show the modal
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};

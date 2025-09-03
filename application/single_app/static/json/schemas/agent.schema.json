@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/Agent",
+  "definitions": {
+    "Agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Agent GUID (UUID v4 pattern)"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "User ID that owns this personal agent"
+        },
+        "last_updated": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "Alphanumeric, underscore, and dash only"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "azure_openai_gpt_endpoint": {
+          "type": "string"
+        },
+        "azure_openai_gpt_key": {
+          "type": "string"
+        },
+        "azure_openai_gpt_deployment": {
+          "type": "string"
+        },
+        "azure_openai_gpt_api_version": {
+          "type": "string"
+        },
+        "azure_agent_apim_gpt_endpoint": {
+          "type": "string"
+        },
+        "azure_agent_apim_gpt_subscription_key": {
+          "type": "string"
+        },
+        "azure_agent_apim_gpt_deployment": {
+          "type": "string"
+        },
+        "azure_agent_apim_gpt_api_version": {
+          "type": "string"
+        },
+        "enable_agent_gpt_apim": {
+          "type": "boolean"
+        },
+        "default_agent": {
+          "type": "boolean",
+          "description": "(deprecated) Use selected_agent for agent selection."
+        },
+        "is_global": {
+          "type": "boolean",
+          "description": "True if this agent is a global agent; required for agent selection and UI badging.",
+          "default": false
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "actions_to_load": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "other_settings": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "display_name",
+        "description",
+        "is_global",
+        "instructions",
+        "actions_to_load",
+        "other_settings"
+      ],
+      "title": "Agent"
+    }
+  }
+}

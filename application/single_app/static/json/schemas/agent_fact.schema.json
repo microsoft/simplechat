@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/AgentFact",
+  "definitions": {
+    "AgentFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier (GUID)"
+        },
+        "agent_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Agent GUID"
+        },
+        "scope_type": {
+          "type": "string",
+          "enum": ["user", "group"],
+          "description": "Scope type, must be 'user' or 'group'"
+        },
+        "scope_id": {
+          "type": "string",
+          "description": "User or group ID"
+        },
+        "conversation_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Conversation GUID"
+        },
+        "value": {
+          "type": "string",
+          "description": "Fact value"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of creation (ISO 8601)"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last update (ISO 8601)"
+        }
+      },
+      "required": [
+        "id",
+        "agent_id",
+        "scope_type",
+        "scope_id",
+        "conversation_id",
+        "value",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "AgentFact"
+    }
+  }
+}

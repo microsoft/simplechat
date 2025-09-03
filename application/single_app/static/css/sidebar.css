@@ -1,0 +1,542 @@
+/* Sidebar Navigation Styles */
+
+/* Base body adjustments for sidebar layout */
+body.sidebar-nav-enabled {
+  padding-left: 0 !important; /* Remove body padding since we're using margin on containers */
+  padding-top: 15 !important;
+}
+
+/* Sidebar container */
+#sidebar-nav {
+  display: none;
+}
+
+body.sidebar-nav-enabled #sidebar-nav {
+  display: flex !important;
+}
+
+/* Hide top navbar when sidebar is enabled */
+body.sidebar-nav-enabled nav.navbar {
+  display: none !important;
+}
+
+/* 
+  CORRECTED RULE:
+  This single, consolidated rule fixes the layout for all main content containers.
+  It removes the conflicting top margin and applies a consistent top padding.
+*/
+body.sidebar-nav-enabled .main-content,
+body.sidebar-nav-enabled .container,
+body.sidebar-nav-enabled .container-fluid {
+  margin-left: 260px !important; /* Same as sidebar width */
+  max-width: calc(100% - 260px) !important; /* Prevent overflow */
+  margin-right: 0 !important;
+  width: auto !important;
+  transition: margin-left 0.3s ease-in-out;
+  /* FIX: Remove top margin and set a consistent top padding */
+  margin-top: 0 !important;
+  padding-top: 1.5rem !important; /* Provides consistent spacing from the top */
+}
+
+
+/* Classification banner adjustments for sidebar layout */
+body.has-classification-banner #sidebar-nav {
+  top: 40px !important; /* Start below the classification banner */
+  height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
+}
+
+/* Floating expand button positioning when classification banner is present */
+body.has-classification-banner #floating-expand-btn {
+  top: calc(0.5rem + 40px) !important; /* Start below the classification banner */
+}
+
+/* When the banner is present, add padding to the top of the main content */
+body.sidebar-nav-enabled.has-classification-banner .main-content,
+body.sidebar-nav-enabled.has-classification-banner .container,
+body.sidebar-nav-enabled.has-classification-banner .container-fluid {
+  padding-top: 2rem !important; /* Increased spacing when banner is present */
+}
+
+/* Sidebar Conversations List Styles */
+#conversations-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0; /* Allow shrinking */
+  max-height: calc(100vh - 350px); /* Constrain height to leave room for other sections */
+}
+
+#conversations-list-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* Allow shrinking */
+  overflow: hidden; /* Prevent container from expanding */
+}
+
+#sidebar-conversations-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0; /* Allow shrinking */
+  max-height: none; /* Remove any max-height constraints */
+}
+
+/* Custom scrollbar styling for sidebar conversations */
+#sidebar-conversations-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#sidebar-conversations-list::-webkit-scrollbar-track {
+  background: #f8f9fa; /* Match sidebar background in light mode */
+  border-radius: 4px;
+}
+
+#sidebar-conversations-list::-webkit-scrollbar-thumb {
+  background: #dee2e6;
+  border-radius: 4px;
+}
+
+#sidebar-conversations-list::-webkit-scrollbar-thumb:hover {
+  background: #adb5bd;
+}
+
+/* Dark mode scrollbar styles */
+[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-track {
+  background: #343a40; /* Match sidebar background in dark mode */
+}
+
+[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb {
+  background: #495057;
+}
+
+[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb:hover {
+  background: #6c757d;
+}
+
+/* Workspaces Section Styles */
+.overflow-auto {
+  overflow: visible !important; /* Remove unwanted scrolling from workspaces */
+}
+
+#workspaces-section {
+  overflow: visible; /* Ensure no scrolling in workspaces */
+}
+
+#workspaces-section .nav {
+  overflow: visible; /* Ensure navigation items don't create scrollbars */
+}
+
+/* Tighten spacing between workspace items (Personal, Groups, Public) */
+#workspaces-section .nav-item {
+  margin-bottom: -0.25rem; /* Reduce space between items */
+}
+
+#workspaces-section .nav-link {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+
+.sidebar-conversation-item {
+  cursor: pointer;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dee2e6;
+  color: rgba(33, 37, 41, 0.65); /* Match nav-link color */
+  background-color: transparent;
+  border-radius: 12px;
+  margin-bottom: 2px;
+  font-size: 0.875rem; /* Match nav-link font size (14px) */
+  font-weight: 400; /* Match nav-link font weight */
+  font-family: var(--bs-body-font-family); /* Match nav-link font family */
+  line-height: 1.2;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Selection mode indicator */
+.sidebar-conversation-item.selection-mode-hint {
+  box-shadow: 0 0 0 1px #ffc107;
+  cursor: pointer;
+}
+
+.sidebar-conversation-item.selection-mode-hint:hover {
+  background-color: #fff3cd !important;
+  color: #856404 !important;
+}
+
+.sidebar-conversation-item:hover {
+  background-color: #f8f9fa;
+  color: rgba(33, 37, 41, 0.8); /* Match nav-link hover color */
+}
+
+.sidebar-conversation-item.active {
+  background-color: #e7f3ff;
+  color: #0d6efd;
+  border-color: #b6d7ff;
+}
+
+.sidebar-conversation-item.selected {
+  background-color: #fff3cd;
+  color: #856404;
+  border-color: #f0d43a;
+  position: relative;
+}
+
+.sidebar-conversation-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  background-color: #ffc107;
+  border-radius: 2px;
+}
+
+/* Show dropdown button on hover or when active or in selection mode */
+.sidebar-conversation-item:hover .conversation-dropdown,
+.sidebar-conversation-item.active .conversation-dropdown,
+.sidebar-conversation-item.selected .conversation-dropdown {
+  opacity: 1 !important;
+}
+
+/* Style the dropdown button in sidebar */
+.sidebar-conversation-item .conversation-dropdown .btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+}
+
+.sidebar-conversation-item .conversation-dropdown .btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-conversation-title {
+  font-weight: 400; /* Match nav-link font weight */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer; /* Indicate it's clickable */
+  user-select: none; /* Prevent text selection on single click */
+}
+
+.sidebar-conversation-title:hover {
+  color: #0d6efd; /* Bootstrap primary color */
+  transition: color 0.2s ease;
+}
+
+/* Edit mode input styling */
+.sidebar-conversation-item input.form-control {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+  z-index: 1000;
+  position: relative;
+}
+
+/* Dark mode edit input styling */
+[data-bs-theme="dark"] .sidebar-conversation-item input.form-control {
+  background: rgba(52, 58, 64, 0.95);
+  color: #fff;
+  border: 1px solid #0d6efd;
+}
+
+.sidebar-conversation-timestamp {
+  font-size: 0.75rem;
+  color: #6c757d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dark mode styles for sidebar conversations */
+[data-bs-theme="dark"] .sidebar-conversation-item {
+  border-bottom: 1px solid #495057;
+  color: rgba(233, 236, 239, 0.65); /* Match dark mode nav-link color */
+  background-color: transparent;
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item:hover {
+  background-color: #343a40;
+  color: rgba(233, 236, 239, 0.8); /* Match dark mode nav-link hover color */
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item.active {
+  background-color: #1a4b7a;
+  color: #b6d7ff;
+  border-color: #4a90e2;
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item.selected {
+  background-color: #3d2914;
+  color: #ffc107;
+  border-color: #f0ad4e;
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item.selected::before {
+  background-color: #ffc107;
+}
+
+/* Dark mode selection mode hint */
+[data-bs-theme="dark"] .sidebar-conversation-item.selection-mode-hint {
+  box-shadow: 0 0 0 1px #ffc107;
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item.selection-mode-hint:hover {
+  background-color: #3d2914 !important;
+  color: #ffc107 !important;
+}
+
+/* Sidebar action buttons styling */
+#conversations-actions {
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+#sidebar-delete-selected-btn {
+  background-color: transparent !important;
+  border-color: #dc3545 !important;
+  color: #dc3545 !important;
+  font-size: 0.75rem !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  transition: all 0.2s ease;
+}
+
+#sidebar-delete-selected-btn:hover {
+  background-color: #dc3545 !important;
+  border-color: #dc3545 !important;
+  color: white !important;
+  transform: scale(1.05);
+}
+
+#sidebar-delete-selected-btn:focus {
+  box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+}
+
+/* Dark mode sidebar action buttons */
+[data-bs-theme="dark"] #sidebar-delete-selected-btn {
+  border-color: #ff6b6b !important;
+  color: #ff6b6b !important;
+}
+
+[data-bs-theme="dark"] #sidebar-delete-selected-btn:hover {
+  background-color: #ff6b6b !important;
+  border-color: #ff6b6b !important;
+  color: #212529 !important;
+}
+
+[data-bs-theme="dark"] #sidebar-delete-selected-btn:focus {
+  box-shadow: 0 0 0 0.2rem rgba(255, 107, 107, 0.25) !important;
+}
+
+/* Selection indicator button styling */
+.selection-indicator {
+  cursor: pointer !important;
+  user-select: none;
+}
+
+.selection-indicator:hover {
+  background-color: rgba(255, 193, 7, 0.2) !important;
+}
+
+.selection-indicator:focus {
+  outline: 2px solid rgba(255, 193, 7, 0.5);
+  outline-offset: 2px;
+}
+
+/* Dark mode selection indicator */
+[data-bs-theme="dark"] .selection-indicator {
+  color: #ffc107 !important;
+}
+
+[data-bs-theme="dark"] .selection-indicator:hover {
+  background-color: rgba(255, 193, 7, 0.15) !important;
+}
+
+[data-bs-theme="dark"] .selection-indicator:focus {
+  outline: 2px solid rgba(255, 193, 7, 0.4);
+}
+
+/* Responsive adjustments for sidebar actions */
+@media (max-width: 575.98px) {
+  #conversations-actions {
+    gap: 0.25rem;
+  }
+  
+  #sidebar-delete-selected-btn {
+    padding: 1px 4px !important;
+    font-size: 0.7rem !important;
+  }
+  
+  #sidebar-delete-selected-btn i {
+    font-size: 0.7rem;
+  }
+  
+  .selection-indicator {
+    padding: 1px 3px !important;
+    font-size: 0.7rem !important;
+  }
+  
+  .selection-indicator i {
+    font-size: 0.7rem !important;
+  }
+}
+
+/* Dark mode dropdown button styles */
+[data-bs-theme="dark"] .sidebar-conversation-item .conversation-dropdown .btn {
+  color: inherit;
+  background: transparent;
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-item .conversation-dropdown .btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-bs-theme="dark"] .sidebar-conversation-timestamp {
+  color: #adb5bd;
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 575.98px) {
+  #sidebar-conversations-list {
+    max-height: 50vh; /* Smaller height on mobile */
+  }
+  
+  .sidebar-conversation-item {
+    padding: 6px 10px; /* Smaller padding on mobile */
+    font-size: 0.8rem; /* Smaller font on mobile */
+  }
+  
+  .sidebar-conversation-title {
+    font-size: 0.8rem;
+  }
+  
+  .sidebar-conversation-timestamp {
+    font-size: 0.7rem;
+  }
+}
+
+
+/* Sidebar navigation link styling */
+#sidebar-nav .nav-link {
+  color: rgba(var(--bs-emphasis-color-rgb), 0.65) !important;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem; /* 14px instead of 16px */
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+#sidebar-nav .nav-link:hover,
+#sidebar-nav .nav-link:focus {
+  color: rgba(var(--bs-emphasis-color-rgb), 0.8) !important;
+}
+
+/* Fix the indentation issue by ensuring consistent positioning */
+#sidebar-nav .nav-item {
+  margin: 0;
+}
+
+#sidebar-nav .nav {
+  margin-bottom: 0;
+}
+
+/* Light mode specific sidebar styling */
+[data-bs-theme="light"] #sidebar-nav .nav-link {
+  color: rgba(33, 37, 41, 0.65) !important;
+  font-size: 0.875rem; /* 14px instead of 16px */
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+[data-bs-theme="light"] #sidebar-nav .nav-link:hover,
+[data-bs-theme="light"] #sidebar-nav .nav-link:focus {
+  color: rgba(33, 37, 41, 0.8) !important;
+}
+
+/* Dark mode specific sidebar styling */
+[data-bs-theme="dark"] #sidebar-nav {
+  background-color: #343a40 !important;
+  color: #e9ecef !important;
+  border-color: #495057 !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .nav-link {
+  color: rgba(233, 236, 239, 0.65) !important;
+  font-size: 0.875rem; /* 14px instead of 16px */
+  font-weight: 400;
+  font-family: var(--bs-body-font-family);
+}
+
+[data-bs-theme="dark"] #sidebar-nav .nav-link:hover,
+[data-bs-theme="dark"] #sidebar-nav .nav-link:focus {
+  color: rgba(233, 236, 239, 0.8) !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .text-muted {
+  color: #adb5bd !important;
+}
+
+[data-bs-theme="dark"] #sidebar-nav .border-bottom,
+[data-bs-theme="dark"] #sidebar-nav .border-top {
+  border-color: #495057 !important;
+}
+
+/* Fix user dropdown text color to match top nav */
+#sidebar-nav .dropdown-toggle {
+  color: inherit !important;
+}
+
+#sidebar-nav .dropdown-toggle .fw-semibold {
+  color: inherit !important;
+}
+
+/* Ensure navbar-brand font size matches top nav */
+#sidebar-nav .navbar-brand {
+  font-size: 20px !important; /* Match top navbar font size */
+}
+
+#sidebar-nav .navbar-brand .fw-bold,
+#sidebar-nav .navbar-brand span {
+  font-size: 20px !important; /* Ensure child elements also use correct size */
+}
+
+/* Responsive adjustments for sidebar navigation */
+@media (max-width: 768px) {
+  body.sidebar-nav-enabled .main-content,
+  body.sidebar-nav-enabled .container,
+  body.sidebar-nav-enabled .container-fluid {
+    margin-left: 220px !important; /* Smaller sidebar on mobile */
+    max-width: calc(100% - 220px) !important;
+  }
+  body.sidebar-nav-enabled #sidebar-nav {
+    width: 220px !important;
+    min-width: 220px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  body.sidebar-nav-enabled .main-content,
+  body.sidebar-nav-enabled .container,
+  body.sidebar-nav-enabled .container-fluid {
+    margin-left: 0 !important; /* No margin on very small screens */
+    max-width: 100% !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  body.sidebar-nav-enabled #sidebar-nav {
+    width: 100% !important;
+    position: fixed !important;
+    z-index: 1050 !important; /* Higher than modals */
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  body.sidebar-nav-enabled.sidebar-open #sidebar-nav {
+    transform: translateX(0);
+  }
+  /* Show mobile menu button only when sidebar nav is enabled */
+  body.sidebar-nav-enabled .sidebar-nav-only {
+    display: block !important;
+  }
+}

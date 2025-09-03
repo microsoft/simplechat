@@ -1,0 +1,676 @@
+<!-- Dynamic Action Modal -->
+<div class="modal fade" id="plugin-modal" tabindex="-1" aria-labelledby="plugin-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="plugin-modal-title">Add Action</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      
+      <!-- Progress Steps Indicator -->
+      <div class="modal-body pb-0">
+        <div class="d-flex justify-content-between mb-4">
+          <div class="step-indicator" data-step="1">
+            <div class="step-circle active">1</div>
+            <div class="step-label">Select Type</div>
+          </div>
+          <div class="step-indicator" data-step="2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Action Details</div>
+          </div>
+          <div class="step-indicator" data-step="3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Configuration</div>
+          </div>
+          <div class="step-indicator" data-step="4">
+            <div class="step-circle">4</div>
+            <div class="step-label">Advanced</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-body pt-0">
+        <!-- Step 1: Select Action Type -->
+        <div class="plugin-step" id="plugin-step-1">
+          <h6 class="mb-3">Select Action Type</h6>
+          <div class="mb-3">
+            <input type="search" class="form-control" id="action-type-search" placeholder="Search action types...">
+          </div>
+          <div id="action-types-container" class="row g-3">
+            <!-- Action type cards will be populated by JavaScript -->
+          </div>
+        </div>
+
+        <!-- Step 2: Action Details -->
+        <div class="plugin-step d-none" id="plugin-step-2">
+          <h6 class="mb-3">Action Details</h6>
+          <div class="mb-3">
+            <label for="plugin-display-name" class="form-label">Display Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="plugin-display-name" required />
+            <div class="form-text">Human-readable name for this action. The action name will be generated automatically.</div>
+          </div>
+          <div class="mb-3">
+            <label for="plugin-description" class="form-label">Description</label>
+            <textarea class="form-control" id="plugin-description" rows="3" placeholder="Describe what this action does..."></textarea>
+          </div>
+          <!-- Hidden fields to store generated name and selected type -->
+          <input type="hidden" id="plugin-name" name="plugin_name" />
+          <input type="hidden" id="plugin-type" name="plugin_type" />
+        </div>
+
+        <!-- Step 3: Authentication & Configuration -->
+        <div class="plugin-step d-none" id="plugin-step-3">
+          <h6 class="mb-3">API Configuration</h6>
+          
+          <!-- OpenAPI specific fields (will be shown/hidden based on plugin type) -->
+          <div id="openapi-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="bi bi-file-earmark-code me-2"></i>OpenAPI Configuration
+            </div>
+            
+            <!-- File Upload Section -->
+            <div id="openapi-file-section" class="mb-3">
+              <label for="plugin-openapi-file" class="form-label">OpenAPI Specification File <span class="text-danger">*</span></label>
+              <input type="file" class="form-control" id="plugin-openapi-file" accept=".yaml,.yml,.json" />
+              <div class="form-text">
+                Upload your OpenAPI specification file (YAML or JSON format, max 5MB).
+                <br><strong>Security:</strong> Files are automatically scanned for malicious content.
+              </div>
+              <div id="openapi-file-status" class="mt-2"></div>
+            </div>
+            
+            <div class="mb-3">
+              <label for="plugin-endpoint" class="form-label">Base URL <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="plugin-endpoint" placeholder="https://api.example.com" />
+              <div class="form-text">
+                Base URL of your API (without trailing slash). 
+                <br><small class="text-muted"><i class="bi bi-lightbulb me-1"></i>This will be auto-populated from your OpenAPI spec if available, but you can modify it as needed.</small>
+              </div>
+            </div>
+            
+            <!-- API Info Display -->
+            <div id="openapi-info-display" class="alert alert-info d-none">
+              <h6><i class="bi bi-info-circle me-2"></i>API Information</h6>
+              <div id="openapi-info-content"></div>
+            </div>
+            
+            <div class="auth-section">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication Configuration
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Authentication Type</label>
+                <div class="input-group mb-2">
+                  <span class="input-group-text">Type</span>
+                  <select class="form-select" id="plugin-auth-type">
+                    <option value="none">No Authentication</option>
+                    <option value="api_key">API Key</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="basic">Basic Auth</option>
+                    <option value="oauth2">OAuth2</option>
+                  </select>
+                </div>
+                
+                <!-- API Key fields -->
+                <div class="input-group mb-2" id="auth-api-key-location-group" style="display:none;">
+                  <span class="input-group-text">Location</span>
+                  <select class="form-select" id="plugin-auth-api-key-location">
+                    <option value="header">Header</option>
+                    <option value="query">Query Parameter</option>
+                  </select>
+                </div>
+                <div class="input-group mb-2" id="auth-api-key-name-group" style="display:none;">
+                  <span class="input-group-text">Key Name</span>
+                  <input type="text" class="form-control" id="plugin-auth-api-key-name" placeholder="X-API-Key" />
+                </div>
+                <div class="input-group mb-2" id="auth-api-key-value-group" style="display:none;">
+                  <span class="input-group-text">API Key</span>
+                  <input type="password" class="form-control" id="plugin-auth-api-key-value" placeholder="your-api-key" />
+                </div>
+                
+                <!-- Bearer Token fields -->
+                <div class="input-group mb-2" id="auth-bearer-group" style="display:none;">
+                  <span class="input-group-text">Token</span>
+                  <input type="password" class="form-control" id="plugin-auth-bearer-token" placeholder="your-bearer-token" />
+                </div>
+                
+                <!-- Basic Auth fields -->
+                <div class="input-group mb-2" id="auth-basic-username-group" style="display:none;">
+                  <span class="input-group-text">Username</span>
+                  <input type="text" class="form-control" id="plugin-auth-basic-username" placeholder="username" />
+                </div>
+                <div class="input-group mb-2" id="auth-basic-password-group" style="display:none;">
+                  <span class="input-group-text">Password</span>
+                  <input type="password" class="form-control" id="plugin-auth-basic-password" placeholder="password" />
+                </div>
+                
+                <!-- OAuth2 fields -->
+                <div class="input-group mb-2" id="auth-oauth2-group" style="display:none;">
+                  <span class="input-group-text">Access Token</span>
+                  <input type="password" class="form-control" id="plugin-auth-oauth2-token" placeholder="your-oauth2-access-token" />
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Generic endpoint field for other plugin types -->
+          <div id="generic-config-section">
+            <div class="mb-3">
+              <label for="plugin-endpoint-generic" class="form-label">Endpoint <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="plugin-endpoint-generic" placeholder="https://" />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Authentication Type</label>
+              <div class="input-group mb-2">
+                <span class="input-group-text">Type</span>
+                <select class="form-select" id="plugin-auth-type-generic">
+                  <option value="key">Key</option>
+                  <option value="identity">Managed Identity</option>
+                  <option value="user">User</option>
+                  <option value="servicePrincipal">Service Principal</option>
+                </select>
+              </div>
+              <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
+                <span class="input-group-text" id="auth-identity-label">Identity</span>
+                <input type="text" class="form-control" id="plugin-auth-identity" />
+              </div>
+              <div class="input-group mb-2" id="auth-key-group" style="display:none;">
+                <span class="input-group-text" id="auth-key-label">Key</span>
+                <input type="text" class="form-control" id="plugin-auth-key" />
+              </div>
+              <div class="input-group mb-2" id="auth-tenantid-group" style="display:none;">
+                <span class="input-group-text" id="auth-tenantid-label">Tenant Id</span>
+                <input type="text" class="form-control" id="plugin-auth-tenant-id" />
+              </div>
+            </div>
+          </div>
+          
+          <!-- SQL Database Configuration -->
+          <div id="sql-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="bi bi-database me-2"></i>SQL Database Configuration
+            </div>
+            
+            <!-- Database Type Selection -->
+            <div class="mb-3">
+              <label class="form-label">Database Type <span class="text-danger">*</span></label>
+              <div class="row g-2">
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlserver" value="sqlserver">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-sqlserver">
+                    <i class="bi bi-server me-1"></i>SQL Server
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-azure-sql" value="azure_sql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-azure-sql">
+                    <i class="bi bi-microsoft me-1"></i>Azure SQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-postgresql" value="postgresql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-postgresql">
+                    <i class="bi bi-hdd me-1"></i>PostgreSQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-mysql" value="mysql">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-mysql">
+                    <i class="bi bi-hdd-fill me-1"></i>MySQL
+                  </label>
+                </div>
+                <div class="col-6 col-md-3">
+                  <input type="radio" class="btn-check" name="sql-database-type" id="sql-db-sqlite" value="sqlite">
+                  <label class="btn btn-outline-primary w-100" for="sql-db-sqlite">
+                    <i class="bi bi-file-earmark-text me-1"></i>SQLite
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- SQL Plugin Type Selection -->
+            <div class="mb-3 sql-plugin-type-selection">
+              <label class="form-label">Plugin Type <span class="text-danger">*</span></label>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-schema" value="schema">
+                  <label class="btn btn-outline-info w-100" for="sql-plugin-schema">
+                    <i class="bi bi-diagram-3 me-1"></i>Schema Plugin
+                    <small class="d-block text-muted">Extract database structure</small>
+                  </label>
+                </div>
+                <div class="col-md-6">
+                  <input type="radio" class="btn-check" name="sql-plugin-type" id="sql-plugin-query" value="query">
+                  <label class="btn btn-outline-success w-100" for="sql-plugin-query">
+                    <i class="bi bi-search me-1"></i>Query Plugin
+                    <small class="d-block text-muted">Execute SQL queries</small>
+                  </label>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Database Connection Configuration -->
+            <div class="sql-connection-config">
+              <div class="config-section-label">
+                <i class="bi bi-plug me-2"></i>Connection Configuration
+              </div>
+              
+              <!-- Connection Method Selection -->
+              <div class="mb-3">
+                <label class="form-label">Connection Method</label>
+                <div class="btn-group w-100" role="group" aria-label="Connection method">
+                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-string" value="connection_string" checked>
+                  <label class="btn btn-outline-secondary" for="sql-conn-string">
+                    <i class="bi bi-link-45deg me-1"></i>Connection String
+                  </label>
+                  
+                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-params" value="parameters">
+                  <label class="btn btn-outline-secondary" for="sql-conn-params">
+                    <i class="bi bi-gear me-1"></i>Individual Parameters
+                  </label>
+                </div>
+              </div>
+              
+              <!-- Connection String Section -->
+              <div id="sql-connection-string-section" class="mb-3">
+                <label for="sql-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="sql-connection-string" rows="3" placeholder="Enter your database connection string..."></textarea>
+                <div class="form-text">
+                  <strong>Examples:</strong>
+                  <div id="sql-connection-examples" class="mt-1">
+                    <!-- Connection string examples will be populated by JavaScript -->
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Individual Parameters Section -->
+              <div id="sql-connection-params-section" class="d-none">
+                <!-- Server field (not for SQLite) -->
+                <div class="mb-3" id="sql-server-field">
+                  <label for="sql-server" class="form-label">Server <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-server" placeholder="server.database.windows.net" />
+                  <div class="form-text">Database server hostname or IP address</div>
+                </div>
+                
+                <!-- Database field -->
+                <div class="mb-3" id="sql-database-field">
+                  <label for="sql-database" class="form-label">Database <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-database" placeholder="database_name" />
+                  <div class="form-text">Database name (or file path for SQLite)</div>
+                </div>
+                
+                <!-- Port field (optional, not for SQLite) -->
+                <div class="mb-3" id="sql-port-field">
+                  <label for="sql-port" class="form-label">Port</label>
+                  <input type="number" class="form-control" id="sql-port" placeholder="Auto-detect" />
+                  <div class="form-text">Leave empty to use default port</div>
+                </div>
+                
+                <!-- Driver field (for SQL Server) -->
+                <div class="mb-3 d-none" id="sql-driver-field">
+                  <label for="sql-driver" class="form-label">ODBC Driver</label>
+                  <select class="form-select" id="sql-driver">
+                    <option value="ODBC Driver 17 for SQL Server">ODBC Driver 17 for SQL Server</option>
+                    <option value="ODBC Driver 18 for SQL Server">ODBC Driver 18 for SQL Server</option>
+                    <option value="SQL Server">SQL Server (Legacy)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Authentication Configuration -->
+            <div class="sql-auth-config">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication Configuration
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label">Authentication Type</label>
+                <select class="form-select" id="sql-auth-type">
+                  <option value="username_password">Username & Password</option>
+                  <option value="integrated">Integrated Authentication</option>
+                  <option value="managed_identity">Managed Identity (Azure)</option>
+                  <option value="service_principal">Service Principal (Azure)</option>
+                  <option value="connection_string_only">Connection String Only</option>
+                </select>
+              </div>
+              
+              <!-- Username/Password fields -->
+              <div id="sql-auth-credentials" class="row g-2">
+                <div class="col-md-6">
+                  <label for="sql-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="sql-username" placeholder="username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="sql-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="sql-password" placeholder="password" />
+                </div>
+              </div>
+              
+              <!-- Service Principal fields -->
+              <div id="sql-auth-service-principal" class="d-none">
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label for="sql-client-id" class="form-label">Client ID <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="sql-client-id" placeholder="client-id" />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="sql-client-secret" class="form-label">Client Secret <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control" id="sql-client-secret" placeholder="client-secret" />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="sql-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="sql-tenant-id" placeholder="tenant-id" />
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Authentication info -->
+              <div id="sql-auth-info" class="alert alert-info mt-2 d-none">
+                <small id="sql-auth-info-text"></small>
+              </div>
+            </div>
+            
+            <!-- Query Plugin Specific Settings -->
+            <div id="sql-query-settings" class="d-none">
+              <div class="config-section-label">
+                <i class="bi bi-gear me-2"></i>Query Plugin Settings
+              </div>
+              
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="sql-read-only" class="form-label">Read Only Mode</label>
+                  <select class="form-select" id="sql-read-only">
+                    <option value="true">Yes (Recommended)</option>
+                    <option value="false">No (Allow writes)</option>
+                  </select>
+                  <div class="form-text">Prevent data modification queries</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="sql-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="sql-max-rows" value="1000" min="1" max="10000" />
+                  <div class="form-text">Limit query result size</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="sql-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="sql-timeout" value="30" min="5" max="300" />
+                  <div class="form-text">Query execution timeout</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Schema Plugin Specific Settings -->
+            <div id="sql-schema-settings" class="d-none">
+              <div class="config-section-label">
+                <i class="bi bi-gear me-2"></i>Schema Plugin Settings
+              </div>
+              
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="sql-include-system-tables" class="form-label">Include System Tables</label>
+                  <select class="form-select" id="sql-include-system-tables">
+                    <option value="false">No (Recommended)</option>
+                    <option value="true">Yes</option>
+                  </select>
+                  <div class="form-text">Include database system tables in schema</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="sql-table-filter" class="form-label">Table Filter</label>
+                  <input type="text" class="form-control" id="sql-table-filter" placeholder="e.g., user_*, *_log" />
+                  <div class="form-text">Filter tables by name pattern (use * as wildcard)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Advanced -->
+        <div class="plugin-step d-none" id="plugin-step-4">
+          <h6 class="mb-3">Advanced</h6>
+          <div class="mb-3">
+            <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
+            <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>
+            <div class="form-text">Optional metadata for this action.</div>
+          </div>
+          <div class="mb-3">
+            <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
+            <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
+            <div class="form-text">Additional configuration fields specific to this action type.</div>
+          </div>
+        </div>
+
+        <div id="plugin-modal-error" class="alert alert-danger d-none"></div>
+      </div>
+      
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="plugin-modal-prev">Previous</button>
+        <button type="button" class="btn btn-outline-primary d-none" id="plugin-modal-skip">Skip to End</button>
+        <button type="button" class="btn btn-primary" id="plugin-modal-next">Next</button>
+        <button type="button" class="btn btn-success d-none" id="save-plugin-btn">Save Action</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Step indicator styles */
+.step-indicator {
+  text-align: center;
+  flex: 1;
+  position: relative;
+}
+
+.step-indicator:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 15px;
+  right: -50%;
+  width: 100%;
+  height: 2px;
+  background-color: #e9ecef;
+  z-index: 0;
+}
+
+.step-indicator.completed:not(:last-child)::after {
+  background-color: #198754;
+}
+
+.step-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #e9ecef;
+  color: #6c757d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  margin: 0 auto 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.step-circle.active {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.step-circle.completed {
+  background-color: #198754;
+  color: white;
+}
+
+.step-label {
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.step-indicator.active .step-label {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+.step-indicator.completed .step-label {
+  color: #198754;
+}
+
+/* Action type cards */
+.action-type-card {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid #dee2e6;
+}
+
+.action-type-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.action-type-card.selected {
+  border-color: #0d6efd;
+  background-color: #e7f1ff;
+}
+
+.action-type-card .card-body {
+  padding: 1rem;
+}
+
+.action-type-card .card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.action-type-card .card-text {
+  font-size: 0.875rem;
+  color: #6c757d;
+  margin-bottom: 0;
+}
+
+/* OpenAPI configuration styling */
+#openapi-config-section {
+  border: 1px solid #e3f2fd;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
+#openapi-config-section h6 {
+  color: #1976d2;
+  border-bottom: 1px solid #e3f2fd;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* SQL Database configuration styling */
+#sql-config-section {
+  border: 1px solid #e8f5e8;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
+.sql-connection-config, 
+.sql-auth-config {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.btn-check:checked + .btn-outline-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-info {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-success {
+  background-color: #198754;
+  border-color: #198754;
+  color: white;
+}
+
+.btn-check:checked + .btn-outline-secondary {
+  background-color: #6c757d;
+  border-color: #6c757d;
+  color: white;
+}
+
+/* Connection string examples styling */
+#sql-connection-examples {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+#sql-connection-examples .example {
+  margin-bottom: 0.25rem;
+  color: #6c757d;
+}
+
+#sql-connection-examples .example:last-child {
+  margin-bottom: 0;
+}
+
+#sql-connection-examples .example strong {
+  color: #495057;
+}
+
+/* Database type icons */
+.btn-outline-primary i.bi-server::before {
+  color: #0078d4;
+}
+
+.btn-outline-primary i.bi-microsoft::before {
+  color: #00bcf2;
+}
+
+.btn-outline-primary i.bi-hdd::before {
+  color: #336791;
+}
+
+.btn-outline-primary i.bi-hdd-fill::before {
+  color: #f29111;
+}
+
+.btn-outline-primary i.bi-file-earmark-text::before {
+  color: #003b57;
+}
+
+/* Authentication info alerts */
+#sql-auth-info {
+  border-left: 4px solid #0dcaf0;
+}
+
+/* Plugin type selection styling */
+.btn-outline-info small,
+.btn-outline-success small {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.auth-section {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.config-section-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 0.5rem;
+}
+</style>
