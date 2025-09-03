@@ -1,5 +1,6 @@
 from typing import Dict, Any, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 import requests
 from flask import current_app
 from functions_settings import get_settings
@@ -25,6 +26,10 @@ class EmbeddingModelPlugin(BasePlugin):
             self.auth_type = settings.get('azure_openai_embedding_authentication_type', 'key')
 
     @property
+    def display_name(self) -> str:
+        return "Embedding Model"
+
+    @property
     def metadata(self) -> Dict[str, Any]:
         return {
             "name": "embedding_model_plugin",
@@ -45,6 +50,7 @@ class EmbeddingModelPlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return ["embed"]
 
+    @plugin_function_logger("EmbeddingModelPlugin")
     @kernel_function(description="Generate an embedding vector for the given text.")
     def embed(self, text: str) -> List[float]:
         if not self.endpoint or not self.key or not self.deployment:

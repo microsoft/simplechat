@@ -282,10 +282,54 @@ export async function showPluginModal({
   }
 }
 
-// Validate plugin manifest with Ajv (parameterized for schema loader)
+// Validate plugin manifest with server-side validation
 export async function validatePluginManifest(pluginManifest) {
-  if (!window.validatePlugin) {
-    window.validatePlugin = (await import('/static/js/validatePlugin.mjs')).default;
+  try {
+    // Try client-side validation first if available
+    if (!window.validatePlugin) {
+      try {
+        window.validatePlugin = (await import('/static/js/validatePlugin.mjs')).default;
+      } catch (importError) {
+        console.warn('Client-side validation module failed to load, falling back to server-side validation:', importError);
+        // Fallback to server-side validation
+        return await validatePluginManifestServerSide(pluginManifest);
+      }
+    }
+    
+    const result = window.validatePlugin(pluginManifest);
+    if (result === true) {
+      return { valid: true, errors: [] };
+    } else {
+      return { valid: false, errors: result.errors || ['Validation failed'] };
+    }
+  } catch (error) {
+    console.warn('Client-side validation failed, falling back to server-side validation:', error);
+    return await validatePluginManifestServerSide(pluginManifest);
   }
-  return window.validatePlugin(pluginManifest);
+}
+
+// Server-side validation fallback
+async function validatePluginManifestServerSide(pluginManifest) {
+  try {
+    const response = await fetch('/api/admin/plugins/validate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(pluginManifest)
+    });
+    
+    const result = await response.json();
+    return {
+      valid: result.valid,
+      errors: result.errors || [],
+      warnings: result.warnings || []
+    };
+  } catch (error) {
+    console.error('Server-side validation failed:', error);
+    return {
+      valid: false,
+      errors: ['Validation service unavailable']
+    };
+  }
 }

@@ -43,9 +43,9 @@ try {
 // ----------------------------------
 
 // We'll store personalDocs/groupDocs/publicDocs in memory once loaded:
-let personalDocs = [];
-let groupDocs = [];
-let publicDocs = [];
+export let personalDocs = [];
+export let groupDocs = [];
+export let publicDocs = [];
 let activeGroupName = "";
 let activePublicWorkspaceName = "";
 let publicWorkspaceIdToName = {};

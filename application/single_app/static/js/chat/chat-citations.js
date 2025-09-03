@@ -225,6 +225,146 @@ export function showImagePopup(imageSrc) {
   modal.show();
 }
 
+export function showAgentCitationModal(toolName, toolArgs, toolResult) {
+  // Create or reuse the agent citation modal
+  let modalContainer = document.getElementById("agent-citation-modal");
+  if (!modalContainer) {
+    modalContainer = document.createElement("div");
+    modalContainer.id = "agent-citation-modal";
+    modalContainer.classList.add("modal", "fade");
+    modalContainer.tabIndex = -1;
+    modalContainer.setAttribute("aria-hidden", "true");
+
+    modalContainer.innerHTML = `
+      <div class="modal-dialog modal-dialog-scrollable modal-xl modal-fullscreen-sm-down">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Agent Tool Execution</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <h6 class="fw-bold">Tool Name:</h6>
+              <div id="agent-tool-name" class="bg-light p-2 rounded"></div>
+            </div>
+            <div class="mb-3">
+              <h6 class="fw-bold">Function Arguments:</h6>
+              <pre id="agent-tool-args" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
+            </div>
+            <div class="mb-3">
+              <h6 class="fw-bold">Function Result:</h6>
+              <pre id="agent-tool-result" class="bg-light p-2 rounded" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modalContainer);
+  }
+
+  // Update the content
+  const toolNameEl = document.getElementById("agent-tool-name");
+  const toolArgsEl = document.getElementById("agent-tool-args");
+  const toolResultEl = document.getElementById("agent-tool-result");
+
+  if (toolNameEl) {
+    toolNameEl.textContent = toolName || "Unknown";
+  }
+  
+  if (toolArgsEl) {
+    // Handle empty or no parameters more gracefully
+    let argsContent = "";
+    
+    try {
+      let parsedArgs;
+      if (!toolArgs || toolArgs === "" || toolArgs === "{}") {
+        argsContent = "No parameters required";
+      } else {
+        parsedArgs = JSON.parse(toolArgs);
+        // Check if it's an empty object
+        if (typeof parsedArgs === 'object' && Object.keys(parsedArgs).length === 0) {
+          argsContent = "No parameters required";
+        } else {
+          argsContent = JSON.stringify(parsedArgs, null, 2);
+        }
+      }
+    } catch (e) {
+      // If it's not valid JSON, check if it's an object representation
+      if (toolArgs === "[object Object]" || !toolArgs || toolArgs.trim() === "") {
+        argsContent = "No parameters required";
+      } else {
+        argsContent = toolArgs;
+      }
+    }
+    
+    // Add truncation with expand/collapse if content is long
+    if (argsContent.length > 300 && argsContent !== "No parameters required") {
+      const truncatedContent = argsContent.substring(0, 300);
+      const remainingContent = argsContent.substring(300);
+      
+      toolArgsEl.innerHTML = `
+        <div class="args-content position-relative">
+          <span class="args-truncated">${escapeHtml(truncatedContent)}</span><span class="args-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
+          <button class="btn btn-link p-0 ms-2 expand-args-btn" 
+                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
+                  onclick="toggleArgsExpansion(this)">
+            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
+          </button>
+        </div>
+      `;
+    } else {
+      toolArgsEl.textContent = argsContent;
+    }
+  }
+  
+  if (toolResultEl) {
+    // Handle result formatting and truncation with expand/collapse
+    let resultContent = "";
+    
+    try {
+      let parsedResult;
+      if (!toolResult || toolResult === "" || toolResult === "{}") {
+        resultContent = "No result";
+      } else if (toolResult === "[object Object]") {
+        resultContent = "No result data available";
+      } else {
+        // Try to parse as JSON first
+        try {
+          parsedResult = JSON.parse(toolResult);
+          resultContent = JSON.stringify(parsedResult, null, 2);
+        } catch (parseError) {
+          // If not JSON, treat as string
+          resultContent = toolResult;
+        }
+      }
+    } catch (e) {
+      resultContent = toolResult || "No result";
+    }
+    
+    // Add truncation with expand/collapse if content is long
+    if (resultContent.length > 300) {
+      const truncatedContent = resultContent.substring(0, 300);
+      const remainingContent = resultContent.substring(300);
+      
+      toolResultEl.innerHTML = `
+        <div class="result-content position-relative">
+          <span class="result-truncated">${escapeHtml(truncatedContent)}</span><span class="result-remaining" style="display: none;">${escapeHtml(remainingContent)}</span>
+          <button class="btn btn-link p-0 ms-2 expand-result-btn" 
+                  style="font-size: 0.75rem; text-decoration: none; vertical-align: baseline;" 
+                  onclick="toggleResultExpansion(this)">
+            <i class="bi bi-chevron-down" style="font-size: 0.7rem;"></i>
+          </button>
+        </div>
+      `;
+    } else {
+      toolResultEl.textContent = resultContent;
+    }
+  }
+
+  const modal = new bootstrap.Modal(modalContainer);
+  modal.show();
+}
+
 // --- MODIFIED: Added citationId parameter and fallback in catch ---
 export function showPdfModal(docId, pageNumber, citationId) {
   const fetchUrl = `/view_pdf?doc_id=${encodeURIComponent(docId)}&page=${encodeURIComponent(pageNumber)}`;
@@ -368,6 +508,20 @@ if (chatboxEl) {
       }
       // --- End Logic ---
 
+    } else if (target && target.matches("a.agent-citation-link")) { // Handle agent citation links
+      event.preventDefault();
+      const toolName = target.getAttribute("data-tool-name");
+      const toolArgs = target.getAttribute("data-tool-args");
+      const toolResult = target.getAttribute("data-tool-result");
+      
+      if (!toolName) {
+        console.warn("Agent citation link clicked but data-tool-name is missing.");
+        showToast("Cannot process agent citation: Missing tool name.", "warning");
+        return;
+      }
+      
+      showAgentCitationModal(toolName, toolArgs, toolResult);
+      
     } else if (target && target.matches("a.file-link")) { // Keep existing file link logic
       event.preventDefault();
       const fileId = target.getAttribute("data-file-id");
@@ -390,4 +544,49 @@ if (chatboxEl) {
     // No specific JS handling needed here unless you want to add tracking etc.
   });
 }
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Global function to toggle result expansion (called from inline onclick)
+window.toggleResultExpansion = function(button) {
+  const resultContent = button.closest('.result-content');
+  const remaining = resultContent.querySelector('.result-remaining');
+  const icon = button.querySelector('i');
+  
+  if (remaining.style.display === 'none') {
+    // Expand
+    remaining.style.display = 'inline';
+    icon.className = 'bi bi-chevron-up';
+    button.title = 'Show less';
+  } else {
+    // Collapse
+    remaining.style.display = 'none';
+    icon.className = 'bi bi-chevron-down';
+    button.title = 'Show more';
+  }
+};
+
+// Global function to toggle arguments expansion (called from inline onclick)
+window.toggleArgsExpansion = function(button) {
+  const argsContent = button.closest('.args-content');
+  const remaining = argsContent.querySelector('.args-remaining');
+  const icon = button.querySelector('i');
+  
+  if (remaining.style.display === 'none') {
+    // Expand
+    remaining.style.display = 'inline';
+    icon.className = 'bi bi-chevron-up';
+    button.title = 'Show less';
+  } else {
+    // Collapse
+    remaining.style.display = 'none';
+    icon.className = 'bi bi-chevron-down';
+    button.title = 'Show more';
+  }
+};
 // ---------------------------------------

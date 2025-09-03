@@ -76,6 +76,10 @@ def register_route_frontend_admin_settings(app):
             settings['enable_http_plugin'] = False
         if 'enable_wait_plugin' not in settings:
             settings['enable_wait_plugin'] = False
+        if 'enable_math_plugin' not in settings:
+            settings['enable_math_plugin'] = False
+        if 'enable_text_plugin' not in settings:
+            settings['enable_text_plugin'] = False
         if 'enable_fact_memory_plugin' not in settings:
             settings['enable_fact_memory_plugin'] = False
         if 'enable_default_embedding_model_plugin' not in settings:

@@ -47,11 +47,23 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from plugin_validation_endpoint import plugin_validation_bp
+from route_openapi import register_openapi_routes
+from route_migration import bp_migration
+from route_plugin_logging import bpl as plugin_logging_bp
+
 from route_external_group_documents import *
 from route_external_public_documents import *
+
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
+app.register_blueprint(plugin_validation_bp)
+app.register_blueprint(bp_migration)
+app.register_blueprint(plugin_logging_bp)
+
+# Register OpenAPI routes
+register_openapi_routes(app)
 
 from flask import g
 from flask_session import Session
@@ -67,6 +79,8 @@ from route_external_groups import *
 from route_external_admin_settings import *
 
 configure_azure_monitor()
+
+
 
 # =================== Helper Functions ===================
 @app.before_first_request
@@ -285,6 +299,18 @@ def robots():
 def favicon():
     return send_from_directory('static', 'favicon.ico')
 
+@app.route('/static/js/<path:filename>')
+def serve_js_modules(filename):
+    """Serve JavaScript modules with correct MIME type."""
+    from flask import send_from_directory, Response
+    if filename.endswith('.mjs'):
+        # Serve .mjs files with correct MIME type for ES modules
+        response = send_from_directory('static/js', filename)
+        response.headers['Content-Type'] = 'application/javascript'
+        return response
+    else:
+        return send_from_directory('static/js', filename)
+
 @app.route('/acceptable_use_policy.html')
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
@@ -381,6 +407,7 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
+
 # ------------------- Extenral Groups Routes ----------
 register_route_external_groups(app)
 
@@ -395,6 +422,7 @@ register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
 register_route_external_admin_settings(app)
+
 
 if __name__ == '__main__':
     settings = get_settings()

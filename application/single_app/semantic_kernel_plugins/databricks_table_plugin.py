@@ -34,6 +34,10 @@ class DatabricksTablePlugin(BasePlugin):
         self.warehouse_id = manifest['additionalFields'].get('warehouse_id', '')
 
     @property
+    def display_name(self) -> str:
+        return "Databricks Table"
+
+    @property
     def metadata(self):
         # Compose a detailed description for the LLM and Semantic Kernel
         user_desc = self._metadata.get("description", f"Databricks table plugin for {self.table_name}")

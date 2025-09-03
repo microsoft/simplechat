@@ -1,4 +1,4 @@
-# DatabaseSeeder for SimpleChat
+# Simple Chat - DatabaseSeeder
 
 The DatabaseSeeder application is a utility designed to automate the process of initializing or updating administrative settings in the CosmosDB database used by the SimpleChat platform. By using this tool, you can reliably seed or overwrite configuration data, ensuring that your environment matches the desired settings for your version of SimpleChat.
 

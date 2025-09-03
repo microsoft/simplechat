@@ -1,4 +1,6 @@
-# ReadMe.Md
+# Simple Chat - Deployment using Terraform
+
+[Return to Main](../README.md)
 
 ## Login to Azure CLI
 
@@ -11,17 +13,33 @@ az login --scope https://graph.microsoft.us//.default --service-principal --user
 az account set -s '@AZURE_SUBSCRIPTION_ID'
 ```
 
-## To use this Terraform configuration
+## Execute Initalize-AzureEnvironment.ps1
 
+After logging into the target Azure subscription, execute the Initalize-AzureEnvironment.ps1 script.  This will configure items not set in the terraform script but is required for the remaining deployment steps.
+
+```powershell
+Initialize-AzureEnvironment.ps1 -ResourceGroupName "myResourceGroup" -AzureRegion "eastus" -ACRName "myACR" -OpenAiName "myOpenAI"
+```
+
+## Configure Terraform Secrets
+ 
 Create a terraform.tfvars: Create a terraform.tfvars file (or provide via environment variables) for sensitive variables like ACR credentials:
 
 ```hcl
-acr_username = "your_acr_username"
-acr_password = "your_acr_password"
+ACR_LOGIN_SERVER = "your_acr_servername"
+ACR_USERNAME = "your_acr_username"
+ACR_PASSWORD = "your_acr_password"
+
 # Optionally override other defaults
 # param_tenant_id = "your-actual-tenant-id"
 # param_location = "usgovvirginia"
 ```
+
+## Deploy initial container
+
+From Github > Actions > "SimpleChat Docker Image Publish" > Run workflow
+
+## Terraform deployment
 
 Initialize: Run terraform init to download the necessary providers.
 Plan: Run terraform plan to see the resources that will be created.
@@ -46,7 +64,7 @@ acr_name = "acr8000"
 acr_resource_group_name = "sc-emma1-sbx1-rg"
 acr_username = "acr8000"
 acr_password = "@YOUR_ACR_PASSWORD"
-image_name = "rudy1simple-chat:2025-05-15_6"
+image_name = "simplechat:latest"
 
 #### SimpleChat Variables
 
@@ -76,20 +94,23 @@ terraform destroy -var-file="./params/rudy1.tfvars" -auto-approve
 STEP 1) Configure Azure Search indexes:
 Deploy index as json files to Azure Search: ai_search-index-group.json, ai_search-index-user.json via the portal.
 
-STEP 2) App Service:
-
-Authentication > identity provider > Delete 100% of this if it exists. You will redo it manually.
-
-Authentication > Add identity provider: Setup identity per instructions in the README.md file.
-
-Deployment Center > Change "Authentication" to "Managed Identity" and then select the correct container image. (This change takes about 5 minutes to kick in after a restart.)
-
-Monitoring > Logs > File System > 14 days expire
-
-Restart the app service.
-
-STEP 3) Navigate to Web UI url in a browser.
+STEP 2) Navigate to Web UI url in a browser.
 
 In the web ui, click on "Admin" > "app settings" to configure your app settings.
 
-STEP 4) Test Web UI fully.
+**NOTE:** When configuring the GPT / Embeddings / Image Generation endpoints, the endpoint / key provided by Azure AI Foundry deployments will cause issues.
+The provided Endpoint / Key will work when "Test GPT Connection" is executed, but fail to "Fetch GPT Models".  To work around this issue, edit the Endpoint URL to the name of the OpenAI service, Fetch the GPT Models, select models as needed, then revert the name back to the original endpoint.
+
+EX: 
+- Azure OpenAI GPT Endpoint: https://northcentralus.api.cognitive.microsoft.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview
+
+Revise to:
+
+- Azure OpenAI GPT Endpoint: https://`<my-openaisvc-01`>.api.cognitive.microsoft.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview
+- Save pending change
+- Fetch GPT Models & select required models
+- Save pending change
+- Revert OpenAI GPT Endpoint: https://northcentralus.api.cognitive.microsoft.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview
+- Save pending change
+
+STEP 3) Test Web UI fully.

@@ -5,13 +5,14 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { docScopeSelect, getDocumentMetadata } from "./chat-documents.js";
+import { docScopeSelect, getDocumentMetadata, personalDocs, groupDocs, publicDocs } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
   selectConversation,
   addConversationToList
 } from "./chat-conversations.js";
+import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { escapeHtml, isColorLight } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
@@ -57,6 +58,7 @@ window.handleInputChange = updateSendButtonVisibility;
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
+  agentCitations = [],
   messageId
 ) {
   let citationsHtml = "";
@@ -98,6 +100,43 @@ function createCitationsHtml(
     });
   }
 
+  if (agentCitations && agentCitations.length > 0) {
+    hasCitations = true;
+    agentCitations.forEach((cite, index) => {
+      // Agent citation format: { tool_name, function_arguments, function_result, timestamp }
+      const displayText = cite.tool_name || `Tool ${index + 1}`;
+      
+      // Handle function arguments properly - convert object to JSON string
+      let toolArgs = "";
+      if (cite.function_arguments) {
+        if (typeof cite.function_arguments === 'object') {
+          toolArgs = JSON.stringify(cite.function_arguments);
+        } else {
+          toolArgs = cite.function_arguments;
+        }
+      }
+      
+      // Handle function result properly - convert object to JSON string
+      let toolResult = "No result";
+      if (cite.function_result) {
+        if (typeof cite.function_result === 'object') {
+          toolResult = JSON.stringify(cite.function_result);
+        } else {
+          toolResult = cite.function_result;
+        }
+      }
+      citationsHtml += `
+              <a href="#"
+                 class="btn btn-sm citation-button agent-citation-link"
+                 data-tool-name="${escapeHtml(cite.tool_name || '')}"
+                 data-tool-args="${escapeHtml(toolArgs)}"
+                 data-tool-result="${escapeHtml(toolResult)}"
+                 title="Agent tool: ${escapeHtml(displayText)} - Click to view details">
+                  <i class="bi bi-cpu me-1"></i>${escapeHtml(displayText)}
+              </a>`;
+    });
+  }
+
   // Optionally wrap in a container if there are any citations
   if (hasCitations) {
     return `<div class="citations-container" data-message-id="${escapeHtml(
@@ -124,7 +163,7 @@ export function loadMessages(conversationId) {
           appendMessage("You", msg.content, null, msg.id);
         } else if (msg.role === "assistant") {
           console.log(`  [loadMessages Loop] Full Assistant msg object:`, JSON.stringify(msg)); // Stringify to see exact keys
-          console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}`);
+          console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}, msg.agent_citations exists=${'agent_citations' in msg}`);
           const senderType = msg.role === "user" ? "You" :
                        msg.role === "assistant" ? "AI" :
                        msg.role === "file" ? "File" :
@@ -137,9 +176,10 @@ export function loadMessages(conversationId) {
           const arg5 = msg.augmented; // Get value
           const arg6 = msg.hybrid_citations; // Get value
           const arg7 = msg.web_search_citations; // Get value
-          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}`);
+          const arg8 = msg.agent_citations; // Get value
+          console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}`);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
           appendMessage("File", msg);
@@ -163,7 +203,8 @@ export function appendMessage(
   messageId = null,
   augmented = false,
   hybridCitations = [],
-  webCitations = []
+  webCitations = [],
+  agentCitations = []
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -192,6 +233,11 @@ export function appendMessage(
       `Received webCitations:`,
       webCitations,
       `(Length: ${webCitations?.length})`
+    );
+    console.log(
+      `Received agentCitations:`,
+      agentCitations,
+      `(Length: ${agentCitations?.length})`
     );
 
     messageClass = "ai-message";
@@ -224,6 +270,7 @@ export function appendMessage(
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
       webCitations,
+      agentCitations,
       messageId
     );
     console.log(
@@ -253,15 +300,25 @@ export function appendMessage(
       "Length:",
       webCitations?.length
     );
+    console.log(
+      "agentCitations:",
+      agentCitations,
+      "Type:",
+      typeof agentCitations,
+      "Length:",
+      agentCitations?.length
+    );
     const hybridCheck = hybridCitations && hybridCitations.length > 0;
     const webCheck = webCitations && webCitations.length > 0;
+    const agentCheck = agentCitations && agentCitations.length > 0;
     console.log("Hybrid Check Result:", hybridCheck);
     console.log("Web Check Result:", webCheck);
-    const overallCondition = augmented && (hybridCheck || webCheck);
+    console.log("Agent Check Result:", agentCheck);
+    const overallCondition = augmented && (hybridCheck || webCheck || agentCheck);
     console.log("Overall Condition Result:", overallCondition);
-    const shouldShowCitations = augmented && citationsButtonsHtml;
+    const shouldShowCitations = (augmented && citationsButtonsHtml) || agentCheck;
     console.log(
-      `Condition check (augmented && citationsButtonsHtml): ${shouldShowCitations}`
+      `Condition check ((augmented && citationsButtonsHtml) || agentCheck): ${shouldShowCitations}`
     );
 
     if (shouldShowCitations) {
@@ -289,6 +346,15 @@ export function appendMessage(
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
+    
+    // Highlight code blocks in the messages
+    messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
+      const match = block.className.match(/language-([a-zA-Z0-9]+)/);
+      if (match && !block.hasAttribute('data-language')) {
+        block.setAttribute('data-language', match[1]);
+      }
+      if (window.Prism) Prism.highlightElement(block);
+    });
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
@@ -452,12 +518,21 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+
+    // Highlight code blocks in the messages
+    messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
+      const match = block.className.match(/language-([a-zA-Z0-9]+)/);
+      if (match && !block.hasAttribute('data-language')) {
+        block.setAttribute('data-language', match[1]);
+      }
+      if (window.Prism) Prism.highlightElement(block);
+    });
+
     
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
     }
-    
     scrollChatToBottom();
   } // End of the large 'else' block for non-AI messages
 }
@@ -608,6 +683,25 @@ export function actuallySendMessage(finalMessageToSend) {
     }
   }
 
+  // Determine the correct doc_scope, especially when "all" is selected but a specific document is chosen
+  let effectiveDocScope = docScopeSelect ? docScopeSelect.value : "all";
+  
+  // If scope is "all" but a specific document is selected, determine the actual scope of that document
+  if (effectiveDocScope === "all" && selectedDocumentId) {
+    const documentMetadata = getDocumentMetadata(selectedDocumentId);
+    if (documentMetadata) {
+      // Check which list the document belongs to
+      if (personalDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "personal";
+      } else if (groupDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "group";
+      } else if (publicDocs.find(doc => doc.id === selectedDocumentId || doc.document_id === selectedDocumentId)) {
+        effectiveDocScope = "public";
+      }
+      console.log(`Document ${selectedDocumentId} scope detected as: ${effectiveDocScope}`);
+    }
+  }
+
   // Fallback: if group_id is null/empty, use window.activeGroupId
   const finalGroupId = group_id || window.activeGroupId || null;
   fetch("/api/chat", {
@@ -624,7 +718,7 @@ export function actuallySendMessage(finalMessageToSend) {
       classifications: classificationsToSend,
       bing_search: bingSearchEnabled,
       image_generation: imageGenEnabled,
-      doc_scope: docScopeSelect ? docScopeSelect.value : "all",
+      doc_scope: effectiveDocScope,
       chat_type: chat_type,
       active_group_id: finalGroupId, // for backward compatibility
       model_deployment: modelDeployment,
@@ -664,6 +758,7 @@ export function actuallySendMessage(finalMessageToSend) {
       );
       console.log("data.hybrid_citations:", data.hybrid_citations);
       console.log("data.web_search_citations:", data.web_search_citations);
+      console.log("data.agent_citations:", data.agent_citations);
       console.log(`data.message_id: ${data.message_id}`);
 
       // Update the user message with the real message ID
@@ -680,7 +775,8 @@ export function actuallySendMessage(finalMessageToSend) {
           data.message_id,
           data.augmented, // Pass augmented flag
           data.hybrid_citations, // Pass hybrid citations
-          data.web_search_citations // Pass web citations
+          data.web_search_citations, // Pass web citations
+          data.agent_citations // Pass agent citations
         );
       }
       // Show kernel fallback notice if present
@@ -717,6 +813,10 @@ export function actuallySendMessage(finalMessageToSend) {
             );
             const titleEl = convoItem.querySelector(".conversation-title");
             if (titleEl) titleEl.textContent = data.conversation_title;
+            
+            // Update sidebar conversation title in real-time
+            updateSidebarConversationTitle(currentConversationId, data.conversation_title);
+            
             updated = true;
           }
           // Update Classifications

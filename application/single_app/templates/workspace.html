@@ -143,6 +143,29 @@
   <div class="container">
     <h2>Personal Workspace</h2>
 
+    <!-- Migration Banner (Hidden by default) -->
+    <div id="migration-banner" class="alert alert-info alert-dismissible fade show" role="alert" style="display: none;">
+      <div class="d-flex align-items-center">
+        <i class="bi bi-arrow-up-circle me-2"></i>
+        <div class="flex-grow-1">
+          <strong>Data Migration Available</strong><br>
+          <small>We've found legacy agents and/or actions in your old settings. Click to migrate them to the new improved storage system for better performance and reliability.</small>
+        </div>
+        <div class="ms-3">
+          <button id="migrate-all-btn" class="btn btn-primary btn-sm me-2">
+            <i class="bi bi-arrow-up"></i> Migrate Now
+          </button>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      </div>
+      <div id="migration-progress" class="mt-2" style="display: none;">
+        <div class="progress" style="height: 4px;">
+          <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+        </div>
+        <small class="text-muted mt-1" id="migration-status-text">Preparing migration...</small>
+      </div>
+    </div>
+
     <!-- Nav Tabs -->
     <ul class="nav nav-tabs" id="workspaceTab" role="tablist">
       <li class="nav-item" role="presentation">
@@ -199,7 +222,7 @@
           aria-controls="plugins-tab"
           aria-selected="false"
         >
-          Your Plugins
+          Your Actions
         </button>
       </li>
       {% endif %}
@@ -487,7 +510,7 @@
       {% endif %}
 
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      <!-- ============= PLUGINS TAB ============= -->
+      <!-- ============= ACTIONS TAB ============= -->
       <div
         class="tab-pane fade"
         id="plugins-tab"
@@ -496,15 +519,15 @@
       >
         {% if settings.allow_user_plugins %}
           <div id="workspace-plugins-root"></div>
-          <!-- Plugins Table Template (hidden) -->
+          <!-- Actions Table Template (hidden) -->
           <template id="plugins-table-template">
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="mb-0 d-flex align-items-center gap-2">
-                  Your Plugins
-                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Plugins Guide</a>
+                  Your Actions
+                  <a href="https://github.com/microsoft/simplechat/blob/main/AGENTS.md" target="_blank" rel="noopener" class="ms-2 small text-decoration-underline">Agents and Actions Guide</a>
                 </h5>
-                <button class="btn btn-success btn-sm" id="create-plugin-btn">New Plugin</button>
+                <button class="btn btn-success btn-sm" id="create-plugin-btn">New Action</button>
               </div>
               <table class="table table-striped" id="plugins-table">
                 <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Actions</th></tr></thead>
@@ -517,7 +540,7 @@
           </div>
         {% else %}
           <div class="alert alert-warning text-center my-4">
-            Custom User Plugins are currently disabled. Please ask your admin to enable plugins for your workspace.
+            Custom User Actions are currently disabled. Please ask your admin to enable actions for your workspace.
           </div>
         {% endif %}
       {% endif %}
@@ -767,7 +790,7 @@
           <!-- Manual User Addition (Collapsible) -->
           <div class="mb-3">
             <button class="btn btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#manualUserSection" aria-expanded="false" aria-controls="manualUserSection">
-              <i class="fas fa-chevron-right" id="manualUserChevron"></i> Add user manually
+              <i class="bi bi-chevron-right" id="manualUserChevron"></i> Add user manually
             </button>
             <div class="collapse mt-3" id="manualUserSection">
               <div class="card card-body">
@@ -941,6 +964,8 @@
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-documents.js') }}"></script>
   <script src="{{ url_for('static', filename='js/workspace/workspace-documents-sharing.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-prompts.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-init.js') }}"></script>
 
 {% endblock %}

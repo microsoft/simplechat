@@ -85,6 +85,7 @@ STEP 4) Configure Azure Search indexes
     #Deploy index as json files to Azure Search
     file: ai_search-index-group.json
     file: ai_search-index-user.json
+    file: ai_search-index-public.json
 
 STEP 5) Entra Security Groups
     - If you opted to have Security Groups created by this deployer, 
@@ -110,24 +111,24 @@ $ErrorActionPreference = "Continue"
 #---------------------------------------------------------------------------------------------
 # Configuration Variables - MODIFY THESE VALUES AS NEEDED
 #---------------------------------------------------------------------------------------------
-$globalWhichAzurePlatform = "AzureUSGovernment" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
+$globalWhichAzurePlatform = "AzureCloud" # Set to "AzureUSGovernment" for Azure Government, "AzureCloud" for Azure Commercial
 $paramTenantId = "" # Tenant ID
-$paramLocation = "EastUS2" # Primary Azure Government region for deployments (e.g., usgovvirginia, usgovarizona, usgovtexas)
+$paramLocation = "EastUS2" # Primary Azure region for deployments (e.g., eastus, eastus2, usgovvirginia, usgovarizona, usgovtexas)
 $paramResourceOwnerId = "" # used for tagging resources
-$paramEnvironment = "prd"  # Environment identifier (e.g., dev, test, prod, uat)
-$paramBaseName = ""  # A short base name for your organization or project (e.g., contoso1, projectx2)
-$ACR_NAME = "" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
-$IMAGE_NAME = "" # Replace with your image name
+$paramEnvironment = "dev"  # Environment identifier (e.g., dev, test, prod, uat)
+$paramBaseName = "simplechatexp"  # A short base name for your organization or project (e.g., contoso1, projectx2)
+$ACR_NAME = "registrysimplechatexperimental" # Replace with your ACR name (must be globally unique, lowercase alphanumeric)
+$IMAGE_NAME = "simplechatexp" # Replace with your image name
 
 $param_UseExisting_OpenAi_Instance = $true
-$param_Existing_AzureOpenAi_ResourceName = "" # Azure OpenAI resource name
-$param_Existing_AzureOpenAi_ResourceGroupName = "" # Azure OpenAI resource group name
-$param_Existing_AzureOpenAi_SubscriptionId = "" # In case the resource is in another subscription
+$param_Existing_AzureOpenAi_ResourceName = "aoai-global-team" # Azure OpenAI resource name
+$param_Existing_AzureOpenAi_ResourceGroupName = "RG-AVD-East-Prod" # Azure OpenAI resource group name
+$param_Existing_AzureOpenAi_SubscriptionId = "9698dd71-9367-49c2-bede-fd0deecfad62" # In case the resource is in another subscription
 #$param_Existing_AzureOpenAi_Deployment_Model = "gpt-4o" # Azure OpenAI deployment name
 #$param_Existing_AzureOpenAi_Deployment_Embeddings = "text-embedding-ada-002" # Azure OpenAI deployment model name
 
 $paramCreateEntraSecurityGroups = $true # Set to true to create Entra ID security groups
-$param_Existing_ResourceGroupName = "" # Leave empty if not using an existing resource group name, one will be dynamically generated
+$param_Existing_ResourceGroupName = "RG-SimpleChat-Experiemental" # Leave empty if not using an existing resource group name, one will be dynamically generated
 
 
 
@@ -323,7 +324,8 @@ $entraGroupName_Users = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGro
 $entraGroupName_CreateGroup = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-CreateGroup"
 $entraGroupName_SafetyViolationAdmin = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-SafetyViolationAdmin"
 $entraGroupName_FeedbackAdmin = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-FeedbackAdmin"
-$global_EntraSecurityGroupNames = @($entraGroupName_Admins, $entraGroupName_Users, $entraGroupName_CreateGroup, $entraGroupName_SafetyViolationAdmin, $entraGroupName_FeedbackAdmin)
+$entraGroupName_CreatePublicWorkspace = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-CreatePublicWorkspace"
+$global_EntraSecurityGroupNames = @($entraGroupName_Admins, $entraGroupName_Users, $entraGroupName_CreateGroup, $entraGroupName_SafetyViolationAdmin, $entraGroupName_FeedbackAdmin, $entraGroupName_CreatePublicWorkspace)
 
 
 #---------------------------------------------------------------------------------------------
@@ -717,8 +719,7 @@ if (-not $account) {
     --public-network-access Enabled `
     --default-consistency-level 'Session' `
     --tags $tagsJson `
-    --enable-burst-capacity True `
-    --enable-prpp-autoscale True
+    --enable-burst-capacity True
 
     if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create Azure Cosmos DB account '$($cosmosDbName)'." }
     else { Write-Host "Azure Cosmos DB account '$($cosmosDbName)' created successfully." }
