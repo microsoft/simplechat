@@ -1011,6 +1011,7 @@
                         <div class="mb-3">
                             <label for="gpt_model" class="form-label">Azure OpenAI GPT Model Selection</label>
                             <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
+                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
                             <div id="gpt_models_list" class="mt-2 mb-3">
                                 
                             </div>
@@ -1152,6 +1153,7 @@
                             <div id="embedding_models_list" class="mt-2 mb-3">
                                 
                             </div>
+                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small>
                             
                             <input type="hidden" name="embedding_model_json" id="embedding_model_json" />
 
@@ -1598,14 +1600,14 @@
 
                         <div class="mb-3">
                             <label for="video_indexer_endpoint" class="form-label">Endpoint</label>
-                            <input type="text" readonly class="form-control"
+                            <input type="text" class="form-control"
                                 id="video_indexer_endpoint" name="video_indexer_endpoint"
                                 value="{{ settings.video_indexer_endpoint or 'https://api.videoindexer.ai' }}">
                         </div>
 
                         <div class="mb-3">
                             <label for="video_indexer_arm_api_version" class="form-label">ARM API Version</label>
-                            <input type="text" readonly class="form-control"
+                            <input type="text" class="form-control"
                                 id="video_indexer_arm_api_version" name="video_indexer_arm_api_version"
                                 value="{{ settings.video_indexer_arm_api_version or '2021-11-10-preview' }}">
                         </div>
@@ -1686,7 +1688,8 @@
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
                             <input type="text" class="form-control"
                                 id="speech_service_endpoint" name="speech_service_endpoint"
-                                value="{{ settings.speech_service_endpoint or '' }}">
+                                value="{{ settings.speech_service_endpoint or '' }}"
+                                placeholder="https://<location>.cognitiveservices.azure.<com or us>/">
                         </div>
 
                         <div class="mb-3">
@@ -2566,6 +2569,24 @@
                         <label class="form-check-label ms-2" for="enable_file_processing_logs">
                             Enable File Processing Logs
                         </label>
+                    </div>
+                    <div class="card mb-3 p-3">
+                        <h5>External Health Check</h5>
+                        <p class="text-muted mb-2">
+                            Enable or disable the /external/healthcheck endpoint for external health monitoring.
+                        </p>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_external_healthcheck"
+                                name="enable_external_healthcheck"
+                                {% if settings.enable_external_healthcheck %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                                Enable External Health Check Endpoint
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>

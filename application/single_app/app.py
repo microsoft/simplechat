@@ -80,6 +80,8 @@ from route_external_admin_settings import *
 
 configure_azure_monitor()
 
+
+
 # =================== Helper Functions ===================
 @app.before_first_request
 def before_first_request():
@@ -405,6 +407,7 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
+
 # ------------------- Extenral Groups Routes ----------
 register_route_external_groups(app)
 
@@ -423,20 +426,13 @@ register_route_external_admin_settings(app)
 if __name__ == '__main__':
     settings = get_settings()
     initialize_clients(settings)
+
+    env = os.environ.get("FLASK_ENV", "production")
     
-    # Configure HTTPS with adhoc SSL certificate for local development
-    ssl_context = 'adhoc'
-    port = 5000
-    
-    try:
-        if ssl_context:
-            print(f"Starting server with HTTPS on https://localhost:{port}")
-        else:
-            print(f"Starting server with HTTP on http://localhost:{port}")
-        
-        app.run(host="0.0.0.0", port=port, debug=False, ssl_context=ssl_context)
-    except Exception as e:
-        print(f"HTTPS enabled but no valid certificates provided. Falling back to HTTP...")
-        port = 5000
-        print(f"Starting server with HTTP on http://localhost:{port}")
-        app.run(host="0.0.0.0", port=port, debug=False, ssl_context=None)
+    if env == "development":
+        # Local dev with HTTPS
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
+    else:
+        # Production - use WSGI server like Gunicorn
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port, debug=False)

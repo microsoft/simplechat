@@ -19,11 +19,22 @@ def extract_content_with_azure_di(file_path):
     """
     try:
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
-        with open(file_path, "rb") as f:
+        if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+            # Required format for Document Intelligence API version 2024-11-30
+            with open(file_path, 'rb') as f:
+                file_bytes = f.read()
+                base64_source = base64.b64encode(file_bytes).decode('utf-8')
+
             poller = document_intelligence_client.begin_analyze_document(
-                model_id="prebuilt-read",
-                document=f
+                "prebuilt-read",
+                {"base64Source": base64_source}
             )
+        else:
+            with open(file_path, 'rb') as f:
+                poller = document_intelligence_client.begin_analyze_document(
+                    model_id="prebuilt-read",
+                    document=f
+                )
 
         max_wait_time = 600
         start_time = time.time()

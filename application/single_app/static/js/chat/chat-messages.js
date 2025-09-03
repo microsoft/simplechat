@@ -356,6 +356,15 @@ export function appendMessage(
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
+    
+    // Highlight code blocks in the messages
+    messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
+      const match = block.className.match(/language-([a-zA-Z0-9]+)/);
+      if (match && !block.hasAttribute('data-language')) {
+        block.setAttribute('data-language', match[1]);
+      }
+      if (window.Prism) Prism.highlightElement(block);
+    });
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
@@ -526,12 +535,21 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+
+    // Highlight code blocks in the messages
+    messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
+      const match = block.className.match(/language-([a-zA-Z0-9]+)/);
+      if (match && !block.hasAttribute('data-language')) {
+        block.setAttribute('data-language', match[1]);
+      }
+      if (window.Prism) Prism.highlightElement(block);
+    });
+
     
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
     }
-    
     scrollChatToBottom();
   } // End of the large 'else' block for non-AI messages
 }
