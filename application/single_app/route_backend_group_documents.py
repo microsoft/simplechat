@@ -97,15 +97,7 @@ def register_route_backend_group_documents(app):
                     percentage_complete=0
                 )
 
-                future = executor.submit(
-                    process_document_upload_background,
-                    document_id=parent_document_id,
-                    group_id=active_group_id,
-                    user_id=user_id,
-                    temp_file_path=temp_file_path,
-                    original_filename=original_filename
-                )
-                executor.submit_stored(
+                future = executor.submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
@@ -462,14 +454,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': 'You do not have permission to extract metadata for this group document'}), 403
 
         # Queue the group metadata extraction task
-        future = executor.submit(
-            process_metadata_extraction_background,
-            document_id=document_id,
-            user_id=user_id,
-            group_id=active_group_id  # Ensure your background handler supports this
-        )
-
-        executor.submit_stored(
+        future = executor.submit_stored(
             f"{document_id}_group_metadata",
             process_metadata_extraction_background,
             document_id=document_id,

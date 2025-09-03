@@ -7,11 +7,15 @@ import { getUrlParameter } from "./chat-utils.js"; // Assuming getUrlParameter i
 import { loadUserPrompts, loadGroupPrompts, initializePromptInteractions } from "./chat-prompts.js";
 import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
+import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
 
   loadConversations(); // Load conversations immediately
+
+  // Initialize the conversation info button
+  initConversationInfoButton();
 
   // Grab references to the relevant elements
   const userInput = document.getElementById("user-input");

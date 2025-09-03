@@ -83,7 +83,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "version": version,
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "type": "document_metadata",
                 "public_workspace_id": public_workspace_id,
                 "user_id": user_id
@@ -101,7 +101,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "version": version,
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "type": "document_metadata",
                 "group_id": group_id,
                 "shared_group_ids": []
@@ -119,7 +119,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "version": version,
                 "status": status,
                 "percentage_complete": 0,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "type": "document_metadata",
                 "user_id": user_id,
                 "shared_user_ids": []
@@ -879,7 +879,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -900,7 +900,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -923,7 +923,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "page_number": page_number,
                 "author": author,
                 "title": title,
-                "document_classification": "Pending",
+                "document_classification": "None",
                 "chunk_sequence": page_number,  # or you can keep an incremental idx
                 "upload_date": current_time,
                 "version": version,
@@ -2856,7 +2856,9 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 "update_callback": update_callback
             }
 
-            if is_group:
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
                 args["group_id"] = group_id
 
             total_chunks_saved = process_single_tabular_sheet(**args)
@@ -2888,7 +2890,9 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                     "update_callback": update_callback
                 }
 
-                if is_group:
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
                     args["group_id"] = group_id
 
                 chunks_from_sheet = process_single_tabular_sheet(**args)
@@ -3571,7 +3575,7 @@ def upgrade_legacy_documents(user_id, group_id=None, public_workspace_id=None):
                 current_file_chunk=doc.get("num_chunks", 1),
                 num_file_chunks=1,
                 enhanced_citations=False,
-                document_classification="Pending",
+                document_classification="None",
                 title="",
                 authors=[],
                 organization="",
@@ -3592,7 +3596,7 @@ def upgrade_legacy_documents(user_id, group_id=None, public_workspace_id=None):
                 current_file_chunk=doc.get("num_chunks", 1),
                 num_file_chunks=1,
                 enhanced_citations=False,
-                document_classification="Pending",
+                document_classification="None",
                 title="",
                 authors=[],
                 organization="",

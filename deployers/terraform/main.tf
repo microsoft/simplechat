@@ -177,8 +177,9 @@ locals {
   search_service_name         = "${var.param_base_name}-${var.param_environment}-search"
   storage_account_base        = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name        = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
-  acr_base_url                = "${var.acr_name}.azurecr.us" # Script has this hardcoded for US Gov
-  param_registry_server       = "https://${var.acr_name}.azurecr.us" # Script has this hardcoded for US Gov
+  
+  acr_base_url                = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"  
+  param_registry_server   = var.global_which_azure_platform == "AzureUSGovernment" ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
 
   app_service_fqdn_suffix = var.global_which_azure_platform == "AzureUSGovernment" ? ".azurewebsites.us" : ".azurewebsites.net"
   graph_url               = var.global_which_azure_platform == "AzureUSGovernment" ? "https://graph.microsoft.us" : "https://graph.microsoft.com"
@@ -318,7 +319,9 @@ resource "azurerm_storage_account" "sa" {
   account_replication_type = "LRS" # Standard_LRS
   account_kind             = "StorageV2"
   access_tier              = "Hot"
+  allow_nested_items_to_be_public =  false
   public_network_access_enabled = false # From script's allow-blob-public-access false
+  shared_access_key_enabled = true
   tags                     = local.common_tags
 }
 
@@ -356,6 +359,8 @@ resource "azurerm_linux_web_app" "app" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   service_plan_id     = azurerm_service_plan.asp.id
+  ftp_publish_basic_authentication_enabled = false
+  webdeploy_publish_basic_authentication_enabled = false   
 
   # auth_settings {
   #     enabled                 = true
@@ -373,15 +378,15 @@ resource "azurerm_linux_web_app" "app" {
 
   auth_settings_v2 {
     auth_enabled           = true
-    unauthenticated_action = "Return401"
-    #unauthenticated_action = "Return302"
+    unauthenticated_action = "RedirectToLoginPage"
+    default_provider       = "azureactivedirectory"
     require_authentication = true
     require_https          = true
 
     active_directory_v2 {
       client_id = azuread_application.app_registration.client_id
       client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" # This should be allowed optional
-      tenant_auth_endpoint       = "https://login.microsoftonline.us/${data.azuread_client_config.current.tenant_id}/v2.0"
+      tenant_auth_endpoint       = var.global_which_azure_platform == "AzureUSGovernment" ? "https://login.microsoftonline.us/${data.azuread_client_config.current.tenant_id}/v2.0" : "https://login.microsoftonline.com/${data.azuread_client_config.current.tenant_id}/v2.0"
     }
 
     login {
@@ -424,9 +429,10 @@ resource "azurerm_linux_web_app" "app" {
   site_config {
     always_on  = true
     minimum_tls_version = "1.2"
+    container_registry_use_managed_identity = true
 
     application_stack {
-      docker_image_name = "${local.param_registry_server}/${var.image_name}"
+      docker_image_name = "${var.image_name}"
       docker_registry_username = var.acr_username
       docker_registry_password = var.acr_password
       docker_registry_url = local.param_registry_server
@@ -440,11 +446,10 @@ resource "azurerm_linux_web_app" "app" {
 
   lifecycle {
     ignore_changes = [
-      site_config[0].application_stack[0].docker_registry_url,
       site_config[0].application_stack[0].docker_image_name
     ]
   }
-
+  
   tags = local.common_tags
 }
 

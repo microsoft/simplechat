@@ -19,6 +19,7 @@ CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")  # Client secret for your clien
 API_SCOPE = os.getenv("API_SCOPE") # Or a specific scope defined for your API, e.g., "api://<your-api-client-id>/.default" for application permissions
 API_BASE_URL = os.getenv("API_BASE_URL") # Base URL for your API
 GROUP_DOCUMENTS_UPLOAD_URL = f"{API_BASE_URL}/external/group_documents/upload"
+PUBLIC_DOCUMENTS_UPLOAD_URL = f"{API_BASE_URL}/external/public_documents/upload"
 BEARER_TOKEN_TEST_URL = f"{API_BASE_URL}/external/testaccesstoken"  # URL to test the access token
 UPLOAD_DIRECTORY = os.getenv("UPLOAD_DIRECTORY")  # Local directory containing files to upload
 g_ACCESS_TOKEN = None  # Placeholder for the access token function
@@ -85,7 +86,7 @@ def get_access_token():
         appLogger.error(f"An unexpected error occurred during token acquisition: {e}")
         return None
 
-def upload_document(file_path, user_id, active_group_id, classification, access_token=None):
+def upload_document(file_path, user_id, active_workspace_scope, active_workspace_id, classification, access_token=None):
     """
     Uploads a single document to the custom API.
 
@@ -102,17 +103,22 @@ def upload_document(file_path, user_id, active_group_id, classification, access_
     }
     data = {
         "user_id": user_id.strip(),
-        "active_group_id": active_group_id.strip(),
+        "active_workspace_id": active_workspace_id.strip(),
         "classification": classification.strip()
     }
+
+    if active_workspace_scope == "public":
+        upload_url = PUBLIC_DOCUMENTS_UPLOAD_URL
+    else:
+        upload_url = GROUP_DOCUMENTS_UPLOAD_URL
 
     try:
         with open(file_path, 'rb') as f:
             files = {'file': (file_name, f)}
-            appLogger.info(f"`nAttempting to upload: {file_name} to url: {GROUP_DOCUMENTS_UPLOAD_URL}")
-            appLogger.info(f"User_ID: {user_id}, Active_Group_OID: {active_group_id}")
+            appLogger.info(f"`nAttempting to upload: {file_name} to url: {upload_url}")
+            appLogger.info(f"User_ID: {user_id}, Workspace_ID: {active_workspace_id}")
             input("Press Enter to process this file...") # For debugging purposes, uncomment to pause before upload
-            response = requests.post(GROUP_DOCUMENTS_UPLOAD_URL, headers=headers, files=files, data=data, timeout=60) # Added timeout
+            response = requests.post(upload_url, headers=headers, files=files, data=data, timeout=60) # Added timeout
             response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
 
             appLogger.info(f"Successfully uploaded {file_name}. Status Code: {response.status_code}")
@@ -199,10 +205,11 @@ def read_csv_ignore_header(file_path):
                 print(f"Line {line_number}: {row}")
                 directory = row[0]
                 user_id = row[1]
-                active_group_id = row[2]
-                classification = row[3]
+                active_workspace_scope = row[2]
+                active_workspace_id = row[3]
+                classification = row[4]
                 full_file_path = os.path.join(UPLOAD_DIRECTORY, directory)
-                read_files_in_directory(full_file_path, user_id, active_group_id, classification, g_ACCESS_TOKEN)
+                read_files_in_directory(full_file_path, user_id, active_workspace_scope, active_workspace_id, classification, g_ACCESS_TOKEN)
                 # You can process each 'row' (which is a list of strings) here
                 line_number += 1
 
@@ -211,7 +218,7 @@ def read_csv_ignore_header(file_path):
     except Exception as e:
         print(f"An error occurred while reading the CSV file: {e}")
 
-def read_files_in_directory(directory, user_id, active_group_id, classification, access_token=g_ACCESS_TOKEN):
+def read_files_in_directory(directory, user_id, active_workspace_scope, active_workspace_id, classification, access_token=g_ACCESS_TOKEN):
     """
     Reads all files in a specified directory and returns their names.
 
@@ -244,7 +251,7 @@ def read_files_in_directory(directory, user_id, active_group_id, classification,
             files.append(filename)
             appLogger.debug("Uploading file")
             appLogger.debug(f"Uploading file: {filename}")
-            upload_document(file_path, user_id, active_group_id, classification, g_ACCESS_TOKEN)
+            upload_document(file_path, user_id, active_workspace_scope, active_workspace_id, classification, g_ACCESS_TOKEN)
         else:
             appLogger.info(f"Skipping {filename}: Not a file.")
     #return files
@@ -294,9 +301,9 @@ def main():
         return
 
     # Uncomment the following lines to test the access token validity
-    #appLogger.info("Testing access token for validity...")
-    #test_access_token(access_token=g_ACCESS_TOKEN)
-    #appLogger.info("Access token test complete...")
+    appLogger.info("Testing access token for validity...")
+    test_access_token(access_token=g_ACCESS_TOKEN)
+    appLogger.info("Access token test complete...")
 
     appLogger.info("Reading map file...")
     read_csv_ignore_header('map.csv')

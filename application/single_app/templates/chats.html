@@ -151,6 +151,21 @@
             background-color: var(--bs-gray-800);
             color: var(--bs-gray-200);
         }
+        
+        /* Conversation info button styling */
+        #conversation-info-btn {
+            transition: color 0.2s ease;
+            font-size: 1rem;
+        }
+        
+        #conversation-info-btn:hover {
+            color: var(--bs-primary) !important;
+        }
+        
+        /* Ensure proper spacing in conversation title area */
+        #current-conversation-title {
+            min-height: 1.5rem;
+        }
     </style>
 {% endblock %}
 
@@ -179,8 +194,13 @@
         <div id="right-pane" class="d-flex flex-column h-100 chat-container">
             <div class="p-3 border-bottom align-items-center justify-content-between flex-shrink-0">
                 <div class="d-flex flex-column">
-                    <h5 id="current-conversation-title" class="mb-0">
-                    </h5>
+                    <div class="d-flex align-items-center">
+                        <h5 id="current-conversation-title" class="mb-0 flex-grow-1">
+                        </h5>
+                        <button id="conversation-info-btn" class="btn btn-link p-0 ms-2" style="color: #6c757d; display: none;" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details">
+                            <i class="bi bi-info-circle"></i>
+                        </button>
+                    </div>
                     <div id="current-conversation-classifications" class="mt-1">
                     </div>
                 </div>
@@ -465,6 +485,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

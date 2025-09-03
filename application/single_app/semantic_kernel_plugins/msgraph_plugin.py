@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 import requests
 from flask import session
 from functions_authentication import get_valid_access_token
@@ -10,6 +11,10 @@ class MSGraphPlugin(BasePlugin):
         self.manifest = manifest
         self._metadata = manifest.get('metadata', {})
         # You can add more config here if needed
+
+    @property
+    def display_name(self) -> str:
+        return "Microsoft Graph"
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -54,6 +59,7 @@ class MSGraphPlugin(BasePlugin):
             raise Exception("Could not acquire MS Graph access token. User may need to re-authenticate.")
         return token
 
+    @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get information about the signed-in user.")
     def get_my_profile(self) -> dict:
         token = self._get_token(["User.Read"])
@@ -64,6 +70,7 @@ class MSGraphPlugin(BasePlugin):
         resp.raise_for_status()
         return resp.json()
 
+    @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get upcoming calendar events for the signed-in user.")
     def get_my_events(self, top: int = 5) -> dict:
         token = self._get_token(["Calendars.Read"])
@@ -75,6 +82,7 @@ class MSGraphPlugin(BasePlugin):
         resp.raise_for_status()
         return resp.json()
 
+    @plugin_function_logger("MSGraphPlugin")
     @kernel_function(description="Get recent security alerts for the signed-in user.")
     def get_my_security_alerts(self, top: int = 5) -> dict:
         token = self._get_token(["SecurityEvents.Read.All"])

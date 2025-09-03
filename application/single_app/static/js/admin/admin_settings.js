@@ -1052,11 +1052,13 @@ function setupToggles() {
         const timeToggle = document.getElementById('toggle-time-plugin');
         const httpToggle = document.getElementById('toggle-http-plugin');
         const waitToggle = document.getElementById('toggle-wait-plugin');
+        const mathToggle = document.getElementById('toggle-math-plugin');
+        const textToggle = document.getElementById('toggle-text-plugin');
         const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
         const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
         const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
-        const toggles = [timeToggle, httpToggle, waitToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -1082,6 +1084,8 @@ function setupToggles() {
                 if (timeToggle) timeToggle.checked = !!settings.enable_time_plugin;
                 if (httpToggle) httpToggle.checked = !!settings.enable_http_plugin;
                 if (waitToggle) waitToggle.checked = !!settings.enable_wait_plugin;
+                if (mathToggle) mathToggle.checked = !!settings.enable_math_plugin;
+                if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
                 if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
                 if (allowUserPluginsToggle) allowUserPluginsToggle.checked = !!settings.allow_user_plugins;
@@ -1101,6 +1105,8 @@ function setupToggles() {
                 enable_time_plugin: timeToggle ? timeToggle.checked : false,
                 enable_http_plugin: httpToggle ? httpToggle.checked : false,
                 enable_wait_plugin: waitToggle ? waitToggle.checked : false,
+                enable_math_plugin: mathToggle ? mathToggle.checked : false,
+                enable_text_plugin: textToggle ? textToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
                 enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
                 allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,

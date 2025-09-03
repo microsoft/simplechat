@@ -25,8 +25,16 @@ def generate_agent_id():
 @login_required
 def get_user_agents():
     user_id = get_current_user_id()
-    user_settings = get_user_settings(user_id)
-    agents = user_settings.get('settings', {}).get('agents', [])
+    
+    # Import the new personal agents functions
+    from functions_personal_agents import get_personal_agents, ensure_migration_complete
+    
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_migration_complete(user_id)
+    
+    # Get agents from the new personal_agents container
+    agents = get_personal_agents(user_id)
+    
     # Always mark user agents as is_global: False
     for agent in agents:
         agent['is_global'] = False
@@ -56,6 +64,9 @@ def set_user_agents():
     agents = request.json if isinstance(request.json, list) else []
     settings = get_settings()
 
+    # Import the new personal agents functions
+    from functions_personal_agents import save_personal_agent, delete_personal_agent, get_personal_agents
+    
     # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
     if not settings.get('allow_user_custom_agent_endpoints', False):
         for agent in agents:
@@ -90,10 +101,20 @@ def set_user_agents():
             if not found:
                 return jsonify({'error': f'At least one agent must match the global_selected_agent ("{global_name}").'}), 400
 
-    user_settings = get_user_settings(user_id)
-    settings_to_update = user_settings.get('settings', {})
-    settings_to_update['agents'] = filtered_agents
-    update_user_settings(user_id, settings_to_update)
+    # Get current personal agents to determine what to delete
+    current_agents = get_personal_agents(user_id)
+    current_agent_names = set(agent['name'] for agent in current_agents)
+    
+    # Save new/updated agents to personal_agents container
+    for agent in filtered_agents:
+        save_personal_agent(user_id, agent)
+    
+    # Delete agents that are no longer in the filtered list
+    new_agent_names = set(agent['name'] for agent in filtered_agents)
+    agents_to_delete = current_agent_names - new_agent_names
+    for agent_name in agents_to_delete:
+        delete_personal_agent(user_id, agent_name)
+    
     log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
@@ -103,26 +124,33 @@ def set_user_agents():
 @login_required
 def delete_user_agent(agent_name):
     user_id = get_current_user_id()
-    user_settings = get_user_settings(user_id)
-    agents = user_settings.get('settings', {}).get('agents', [])
+    
+    # Import the new personal agents functions
+    from functions_personal_agents import get_personal_agents, delete_personal_agent
+    
+    # Get current agents from personal_agents container
+    agents = get_personal_agents(user_id)
     agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
     if not agent_to_delete:
         return jsonify({'error': 'Agent not found.'}), 404
+    
     # Prevent deleting the agent that matches global_selected_agent
     settings = get_settings()
     global_selected_agent = settings.get('global_selected_agent', {})
     global_selected_name = global_selected_agent.get('name')
     if agent_to_delete.get('name') == global_selected_name:
         return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
-    new_agents = [a for a in agents if a['name'] != agent_name]
-    # Enforce that if there are agents left, one must match global_selected_agent
-    if len(new_agents) > 0:
-        found = any(a.get('name') == global_selected_name for a in new_agents)
+    
+    # Delete from personal_agents container
+    delete_personal_agent(user_id, agent_name)
+    
+    # Check if there are any agents left and if they match global_selected_agent
+    remaining_agents = get_personal_agents(user_id)
+    if len(remaining_agents) > 0:
+        found = any(a.get('name') == global_selected_name for a in remaining_agents)
         if not found:
             return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-    settings_to_update = user_settings.get('settings', {})
-    settings_to_update['agents'] = new_agents
-    update_user_settings(user_id, settings_to_update)
+  
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 
@@ -428,6 +456,8 @@ def get_global_agent_settings(include_admin_extras=False):
         "per_user_semantic_kernel": settings.get("per_user_semantic_kernel", False),
         "enable_time_plugin": settings.get("enable_time_plugin", False),
         "enable_fact_memory_plugin": settings.get("enable_fact_memory_plugin", False),
+        "enable_math_plugin": settings.get("enable_math_plugin", False),
+        "enable_text_plugin": settings.get("enable_text_plugin", False),
         "enable_http_plugin": settings.get("enable_http_plugin", False),
         "enable_wait_plugin": settings.get("enable_wait_plugin", False),
         "enable_default_embedding_model_plugin": settings.get("enable_default_embedding_model_plugin", False),

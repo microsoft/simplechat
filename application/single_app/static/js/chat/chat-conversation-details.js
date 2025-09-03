@@ -3,6 +3,8 @@
  * Module for handling conversation details modal
  */
 
+import { isColorLight } from "./chat-utils.js";
+
 /**
  * Show conversation details in a modal
  * @param {string} conversationId - The conversation ID to show details for
@@ -70,7 +72,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal' } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -105,6 +107,9 @@ function renderConversationMetadata(metadata) {
               </div>
               <div class="col-sm-6">
                 <strong>Strict Mode:</strong> ${strict ? '<span class="badge bg-warning">Enabled</span>' : '<span class="badge bg-success">Disabled</span>'}
+              </div>
+              <div class="col-sm-6">
+                <strong>Chat Type:</strong> ${formatChatType(chat_type, context)}
               </div>
               <div class="col-sm-6">
                 <strong>Classifications:</strong> ${formatClassifications(classification)}
@@ -226,12 +231,17 @@ function renderContextSection(context) {
   
   if (primary) {
     const displayName = primary.name || primary.id;
+    const isGroupChat = primary.scope === 'group';
+    
     html += `
       <div class="mb-3">
         <strong class="text-primary">Primary Context:</strong>
         <div class="ms-3 mt-1">
-          <span class="badge bg-primary me-2">${primary.scope}</span>
-          <span class="fw-bold">${displayName}</span>
+          <div class="d-flex align-items-center mb-2">
+            <span class="badge bg-primary me-2">${primary.scope}</span>
+            ${isGroupChat ? '<span class="badge bg-secondary me-2">single-user</span>' : ''}
+            <span class="fw-bold">${displayName}</span>
+          </div>
           ${primary.name ? `<div class="small text-muted">ID: ${primary.id}</div>` : ''}
         </div>
       </div>
@@ -374,11 +384,23 @@ function renderDocumentsSection(documents) {
     const documentTitle = doc.title || doc.document_id;
     const scopeName = doc.scope?.name || doc.scope?.id || 'Unknown';
     
+    // Format document classification with custom colors
+    const allCategories = window.classification_categories || [];
+    const category = allCategories.find(cat => cat.label === doc.classification);
+    let classificationHtml;
+    
+    if (category) {
+      const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
+      classificationHtml = `<span class="badge ${textClass}" style="background-color: ${category.color}">${doc.classification}</span>`;
+    } else {
+      classificationHtml = `<span class="badge bg-warning text-dark" title="Definition for '${doc.classification}' not found">${doc.classification}</span>`;
+    }
+    
     html += `
       <div class="mb-3 p-2 border rounded">
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div class="fw-semibold text-truncate me-2" title="${documentTitle}">${documentTitle}</div>
-          <span class="badge bg-${getClassificationColor(doc.classification)}">${doc.classification}</span>
+          ${classificationHtml}
         </div>
         <div class="small text-muted mb-1">
           <i class="bi bi-file-earmark me-1"></i>
@@ -450,17 +472,41 @@ function formatClassifications(classifications) {
     return '<span class="badge bg-light text-dark">None</span>';
   }
   
-  return classifications.map(cls => 
-    `<span class="badge bg-${getClassificationColor(cls)}">${cls}</span>`
-  ).join(' ');
+  const allCategories = window.classification_categories || [];
+  
+  return classifications.map(label => {
+    const category = allCategories.find(cat => cat.label === label);
+    
+    if (category) {
+      // Found category definition, apply custom color
+      const textClass = isColorLight(category.color) ? 'text-dark' : 'text-white';
+      return `<span class="badge ${textClass}" style="background-color: ${category.color}">${label}</span>`;
+    } else {
+      // Label exists but no definition found (maybe deleted in admin)
+      return `<span class="badge bg-warning text-dark" title="Definition for '${label}' not found">${label}</span>`;
+    }
+  }).join(' ');
 }
 
-function getClassificationColor(classification) {
-  switch (classification?.toLowerCase()) {
-    case 'cui': return 'warning';
-    case 'public': return 'success';
-    case 'pending': return 'secondary';
-    default: return 'light text-dark';
+function formatChatType(chatType, context = []) {
+  // Use the actual chat_type value from the metadata
+  if (chatType === 'personal') {
+    return '<span class="badge bg-primary">personal</span>';
+  } else if (chatType === 'group' || chatType.startsWith('group')) {
+    // For group chats, try to find the group name from context
+    const primaryContext = context.find(c => c.type === 'primary' && c.scope === 'group');
+    const groupName = primaryContext ? primaryContext.name || 'Group' : 'Group';
+    
+    // Determine if single-user or multi-user based on chat_type
+    const userType = chatType.includes('multi-user') ? 'multi-user' : 'single-user';
+    
+    return `
+      <span class="badge bg-info me-1">group - ${groupName}</span>
+      <span class="badge bg-secondary">${userType}</span>
+    `;
+  } else {
+    // Fallback for unknown types
+    return `<span class="badge bg-secondary">${chatType}</span>`;
   }
 }
 

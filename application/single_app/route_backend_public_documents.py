@@ -16,7 +16,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_upload_public_document():
         user_id = get_current_user_id()
         if not user_id:
@@ -102,7 +101,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_list_public_documents():
         user_id = get_current_user_id()
         if not user_id:
@@ -230,7 +228,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_get_public_document(doc_id):
         user_id = get_current_user_id()
         settings = get_user_settings(user_id)
@@ -249,7 +246,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_patch_public_document(doc_id):
         user_id = get_current_user_id()
         settings = get_user_settings(user_id)
@@ -283,7 +279,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_delete_public_document(doc_id):
         user_id = get_current_user_id()
         settings = get_user_settings(user_id)
@@ -304,7 +299,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_extract_metadata_public_document(doc_id):
         user_id = get_current_user_id()
         settings = get_settings()
@@ -324,7 +318,6 @@ def register_route_backend_public_documents(app):
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
-    @create_public_workspace_role_required
     def api_upgrade_legacy_public_documents():
         user_id = get_current_user_id()
         user_cfg = get_user_settings(user_id)

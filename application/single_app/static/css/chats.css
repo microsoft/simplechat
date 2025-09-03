@@ -172,8 +172,8 @@
 
 .chat-classification-badge {
   display: inline-block;
-  padding: 0.2em 0.5em; /* Slightly smaller padding */
-  font-size: 0.75em;   /* Smaller font size */
+  padding: 0.35em 0.65em; /* Match Bootstrap badge padding */
+  font-size: 0.75em;   /* Match Bootstrap badge font size */
   font-weight: 600;
   line-height: 1;
   color: #fff; /* Default white text */
@@ -470,6 +470,147 @@ body.layout-split .gutter {
 .message-actions {
   display: flex;
   align-items: center;
+}
+
+/* User message footer styling */
+.user-message .message-footer {
+  padding-top: 5px;
+  margin-top: 8px;
+}
+
+.copy-user-btn, .source-user-btn {
+  border: none;
+  background: transparent;
+  color: #6c757d;
+  font-size: 0.875rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.copy-user-btn, .metadata-toggle-btn {
+  border: none;
+  background: transparent;
+  color: #6c757d;
+  font-size: 0.875rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.copy-user-btn:hover, .metadata-toggle-btn:hover {
+  color: #0d6efd;
+  background-color: #e3f2fd;
+}
+
+/* Metadata drawer styling */
+.metadata-container {
+  font-size: 0.875rem;
+  color: #6c757d;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.metadata-content {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Responsive grid layout for metadata sections */
+@media (min-width: 768px) {
+  .metadata-content {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .metadata-content {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.metadata-section {
+  margin-bottom: 0; /* Remove margin since grid gap handles spacing */
+  break-inside: avoid; /* Prevent sections from breaking across columns in some browsers */
+}
+
+.metadata-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #495057;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.5rem;
+}
+
+.metadata-item {
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.4;
+}
+
+.metadata-item .badge {
+  font-size: 0.7rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+.metadata-code {
+  font-size: 0.75rem;
+  background-color: #e9ecef;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.copy-user-btn:hover, .source-user-btn:hover {
+  color: #0d6efd;
+  background-color: #e3f2fd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn,
+[data-bs-theme="dark"] .source-user-btn {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn,
+[data-bs-theme="dark"] .metadata-toggle-btn {
+  color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .copy-user-btn:hover,
+[data-bs-theme="dark"] .source-user-btn:hover {
+  color: #ffffff;
+  background-color: #0a58ca;
+}
+
+[data-bs-theme="dark"] .copy-user-btn:hover,
+[data-bs-theme="dark"] .metadata-toggle-btn:hover {
+  color: #ffffff;
+  background-color: #0a58ca;
+}
+
+/* Dark mode metadata drawer styling */
+[data-bs-theme="dark"] .metadata-container {
+  background-color: #343a40;
+  color: #adb5bd;
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] .metadata-title {
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .metadata-code {
+  background-color: #495057;
+  border-color: #6c757d;
+  color: #e9ecef;
 }
 
 /* Ensure the image is a fixed small size */
