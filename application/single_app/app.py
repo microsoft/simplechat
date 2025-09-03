@@ -80,6 +80,8 @@ from route_external_admin_settings import *
 
 configure_azure_monitor()
 
+
+
 # =================== Helper Functions ===================
 @app.before_first_request
 def before_first_request():
@@ -405,6 +407,7 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
+
 # ------------------- Extenral Groups Routes ----------
 register_route_external_groups(app)
 
@@ -419,6 +422,7 @@ register_route_external_documents(app)
 
 # ------------------- Extenral Admin Settings Routes ----------
 register_route_external_admin_settings(app)
+
 
 if __name__ == '__main__':
     settings = get_settings()
