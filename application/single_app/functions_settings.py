@@ -291,6 +291,7 @@ def get_settings():
         'conversation_history_limit': 10,
         'default_system_prompt': '',
         'enable_file_processing_logs': True,
+        'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': 'https://api.videoindexer.ai',
