@@ -89,6 +89,8 @@ export class PluginModalStepper {
       // Skip to step 2 for editing
       this.goToStep(2);
     } else {
+      // Clear form for new action
+      this.clearForm();
       this.populateActionTypeCards();
     }
     
@@ -1584,9 +1586,24 @@ export class PluginModalStepper {
     document.getElementById('summary-plugin-type').textContent = type;
     document.getElementById('summary-plugin-description').textContent = description || '-';
     
-    // Configuration Section
-    const endpoint = this.getEndpointValue();
-    document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+    // Configuration Section - Handle endpoint vs SQL configuration
+    const isSqlType = this.selectedType && (
+      this.selectedType.toLowerCase().includes('sql') || 
+      this.selectedType.toLowerCase() === 'sql_schema' ||
+      this.selectedType.toLowerCase() === 'sql_query'
+    );
+    
+    const endpointRow = document.getElementById('summary-plugin-endpoint-row');
+    
+    if (isSqlType) {
+      // Hide endpoint for SQL plugins since they don't use endpoints
+      endpointRow.style.display = 'none';
+    } else {
+      // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+    }
     
     const authType = this.getAuthTypeValue();
     document.getElementById('summary-plugin-auth').textContent = authType || 'None';
@@ -2013,6 +2030,95 @@ export class PluginModalStepper {
       additionalFields: 'Additional Fields'
     };
     return labels[field] || field;
+  }
+
+  clearForm() {
+    // Clear all form fields for new action creation
+    // Use safe setting to avoid errors with missing elements
+    
+    const safeSetValue = (id, value = '') => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.value = value;
+      }
+    };
+    
+    const safeSetDataset = (id, key, value = '') => {
+      const element = document.getElementById(id);
+      if (element && element.dataset) {
+        element.dataset[key] = value;
+      }
+    };
+    
+    // Step 2 fields - Basic Info
+    safeSetValue('plugin-name');
+    safeSetValue('plugin-display-name');
+    safeSetValue('plugin-description');
+    safeSetValue('plugin-type');
+    
+    // Step 3 fields - OpenAPI
+    safeSetValue('plugin-endpoint');
+    safeSetValue('plugin-openapi-file');
+    safeSetDataset('plugin-openapi-file', 'fileId');
+    safeSetDataset('plugin-openapi-file', 'specContent');
+    
+    // Clear OpenAPI auth fields
+    safeSetValue('plugin-auth-type', 'none');
+    safeSetValue('plugin-auth-api-key');
+    safeSetValue('plugin-auth-bearer-token');
+    safeSetValue('plugin-auth-basic-username');
+    safeSetValue('plugin-auth-basic-password');
+    safeSetValue('plugin-auth-oauth2-token');
+    
+    // Clear OpenAPI status displays
+    const statusElements = [
+      'openapi-file-status',
+      'openapi-file-help'
+    ];
+    statusElements.forEach(id => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.innerHTML = '';
+        element.className = '';
+      }
+    });
+    
+    // Step 3 fields - Generic Plugin
+    safeSetValue('plugin-endpoint-generic');
+    safeSetValue('plugin-auth-type-generic', 'none');
+    safeSetValue('plugin-auth-api-key-generic');
+    safeSetValue('plugin-auth-bearer-token-generic');
+    safeSetValue('plugin-auth-basic-username-generic');
+    safeSetValue('plugin-auth-basic-password-generic');
+    safeSetValue('plugin-auth-oauth2-token-generic');
+    
+    // Step 3 fields - SQL Plugin
+    safeSetValue('sql-connection-method', 'connection_string');
+    safeSetValue('sql-connection-string');
+    safeSetValue('sql-server');
+    safeSetValue('sql-database');
+    safeSetValue('sql-username');
+    safeSetValue('sql-password');
+    safeSetValue('sql-auth-type', 'username_password');
+    safeSetValue('sql-database-type', 'sql_server');
+    
+    // Clear any type selection
+    this.selectedType = null;
+    
+    // Hide all auth field sections (with safe calls)
+    try {
+      this.toggleOpenApiAuthFields();
+      this.toggleGenericAuthFields();
+      this.handleSqlAuthTypeChange();
+    } catch (e) {
+      console.log('Some auth field toggles not available:', e.message);
+    }
+    
+    // Reset action type selection
+    const actionTypeCards = document.querySelectorAll('.action-type-card.selected');
+    actionTypeCards.forEach(card => card.classList.remove('selected'));
+    
+    console.log('Form cleared for new action');
   }
 
   escapeHtml(str) {

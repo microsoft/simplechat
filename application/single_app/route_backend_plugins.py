@@ -274,9 +274,24 @@ def set_user_plugins():
         plugin.setdefault('name', '')
         plugin.setdefault('displayName', plugin.get('name', ''))
         plugin.setdefault('description', '')
-        plugin.setdefault('endpoint', '')
         plugin.setdefault('metadata', {})
         plugin.setdefault('additionalFields', {})
+        
+        # Remove Cosmos DB system fields that are not part of the plugin schema
+        cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'id', 'user_id', 'last_updated']
+        for field in cosmos_fields:
+            if field in plugin:
+                del plugin[field]
+        
+        # Handle endpoint based on plugin type
+        plugin_type = plugin.get('type', '')
+        if plugin_type in ['sql_schema', 'sql_query']:
+            # SQL plugins don't use endpoints, but schema validation requires one
+            # Use a placeholder that indicates it's a SQL plugin
+            plugin.setdefault('endpoint', f'sql://{plugin_type}')
+        else:
+            # For other plugin types, require a real endpoint
+            plugin.setdefault('endpoint', '')
         
         # Ensure auth has default structure
         if 'auth' not in plugin:

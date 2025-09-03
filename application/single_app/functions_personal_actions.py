@@ -109,9 +109,17 @@ def save_personal_action(user_id, action_data):
     try:
         from config import cosmos_personal_actions_container
         
-        # Ensure required fields
-        if 'id' not in action_data or not action_data['id']:
-            # Always generate UUID for ID to avoid conflicts
+        # Check if an action with this name already exists
+        existing_action = None
+        if 'name' in action_data and action_data['name']:
+            existing_action = get_personal_action(user_id, action_data['name'])
+        
+        # Preserve existing ID if updating, or generate new ID if creating
+        if existing_action:
+            # Update existing action - preserve the original ID
+            action_data['id'] = existing_action['id']
+        elif 'id' not in action_data or not action_data['id']:
+            # New action - generate UUID for ID
             action_data['id'] = str(uuid.uuid4())
             
         action_data['user_id'] = user_id
