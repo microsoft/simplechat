@@ -136,23 +136,50 @@ export async function loadGlobalModelsForModal({
 			m => m.deployment === this.value || m.name === this.value || m.id === this.value
 		);
 		if (selected) {
-			// Admin/global context: update APIM or GPT fields accordingly
-			if ((isGlobal && apimEnabled) || (!isGlobal && agent && agent.enable_agent_gpt_apim)) {
-				const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
-				if (apimDeploymentInput) apimDeploymentInput.value = selected.deployment || '';
-				// Optionally clear GPT fields
-				['agent-gpt-endpoint', 'agent-gpt-key', 'agent-gpt-deployment', 'agent-gpt-api-version'].forEach(id => {
-					const el = document.getElementById(id);
-					if (el) el.value = '';
-				});
+			// Check if custom connection is enabled for this agent
+			const isCustomConnection = customConnectionCheck(agent);
+			
+			if (isCustomConnection) {
+				// Only populate custom fields if custom connection is actually enabled
+				if ((isGlobal && apimEnabled) || (!isGlobal && agent && agent.enable_agent_gpt_apim)) {
+					const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
+					if (apimDeploymentInput) apimDeploymentInput.value = selected.deployment || '';
+					// Clear GPT fields when using APIM
+					['agent-gpt-endpoint', 'agent-gpt-key', 'agent-gpt-deployment', 'agent-gpt-api-version'].forEach(id => {
+						const el = document.getElementById(id);
+						if (el) el.value = '';
+					});
+				} else {
+					// Populate GPT fields with proper values from the selected model
+					const deploymentEl = document.getElementById('agent-gpt-deployment');
+					const apiVersionEl = document.getElementById('agent-gpt-api-version');
+					const endpointEl = document.getElementById('agent-gpt-endpoint');
+					const keyEl = document.getElementById('agent-gpt-key');
+					
+					if (deploymentEl) deploymentEl.value = selected.deployment || selected.name || '';
+					if (apiVersionEl) apiVersionEl.value = selected.api_version || ''; // Use proper API version, not model name
+					if (endpointEl) endpointEl.value = selected.endpoint || '';
+					if (keyEl) keyEl.value = selected.key || '';
+					
+					// Clear APIM field
+					const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
+					if (apimDeploymentInput) apimDeploymentInput.value = '';
+				}
 			} else {
-				// User/workspace context: update GPT fields
-				['agent-gpt-endpoint', 'agent-gpt-key', 'agent-gpt-deployment', 'agent-gpt-api-version'].forEach(id => {
-					const el = document.getElementById(id);
-					if (el) el.value = selected[id.replace('agent-gpt-', '')] || selected.deployment || selected.name || '';
-				});
-				const apimDeploymentInput = document.getElementById(deploymentFieldIds.apim);
-				if (apimDeploymentInput) apimDeploymentInput.value = '';
+				// Custom connection is OFF - using global connection settings
+				// Only populate the deployment field, agent will use global endpoint/key
+				const deploymentEl = document.getElementById('agent-gpt-deployment');
+				if (deploymentEl) deploymentEl.value = selected.deployment || selected.name || '';
+				
+				// Do NOT populate custom connection fields when using global settings
+				// Clear them to ensure they don't interfere with shouldEnableCustomConnection logic
+				const apiVersionEl = document.getElementById('agent-gpt-api-version');
+				const endpointEl = document.getElementById('agent-gpt-endpoint');
+				const keyEl = document.getElementById('agent-gpt-key');
+				
+				if (apiVersionEl) apiVersionEl.value = '';
+				if (endpointEl) endpointEl.value = '';
+				if (keyEl) keyEl.value = '';
 			}
 		}
 	};

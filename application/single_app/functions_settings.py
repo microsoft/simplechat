@@ -14,6 +14,8 @@ def get_settings():
         'enable_time_plugin': True,
         'enable_http_plugin': True,
         'enable_wait_plugin': True,
+        'enable_math_plugin': True,
+        'enable_text_plugin': True,
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_multi_agent_orchestration': False,
@@ -289,6 +291,7 @@ def get_settings():
         'conversation_history_limit': 10,
         'default_system_prompt': '',
         'enable_file_processing_logs': True,
+        'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': 'https://api.videoindexer.ai',

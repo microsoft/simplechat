@@ -91,8 +91,7 @@ app.config['EXECUTOR_MAX_WORKERS'] = 30
 executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.223.001'
-
+app.config['VERSION'] = "0.224.112"
 
 Session(app)
 
@@ -278,9 +277,18 @@ cosmos_file_processing_container = cosmos_database.create_container_if_not_exist
     partition_key=PartitionKey(path="/document_id")
 )
 
+cosmos_personal_agents_container_name = "personal_agents"
+cosmos_personal_agents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_agents_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
 
-# Group Chat containers fulfilling the same roles as messages and conversations
-# but for group chats. These are separate from the user chat containers.
+cosmos_personal_actions_container_name = "personal_actions"
+cosmos_personal_actions_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_actions_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 cosmos_file_processing_container_name = "group_messages"
 cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_file_processing_container_name,
@@ -293,17 +301,18 @@ cosmos_file_processing_container = cosmos_database.create_container_if_not_exist
     partition_key=PartitionKey(path="/id")
 )
 
-# agent_facts document schema:
-# {
-#   "id": "<uuid>",
-#   "agent_id": "<agent_id>",
-#   "scope_type": "user" | "group",
-#   "scope_id": "<user_id or group_id>",
-#   "conversation_id": "<conversation_id>",
-#   "value": "<fact_value>",
-#   "created_at": "<timestamp>",
-#   "updated_at": "<timestamp>"
-# }
+cosmos_group_agents_container_name = "group_agents"
+cosmos_group_agents_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_agents_container_name,
+    partition_key=PartitionKey(path="/group_id")
+)
+
+cosmos_group_actions_container_name = "group_actions"
+cosmos_group_actions_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_actions_container_name,
+    partition_key=PartitionKey(path="/group_id")
+)
+
 cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,

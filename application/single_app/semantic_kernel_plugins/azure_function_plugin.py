@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 import requests
 from azure.identity import DefaultAzureCredential
 
@@ -21,6 +22,10 @@ class AzureFunctionPlugin(BasePlugin):
             self.credential = None
         else:
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
+
+    @property
+    def display_name(self) -> str:
+        return "Azure Function"
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -51,6 +56,7 @@ class AzureFunctionPlugin(BasePlugin):
     def get_functions(self) -> List[str]:
         return ["call_function_post", "call_function_get"]
 
+    @plugin_function_logger("AzureFunctionPlugin")
     @kernel_function(description="Call the Azure Function using HTTP POST.")
     def call_function_post(self, payload: dict) -> dict:
         url = self.endpoint
@@ -67,6 +73,7 @@ class AzureFunctionPlugin(BasePlugin):
         response.raise_for_status()
         return response.json()
 
+    @plugin_function_logger("AzureFunctionPlugin")
     @kernel_function(description="Call the Azure Function using HTTP GET.")
     def call_function_get(self, params: dict = None) -> dict:
         url = self.endpoint

@@ -358,6 +358,9 @@ def validate_bearer_token(token):
 def accesstoken_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+
+        print("accesstoken_required")
+
         auth_header = request.headers.get('Authorization')
         if not auth_header:
             return jsonify({"message": "Authorization header missing"}), 401
@@ -375,6 +378,8 @@ def accesstoken_required(f):
         roles = data.get("roles") if isinstance(data, dict) else None
         if not roles or "ExternalApi" not in roles:
             return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
+
+        print("User is valid")
 
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW

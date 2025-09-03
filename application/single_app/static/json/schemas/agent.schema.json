@@ -11,6 +11,14 @@
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "description": "Agent GUID (UUID v4 pattern)"
         },
+        "user_id": {
+          "type": "string",
+          "description": "User ID that owns this personal agent"
+        },
+        "last_updated": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        },
         "name": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]+$",

@@ -4,6 +4,7 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from azure.storage.blob import BlobServiceClient
 from semantic_kernel.functions import kernel_function
 from azure.identity import DefaultAzureCredential
+from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
 class BlobStoragePlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
@@ -22,6 +23,10 @@ class BlobStoragePlugin(BasePlugin):
             self.service_client = BlobServiceClient(account_url=self.endpoint, credential=self.key)
         else:
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
+
+    @property
+    def display_name(self) -> str:
+        return "Blob Storage"
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -82,22 +87,26 @@ class BlobStoragePlugin(BasePlugin):
             "iterate_blobs_in_container"
         ]
 
+    @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="List all containers in the storage account.")
     def list_containers(self) -> List[str]:
         containers = self.service_client.list_containers()
         return [c['name'] for c in containers]
 
+    @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="List all blobs in a given container.")
     def list_blobs(self, container_name: str) -> List[str]:
         container_client = self.service_client.get_container_client(container_name)
         blobs = container_client.list_blobs()
         return [b['name'] for b in blobs]
 
+    @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="Get metadata for a specific blob.")
     def get_blob_metadata(self, container_name: str, blob_name: str) -> dict:
         blob_client = self.service_client.get_blob_client(container=container_name, blob=blob_name)
         return blob_client.get_blob_properties().metadata
 
+    @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="Read the contents of a blob as text or base64 for images to be renderable in the browser.")
     def get_blob_content(self, container_name: str, blob_name: str) -> str:
         blob_client = self.service_client.get_blob_client(container=container_name, blob=blob_name)
@@ -115,6 +124,7 @@ class BlobStoragePlugin(BasePlugin):
         else:
             return f"[Binary file: {blob_name}, type: {content_type or 'unknown'}]"
 
+    @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="Iterates over all blobs in a container, reads their data, and return a dict of blob_name: content. Uses text or base64 for images to be renderable in the browser.")
     def iterate_blobs_in_container(self, container_name: str) -> dict:
         container_client = self.service_client.get_container_client(container_name)
