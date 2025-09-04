@@ -143,7 +143,7 @@
 <!-- Find Group Modal -->
 <!-- Keep Modal Structure As Is, maybe update search button ID -->
 <div class="modal fade" id="findGroupModal" tabindex="-1" aria-labelledby="findGroupModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-xl">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="findGroupModalLabel">Find a Group to Join</h5>
@@ -156,9 +156,9 @@
         </div>
         <div class="table-responsive">
           <table class="table table-hover" id="globalGroupResultsTable">
-            <thead><tr><th>Name</th><th>Description</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Description</th><th>Owner</th><th>Members</th><th>Actions</th></tr></thead>
             <tbody>
-                <tr><td colspan="3" class="text-center text-muted">Enter search term and click Search.</td></tr>
+                <tr><td colspan="5" class="text-center text-muted">Enter search term and click Search.</td></tr>
             </tbody>
           </table>
         </div>
@@ -373,7 +373,7 @@
       .fail(function (jqXHR, textStatus, errorThrown) {
         console.error("Error loading global groups:", errorThrown);
         const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-        resultsBody.html(`<tr><td colspan="3" class="text-center text-danger">Error: ${escapeHtml(errorMsg)}</td></tr>`);
+        resultsBody.html(`<tr><td colspan="5" class="text-center text-danger">Error: ${escapeHtml(errorMsg)}</td></tr>`);
       });
   }
 
@@ -381,12 +381,21 @@
     const tbody = $("#globalGroupResultsTable tbody");
     tbody.empty();
     if (!groups || groups.length === 0) {
-      tbody.html(`<tr><td colspan="3" class="text-center text-muted">No groups found matching your search.</td></tr>`); return;
+      tbody.html(`<tr><td colspan="5" class="text-center text-muted">No groups found matching your search.</td></tr>`); return;
     }
     groups.forEach((g) => {
       const row = $("<tr></tr>");
       row.append($("<td></td>").text(g.name));
       row.append($("<td></td>").text(g.description));
+      
+      // Owner column
+      const ownerName = g.owner?.displayName || g.owner?.email || 'Unknown';
+      row.append($("<td></td>").text(ownerName));
+      
+      // Member count column
+      row.append($("<td></td>").text(g.member_count || 0));
+      
+      // Actions column
       const joinBtn = $("<button class='btn btn-sm btn-primary join-request-btn'></button>")
                       .attr('data-group-id', g.id)
                       .text('Request to Join');
@@ -478,7 +487,7 @@
 
     $("#findGroupModal").on("show.bs.modal", function () {
       $("#globalGroupSearchInput").val("");
-      $("#globalGroupResultsTable tbody").html('<tr><td colspan="3" class="text-center text-muted">Enter search term and select Search. To view all groups, clear search input and select Search</td></tr>');
+      $("#globalGroupResultsTable tbody").html('<tr><td colspan="5" class="text-center text-muted">Enter search term and select Search. To view all groups, clear search input and select Search</td></tr>');
       // Optionally trigger an initial empty search: searchAllGroups("");
     });
 

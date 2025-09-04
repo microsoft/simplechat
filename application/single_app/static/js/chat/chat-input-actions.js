@@ -170,12 +170,77 @@ export function showFileContentPopup(fileContent, filename, isTable) {
   if (!fileContentElement) return;
 
   if (isTable) {
-    fileContentElement.innerHTML = `<div class="table-responsive">${fileContent}</div>`;
+    // Check if content is CSV (new format) or HTML (legacy format)
+    const isCSVContent = !fileContent.trim().startsWith('<table') && 
+                         !fileContent.trim().startsWith('<') && 
+                         fileContent.includes(',');
+    
+    if (isCSVContent) {
+      // Convert CSV to HTML table for display
+      // Use a simple CSV parser that handles quoted fields
+      const parseCSVLine = (line) => {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+      
+      const csvLines = fileContent.trim().split('\n');
+      if (csvLines.length > 0) {
+        const headers = parseCSVLine(csvLines[0]);
+        const rows = csvLines.slice(1);
+        
+        let tableHTML = '<table class="table table-striped table-bordered"><thead><tr>';
+        headers.forEach(header => {
+          tableHTML += `<th>${escapeHtml(header)}</th>`;
+        });
+        tableHTML += '</tr></thead><tbody>';
+        
+        rows.forEach(row => {
+          if (row.trim()) {
+            const cells = parseCSVLine(row);
+            tableHTML += '<tr>';
+            cells.forEach(cell => {
+              tableHTML += `<td>${escapeHtml(cell)}</td>`;
+            });
+            tableHTML += '</tr>';
+          }
+        });
+        
+        tableHTML += '</tbody></table>';
+        fileContentElement.innerHTML = `<div class="table-responsive">${tableHTML}</div>`;
+      } else {
+        fileContentElement.innerHTML = '<p>No data available</p>';
+      }
+    } else {
+      // Legacy HTML format
+      fileContentElement.innerHTML = `<div class="table-responsive">${fileContent}</div>`;
+    }
+    
+    // Apply DataTable after content is set
     $(document).ready(function () {
-      $("#file-content table").DataTable({
-        responsive: true,
-        scrollX: true,
-      });
+      const table = $("#file-content table");
+      if (table.length > 0) {
+        table.DataTable({
+          responsive: true,
+          scrollX: true,
+          destroy: true // Allow re-initialization
+        });
+      }
     });
   } else {
     fileContentElement.innerHTML = `<pre style="white-space: pre-wrap;">${fileContent}</pre>`;
@@ -183,6 +248,18 @@ export function showFileContentPopup(fileContent, filename, isTable) {
 
   const modal = new bootstrap.Modal(modalContainer);
   modal.show();
+}
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
 export function getUrlParameter(name) {

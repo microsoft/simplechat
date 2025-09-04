@@ -50,6 +50,8 @@ def register_route_backend_groups(app):
                 "id": g["id"],
                 "name": g.get("name", ""),
                 "description": g.get("description", ""),
+                "owner": g.get("owner", {}),
+                "member_count": len(g.get("users", []))
             })
 
         return jsonify(results), 200

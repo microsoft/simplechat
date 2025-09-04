@@ -408,7 +408,7 @@ if __name__ == '__main__':
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5001, debug=True, ssl_context='adhoc')
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
     else:
         # Production - typically run via WSGI server (Gunicorn) on Azure
         port = int(os.environ.get("PORT", 5000))

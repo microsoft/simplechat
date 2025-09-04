@@ -176,8 +176,10 @@ def extract_table_file(file_path, file_ext):
         else:
             raise ValueError("Unsupported file extension for table extraction.")
         
-        table_html = df.to_html(index=False, classes='table table-striped table-bordered')
-        return table_html
+        # Return CSV format instead of HTML for more efficient storage and LLM processing
+        # This drastically reduces token count and storage costs
+        csv_content = df.to_csv(index=False)
+        return csv_content
     except Exception as e:
         raise
 
