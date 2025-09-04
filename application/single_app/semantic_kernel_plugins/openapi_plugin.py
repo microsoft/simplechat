@@ -948,39 +948,43 @@ class OpenApiPlugin(BasePlugin):
                     # Check response size and truncate if too large to prevent context overflow
                     result_str = str(result)
                     result_size = len(result_str)
-                    MAX_RESPONSE_SIZE = 50000  # ~50k characters to stay well under token limits
+                    MAX_RESPONSE_SIZE = 100000  # Increased to ~100k characters for better news coverage
                     
                     if result_size > MAX_RESPONSE_SIZE:
                         print(f"DEBUG: Response too large ({result_size} chars), truncating to {MAX_RESPONSE_SIZE} chars")
                         logging.warning(f"[OpenAPI Plugin] Large response ({result_size} chars) truncated to prevent context overflow")
                         
-                        # If it's a list, take only the first few items
-                        if isinstance(result, list) and len(result) > 5:
+                        # If it's a list, take more items for news APIs
+                        if isinstance(result, list) and len(result) > 10:
                             truncated_result = {
                                 "truncated": True,
                                 "original_count": len(result),
-                                "showing_first": 5,
-                                "data": result[:5],
-                                "note": f"Response truncated - showing first 5 of {len(result)} items to prevent context overflow"
+                                "showing_first": 10,
+                                "data": result[:10],
+                                "note": f"Response truncated - showing first 10 of {len(result)} items. Use more specific parameters to filter results.",
+                                "suggestion": "Try adding filters like date, category, or country to reduce response size"
                             }
                             result = truncated_result
-                        # If it's a dict with a list property, truncate the list
+                        # If it's a dict with a list property, truncate the list more intelligently
                         elif isinstance(result, dict):
                             # Create a copy to avoid "dictionary changed size during iteration" error
                             result_copy = result.copy()
                             for key, value in result_copy.items():
-                                if isinstance(value, list) and len(value) > 5:
-                                    result[key] = value[:5]
+                                if isinstance(value, list) and len(value) > 10:
+                                    result[key] = value[:10]
                                     result[f"{key}_truncated"] = True
                                     result[f"{key}_original_count"] = len(value)
-                            result["truncation_note"] = "Large arrays truncated to prevent context overflow"
-                        # If still too large, create a summary
+                            result["truncation_note"] = f"Large arrays truncated to first 10 items to prevent context overflow (original size: {result_size} chars)"
+                            result["available_data"] = f"Showing 10 items from available {len(value) if 'value' in locals() else 'many'} items"
+                        # If still too large, create a summary with more detail
                         if len(str(result)) > MAX_RESPONSE_SIZE:
                             result = {
                                 "truncated": True,
                                 "original_size_chars": result_size,
-                                "summary": "Response too large for context - use more specific queries",
-                                "note": "Consider using API parameters to filter results"
+                                "summary": f"Response contains data but is too large ({result_size} chars) for context window",
+                                "recommendation": "Use API parameters to filter results (e.g., date range, category, limit)",
+                                "note": "The API returned valid data, but it needs to be filtered to be usable",
+                                "data_available": True
                             }
                     
                     logging.info(f"[OpenAPI Plugin] Successfully called {operation_id} - JSON response received")

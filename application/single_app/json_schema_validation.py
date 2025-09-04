@@ -24,8 +24,32 @@ def validate_agent(agent):
 
 def validate_plugin(plugin):
     schema = load_schema('plugin.schema.json')
+    
+    # For SQL plugins, temporarily provide a dummy endpoint if none exists
+    # since SQL plugins don't use endpoints but the schema requires them
+    plugin_copy = plugin.copy()
+    plugin_type = plugin_copy.get('type', '')
+    
+    # Remove Cosmos DB system fields that are not part of the plugin schema
+    cosmos_fields = ['_attachments', '_etag', '_rid', '_self', '_ts', 'created_at', 'updated_at', 'id', 'user_id', 'last_updated']
+    for field in cosmos_fields:
+        if field in plugin_copy:
+            del plugin_copy[field]
+    
+    if plugin_type in ['sql_schema', 'sql_query'] and not plugin_copy.get('endpoint'):
+        plugin_copy['endpoint'] = f'sql://{plugin_type}'
+    
+    # First run schema validation
     validator = Draft7Validator(schema['definitions']['Plugin'])
-    errors = sorted(validator.iter_errors(plugin), key=lambda e: e.path)
+    errors = sorted(validator.iter_errors(plugin_copy), key=lambda e: e.path)
     if errors:
         return '; '.join([e.message for e in errors])
+    
+    # Additional business logic validation
+    # For non-SQL plugins, endpoint must not be empty
+    if plugin_type not in ['sql_schema', 'sql_query']:
+        endpoint = plugin.get('endpoint', '')
+        if not endpoint or endpoint.strip() == '':
+            return 'Non-SQL plugins must have a valid endpoint'
+    
     return None

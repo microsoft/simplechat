@@ -73,6 +73,7 @@ from functions_authentication import get_current_user_id
 from route_external_health import *
 from route_external_public_documents import *
 
+
 configure_azure_monitor()
 
 
@@ -405,16 +406,17 @@ register_route_external_health(app)
 # ------------------- Extenral Public Documents Routes ----------
 register_route_external_public_documents(app)
 
+
 if __name__ == '__main__':
     settings = get_settings()
     initialize_clients(settings)
 
-    env = os.environ.get("FLASK_ENV", "production")
-    
-    if env == "development":
-        # Local dev with HTTPS
+    debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+
+    if debug_mode:
+        # Local development with HTTPS
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
     else:
-        # Production - use WSGI server like Gunicorn
+        # Production - typically run via WSGI server (Gunicorn) on Azure
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)
