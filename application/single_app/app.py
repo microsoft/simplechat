@@ -52,9 +52,6 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
-from route_external_group_documents import *
-from route_external_public_documents import *
-
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -72,11 +69,6 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
-from route_external_group_documents import *
-from route_external_public_documents import *
-from route_external_documents import *
-from route_external_groups import *
-from route_external_admin_settings import *
 
 configure_azure_monitor()
 
@@ -408,31 +400,16 @@ register_route_backend_public_prompts(app)
 register_route_external_health(app)
 
 
-# ------------------- Extenral Groups Routes ----------
-register_route_external_groups(app)
-
-# ------------------- Extenral Group Documents Routes ----------
-register_route_external_group_documents(app)
-
-# ------------------- Extenral Public Documents Routes ----------
-register_route_external_public_documents(app)
-
-# ------------------- Extenral Documents Routes ----------
-register_route_external_documents(app)
-
-# ------------------- Extenral Admin Settings Routes ----------
-register_route_external_admin_settings(app)
-
 if __name__ == '__main__':
     settings = get_settings()
     initialize_clients(settings)
 
-    env = os.environ.get("FLASK_ENV", "production")
-    
-    if env == "development":
-        # Local dev with HTTPS
+    debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+
+    if debug_mode:
+        # Local development with HTTPS
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
     else:
-        # Production - use WSGI server like Gunicorn
+        # Production - typically run via WSGI server (Gunicorn) on Azure
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)

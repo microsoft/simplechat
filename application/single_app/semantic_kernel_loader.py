@@ -402,6 +402,7 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             # Global mode - get from global actions container
             from functions_global_actions import get_global_actions
             all_plugin_manifests = get_global_actions()
+            print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
         # Check both 'name' and 'id' fields to support both UUID and name references
@@ -661,9 +662,12 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         # Load agent-specific plugins into the kernel before creating the agent
         if agent_config.get("actions_to_load"):
             print(f"[SK Loader] Loading agent-specific plugins: {agent_config['actions_to_load']}")
-            # Get user_id directly from authentication when in per-user mode
-            user_id = get_current_user_id() if mode_label == "per-user" else None
-            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], mode_label, user_id=user_id)
+            # Determine plugin source based on agent's global status, not overall mode
+            agent_is_global = agent_config.get("is_global", False)
+            plugin_mode = "global" if agent_is_global else mode_label
+            user_id = get_current_user_id() if not agent_is_global else None
+            print(f"[SK Loader] Agent is_global: {agent_is_global}, using plugin_mode: {plugin_mode}")
+            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], plugin_mode, user_id=user_id)
         
         try:
             kwargs = {
