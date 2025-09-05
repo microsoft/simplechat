@@ -1471,11 +1471,39 @@ function setupToggles() {
     }
 
     const officeAuthType = document.getElementById('office_docs_authentication_type');
-    if (officeAuthType) {
-        officeAuthType.addEventListener('change', function(){
-            document.getElementById('office_docs_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+    const connStrGroup = document.getElementById('office_docs_storage_conn_str_group');
+    const urlGroup = document.getElementById('office_docs_storage_url_group');
+    const connStrInput = document.getElementById('office_docs_storage_account_url');
+    const urlInput = document.getElementById('office_docs_storage_account_blob_endpoint');
+
+    if (officeAuthType && connStrGroup && urlGroup && connStrInput && urlInput) {
+        officeAuthType.addEventListener('change', function() {
+            if (this.value === 'managed_identity') {
+                connStrGroup.style.display = 'none';
+                urlGroup.style.display = '';
+            } else {
+                connStrGroup.style.display = '';
+                urlGroup.style.display = 'none';
+            }
             markFormAsModified();
+        });
+    }
+
+    // Toggle visibility of connection string
+    const toggleConnStrBtn = document.getElementById('toggle_office_conn_str');
+    if (toggleConnStrBtn && connStrInput) {
+        toggleConnStrBtn.addEventListener('click', function() {
+            connStrInput.type = connStrInput.type === 'password' ? 'text' : 'password';
+            toggleConnStrBtn.textContent = connStrInput.type === 'password' ? 'Show' : 'Hide';
+        });
+    }
+
+    // Toggle visibility of blob service endpoint URL
+    const toggleUrlBtn = document.getElementById('toggle_office_url');
+    if (toggleUrlBtn && urlInput) {
+        toggleUrlBtn.addEventListener('click', function() {
+            urlInput.type = urlInput.type === 'password' ? 'text' : 'password';
+            toggleUrlBtn.textContent = urlInput.type === 'password' ? 'Show' : 'Hide';
         });
     }
 
@@ -2084,7 +2112,7 @@ togglePassword('toggle_azure_apim_document_intelligence_subscription_key', 'azur
 togglePassword('toggle_office_docs_key', 'office_docs_key');
 togglePassword('toggle_video_files_key', 'video_files_key');
 togglePassword('toggle_audio_files_key', 'audio_files_key');
-togglePassword('toggle_office_conn_str', 'office_docs_storage_account_url');
+togglePassword('toggle_office_conn_str', 'office_docs_storage_account_blob_endpoint');
 togglePassword('toggle_video_conn_str', 'video_files_storage_account_url');
 togglePassword('toggle_audio_conn_str', 'audio_files_storage_account_url');
 togglePassword('toggle_video_indexer_api_key', 'video_indexer_api_key');
@@ -2675,11 +2703,11 @@ function isStepComplete(stepNumber) {
             if (!workspacesEnabled || !videoEnabled) return true;
             
             // Otherwise check settings
+            const videoEndpoint = document.getElementById('video_indexer_endpoint')?.value;
             const videoLocation = document.getElementById('video_indexer_location')?.value;
             const videoAccountId = document.getElementById('video_indexer_account_id')?.value;
-            const videoApiKey = document.getElementById('video_indexer_api_key')?.value;
             
-            return videoLocation && videoAccountId && videoApiKey;
+            return videoLocation && videoAccountId && videoEndpoint;
             
         case 9: // Audio support
             const audioEnabled = document.getElementById('enable_audio_file_support').checked || false;
