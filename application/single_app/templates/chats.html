@@ -121,8 +121,8 @@
         }
         
         /* Conversation details modal styles */
-        #conversation-details-modal .modal-lg {
-            max-width: 900px;
+        #conversation-details-modal .modal-xl {
+            max-width: 1200px;
         }
         
         #conversation-details-modal .card {
@@ -144,6 +144,10 @@
             background-color: var(--bs-gray-100);
             padding: 0.125rem 0.25rem;
             border-radius: 0.25rem;
+            white-space: nowrap;
+            overflow-x: auto;
+            display: inline-block;
+            max-width: 100%;
         }
         
         /* Dark mode support for conversation details */
@@ -423,7 +427,7 @@
 
 <!-- Modal for conversation details -->
 <div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="conversationDetailsModalLabel">

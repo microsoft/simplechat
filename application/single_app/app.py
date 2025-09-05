@@ -52,8 +52,6 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
-from route_external_public_documents import *
-
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -71,8 +69,6 @@ from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 
 from route_external_health import *
-from route_external_public_documents import *
-
 
 configure_azure_monitor()
 
@@ -402,10 +398,6 @@ register_route_backend_public_prompts(app)
 
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
-
-# ------------------- Extenral Public Documents Routes ----------
-register_route_external_public_documents(app)
-
 
 if __name__ == '__main__':
     settings = get_settings()

@@ -995,7 +995,8 @@ def register_route_backend_chats(app):
 
                 # Add the recent messages (user, assistant, relevant system/file messages)
                 allowed_roles_in_history = ['user', 'assistant'] # Add 'system' if you PERSIST general system messages not related to augmentation
-                max_file_content_length_in_history = 1000 # Limit file content directly in history
+                max_file_content_length_in_history = 50000 # Increased limit for all file content in history
+                max_tabular_content_length_in_history = 50000 # Same limit for tabular data consistency
 
                 for message in recent_messages:
                     role = message.get('role')
@@ -1006,13 +1007,26 @@ def register_route_backend_chats(app):
                     elif role == 'file': # Handle file content inclusion (simplified)
                         filename = message.get('filename', 'uploaded_file')
                         file_content = message.get('file_content', '') # Assuming file content is stored
-                        display_content = file_content[:max_file_content_length_in_history]
-                        if len(file_content) > max_file_content_length_in_history:
+                        is_table = message.get('is_table', False)
+                        
+                        # Use higher limit for tabular data that needs complete analysis
+                        content_limit = max_tabular_content_length_in_history if is_table else max_file_content_length_in_history
+                        
+                        display_content = file_content[:content_limit]
+                        if len(file_content) > content_limit:
                             display_content += "..."
-                        conversation_history_for_api.append({
-                            'role': 'system', # Represent file as system info
-                            'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
-                        })
+                        
+                        # Enhanced message for tabular data
+                        if is_table:
+                            conversation_history_for_api.append({
+                                'role': 'system', # Represent file as system info
+                                'content': f"[User uploaded a tabular data file named '{filename}'. This is CSV format data for analysis:\n{display_content}]\nThis is complete tabular data in CSV format. You can perform calculations, analysis, and data operations on this dataset."
+                            })
+                        else:
+                            conversation_history_for_api.append({
+                                'role': 'system', # Represent file as system info
+                                'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
+                            })
                     # elif role == 'image': # If you want to represent image generation prompts/results
                     #     prompt = message.get('prompt', 'User generated an image.')
                     #     img_url = message.get('content', '') # URL is in content

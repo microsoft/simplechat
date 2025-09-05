@@ -750,15 +750,20 @@ def update_document(**kwargs):
                         chunk_updates['document_classification'] = existing_document.get('document_classification')
 
                     if chunk_updates: # Only call update if there's something to change
-                         update_chunk_metadata(
-                             chunk_id=chunk['id'],
-                             user_id=user_id,
-                             document_id=document_id,
-                             group_id=group_id,
-                             **chunk_updates,
-                             # Propagate shared_group_ids if needed
-                             shared_group_ids=existing_document.get('shared_group_ids') if 'shared_group_ids' in updated_fields_requiring_chunk_sync else None
-                         )
+                        # Build the call parameters
+                        update_params = {
+                            'chunk_id': chunk['id'],
+                            'user_id': user_id,
+                            'document_id': document_id,
+                            'group_id': group_id,
+                            **chunk_updates
+                        }
+                        
+                        # Only include shared_group_ids for group workspaces 
+                        if is_group and 'shared_group_ids' in updated_fields_requiring_chunk_sync:
+                            update_params['shared_group_ids'] = existing_document.get('shared_group_ids')
+                        
+                        update_chunk_metadata(**update_params)
                 add_file_task_to_file_processing_log(
                     document_id=document_id,
                     user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
@@ -1035,16 +1040,21 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
         if chunk_item.get('document_id') != document_id:
             raise Exception("Chunk does not belong to document")
 
-        # Update only supported fields
+        # Update only supported fields based on workspace type
+        # Personal workspace documents don't have shared_group_ids in search index
         updatable_fields = [
             'chunk_keywords',
             'chunk_summary',
             'author',
             'title',
             'document_classification',
-            'shared_user_ids',
-            'shared_group_ids'
+            'shared_user_ids'
         ]
+        
+        # Only include shared_group_ids for group workspaces where it exists in the schema
+        if is_group:
+            updatable_fields.append('shared_group_ids')
+            
         for field in updatable_fields:
             if field in kwargs:
                 chunk_item[field] = kwargs[field]

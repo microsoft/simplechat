@@ -19,22 +19,55 @@ def extract_content_with_azure_di(file_path):
     """
     try:
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
+        
+        # Debug logging for troubleshooting
+        print(f"[DEBUG] Starting Azure DI extraction for: {os.path.basename(file_path)}")
+        print(f"[DEBUG] AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
+        
         if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
             # Required format for Document Intelligence API version 2024-11-30
+            print("[DEBUG] Using US Government/Custom environment with base64Source")
             with open(file_path, 'rb') as f:
                 file_bytes = f.read()
                 base64_source = base64.b64encode(file_bytes).decode('utf-8')
-
+            
+            # For stable API 1.0.2, use the correct body parameter structure
+            analyze_request = {"base64Source": base64_source}
             poller = document_intelligence_client.begin_analyze_document(
-                "prebuilt-read",
-                {"base64Source": base64_source}
+                model_id="prebuilt-read",
+                body=analyze_request
             )
+            print("[DEBUG] Successfully started analysis with base64Source")
         else:
+            print("[DEBUG] Using Public cloud environment")
             with open(file_path, 'rb') as f:
-                poller = document_intelligence_client.begin_analyze_document(
-                    model_id="prebuilt-read",
-                    document=f
-                )
+                # For stable API 1.0.2, the file needs to be passed as part of the body
+                file_content = f.read()
+                
+                # Try different approaches for the stable API
+                try:
+                    # Method 1: Use bytes directly in body
+                    poller = document_intelligence_client.begin_analyze_document(
+                        model_id="prebuilt-read",
+                        body=file_content,
+                        content_type="application/pdf"
+                    )
+                    print("[DEBUG] Successfully started analysis with body as bytes")
+                except Exception as e1:
+                    print(f"[DEBUG] Method 1 failed: {e1}")
+                    
+                    try:
+                        # Method 2: Use base64 format for consistency
+                        base64_source = base64.b64encode(file_content).decode('utf-8')
+                        analyze_request = {"base64Source": base64_source}
+                        poller = document_intelligence_client.begin_analyze_document(
+                            model_id="prebuilt-read",
+                            body=analyze_request
+                        )
+                        print("[DEBUG] Successfully started analysis with base64Source in body")
+                    except Exception as e2:
+                        print(f"[ERROR] Both methods failed. Method 1: {e1}, Method 2: {e2}")
+                        raise e1
 
         max_wait_time = 600
         start_time = time.time()
@@ -143,8 +176,10 @@ def extract_table_file(file_path, file_ext):
         else:
             raise ValueError("Unsupported file extension for table extraction.")
         
-        table_html = df.to_html(index=False, classes='table table-striped table-bordered')
-        return table_html
+        # Return CSV format instead of HTML for more efficient storage and LLM processing
+        # This drastically reduces token count and storage costs
+        csv_content = df.to_csv(index=False)
+        return csv_content
     except Exception as e:
         raise
 
