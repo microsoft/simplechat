@@ -264,9 +264,9 @@ export class AgentModalStepper {
         if (customConnectionToggle) {
           const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
           if (!allowUserCustom) {
-            customConnectionToggle.style.display = 'none';
+            customConnectionToggle.classList.add('d-none');
           } else {
-            customConnectionToggle.style.display = '';
+            customConnectionToggle.classList.remove('d-none');
           }
         }
       }
