@@ -309,11 +309,13 @@ def register_route_frontend_admin_settings(app):
 
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
+            office_docs_storage_account_blob_endpoint = form_data.get('office_docs_storage_account_blob_endpoint', '').strip()
             office_docs_storage_account_url = form_data.get('office_docs_storage_account_url', '').strip()
+
             
             # Validate that if enhanced citations are enabled, a connection string is provided
-            if enable_enhanced_citations and not office_docs_storage_account_url:
-                flash("Enhanced Citations cannot be enabled without providing a connection string. Feature has been disabled.", "danger")
+            if enable_enhanced_citations and not (office_docs_storage_account_blob_endpoint or office_docs_storage_account_url):
+                flash("Enhanced Citations cannot be enabled without providing a connection string or blob service endpoint. Feature has been disabled.", "danger")
                 enable_enhanced_citations = False
 
             # Model JSON Parsing (Your existing logic is fine)
@@ -386,7 +388,6 @@ def register_route_frontend_admin_settings(app):
                 'logo_version': settings.get('logo_version', 1),
                 'custom_logo_dark_base64': settings.get('custom_logo_dark_base64', ''),
                 'logo_dark_version': settings.get('logo_dark_version', 1),
-                'logo_version': settings.get('logo_version', 1),
                 'custom_favicon_base64': settings.get('custom_favicon_base64', ''),
                 'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
@@ -477,6 +478,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
+                'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
                 'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
                 'office_docs_key': form_data.get('office_docs_key', '').strip(),
@@ -817,6 +819,7 @@ def register_route_frontend_admin_settings(app):
                 if updated_settings_for_file:
                     ensure_custom_logo_file_exists(app, updated_settings_for_file)
                     ensure_custom_favicon_file_exists(app, updated_settings_for_file)
+                    initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
 

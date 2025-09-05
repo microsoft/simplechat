@@ -349,7 +349,7 @@
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Video Indexer API Key</span>
-                                <span id="video-key-badge" class="badge bg-danger">Required</span>
+                                <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
                     </div>
@@ -1863,13 +1863,22 @@
                         <div class="card mb-3 p-3">
                             <h6><strong>All filetypes</strong></h6>
                             <div class="mb-3">
+                                <label for="office_docs_authentication_type" class="form-label">
+                                    Storage Account Authentication Type
+                                </label>
+                                <select class="form-select" id="office_docs_authentication_type" name="office_docs_authentication_type">
+                                    <option value="key" {% if settings.office_docs_authentication_type == "key" or not settings.office_docs_authentication_type %}selected{% endif %}>Connection String</option>
+                                    <option value="managed_identity" {% if settings.office_docs_authentication_type == "managed_identity" %}selected{% endif %}>Managed Identity</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3" id="office_docs_storage_conn_str_group" {% if settings.office_docs_authentication_type == "managed_identity" %}style="display:none;"{% endif %}>
                                 <label for="office_docs_storage_account_url" class="form-label">
                                     Storage Account Connection String
                                 </label>
-                                
                                 <div class="input-group">
                                     <input
-                                        type="password" 
+                                        type="password"
                                         class="form-control"
                                         id="office_docs_storage_account_url"
                                         name="office_docs_storage_account_url"
@@ -1877,7 +1886,22 @@
                                     >
                                     <button type="button" class="btn btn-outline-secondary" id="toggle_office_conn_str">Show</button>
                                 </div>
-                                
+                            </div>
+                            
+                            <div class="mb-3" id="office_docs_storage_url_group" {% if settings.office_docs_authentication_type != "managed_identity" %}style="display:none;"{% endif %}>
+                                <label for="office_docs_storage_account_blob_endpoint" class="form-label">
+                                    Storage Account Blob Service Endpoint
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="office_docs_storage_account_blob_endpoint"
+                                        name="office_docs_storage_account_blob_endpoint"
+                                        value="{{ settings.office_docs_storage_account_blob_endpoint or '' }}"
+                                    >
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_office_url">Show</button>
+                                </div>
                             </div>
                         </div>
 

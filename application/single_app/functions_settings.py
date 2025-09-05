@@ -151,6 +151,7 @@ def get_settings():
         'enable_enhanced_citations_mount': False,
         'enhanced_citations_mount': '/view_documents',
         'office_docs_storage_account_url': '',
+        'office_docs_storage_account_blob_endpoint': '',
         'office_docs_authentication_type': 'key',
         'office_docs_key': '',
         'video_files_storage_account_url': '',
