@@ -611,11 +611,14 @@ def initialize_clients(settings):
 
         try:
             if enable_enhanced_citations:
-                blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
-                CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                
-                # Create containers if they don't exist
-                # This addresses the issue where the application assumes containers exist
+                if settings.get("office_docs_authentication_type") == "key":
+                    blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
+                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
+                if settings.get("office_docs_authentication_type") == "managed_identity":
+                    blob_service_client = BlobServiceClient(account_url=settings.get("office_docs_storage_account_blob_endpoint"), credential=DefaultAzureCredential())
+                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
+                    # Create containers if they don't exist
+                    # This addresses the issue where the application assumes containers exist
                 for container_name in [
                     storage_account_user_documents_container_name, 
                     storage_account_group_documents_container_name, 

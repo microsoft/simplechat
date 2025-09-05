@@ -399,7 +399,6 @@ register_route_backend_public_prompts(app)
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
-
 if __name__ == '__main__':
     settings = get_settings()
     initialize_clients(settings)
