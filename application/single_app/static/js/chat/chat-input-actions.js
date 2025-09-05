@@ -202,6 +202,7 @@ export function showFileContentPopup(fileContent, filename, isTable) {
       const csvLines = fileContent.trim().split('\n');
       if (csvLines.length > 0) {
         const headers = parseCSVLine(csvLines[0]);
+        const headerCount = headers.length;
         const rows = csvLines.slice(1);
         
         let tableHTML = '<table class="table table-striped table-bordered"><thead><tr>';
@@ -213,6 +214,15 @@ export function showFileContentPopup(fileContent, filename, isTable) {
         rows.forEach(row => {
           if (row.trim()) {
             const cells = parseCSVLine(row);
+            // Ensure all rows have the same number of columns as headers
+            while (cells.length < headerCount) {
+              cells.push(''); // Add empty cells for missing columns
+            }
+            // Truncate if there are too many columns (shouldn't happen but safety check)
+            if (cells.length > headerCount) {
+              cells.splice(headerCount);
+            }
+            
             tableHTML += '<tr>';
             cells.forEach(cell => {
               tableHTML += `<td>${escapeHtml(cell)}</td>`;

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for tabular data CSV storage optimization fix.
+Version: 0.226.101
+Implemented in: 0.226.099
 
 This test ensures that when tabular data files (CSV, Excel) are uploaded to conversations,
 they are stored in CSV format instead of HTML format to reduce storage costs and improve
@@ -148,6 +150,7 @@ def test_frontend_csv_rendering():
 2025-01-01,"Coffee Shop",12.50,"Food & Dining"
 2025-01-02,"Gas Station",45.00,"Transportation"
 2025-01-03,"Grocery Store",89.25,"Groceries"
+Simple Summary,,
 """
         
         # Simulate the frontend detection logic
@@ -159,7 +162,7 @@ def test_frontend_csv_rendering():
         
         # Test basic CSV parsing
         lines = csv_content.strip().split('\n')
-        assert len(lines) == 4, "Should parse 4 lines"
+        assert len(lines) == 5, "Should parse 5 lines"
         
         # Simulate simple CSV parsing (like frontend)
         def parse_csv_line(line):
@@ -185,6 +188,18 @@ def test_frontend_csv_rendering():
         # Test parsing quoted field
         row_with_quotes = parse_csv_line(lines[1])
         assert row_with_quotes[1] == 'Coffee Shop', "Should handle quoted fields by removing quotes"
+        
+        # Test inconsistent column count handling (like credit card data)
+        short_row = parse_csv_line(lines[4])  # "Simple Summary,,"
+        assert len(short_row) == 3, "Should parse short row correctly"
+        
+        # Simulate frontend column normalization
+        header_count = len(headers)
+        while len(short_row) < header_count:
+            short_row.append('')  # Add empty cells for missing columns
+        
+        assert len(short_row) == header_count, "Should normalize column count to match headers"
+        assert short_row == ['Simple Summary', '', '', ''], "Should pad with empty strings"
         
         print("✅ Frontend CSV detection and parsing works correctly")
         
