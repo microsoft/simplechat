@@ -257,6 +257,20 @@ export class AgentModalStepper {
     if (currentStep) {
       currentStep.classList.remove('d-none');
     }
+
+    if (stepNumber === 2) {
+      if (!this.isAdmin) {
+        const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
+        if (customConnectionToggle) {
+          const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
+          if (!allowUserCustom) {
+            customConnectionToggle.style.display = 'none';
+          } else {
+            customConnectionToggle.style.display = '';
+          }
+        }
+      }
+    }
     
     // Load actions when reaching step 4
     if (stepNumber === 4) {
