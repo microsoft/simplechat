@@ -855,26 +855,130 @@ def register_route_backend_chats(app):
                             image_gen_model = selected_image_gen_model['deploymentName']
 
                 try:
+                    print(f"DEBUG: Generating image with model: {image_gen_model}")
+                    print(f"DEBUG: Using prompt: {user_message}")
+                    
+                    # Azure OpenAI doesn't support response_format parameter
+                    # Different models return different formats automatically
                     image_response = image_gen_client.images.generate(
                         prompt=user_message,
                         n=1,
                         model=image_gen_model
                     )
-                    generated_image_url = json.loads(image_response.model_dump_json())['data'][0]['url']
+                    
+                    print(f"DEBUG: Image response received: {type(image_response)}")
+                    response_dict = json.loads(image_response.model_dump_json())
+                    print(f"DEBUG: Response dict: {response_dict}")
+                    
+                    # Extract image URL or base64 data with validation
+                    if 'data' not in response_dict or not response_dict['data']:
+                        raise ValueError("No image data in response")
+                    
+                    image_data = response_dict['data'][0]
+                    print(f"DEBUG: Image data keys: {list(image_data.keys())}")
+                    
+                    generated_image_url = None
+                    
+                    # Handle different response formats
+                    if 'url' in image_data and image_data['url']:
+                        # dall-e-3 format: returns URL
+                        generated_image_url = image_data['url']
+                        print(f"DEBUG: Using URL format: {generated_image_url}")
+                    elif 'b64_json' in image_data and image_data['b64_json']:
+                        # gpt-image-1 format: returns base64 data
+                        b64_data = image_data['b64_json']
+                        # Create data URL for frontend
+                        generated_image_url = f"data:image/png;base64,{b64_data}"
+                        print(f"DEBUG: Using base64 format, length: {len(b64_data)}")
+                    else:
+                        available_keys = list(image_data.keys())
+                        raise ValueError(f"No URL or base64 data in image data. Available keys: {available_keys}")
+                    
+                    # Validate we have a valid image source
+                    if not generated_image_url or generated_image_url == 'null':
+                        raise ValueError("Generated image URL is null or empty")
 
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
-                    image_doc = {
-                        'id': image_message_id,
-                        'conversation_id': conversation_id,
-                        'role': 'image',
-                        'content': generated_image_url,
-                        'prompt': user_message,
-                        'created_at': datetime.utcnow().isoformat(),
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': image_gen_model,
-                        'metadata': {}
-                    }
-                    cosmos_messages_container.upsert_item(image_doc)
+                    
+                    # Handle large images by chunking if necessary
+                    # Cosmos DB has ~2MB document limit, let's use 1.5MB chunks to be safe
+                    MAX_CONTENT_SIZE = 1500000  # 1.5MB in characters
+                    
+                    if len(generated_image_url) > MAX_CONTENT_SIZE:
+                        print(f"DEBUG: Large image detected ({len(generated_image_url)} chars), splitting into chunks")
+                        
+                        # Split the data URL into prefix and base64 data
+                        if generated_image_url.startswith('data:image/png;base64,'):
+                            prefix = 'data:image/png;base64,'
+                            base64_only = generated_image_url[len(prefix):]
+                        else:
+                            # For URLs, we'll store as-is (shouldn't be this large anyway)
+                            prefix = ''
+                            base64_only = generated_image_url
+                        
+                        # Calculate chunk size for base64 data only
+                        chunk_size = MAX_CONTENT_SIZE - len(prefix) - 100  # Leave room for metadata
+                        chunks = [base64_only[i:i+chunk_size] for i in range(0, len(base64_only), chunk_size)]
+                        total_chunks = len(chunks)
+                        
+                        print(f"DEBUG: Split into {total_chunks} chunks")
+                        
+                        # Store main image document with metadata
+                        main_image_doc = {
+                            'id': image_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'image',
+                            'content': f"{prefix}{chunks[0]}",  # First chunk with prefix
+                            'prompt': user_message,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': image_gen_model,
+                            'metadata': {
+                                'is_chunked': True,
+                                'total_chunks': total_chunks,
+                                'chunk_index': 0,
+                                'original_size': len(generated_image_url)
+                            }
+                        }
+                        cosmos_messages_container.upsert_item(main_image_doc)
+                        
+                        # Store additional chunks if needed
+                        for i in range(1, total_chunks):
+                            chunk_doc = {
+                                'id': f"{image_message_id}_chunk_{i}",
+                                'conversation_id': conversation_id,
+                                'role': 'image_chunk',
+                                'content': chunks[i],
+                                'parent_id': image_message_id,
+                                'created_at': datetime.utcnow().isoformat(),
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'metadata': {
+                                    'is_chunk': True,
+                                    'chunk_index': i,
+                                    'parent_id': image_message_id
+                                }
+                            }
+                            cosmos_messages_container.upsert_item(chunk_doc)
+                            
+                        # For the response, we'll use a special marker that the frontend can recognize
+                        response_image_url = f"chunked:{image_message_id}"
+                        
+                    else:
+                        # Small image, store normally
+                        print(f"DEBUG: Small image ({len(generated_image_url)} chars), storing normally")
+                        image_doc = {
+                            'id': image_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'image',
+                            'content': generated_image_url,
+                            'prompt': user_message,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': image_gen_model,
+                            'metadata': {}
+                        }
+                        cosmos_messages_container.upsert_item(image_doc)
+                        response_image_url = generated_image_url
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
@@ -888,9 +992,28 @@ def register_route_backend_chats(app):
                         'message_id': image_message_id
                     }), 200
                 except Exception as e:
+                    print(f"DEBUG: Image generation error: {str(e)}")
+                    print(f"DEBUG: Error type: {type(e)}")
+                    import traceback
+                    print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                    
+                    # Handle different types of errors appropriately
+                    error_message = str(e)
+                    status_code = 500
+                    
+                    # Check if this is a content moderation error
+                    if "safety system" in error_message.lower() or "moderation_blocked" in error_message:
+                        user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
+                        status_code = 400  # Bad request rather than server error
+                    elif "400" in error_message and "BadRequestError" in str(type(e)):
+                        user_friendly_message = f"Image generation request was invalid: {error_message}"
+                        status_code = 400
+                    else:
+                        user_friendly_message = f"Image generation failed due to a technical error: {error_message}"
+                    
                     return jsonify({
-                        'error': f'Image generation failed: {str(e)}'
-                    }), 500
+                        'error': user_friendly_message
+                    }), status_code
 
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
