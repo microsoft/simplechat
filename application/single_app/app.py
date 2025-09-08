@@ -52,6 +52,17 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
+app = Flask(__name__)
+
+app.config['EXECUTOR_TYPE'] = 'thread'
+app.config['EXECUTOR_MAX_WORKERS'] = 30
+executor = Executor()
+executor.init_app(app)
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['VERSION'] = "0.226.102"
+
+Session(app)
+
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
