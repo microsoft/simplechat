@@ -661,6 +661,7 @@ resource "azurerm_search_service" "search" {
   sku                 = "basic" # Other options: standard, standard2, standard3
   replica_count       = 1
   partition_count     = 1
+  semantic_search_sku = "standard" #other options:  free
   public_network_access_enabled = true # From script's public-network-access enabled
   tags                = local.common_tags
 }
