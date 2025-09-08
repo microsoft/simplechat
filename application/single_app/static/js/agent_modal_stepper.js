@@ -1147,7 +1147,8 @@ export class AgentModalStepper {
       description: document.getElementById('agent-description')?.value || '',
       instructions: document.getElementById('agent-instructions')?.value || '',
       model: document.getElementById('agent-global-model-select')?.value || '',
-      custom_connection: document.getElementById('agent-custom-connection')?.checked || false
+      custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
+      other_settings: document.getElementById('agent-additional-settings')?.value || '{}'
     };
     
     // Handle model and deployment configuration
