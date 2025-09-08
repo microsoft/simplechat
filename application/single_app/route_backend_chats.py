@@ -889,7 +889,14 @@ def register_route_backend_chats(app):
                         b64_data = image_data['b64_json']
                         # Create data URL for frontend
                         generated_image_url = f"data:image/png;base64,{b64_data}"
-                        print(f"DEBUG: Using base64 format, length: {len(b64_data)}")
+                        
+                        # Redacted logging for large base64 content
+                        if len(b64_data) > 100:
+                            redacted_content = f"{b64_data[:50]}...{b64_data[-50:]}"
+                            print(f"DEBUG: Using base64 format, length: {len(b64_data)}")
+                            print(f"DEBUG: Base64 content (redacted): {redacted_content}")
+                        else:
+                            print(f"DEBUG: Using base64 format, full content: {b64_data}")
                     else:
                         available_keys = list(image_data.keys())
                         raise ValueError(f"No URL or base64 data in image data. Available keys: {available_keys}")
@@ -900,35 +907,47 @@ def register_route_backend_chats(app):
 
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
                     
-                    # Handle large images by chunking if necessary
-                    # Cosmos DB has ~2MB document limit, let's use 1.5MB chunks to be safe
-                    MAX_CONTENT_SIZE = 1500000  # 1.5MB in characters
+                    # Check if image data is too large for a single Cosmos document (2MB limit)
+                    # Account for JSON overhead by using 1.5MB as the safe limit for base64 content
+                    max_content_size = 1500000  # 1.5MB in bytes
                     
-                    if len(generated_image_url) > MAX_CONTENT_SIZE:
-                        print(f"DEBUG: Large image detected ({len(generated_image_url)} chars), splitting into chunks")
+                    if len(generated_image_url) > max_content_size:
+                        print(f"DEBUG: Large image detected ({len(generated_image_url)} bytes), splitting across multiple documents")
                         
-                        # Split the data URL into prefix and base64 data
+                        # Split the data URL into manageable chunks
                         if generated_image_url.startswith('data:image/png;base64,'):
-                            prefix = 'data:image/png;base64,'
-                            base64_only = generated_image_url[len(prefix):]
+                            # Extract just the base64 part for splitting
+                            data_url_prefix = 'data:image/png;base64,'
+                            base64_content = generated_image_url[len(data_url_prefix):]
+                            print(f"DEBUG: Extracted base64 content length: {len(base64_content)} bytes")
                         else:
-                            # For URLs, we'll store as-is (shouldn't be this large anyway)
-                            prefix = ''
-                            base64_only = generated_image_url
+                            # For regular URLs, store as-is (shouldn't happen with large content)
+                            data_url_prefix = ''
+                            base64_content = generated_image_url
                         
-                        # Calculate chunk size for base64 data only
-                        chunk_size = MAX_CONTENT_SIZE - len(prefix) - 100  # Leave room for metadata
-                        chunks = [base64_only[i:i+chunk_size] for i in range(0, len(base64_only), chunk_size)]
+                        # Calculate chunk size and number of chunks
+                        chunk_size = max_content_size - len(data_url_prefix) - 200  # More room for JSON overhead
+                        chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
                         total_chunks = len(chunks)
                         
-                        print(f"DEBUG: Split into {total_chunks} chunks")
+                        print(f"DEBUG: Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
+                        for i, chunk in enumerate(chunks):
+                            print(f"DEBUG: Chunk {i} length: {len(chunk)} bytes")
                         
-                        # Store main image document with metadata
+                        # Verify we can reassemble before storing
+                        reassembled_test = data_url_prefix + ''.join(chunks)
+                        if len(reassembled_test) == len(generated_image_url):
+                            print(f"DEBUG: ✅ Chunking verification passed - can reassemble to original size")
+                        else:
+                            print(f"DEBUG: ❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
+                        
+                        
+                        # Create main image document with metadata
                         main_image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
                             'role': 'image',
-                            'content': f"{prefix}{chunks[0]}",  # First chunk with prefix
+                            'content': f"{data_url_prefix}{chunks[0]}",  # First chunk with data URL prefix
                             'prompt': user_message,
                             'created_at': datetime.utcnow().isoformat(),
                             'timestamp': datetime.utcnow().isoformat(),
@@ -940,32 +959,46 @@ def register_route_backend_chats(app):
                                 'original_size': len(generated_image_url)
                             }
                         }
-                        cosmos_messages_container.upsert_item(main_image_doc)
                         
-                        # Store additional chunks if needed
+                        # Create additional chunk documents
+                        chunk_docs = []
                         for i in range(1, total_chunks):
                             chunk_doc = {
                                 'id': f"{image_message_id}_chunk_{i}",
                                 'conversation_id': conversation_id,
                                 'role': 'image_chunk',
                                 'content': chunks[i],
-                                'parent_id': image_message_id,
+                                'parent_message_id': image_message_id,
                                 'created_at': datetime.utcnow().isoformat(),
                                 'timestamp': datetime.utcnow().isoformat(),
                                 'metadata': {
                                     'is_chunk': True,
                                     'chunk_index': i,
-                                    'parent_id': image_message_id
+                                    'total_chunks': total_chunks,
+                                    'parent_message_id': image_message_id
                                 }
                             }
+                            chunk_docs.append(chunk_doc)
+                        
+                        # Store all documents
+                        print(f"DEBUG: Storing main document with content length: {len(main_image_doc['content'])} bytes")
+                        cosmos_messages_container.upsert_item(main_image_doc)
+                        
+                        for i, chunk_doc in enumerate(chunk_docs):
+                            print(f"DEBUG: Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
                             cosmos_messages_container.upsert_item(chunk_doc)
                             
-                        # For the response, we'll use a special marker that the frontend can recognize
-                        response_image_url = f"chunked:{image_message_id}"
+                        print(f"DEBUG: Successfully stored image in {total_chunks} documents")
+                        print(f"DEBUG: Main doc content starts with: {main_image_doc['content'][:50]}...")
+                        print(f"DEBUG: Main doc content ends with: ...{main_image_doc['content'][-50:]}")
+                        
+                        # Return the full image URL for immediate display
+                        response_image_url = generated_image_url
                         
                     else:
-                        # Small image, store normally
-                        print(f"DEBUG: Small image ({len(generated_image_url)} chars), storing normally")
+                        # Small image - store normally in single document
+                        print(f"DEBUG: Small image ({len(generated_image_url)} bytes), storing in single document")
+                        
                         image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
@@ -975,7 +1008,10 @@ def register_route_backend_chats(app):
                             'created_at': datetime.utcnow().isoformat(),
                             'timestamp': datetime.utcnow().isoformat(),
                             'model_deployment_name': image_gen_model,
-                            'metadata': {}
+                            'metadata': {
+                                'is_chunked': False,
+                                'original_size': len(generated_image_url)
+                            }
                         }
                         cosmos_messages_container.upsert_item(image_doc)
                         response_image_url = generated_image_url
@@ -985,7 +1021,7 @@ def register_route_backend_chats(app):
 
                     return jsonify({
                         'reply': "Image loading...",
-                        'image_url': generated_image_url,
+                        'image_url': response_image_url,
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'model_deployment_name': image_gen_model,
