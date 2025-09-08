@@ -206,10 +206,14 @@ export function setupApimToggle(apimToggle, apimFields, gptFields, onToggle) {
 		if (apimToggle.checked) {
 			apimFields.style.display = 'block';
 			gptFields.style.display = 'none';
+			apimFields.classList.remove('d-none');
+			gptFields.classList.add('d-none');
 			console.log('[DEBUG] Showing APIM fields, hiding GPT fields.');
 		} else {
 			apimFields.style.display = 'none';
 			gptFields.style.display = 'block';
+			gptFields.classList.remove('d-none');
+			apimFields.classList.add('d-none');
 			console.log('[DEBUG] Hiding APIM fields, showing GPT fields.');
 		}
 		if (typeof onToggle === 'function') {
@@ -406,9 +410,11 @@ export function toggleCustomConnectionUI(isEnabled, modalElements) {
 	if (!modalElements) return;
 	if (modalElements.customFields) {
 		modalElements.customFields.style.display = isEnabled ? '' : 'none';
+		isEnabled ? modalElements.customFields.classList.remove('d-none') : modalElements.customFields.classList.add('d-none');
 	}
 	if (modalElements.globalModelGroup) {
 		modalElements.globalModelGroup.style.display = isEnabled ? 'none' : '';
+		isEnabled ? modalElements.globalModelGroup.classList.add('d-none') : modalElements.globalModelGroup.classList.remove('d-none');
 	}
 }
 
@@ -421,6 +427,7 @@ export function toggleAdvancedUI(isEnabled, modalElements) {
 	if (!modalElements) return;
 	if (modalElements.advancedSection) {
 		modalElements.advancedSection.style.display = isEnabled ? '' : 'none';
+		isEnabled ? modalElements.advancedSection.classList.remove('d-none') : modalElements.advancedSection.classList.add('d-none');
 	}
 }
 
