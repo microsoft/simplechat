@@ -94,7 +94,7 @@ def save_personal_agent(user_id, agent_data):
         
         # Ensure required fields
         if 'id' not in agent_data:
-            agent_data['id'] = str(uuid.uuid4())
+            agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
             
         agent_data['user_id'] = user_id
         agent_data['last_updated'] = datetime.utcnow().isoformat()
