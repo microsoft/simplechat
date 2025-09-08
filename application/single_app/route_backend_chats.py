@@ -855,42 +855,201 @@ def register_route_backend_chats(app):
                             image_gen_model = selected_image_gen_model['deploymentName']
 
                 try:
+                    print(f"DEBUG: Generating image with model: {image_gen_model}")
+                    print(f"DEBUG: Using prompt: {user_message}")
+                    
+                    # Azure OpenAI doesn't support response_format parameter
+                    # Different models return different formats automatically
                     image_response = image_gen_client.images.generate(
                         prompt=user_message,
                         n=1,
                         model=image_gen_model
                     )
-                    generated_image_url = json.loads(image_response.model_dump_json())['data'][0]['url']
+                    
+                    print(f"DEBUG: Image response received: {type(image_response)}")
+                    response_dict = json.loads(image_response.model_dump_json())
+                    print(f"DEBUG: Response dict: {response_dict}")
+                    
+                    # Extract image URL or base64 data with validation
+                    if 'data' not in response_dict or not response_dict['data']:
+                        raise ValueError("No image data in response")
+                    
+                    image_data = response_dict['data'][0]
+                    print(f"DEBUG: Image data keys: {list(image_data.keys())}")
+                    
+                    generated_image_url = None
+                    
+                    # Handle different response formats
+                    if 'url' in image_data and image_data['url']:
+                        # dall-e-3 format: returns URL
+                        generated_image_url = image_data['url']
+                        print(f"DEBUG: Using URL format: {generated_image_url}")
+                    elif 'b64_json' in image_data and image_data['b64_json']:
+                        # gpt-image-1 format: returns base64 data
+                        b64_data = image_data['b64_json']
+                        # Create data URL for frontend
+                        generated_image_url = f"data:image/png;base64,{b64_data}"
+                        
+                        # Redacted logging for large base64 content
+                        if len(b64_data) > 100:
+                            redacted_content = f"{b64_data[:50]}...{b64_data[-50:]}"
+                            print(f"DEBUG: Using base64 format, length: {len(b64_data)}")
+                            print(f"DEBUG: Base64 content (redacted): {redacted_content}")
+                        else:
+                            print(f"DEBUG: Using base64 format, full content: {b64_data}")
+                    else:
+                        available_keys = list(image_data.keys())
+                        raise ValueError(f"No URL or base64 data in image data. Available keys: {available_keys}")
+                    
+                    # Validate we have a valid image source
+                    if not generated_image_url or generated_image_url == 'null':
+                        raise ValueError("Generated image URL is null or empty")
 
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
-                    image_doc = {
-                        'id': image_message_id,
-                        'conversation_id': conversation_id,
-                        'role': 'image',
-                        'content': generated_image_url,
-                        'prompt': user_message,
-                        'created_at': datetime.utcnow().isoformat(),
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': image_gen_model,
-                        'metadata': {}
-                    }
-                    cosmos_messages_container.upsert_item(image_doc)
+                    
+                    # Check if image data is too large for a single Cosmos document (2MB limit)
+                    # Account for JSON overhead by using 1.5MB as the safe limit for base64 content
+                    max_content_size = 1500000  # 1.5MB in bytes
+                    
+                    if len(generated_image_url) > max_content_size:
+                        print(f"DEBUG: Large image detected ({len(generated_image_url)} bytes), splitting across multiple documents")
+                        
+                        # Split the data URL into manageable chunks
+                        if generated_image_url.startswith('data:image/png;base64,'):
+                            # Extract just the base64 part for splitting
+                            data_url_prefix = 'data:image/png;base64,'
+                            base64_content = generated_image_url[len(data_url_prefix):]
+                            print(f"DEBUG: Extracted base64 content length: {len(base64_content)} bytes")
+                        else:
+                            # For regular URLs, store as-is (shouldn't happen with large content)
+                            data_url_prefix = ''
+                            base64_content = generated_image_url
+                        
+                        # Calculate chunk size and number of chunks
+                        chunk_size = max_content_size - len(data_url_prefix) - 200  # More room for JSON overhead
+                        chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
+                        total_chunks = len(chunks)
+                        
+                        print(f"DEBUG: Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
+                        for i, chunk in enumerate(chunks):
+                            print(f"DEBUG: Chunk {i} length: {len(chunk)} bytes")
+                        
+                        # Verify we can reassemble before storing
+                        reassembled_test = data_url_prefix + ''.join(chunks)
+                        if len(reassembled_test) == len(generated_image_url):
+                            print(f"DEBUG: ✅ Chunking verification passed - can reassemble to original size")
+                        else:
+                            print(f"DEBUG: ❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
+                        
+                        
+                        # Create main image document with metadata
+                        main_image_doc = {
+                            'id': image_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'image',
+                            'content': f"{data_url_prefix}{chunks[0]}",  # First chunk with data URL prefix
+                            'prompt': user_message,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': image_gen_model,
+                            'metadata': {
+                                'is_chunked': True,
+                                'total_chunks': total_chunks,
+                                'chunk_index': 0,
+                                'original_size': len(generated_image_url)
+                            }
+                        }
+                        
+                        # Create additional chunk documents
+                        chunk_docs = []
+                        for i in range(1, total_chunks):
+                            chunk_doc = {
+                                'id': f"{image_message_id}_chunk_{i}",
+                                'conversation_id': conversation_id,
+                                'role': 'image_chunk',
+                                'content': chunks[i],
+                                'parent_message_id': image_message_id,
+                                'created_at': datetime.utcnow().isoformat(),
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'metadata': {
+                                    'is_chunk': True,
+                                    'chunk_index': i,
+                                    'total_chunks': total_chunks,
+                                    'parent_message_id': image_message_id
+                                }
+                            }
+                            chunk_docs.append(chunk_doc)
+                        
+                        # Store all documents
+                        print(f"DEBUG: Storing main document with content length: {len(main_image_doc['content'])} bytes")
+                        cosmos_messages_container.upsert_item(main_image_doc)
+                        
+                        for i, chunk_doc in enumerate(chunk_docs):
+                            print(f"DEBUG: Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
+                            cosmos_messages_container.upsert_item(chunk_doc)
+                            
+                        print(f"DEBUG: Successfully stored image in {total_chunks} documents")
+                        print(f"DEBUG: Main doc content starts with: {main_image_doc['content'][:50]}...")
+                        print(f"DEBUG: Main doc content ends with: ...{main_image_doc['content'][-50:]}")
+                        
+                        # Return the full image URL for immediate display
+                        response_image_url = generated_image_url
+                        
+                    else:
+                        # Small image - store normally in single document
+                        print(f"DEBUG: Small image ({len(generated_image_url)} bytes), storing in single document")
+                        
+                        image_doc = {
+                            'id': image_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'image',
+                            'content': generated_image_url,
+                            'prompt': user_message,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': image_gen_model,
+                            'metadata': {
+                                'is_chunked': False,
+                                'original_size': len(generated_image_url)
+                            }
+                        }
+                        cosmos_messages_container.upsert_item(image_doc)
+                        response_image_url = generated_image_url
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
 
                     return jsonify({
                         'reply': "Image loading...",
-                        'image_url': generated_image_url,
+                        'image_url': response_image_url,
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'model_deployment_name': image_gen_model,
                         'message_id': image_message_id
                     }), 200
                 except Exception as e:
+                    print(f"DEBUG: Image generation error: {str(e)}")
+                    print(f"DEBUG: Error type: {type(e)}")
+                    import traceback
+                    print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                    
+                    # Handle different types of errors appropriately
+                    error_message = str(e)
+                    status_code = 500
+                    
+                    # Check if this is a content moderation error
+                    if "safety system" in error_message.lower() or "moderation_blocked" in error_message:
+                        user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
+                        status_code = 400  # Bad request rather than server error
+                    elif "400" in error_message and "BadRequestError" in str(type(e)):
+                        user_friendly_message = f"Image generation request was invalid: {error_message}"
+                        status_code = 400
+                    else:
+                        user_friendly_message = f"Image generation failed due to a technical error: {error_message}"
+                    
                     return jsonify({
-                        'error': f'Image generation failed: {str(e)}'
-                    }), 500
+                        'error': user_friendly_message
+                    }), status_code
 
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
