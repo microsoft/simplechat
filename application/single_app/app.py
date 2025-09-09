@@ -78,6 +78,7 @@ from flask_session import Session
 from redis import Redis
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
+from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
@@ -97,6 +98,8 @@ def before_first_request():
     print("Setting up Application Insights logging...")
     setup_appinsights_logging(settings)
     logging.basicConfig(level=logging.DEBUG)
+    print("Application initialized.")
+    ensure_default_global_agent_exists()
 
 
     # Setup session handling

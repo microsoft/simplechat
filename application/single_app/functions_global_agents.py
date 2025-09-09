@@ -9,8 +9,67 @@ global_agents container with id partitioning.
 import uuid
 import json
 import traceback
+import logging
+from functions_appinsights import log_event
+from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
+
+
+def ensure_default_global_agent_exists():
+    """
+    Ensure at least one global agent exists in the global_agents container.
+    If none exist, create a default global agent (using the researcher agent template).
+    """
+    try:
+        agents = get_global_agents() or []
+        if not agents:
+            default_agent = {
+                "name": "researcher",
+                "display_name": "researcher",
+                "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
+                "azure_openai_gpt_endpoint": "",
+                "azure_openai_gpt_key": "",
+                "azure_openai_gpt_deployment": "",
+                "azure_openai_gpt_api_version": "",
+                "azure_agent_apim_gpt_endpoint": "",
+                "azure_agent_apim_gpt_subscription_key": "",
+                "azure_agent_apim_gpt_deployment": "",
+                "azure_agent_apim_gpt_api_version": "",
+                "enable_agent_gpt_apim": False,
+                "is_global": True,
+                "instructions": (
+                    "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\n"
+                    "You must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\n"
+                    "Use a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\n"
+                    "If you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming."
+                ),
+                "actions_to_load": [],
+                "other_settings": {},
+            }
+            save_global_agent(default_agent)
+            log_event(
+                "Default global agent created.",
+                extra={
+                    "agent_name": default_agent["name"]
+                },
+            )
+            print("✅ Default global agent created.")
+        else:
+            log_event(
+                "At least one global agent already exists.",
+                extra={"existing_agents_count": len(agents)},
+            )
+            print("ℹ️ At least one global agent already exists.")
+    except Exception as e:
+        log_event(
+            f"Error ensuring default global agent exists: {e}",
+            extra={"exception": str(e)},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
+        print(f"❌ Error ensuring default global agent exists: {e}")
+        traceback.print_exc()
 
 def get_global_agents():
     """
@@ -24,10 +83,13 @@ def get_global_agents():
             query="SELECT * FROM c",
             enable_cross_partition_query=True
         ))
-        
         return agents
-        
     except Exception as e:
+        log_event(
+            f"Error getting global agents: {e}",
+            extra={"exception": str(e)},
+            exceptionTraceback=True
+        )
         print(f"❌ Error getting global agents: {str(e)}")
         traceback.print_exc()
         return []
@@ -48,11 +110,15 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
-        
         print(f"✅ Found global agent: {agent_id}")
         return agent
-        
     except Exception as e:
+        log_event(
+            f"Error getting global agent {agent_id}: {e}",
+            extra={"agent_id": agent_id, "exception": str(e)},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         print(f"❌ Error getting global agent {agent_id}: {str(e)}")
         return None
 
@@ -69,22 +135,32 @@ def save_global_agent(agent_data):
     """
     try:
         # Ensure required fields
+        user_id = get_current_user_id()
         if 'id' not in agent_data:
             agent_data['id'] = str(uuid.uuid4())
-        
         # Add metadata
         agent_data['is_global'] = True
         agent_data['created_at'] = datetime.utcnow().isoformat()
         agent_data['updated_at'] = datetime.utcnow().isoformat()
-        
+        log_event(
+            "Saving global agent.",
+            extra={"agent_name": agent_data.get('name', 'Unknown')},
+        )
         print(f"💾 Saving global agent: {agent_data.get('name', 'Unknown')}")
-        
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
-        
+        log_event(
+            "Global agent saved successfully.",
+            extra={"agent_id": result['id'], "user_id": user_id},
+        )
         print(f"✅ Global agent saved successfully: {result['id']}")
         return result
-        
     except Exception as e:
+        log_event(
+            f"Error saving global agent: {e}",
+            extra={"agent_name": agent_data.get('name', 'Unknown'), "exception": str(e)},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         print(f"❌ Error saving global agent: {str(e)}")
         traceback.print_exc()
         return None
@@ -101,17 +177,25 @@ def delete_global_agent(agent_id):
         bool: True if successful, False otherwise
     """
     try:
+        user_id = get_current_user_id()
         print(f"🗑️ Deleting global agent: {agent_id}")
-        
         cosmos_global_agents_container.delete_item(
             item=agent_id,
             partition_key=agent_id
         )
-        
+        log_event(
+            "Global agent deleted successfully.",
+            extra={"agent_id": agent_id, "user_id": user_id},
+        )
         print(f"✅ Global agent deleted successfully: {agent_id}")
         return True
-        
     except Exception as e:
+        log_event(
+            f"Error deleting global agent {agent_id}: {e}",
+            extra={"agent_id": agent_id, "exception": str(e)},
+            level=logging.ERROR,
+            exceptionTraceback=True
+        )
         print(f"❌ Error deleting global agent {agent_id}: {str(e)}")
         traceback.print_exc()
         return False
