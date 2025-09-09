@@ -10,7 +10,7 @@ import uuid
 import json
 import traceback
 from datetime import datetime
-
+from config import cosmos_global_agents_container
 
 def get_global_agents():
     """
@@ -20,8 +20,6 @@ def get_global_agents():
         list: List of global agent dictionaries
     """
     try:
-        from config import cosmos_global_agents_container
-        
         agents = list(cosmos_global_agents_container.query_items(
             query="SELECT * FROM c",
             enable_cross_partition_query=True
@@ -46,8 +44,6 @@ def get_global_agent(agent_id):
         dict: Agent data or None if not found
     """
     try:
-        from config import cosmos_global_agents_container
-        
         agent = cosmos_global_agents_container.read_item(
             item=agent_id,
             partition_key=agent_id
@@ -72,8 +68,6 @@ def save_global_agent(agent_data):
         dict: Saved agent data or None if failed
     """
     try:
-        from config import cosmos_global_agents_container
-        
         # Ensure required fields
         if 'id' not in agent_data:
             agent_data['id'] = str(uuid.uuid4())
@@ -107,8 +101,6 @@ def delete_global_agent(agent_id):
         bool: True if successful, False otherwise
     """
     try:
-        from config import cosmos_global_agents_container
-        
         print(f"🗑️ Deleting global agent: {agent_id}")
         
         cosmos_global_agents_container.delete_item(
