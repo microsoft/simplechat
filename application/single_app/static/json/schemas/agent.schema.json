@@ -8,8 +8,8 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          "description": "Agent GUID (UUID v4 pattern)"
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+          "description": "Agent ID = GUID (UUID v4 pattern) and possible userId/groupId"
         },
         "user_id": {
           "type": "string",

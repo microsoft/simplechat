@@ -1105,10 +1105,26 @@ export class AgentModalStepper {
       if (this.isEditMode && this.originalAgent && this.originalAgent.id) {
         agentData.id = this.originalAgent.id;
       }
-      
-      // Generate ID if needed for new agents
-      if (!agentData.id) {
-        agentData.id = `${current_user_id}_${agentData.name}`;
+      else {
+        // Generate ID if needed for new agents
+        if (!agentData.id) {
+          if (this.isAdmin) {
+            try {
+              const guidResp = await fetch('/api/agents/generate_id');
+              if (guidResp.ok) {
+                const guidData = await guidResp.json();
+                agentData.id = guidData.id;
+              } else {
+                agentData.id = crypto.randomUUID();
+              }
+            } catch (guidErr) {
+              agentData.id = crypto.randomUUID();
+            }
+          }
+          else {
+            agentData.id = `${current_user_id}_${agentData.name}`;
+          }
+        }
       }
       
       // Add selected actions
