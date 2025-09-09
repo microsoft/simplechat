@@ -312,7 +312,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
         agent,
         globalModelSelect: document.getElementById('agent-global-model-select'),
         isGlobal: false,
-        customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
+        customConnectionCheck: agentsCommon.shouldEnableCustomConnection(agent),
         deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
       })
     );

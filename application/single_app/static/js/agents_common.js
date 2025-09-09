@@ -335,6 +335,7 @@ export function shouldExpandAdvanced(agent) {
 /**
  * Returns true if any custom connection fields are set (non-empty or true)
  * @param {Object} agent
+ * @returns {boolean}
  */
 export function shouldEnableCustomConnection(agent) {
 	if (!agent) return false;
