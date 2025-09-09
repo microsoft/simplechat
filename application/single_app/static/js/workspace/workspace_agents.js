@@ -253,10 +253,7 @@ async function chatWithAgent(agentName) {
 async function openAgentModal(agent = null, selectedAgentName = null) {
   console.log('openAgentModal called with agent:', agent);
 
-  // Always re-initialize stepper with workspace context to ensure correct state
-  // This prevents issues when switching between workspace and admin contexts
-  console.log('Creating new AgentModalStepper for workspace');
-  window.agentModalStepper = new AgentModalStepper(false); // Pass isAdmin = false
+  // Use the stepper to show the modal (instance created once globally)
 
   // Use the stepper to show the modal
   try {
@@ -312,7 +309,7 @@ async function openAgentModal(agent = null, selectedAgentName = null) {
         agent,
         globalModelSelect: document.getElementById('agent-global-model-select'),
         isGlobal: false,
-        customConnectionCheck: agentsCommon.shouldEnableCustomConnection(agent),
+        customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
         deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
       })
     );
@@ -352,14 +349,17 @@ async function deleteAgent(name) {
 
 
 // --- Execution: Event Wiring & Initial Load ---
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    attachAgentTableEvents();
-    fetchAgents();
-  });
-} else {
+
+function initializeWorkspaceAgentUI() {
+  window.agentModalStepper = new AgentModalStepper(false);
   attachAgentTableEvents();
   fetchAgents();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeWorkspaceAgentUI);
+} else {
+  initializeWorkspaceAgentUI();
 }
 
 // Expose fetchAgents globally for migration script
