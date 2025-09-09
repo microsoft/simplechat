@@ -7,6 +7,7 @@ import builtins
 from flask import Blueprint, jsonify, request
 from semantic_kernel_loader import get_agent_orchestration_types
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings
+from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
@@ -259,8 +260,6 @@ def list_agents():
 @admin_required
 def add_agent():
     try:
-        from functions_global_agents import get_global_agents, save_global_agent
-        
         agents = get_global_agents()
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         new_agent['is_global'] = True

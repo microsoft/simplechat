@@ -61,6 +61,7 @@ async function loadAllAdminAgentData() {
         renderAdminAgentDropdown([], null);
     }
 }
+window.loadAllAdminAgentData = loadAllAdminAgentData; // Expose for reloading after edits
 
 function renderAdminAgentDropdown(agentsList, selectedAgentName) {
     const dropdown = document.getElementById('default-agent-select');
@@ -123,13 +124,12 @@ function handleAddAgentClick() {
 
 // DRY modal open logic for add/edit agent (unified with workspace)
 async function openAgentModal(agent = null) {
+
     const modalEl = document.getElementById('agentModal');
     if (!modalEl) return alert('Agent modal not found.');
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
-    // Always re-initialize stepper with admin context to ensure correct state
-    // This prevents issues when switching between workspace and admin contexts
-    window.agentModalStepper = new AgentModalStepper(true); // Pass isAdmin = true
+    // Only call showModal; instance is created once globally
     window.agentModalStepper.showModal(agent);
 
     // Clear error div on modal open
@@ -393,14 +393,17 @@ if (saveOrchBtn) {
 }
 
 // --- Execution Section: Only minimal wiring at the bottom ---
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        loadAllAdminAgentData();
-        ensureAdminAgentEventListeners();
-    });
-} else {
+
+function initializeAdminAgentUI() {
+    window.agentModalStepper = new AgentModalStepper(true);
     loadAllAdminAgentData();
     ensureAdminAgentEventListeners();
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeAdminAgentUI);
+} else {
+    initializeAdminAgentUI();
 }
 
 // --- Merge Global Agents/Plugins Toggle (Async Save) ---
@@ -426,116 +429,6 @@ if (mergeGlobalToggle) {
             mergeGlobalToggle.checked = !checked;
         } finally {
             mergeGlobalToggle.disabled = false;
-        }
-    });
-}
-
-// Save Agent (Add/Edit)
-if (agentModalSaveBtn) {
-    agentModalSaveBtn.addEventListener('click', async function () {
-        console.log('[DEBUG] Save Agent button clicked');
-        let agentData;
-        try {
-            agentData = agentsCommon.getAgentModalFields({ context: 'admin' });
-            // Only preserve id if editing; do not generate or strip id on create
-            if (typeof editingAgentIndex !== 'undefined' && editingAgentIndex !== null && agents[editingAgentIndex] && agents[editingAgentIndex].id) {
-                agentData.id = agents[editingAgentIndex].id;
-            }
-            // If id is still not present, fetch a GUID from backend
-            if (!('id' in agentData) || !agentData.id) {
-                try {
-                    const guidResp = await fetch('/api/agents/generate_id');
-                    if (guidResp.ok) {
-                        const guidData = await guidResp.json();
-                        agentData.id = guidData.id;
-                    } else {
-                        agentData.id = '';
-                    }
-                } catch (guidErr) {
-                    agentData.id = '';
-                }
-            }
-            agentData.is_global = true;
-        } catch (e) {
-            const msg = 'Additional Settings: ' + e.message;
-            showAgentModalError(msg);
-            showToast(msg, 'danger');
-            return;
-        }
-        try {
-            if (!window.validateAgent) {
-                window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
-            }
-            console.log('[DEBUG] Agent object before validation:', agentData);
-            const valid = window.validateAgent(agentData);
-            console.log('[DEBUG] Validation result:', valid);
-            if (window.validateAgent.errors) {
-                console.log('[DEBUG] Ajv validation errors:', window.validateAgent.errors);
-            }
-            if (!valid) {
-                const msg = 'Validation error: Invalid agent data.';
-                showAgentModalError(msg);
-                showToast(msg, 'danger');
-                return;
-            }
-        } catch (e) {
-            const msg = 'Schema validation failed: ' + e.message;
-            console.log('[DEBUG] Validation threw error:', e);
-            showAgentModalError(msg);
-            showToast(msg, 'danger');
-            return;
-        }
-        try {
-            let resp, data;
-            if (typeof editingAgentIndex === 'undefined' || editingAgentIndex === null) {
-                console.log('[DEBUG] About to POST new agent');
-                resp = await fetch('/api/admin/agents', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(agentData)
-                });
-                data = await resp.json();
-                console.log('[DEBUG] POST response:', resp.status, data);
-                if (!resp.ok) {
-                    const msg = data.error || 'Failed to add agent.';
-                    showAgentModalError(msg);
-                    showToast(msg, 'danger');
-                    return;
-                }
-                agents.push(agentData);
-            } else {
-                console.log('[DEBUG] About to PUT update agent');
-                resp = await fetch(`/api/admin/agents/${encodeURIComponent(editingAgentName)}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(agentData)
-                });
-                data = await resp.json();
-                console.log('[DEBUG] PUT response:', resp.status, data);
-                if (!resp.ok) {
-                    const msg = data.error || 'Failed to update agent.';
-                    showAgentModalError(msg);
-                    showToast(msg, 'danger');
-                    return;
-                }
-                agents[editingAgentIndex] = agentData;
-            }
-            const agentModal = bootstrap.Modal.getInstance(document.getElementById('agentModal'));
-            if (agentModal) agentModal.hide();
-            try {
-                await loadAllAdminAgentData();
-            } catch (loadErr) {
-                const msg = 'Agent saved, but failed to reload agents: ' + (loadErr.message || loadErr);
-                console.error('[ERROR] ' + msg, loadErr);
-                showAgentModalError(msg);
-                showToast(msg, 'danger');
-                return;
-            }
-        } catch (e) {
-            const msg = 'Failed to save agent: ' + (e && e.message ? e.message : e);
-            console.error('[ERROR] Save agent exception:', e);
-            showAgentModalError(msg);
-            showToast(msg, 'danger');
         }
     });
 }
