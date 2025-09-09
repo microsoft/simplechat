@@ -89,7 +89,7 @@ def get_settings():
         'enable_image_generation': False,
         'enable_image_gen_apim': False,
         'azure_openai_image_gen_endpoint': '',
-        'azure_openai_image_gen_api_version': '2024-05-01-preview',
+        'azure_openai_image_gen_api_version': '2024-12-01-preview',
         'azure_openai_image_gen_authentication_type': 'key',
         'azure_openai_image_gen_subscription_id': '',
         'azure_openai_image_gen_resource_group': '',

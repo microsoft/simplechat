@@ -186,7 +186,14 @@ export function loadMessages(conversationId) {
         } else if (msg.role === "file") {
           appendMessage("File", msg);
         } else if (msg.role === "image") {
-          appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
+          // Validate image URL before calling appendMessage
+          if (msg.content && msg.content !== 'null' && msg.content.trim() !== '') {
+            appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
+          } else {
+            console.error(`[loadMessages] Invalid image URL for message ${msg.id}: "${msg.content}"`);
+            // Show error message instead of broken image
+            appendMessage("Error", "Failed to load generated image - invalid URL", msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
+          }
         } else if (msg.role === "safety") {
           appendMessage("safety", msg.content, null, msg.id, false, [], [], [], null, null);
         }
@@ -466,7 +473,13 @@ export function appendMessage(
       
       avatarImg = "/static/images/ai-avatar.png"; // Or a specific image icon
       avatarAltText = "Generated Image";
-      messageContentHtml = `<img src="${messageContent}" alt="Generated Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" />`;
+      
+      // Validate image URL before creating img tag
+      if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
+        messageContentHtml = `<img src="${messageContent}" alt="Generated Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
+      } else {
+        messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to generate image - invalid response from image service</div>`;
+      }
     } else if (sender === "safety") {
       messageClass = "safety-message";
       senderLabel = "Content Safety";
@@ -908,7 +921,25 @@ export function actuallySendMessage(finalMessageToSend) {
       } else {
         // Show specific embedding error if present, or if status is 500 (embedding backend error)
         const errMsg = (error.message || "").toLowerCase();
-        if (errMsg.includes("embedding") || error.status === 500) {
+        
+        // Handle image generation content safety errors
+        if (errMsg.includes("safety system") || errMsg.includes("moderation_blocked") || errMsg.includes("content safety")) {
+          appendMessage(
+            "safety", // Use 'safety' sender type
+            `**Image Generation Blocked by Content Safety**\n\n` +
+            `Your image generation request was blocked by Azure OpenAI's content safety system. ` +
+            `Please try a different prompt that doesn't involve potentially harmful, violent, or illicit content.\n\n` +
+            `**Error**: ${error.message || "Content safety violation"}`,
+            null, // No model name for safety message
+            null, // No message ID for error
+            false, // augmented
+            [], // hybridCitations
+            [], // webCitations
+            [], // agentCitations
+            null, // agentDisplayName
+            null // agentName
+          );
+        } else if (errMsg.includes("embedding") || error.status === 500) {
           appendMessage(
             "Error",
             "There was an issue with the embedding process. Please check with an admin on embedding configuration.",
