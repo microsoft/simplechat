@@ -75,7 +75,6 @@ def register_route_backend_chats(app):
             search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
-            bing_citations_list = [] # Empty list since Bing search is removed
             system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
             selected_agent = None  # Initialize selected_agent early to prevent NameError
@@ -1069,7 +1068,7 @@ def register_route_backend_chats(app):
                         "content": f"<Summary of previous conversation context>\n{summary_of_older}\n</Summary of previous conversation context>"
                     })
 
-                # Add augmentation system messages (search, bing) next
+                # Add augmentation system messages (search, agents) next
                 # **Important**: Decide if you want these saved. If so, you need to upsert them now.
                 # For simplicity here, we're just adding them to the API call context.
                 for aug_msg in system_messages_for_augmentation:
@@ -1173,8 +1172,7 @@ def register_route_backend_chats(app):
                 has_general_system_prompt = any(
                     msg.get('role') == 'system' and not (
                         msg.get('content', '').startswith('<Summary of previous conversation context>') or
-                        "retrieved document excerpts" in msg.get('content', '') or
-                        "web search results" in msg.get('content', '')
+                        "retrieved document excerpts" in msg.get('content', '')
                     )
                     for msg in conversation_history_for_api
                 )
@@ -1728,7 +1726,6 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None, # Log query only if hybrid search ran and found results
-                'web_search_citations': bing_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'agent_citations': agent_citations_list, # <--- NEW: Store agent tool invocation results
                 'user_message': user_message,
                 'model_deployment_name': actual_model_used,
@@ -1774,12 +1771,10 @@ def register_route_backend_chats(app):
                     selected_document_id=selected_document_id,
                     model_deployment=actual_model_used,
                     hybrid_search_enabled=hybrid_search_enabled,
-                    bing_search_enabled=bing_search_enabled,
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
                     search_results=search_results if 'search_results' in locals() else None,
-                    web_search_results=bing_results if 'bing_results' in locals() else None,
                     conversation_item=conversation_item
                 )
             except Exception as e:
@@ -1809,7 +1804,6 @@ def register_route_backend_chats(app):
                 'blocked': False, # Explicitly false if we got this far
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
-                'web_search_citations': bing_citations_list,
                 'agent_citations': agent_citations_list,
                 'kernel_fallback_notice': kernel_fallback_notice
             }), 200

@@ -1790,53 +1790,6 @@ function setupTestButtons() {
             }
         });
     }
-
-    const testWebSearchBtn = document.getElementById('test_web_search_button');
-    if (testWebSearchBtn) {
-        testWebSearchBtn.addEventListener('click', async () => {
-            const resultDiv = document.getElementById('test_web_search_result');
-            resultDiv.innerHTML = 'Testing Bing Web Search...';
-
-            const webSearchEnabled = document.getElementById('enable_web_search').checked;
-            const enableApim = document.getElementById('enable_web_search_apim').checked;
-
-            const payload = {
-                test_type: 'web_search',
-                enabled: webSearchEnabled,
-                enable_apim: enableApim
-            };
-
-            if (enableApim) {
-                payload.apim = {
-                    endpoint: document.getElementById('azure_apim_web_search_endpoint').value,
-                    subscription_key: document.getElementById('azure_apim_web_search_subscription_key').value,
-                    deployment: document.getElementById('azure_apim_web_search_deployment').value,
-                    api_version: document.getElementById('azure_apim_web_search_api_version').value
-                };
-            } else {
-                payload.direct = {
-                    key: document.getElementById('bing_search_key').value
-                };
-            }
-
-            try {
-                const resp = await fetch('/api/admin/settings/test_connection', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await resp.json();
-                if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
-                } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Web Search'}</span>`;
-                }
-            } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
-            }
-        });
-    }
-
     const testAzureSearchBtn = document.getElementById('test_azure_ai_search_button');
     if (testAzureSearchBtn) {
         testAzureSearchBtn.addEventListener('click', async () => {
@@ -2156,7 +2109,6 @@ togglePassword('toggle_gpt_key', 'azure_openai_gpt_key');
 togglePassword('toggle_embedding_key', 'azure_openai_embedding_key');
 togglePassword('toggle_image_gen_key', 'azure_openai_image_gen_key');
 togglePassword('toggle_content_safety_key', 'content_safety_key');
-togglePassword('toggle_bing_search_key', 'bing_search_key');
 togglePassword('toggle_search_key', 'azure_ai_search_key');
 togglePassword('toggle_docintel_key', 'azure_document_intelligence_key');
 togglePassword('toggle_azure_apim_gpt_subscription_key', 'azure_apim_gpt_subscription_key');

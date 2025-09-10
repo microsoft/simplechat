@@ -61,7 +61,6 @@
     "enable_user_feedback": true,
     "enable_conversation_archiving": true,
     "enable_web_search": true,
-    "bing_search_key": "<your-bing-search-key>",
     "azure_ai_search_endpoint": "<your-ai-search-endpoint>",
     "azure_ai_search_key": "<your-ai-search-key>",
     "azure_ai_search_authentication_type": "key",

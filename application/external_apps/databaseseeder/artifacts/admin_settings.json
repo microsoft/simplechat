@@ -101,7 +101,6 @@
     "require_member_of_feedback_admin": false,
     "enable_conversation_archiving": true,
     "enable_web_search": false,
-    "bing_search_key": "",
     "enable_web_search_apim": false,
     "azure_apim_web_search_endpoint": "",
     "azure_apim_web_search_subscription_key": "",
