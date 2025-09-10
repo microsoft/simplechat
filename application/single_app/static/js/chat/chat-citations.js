@@ -6,6 +6,7 @@ import { toBoolean } from "./chat-utils.js";
 import { fetchFileContent } from "./chat-input-actions.js";
 // --- NEW IMPORT ---
 import { getDocumentMetadata } from './chat-documents.js';
+import { showEnhancedCitationModal } from './chat-enhanced-citations.js';
 // ------------------
 
 const chatboxEl = document.getElementById("chatbox");
@@ -498,9 +499,9 @@ if (chatboxEl) {
 
       // --- Execute based on the decision ---
       if (attemptEnhanced) {
-          // console.log(`Attempting PDF Modal for ${docId}, page ${pageNumber}, citationId ${citationId}`);
-          // Pass citationId for potential fallback within showPdfModal
-          showPdfModal(docId, pageNumber, citationId);
+          // console.log(`Attempting Enhanced Citation for ${docId}, page/timestamp ${pageNumber}, citationId ${citationId}`);
+          // Use new enhanced citation system that supports multiple file types
+          showEnhancedCitationModal(docId, pageNumber, citationId);
       } else {
           // console.log(`Fetching Text Citation for ${citationId}`);
           // Use text citation if globally disabled OR explicitly disabled for this doc OR if parsing failed earlier

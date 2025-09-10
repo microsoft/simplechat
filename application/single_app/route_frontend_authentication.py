@@ -115,11 +115,9 @@ def register_route_frontend_authentication(app):
         # Store user identity info (claims from ID token)
         print(f"DEBUG:  [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
         print(f"DEBUG:  [claims] User claims: {result.get('id_token_claims', {})}")
+        print(f"DEBUG:  [claims] User token: {result.get('access_token', 'Unknown')}")
+
         session["user"] = result.get("id_token_claims")
-        
-        # Print user info for debugging
-        print(f"DEBUG:  [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
-        print(f"DEBUG:  [claims] User claims: {result.get('id_token_claims', {})}")
 
         # --- CRITICAL: Save the entire cache (contains tokens) to session ---
         _save_cache(msal_app.token_cache)
