@@ -54,6 +54,7 @@ provider "azurerm" {
       permanently_delete_on_destroy = true
     }
   }
+  storage_use_azuread = true
   environment = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : (var.global_which_azure_platform == "AzureCloud" ? "public" : null)
   tenant_id   = var.param_tenant_id
   subscription_id = var.param_subscription_id
@@ -284,7 +285,7 @@ resource "azurerm_key_vault" "kv" {
   # Using RBAC authorization as recommended by the script
   # The script attempts to get current user's object ID for initial permissions
   # In Terraform, we can assign roles after creation.
-  enable_rbac_authorization = true
+  rbac_authorization_enabled = true
 
   tags = local.common_tags
 }
@@ -321,7 +322,7 @@ resource "azurerm_storage_account" "sa" {
   access_tier              = "Hot"
   allow_nested_items_to_be_public =  false
   public_network_access_enabled = false # From script's allow-blob-public-access false
-  shared_access_key_enabled = true
+  shared_access_key_enabled = false
   tags                     = local.common_tags
 }
 
@@ -660,6 +661,7 @@ resource "azurerm_search_service" "search" {
   sku                 = "basic" # Other options: standard, standard2, standard3
   replica_count       = 1
   partition_count     = 1
+  semantic_search_sku = "standard" #other options:  free
   public_network_access_enabled = true # From script's public-network-access enabled
   tags                = local.common_tags
 }

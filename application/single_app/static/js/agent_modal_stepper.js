@@ -192,21 +192,41 @@ export class AgentModalStepper {
   }
 
   populateFields(agent) {
-    // Populate form fields with agent data
-    const displayName = document.getElementById('agent-display-name');
-    const generatedName = document.getElementById('agent-name');
-    const description = document.getElementById('agent-description');
-    const instructions = document.getElementById('agent-instructions');
-    const modelSelect = document.getElementById('agent-global-model-select');
+    // Use shared logic to determine if custom connection should be enabled
     const customConnection = document.getElementById('agent-custom-connection');
-    
-    if (displayName) displayName.value = agent.display_name || '';
-    if (generatedName) generatedName.value = agent.name || '';
-    if (description) description.value = agent.description || '';
-    if (instructions) instructions.value = agent.instructions || '';
-    if (modelSelect && agent.model) modelSelect.value = agent.model;
-    if (customConnection) customConnection.checked = agent.custom_connection || false;
-    
+    if (customConnection) {
+      // Use agentsCommon.shouldEnableCustomConnection to set toggle
+      customConnection.checked = agentsCommon.shouldEnableCustomConnection(agent);
+    }
+
+    // Use shared function to populate all fields
+    if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
+      agentsCommon.setAgentModalFields(agent);
+    }
+
+    // Show/hide custom connection fields as needed
+    if (customConnection) {
+      // Find the custom fields and global model group containers
+      const customFields = document.getElementById('agent-custom-connection-fields');
+      const globalModelGroup = document.getElementById('agent-global-model-group');
+      // Use shared UI toggle logic if available
+      if (agentsCommon && typeof agentsCommon.toggleCustomConnectionUI === 'function') {
+        agentsCommon.toggleCustomConnectionUI(customConnection.checked, {
+          customFields,
+          globalModelGroup
+        });
+      } else if (customFields && globalModelGroup) {
+        // Fallback: show/hide manually
+        if (customConnection.checked) {
+          customFields.classList.remove('d-none');
+          globalModelGroup.classList.add('d-none');
+        } else {
+          customFields.classList.add('d-none');
+          globalModelGroup.classList.remove('d-none');
+        }
+      }
+    }
+
     // Store selected actions to be set when actions are loaded
     if (agent.actions_to_load && Array.isArray(agent.actions_to_load)) {
       this.actionsToSelect = agent.actions_to_load;
@@ -256,6 +276,20 @@ export class AgentModalStepper {
     const currentStep = document.getElementById(`agent-step-${stepNumber}`);
     if (currentStep) {
       currentStep.classList.remove('d-none');
+    }
+
+    if (stepNumber === 2) {
+      if (!this.isAdmin) {
+        const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
+        if (customConnectionToggle) {
+          const allowUserCustom = appSettings?.allow_user_custom_agent_endpoints;
+          if (!allowUserCustom) {
+            customConnectionToggle.classList.add('d-none');
+          } else {
+            customConnectionToggle.classList.remove('d-none');
+          }
+        }
+      }
     }
     
     // Load actions when reaching step 4
@@ -494,6 +528,25 @@ export class AgentModalStepper {
     }
   }
 
+  getFormModelName() {
+    const customConnection = document.getElementById('agent-custom-connection')?.checked || false;
+    let modelName = '-';
+    if (customConnection) {
+      const apimToggle = document.getElementById('agent-enable-apim');
+      if (apimToggle && apimToggle.checked) {
+        const apimDeployment = document.getElementById('agent-apim-deployment');
+        modelName = apimDeployment?.value?.trim() || '-';
+      } else {
+        const gptDeployment = document.getElementById('agent-gpt-deployment');
+        modelName = gptDeployment?.value?.trim() || '-';
+      }
+    } else {
+      const modelSelect = document.getElementById('agent-global-model-select');
+      modelName = modelSelect?.options[modelSelect.selectedIndex]?.text || '-';
+    }
+    return modelName;
+  }
+
   populateSummary() {
     // Basic Information
     const displayName = document.getElementById('agent-display-name')?.value || '-';
@@ -501,10 +554,8 @@ export class AgentModalStepper {
     const description = document.getElementById('agent-description')?.value || '-';
     
     // Model & Connection
-    const modelSelect = document.getElementById('agent-global-model-select');
-    const modelName = modelSelect?.options[modelSelect.selectedIndex]?.text || '-';
-    
     const customConnection = document.getElementById('agent-custom-connection')?.checked ? 'Yes' : 'No';
+    const modelName = this.getFormModelName();
     
     // Instructions
     const instructions = document.getElementById('agent-instructions')?.value || '-';
@@ -906,12 +957,11 @@ export class AgentModalStepper {
       const currentDescription = document.getElementById('agent-description')?.value || '';
       const currentInstructions = document.getElementById('agent-instructions')?.value || '';
       
-      // Model selection
-      const modelSelect = document.getElementById('agent-global-model-select');
-      const currentModel = modelSelect?.options[modelSelect.selectedIndex]?.value || '';
-      
       // Custom connection
       const currentCustomConnection = document.getElementById('agent-custom-connection')?.checked || false;
+
+      // Model selection
+      const currentModel = this.getFormModelName();
       
       // Selected actions
       const currentActions = this.getSelectedActionIds();
@@ -1055,19 +1105,25 @@ export class AgentModalStepper {
       if (this.isEditMode && this.originalAgent && this.originalAgent.id) {
         agentData.id = this.originalAgent.id;
       }
-      
-      // Generate ID if needed for new agents
-      if (!agentData.id) {
-        try {
-          const guidResp = await fetch('/api/agents/generate_id');
-          if (guidResp.ok) {
-            const guidData = await guidResp.json();
-            agentData.id = guidData.id;
-          } else {
-            agentData.id = crypto.randomUUID();
+      else {
+        // Generate ID if needed for new agents
+        if (!agentData.id) {
+          if (this.isAdmin) {
+            try {
+              const guidResp = await fetch('/api/agents/generate_id');
+              if (guidResp.ok) {
+                const guidData = await guidResp.json();
+                agentData.id = guidData.id;
+              } else {
+                agentData.id = crypto.randomUUID();
+              }
+            } catch (guidErr) {
+              agentData.id = crypto.randomUUID();
+            }
           }
-        } catch (guidErr) {
-          agentData.id = crypto.randomUUID();
+          else {
+            agentData.id = `${current_user_id}_${agentData.name}`;
+          }
         }
       }
       
@@ -1078,6 +1134,9 @@ export class AgentModalStepper {
       // Ensure required schema fields are present
       if (!agentData.other_settings) {
         agentData.other_settings = {};
+      }
+      else {
+        agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
       
       // Clean up form-specific fields that shouldn't be sent to backend
@@ -1133,7 +1192,8 @@ export class AgentModalStepper {
       description: document.getElementById('agent-description')?.value || '',
       instructions: document.getElementById('agent-instructions')?.value || '',
       model: document.getElementById('agent-global-model-select')?.value || '',
-      custom_connection: document.getElementById('agent-custom-connection')?.checked || false
+      custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
+      other_settings: document.getElementById('agent-additional-settings')?.value || '{}'
     };
     
     // Handle model and deployment configuration

@@ -31,7 +31,7 @@ import inspect
 import builtins
 
 # Agent and Azure OpenAI chat service imports
-log_event("[SK Loader] Starting loader")
+log_event("[SK Loader] Starting loader imports")
 try:
     from semantic_kernel.agents import ChatCompletionAgent
     from agent_logging_chat_completion import LoggingChatCompletionAgent
