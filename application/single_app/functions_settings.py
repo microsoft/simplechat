@@ -25,7 +25,7 @@ def get_settings():
         'orchestration_type': 'default_agent',
         'merge_global_semantic_kernel_with_workspace': False,
         'global_selected_agent': {
-            'name': 'researcher_agent',
+            'name': 'researcher',
             'is_global': True
         },
         'allow_user_agents': False,
@@ -518,7 +518,7 @@ def update_user_settings(user_id, settings_to_update):
         if 'agents' not in doc['settings'] or doc['settings']['agents'] is None:
             doc['settings']['agents'] = [
                 {
-                    "id": "fcdf009d-b8c5-46b6-833f-5d7b3d763468",
+                    "id": f"{user_id}_researcher",
                     "name": "researcher",
                     "display_name": "researcher",
                     "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",

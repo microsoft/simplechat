@@ -84,18 +84,6 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 # Load environment variables from .env file
 load_dotenv()
 
-app = Flask(__name__)
-
-app.config['EXECUTOR_TYPE'] = 'thread'
-app.config['EXECUTOR_MAX_WORKERS'] = 30
-executor = Executor()
-executor.init_app(app)
-app.config['SESSION_TYPE'] = 'filesystem'
-VERSION = "0.226.112"
-
-
-Session(app)
-
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 

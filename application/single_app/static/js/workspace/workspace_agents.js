@@ -252,17 +252,76 @@ async function chatWithAgent(agentName) {
 
 async function openAgentModal(agent = null, selectedAgentName = null) {
   console.log('openAgentModal called with agent:', agent);
-  
-  // Always re-initialize stepper with workspace context to ensure correct state
-  // This prevents issues when switching between workspace and admin contexts
-  console.log('Creating new AgentModalStepper for workspace');
-  window.agentModalStepper = new AgentModalStepper(false); // Pass isAdmin = false
-  
+
+  // Use the stepper to show the modal (instance created once globally)
+
   // Use the stepper to show the modal
   try {
     console.log('Calling showModal on AgentModalStepper');
     await window.agentModalStepper.showModal(agent);
     console.log('Modal should be visible now');
+
+    // --- Custom Connection Toggle Logic (mirroring admin_agents.js) ---
+    // Setup toggles using shared helpers
+    agentsCommon.setupApimToggle(
+      document.getElementById('agent-enable-apim'),
+      document.getElementById('agent-apim-fields'),
+      document.getElementById('agent-gpt-fields'),
+      () => agentsCommon.loadGlobalModelsForModal({
+        endpoint: '/api/user/agent/settings',
+        agent,
+        globalModelSelect: document.getElementById('agent-global-model-select'),
+        isGlobal: false,
+        customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
+        deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
+      })
+    );
+    agentsCommon.toggleCustomConnectionUI(
+      agentsCommon.shouldEnableCustomConnection(agent),
+      {
+        customFields: document.getElementById('agent-custom-connection-fields'),
+        globalModelGroup: document.getElementById('agent-global-model-group'),
+        advancedSection: document.getElementById('agent-advanced-section')
+      }
+    );
+    agentsCommon.toggleAdvancedUI(
+      agentsCommon.shouldExpandAdvanced(agent),
+      {
+        customFields: document.getElementById('agent-custom-connection-fields'),
+        globalModelGroup: document.getElementById('agent-global-model-group'),
+        advancedSection: document.getElementById('agent-advanced-section')
+      }
+    );
+    // Attach shared toggle handlers after shared helpers
+    const customConnectionToggle = document.getElementById('agent-custom-connection');
+    const advancedToggle = document.getElementById('agent-advanced-toggle');
+    const modalElements = {
+      customFields: document.getElementById('agent-custom-connection-fields'),
+      globalModelGroup: document.getElementById('agent-global-model-group'),
+      advancedSection: document.getElementById('agent-advanced-section')
+    };
+    agentsCommon.attachCustomConnectionToggleHandler(
+      customConnectionToggle,
+      agent,
+      modalElements,
+      () => agentsCommon.loadGlobalModelsForModal({
+        endpoint: '/api/user/agent/settings',
+        agent,
+        globalModelSelect: document.getElementById('agent-global-model-select'),
+        isGlobal: false,
+        customConnectionCheck: agentsCommon.shouldEnableCustomConnection,
+        deploymentFieldIds: { gpt: 'agent-gpt-deployment', apim: 'agent-apim-deployment' }
+      })
+    );
+    agentsCommon.attachAdvancedToggleHandler(advancedToggle, modalElements);
+
+    // Clear error div on modal open (optional, if you have an error div)
+    const errorDiv = document.getElementById('agent-modal-error');
+    if (errorDiv) {
+      errorDiv.textContent = '';
+      errorDiv.style.display = 'none';
+    }
+
   } catch (error) {
     console.error('Error opening agent modal:', error);
     showToast('Error opening agent modal. Please try again.', 'error');
@@ -290,14 +349,17 @@ async function deleteAgent(name) {
 
 
 // --- Execution: Event Wiring & Initial Load ---
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    attachAgentTableEvents();
-    fetchAgents();
-  });
-} else {
+
+function initializeWorkspaceAgentUI() {
+  window.agentModalStepper = new AgentModalStepper(false);
   attachAgentTableEvents();
   fetchAgents();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeWorkspaceAgentUI);
+} else {
+  initializeWorkspaceAgentUI();
 }
 
 // Expose fetchAgents globally for migration script

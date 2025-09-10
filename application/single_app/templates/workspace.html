@@ -869,6 +869,7 @@
 {% block scripts %}
   {{ super() }}
   {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+    <script type="module" src="/static/js/agents_common.js"></script>
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}

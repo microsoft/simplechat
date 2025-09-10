@@ -1,0 +1,42 @@
+
+name: SimpleChat Docker Image Publish (nadoyle branch)
+
+on:
+  push:
+    branches:
+    - nadoyle
+
+  workflow_dispatch:
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Azure Container Registry Login
+      uses: Azure/docker-login@v2
+      with:
+        # Container registry username
+        username: ${{ secrets.ACR_USERNAME }}
+        # Container registry password
+        password: ${{ secrets.ACR_PASSWORD }}
+        # Container registry server url
+        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+        
+    - uses: actions/checkout@v3
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Install Ajv
+      run: npm install ajv@^8.0.0 ajv-formats
+    - name: Generate standalone JSON schema validators
+      run: node scripts/generate-validators.mjs
+    - name: Build the Docker image
+      run:         
+        docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker tag ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:$(date +'%Y-%m-%d')_$GITHUB_RUN_NUMBER;
+        docker push ${{ secrets.ACR_LOGIN_SERVER }}/simple-chat-dev:latest;

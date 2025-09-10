@@ -52,6 +52,17 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
+app = Flask(__name__)
+
+app.config['EXECUTOR_TYPE'] = 'thread'
+app.config['EXECUTOR_MAX_WORKERS'] = 30
+executor = Executor()
+executor.init_app(app)
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['VERSION'] = "0.226.102"
+
+Session(app)
+
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
@@ -67,6 +78,7 @@ from flask_session import Session
 from redis import Redis
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
+from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
@@ -86,6 +98,8 @@ def before_first_request():
     print("Setting up Application Insights logging...")
     setup_appinsights_logging(settings)
     logging.basicConfig(level=logging.DEBUG)
+    print("Application initialized.")
+    ensure_default_global_agent_exists()
 
 
     # Setup session handling
