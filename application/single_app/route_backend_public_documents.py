@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from flask import current_app
 
 def register_route_backend_public_documents(app):
     """
@@ -77,6 +78,7 @@ def register_route_backend_public_documents(app):
                     public_workspace_id=active_ws,
                     percentage_complete=0
                 )
+                executor = current_app.extensions['executor']
                 executor.submit(
                     process_document_upload_background,
                     document_id=doc_id,
@@ -311,6 +313,7 @@ def register_route_backend_public_documents(app):
         role = get_user_role_in_public_workspace(ws_doc, user_id) if ws_doc else None
         if role not in ['Owner','Admin','DocumentManager']:
             return jsonify({'error':'Access denied'}), 403
+        executor = current_app.extensions['executor']
         executor.submit(process_metadata_extraction_background, document_id=doc_id, user_id=user_id, public_workspace_id=active_ws)
         return jsonify({'message':'Extraction queued'}), 200
 
