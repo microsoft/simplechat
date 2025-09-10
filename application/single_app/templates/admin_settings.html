@@ -1016,6 +1016,8 @@
                                 
                             </div>
                             
+                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+
                             <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
 
                             
@@ -1153,7 +1155,7 @@
                             <div id="embedding_models_list" class="mt-2 mb-3">
                                 
                             </div>
-                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small>
+                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
                             
                             <input type="hidden" name="embedding_model_json" id="embedding_model_json" />
 
@@ -1307,6 +1309,8 @@
                                 <div id="image_models_list" class="mt-2 mb-3">
                                     
                                 </div>
+
+                                <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
                                 
                                 <input type="hidden" name="image_gen_model_json" id="image_gen_model_json" />
 
@@ -1430,26 +1434,38 @@
 
                 <!-- Authentication & Redirect Settings Card -->
                 <div class="card p-3 mb-3">
-                    <h5>Authentication & Redirect Settings</h5>
-                    <p class="text-muted mb-1">Configure redirect URLs for home page and login authentication.</p>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">Authentication & Redirect Settings</h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#frontDoorInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    <p class="text-muted mb-1">Configure Front Door URL for authentication and redirect flows.</p>
                     
-                    <div class="mb-3">
-                        <label for="home_redirect_url" class="form-label">Home Redirect URL</label>
-                        <input type="url" class="form-control" id="home_redirect_url" name="home_redirect_url" 
-                               value="{{ settings.home_redirect_url or '' }}" 
-                               placeholder="https://your-frontdoor.azurefd.net">
-                        <small class="form-text text-muted">
-                            Optional: Redirect users to this URL when accessing the home page. Useful for Front Door or load balancer configurations. Leave blank to use default behavior.
-                        </small>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input 
+                            class="form-check-input" 
+                            type="checkbox" 
+                            id="enable_front_door" 
+                            name="enable_front_door" 
+                            {% if settings.enable_front_door %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_front_door">
+                            Enable Front Door Support
+                        </label>
                     </div>
                     
-                    <div class="mb-3">
-                        <label for="login_redirect_url" class="form-label">Login Redirect URL</label>
-                        <input type="url" class="form-control" id="login_redirect_url" name="login_redirect_url" 
-                               value="{{ settings.login_redirect_url or '' }}" 
-                               placeholder="https://your-frontdoor.azurefd.net/getAToken">
+                    <div class="mb-3" id="front-door-url-settings">
+                        <label for="front_door_url" class="form-label">Front Door URL</label>
+                        <input type="url" class="form-control" id="front_door_url" name="front_door_url" 
+                               value="{{ settings.front_door_url or '' }}" 
+                               placeholder="https://your-frontdoor.azurefd.net">
                         <small class="form-text text-muted">
-                            Optional: Override the OAuth2 redirect URI for login authentication. Useful for Front Door or custom authentication flows. Leave blank to use auto-generated redirect URI.
+                            The base URL of your Front Door or load balancer. The system will automatically generate:
+                            <ul class="mb-0 mt-1">
+                                <li><strong>Home redirect:</strong> <code id="home-url-preview">https://your-frontdoor.azurefd.net</code></li>
+                                <li><strong>OAuth2 redirect:</strong> <code id="oauth-url-preview">https://your-frontdoor.azurefd.net/getAToken</code></li>
+                            </ul>
                         </small>
                     </div>
                 </div>
@@ -2628,6 +2644,9 @@
 
         <!-- Agent Modal (moved outside form) -->
         {% include '_agent_modal.html' %}
+
+        <!-- Front Door Info Modal -->
+        {% include '_front_door_info.html' %}
     </div>
 </div>
 {% endblock %}
@@ -2808,6 +2827,46 @@
                 const currentStep = getCurrentWalkthroughStep();
                 navigateToWalkthroughStep(currentStep);
             });
+        }
+        
+        // Handle Front Door toggle in main form
+        const frontDoorToggle = document.getElementById('enable_front_door');
+        const frontDoorUrlSettings = document.getElementById('front-door-url-settings');
+        const frontDoorUrlInput = document.getElementById('front_door_url');
+        const homeUrlPreview = document.getElementById('home-url-preview');
+        const oauthUrlPreview = document.getElementById('oauth-url-preview');
+        
+        function updateFrontDoorPreviews() {
+            const baseUrl = frontDoorUrlInput?.value.trim() || 'https://your-frontdoor.azurefd.net';
+            if (homeUrlPreview) {
+                homeUrlPreview.textContent = baseUrl;
+            }
+            if (oauthUrlPreview) {
+                oauthUrlPreview.textContent = `${baseUrl}/getAToken`;
+            }
+        }
+        
+        function toggleFrontDoorSettings() {
+            if (frontDoorToggle && frontDoorUrlSettings) {
+                if (frontDoorToggle.checked) {
+                    frontDoorUrlSettings.style.display = 'block';
+                    updateFrontDoorPreviews();
+                } else {
+                    frontDoorUrlSettings.style.display = 'none';
+                }
+            }
+        }
+        
+        if (frontDoorToggle) {
+            frontDoorToggle.addEventListener('change', toggleFrontDoorSettings);
+            // Initialize state on page load
+            toggleFrontDoorSettings();
+        }
+        
+        if (frontDoorUrlInput) {
+            frontDoorUrlInput.addEventListener('input', updateFrontDoorPreviews);
+            // Initialize previews on page load
+            updateFrontDoorPreviews();
         }
         
         // Handle walkthrough container events
