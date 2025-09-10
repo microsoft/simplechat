@@ -7,6 +7,28 @@ from functions_settings import *
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
+def build_front_door_urls(front_door_url):
+    """
+    Build home and login redirect URLs from a Front Door base URL.
+    
+    Args:
+        front_door_url (str): The base Front Door URL (e.g., https://myapp.azurefd.net)
+    
+    Returns:
+        tuple: (home_url, login_redirect_url)
+    """
+    if not front_door_url:
+        return None, None
+    
+    # Remove trailing slash if present
+    base_url = front_door_url.rstrip('/')
+    
+    # Build the URLs
+    home_url = base_url
+    login_redirect_url = f"{base_url}/getAToken"
+    
+    return home_url, login_redirect_url
+
 def _load_cache():
     """Loads the MSAL token cache from the Flask session."""
     cache = SerializableTokenCache()
@@ -403,12 +425,18 @@ def login_required(f):
                 # Get settings from database, with environment variable fallback
                 from functions_settings import get_settings
                 settings = get_settings()
-                login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
                 
-                if login_redirect_url:
-                    return redirect(login_redirect_url)
-                else:
-                    return redirect(url_for('login'))
+                # Only use Front Door redirect URLs if Front Door is enabled
+                if settings.get('enable_front_door', False):
+                    front_door_url = settings.get('front_door_url')
+                    if front_door_url:
+                        home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                        return redirect(login_redirect_url)
+                    elif LOGIN_REDIRECT_URL:
+                        # Fall back to environment variable if Front Door is enabled but no URL is set
+                        return redirect(LOGIN_REDIRECT_URL)
+                
+                return redirect(url_for('login'))
 
         return f(*args, **kwargs)
     return decorated_function

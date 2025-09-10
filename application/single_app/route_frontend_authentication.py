@@ -4,6 +4,28 @@ from unittest import result
 from config import *
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
 
+def build_front_door_urls(front_door_url):
+    """
+    Build home and login redirect URLs from a Front Door base URL.
+    
+    Args:
+        front_door_url (str): The base Front Door URL (e.g., https://myapp.azurefd.net)
+    
+    Returns:
+        tuple: (home_url, login_redirect_url)
+    """
+    if not front_door_url:
+        return None, None
+    
+    # Remove trailing slash if present
+    base_url = front_door_url.rstrip('/')
+    
+    # Build the URLs
+    home_url = base_url
+    login_redirect_url = f"{base_url}/getAToken"
+    
+    return home_url, login_redirect_url
+
 def register_route_frontend_authentication(app):
     @app.route('/login')
     def login():
@@ -17,15 +39,24 @@ def register_route_frontend_authentication(app):
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
         settings = get_settings()
-        login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
         
-        # Use database login_redirect_url if set, otherwise fall back to url_for
-        redirect_uri = login_redirect_url if login_redirect_url else url_for('authorized', _external=True, _scheme='https')
+        # Only use Front Door redirect URL if Front Door is enabled
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                redirect_uri = login_redirect_url
+            else:
+                # Fall back to environment variable if Front Door is enabled but no URL is set
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+        else:
+            redirect_uri = url_for('authorized', _external=True, _scheme='https')
         
-        print(f"LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
-        print(f"login_redirect_url (db): {settings.get('login_redirect_url')}")
-        print(f"Using redirect_uri for Azure AD: {redirect_uri}")
-        
+        print(f"DEBUG: LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
+        print(f"DEBUG: front_door_url (db): {settings.get('front_door_url')}")
+        print(f"DEBUG: Front Door enabled: {settings.get('enable_front_door', False)}")
+        print(f"DEBUG: Using redirect_uri for Azure AD: {redirect_uri}")
+
         auth_url = msal_app.get_authorization_request_url(
             scopes=SCOPE, # Use SCOPE from config (includes offline_access)
             redirect_uri=redirect_uri
@@ -54,10 +85,18 @@ def register_route_frontend_authentication(app):
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
         settings = get_settings()
-        login_redirect_url = settings.get('login_redirect_url') or LOGIN_REDIRECT_URL
         
-        # Use database login_redirect_url if set, otherwise fall back to url_for
-        redirect_uri = login_redirect_url if login_redirect_url else url_for('authorized', _external=True, _scheme='https')
+        # Only use Front Door redirect URL if Front Door is enabled
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                redirect_uri = login_redirect_url
+            else:
+                # Fall back to environment variable if Front Door is enabled but no URL is set
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+        else:
+            redirect_uri = url_for('authorized', _external=True, _scheme='https')
         
         print(f"Token exchange using redirect_uri: {redirect_uri}")
 
@@ -91,16 +130,25 @@ def register_route_frontend_authentication(app):
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
         settings = get_settings()
-        home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
         
         print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
-        print(f"home_redirect_url (db): {settings.get('home_redirect_url')}")
-        if home_redirect_url:
-            print(f"Redirecting to configured URL: {home_redirect_url}")
-            return redirect(home_redirect_url)
-        else:
-            print("HOME_REDIRECT_URL not set, falling back to url_for('index')")
-            return redirect(url_for('index')) # Or another appropriate page
+        print(f"front_door_url (db): {settings.get('front_door_url')}")
+        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        
+        # Only use Front Door redirect URL if Front Door is enabled
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                print(f"Redirecting to configured Front Door URL: {home_url}")
+                return redirect(home_url)
+            elif HOME_REDIRECT_URL:
+                # Fall back to environment variable if Front Door is enabled but no URL is set
+                print(f"Redirecting to environment HOME_REDIRECT_URL: {HOME_REDIRECT_URL}")
+                return redirect(HOME_REDIRECT_URL)
+        
+        print("Front Door not enabled or URLs not set, falling back to url_for('index')")
+        return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path
@@ -120,10 +168,24 @@ def register_route_frontend_authentication(app):
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
         msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
 
+        # Get settings for redirect URI (same logic as other routes)
+        from functions_settings import get_settings
+        settings = get_settings()
+        
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                redirect_uri = login_redirect_url
+            else:
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+        else:
+            redirect_uri = url_for('authorized', _external=True, _scheme='https')
+
         result = msal_app.acquire_token_by_authorization_code(
             code=code,
             scopes=SCOPE, # Request the same scopes again
-            redirect_uri=url_for('authorized', _external=True, _scheme='https')
+            redirect_uri=redirect_uri
         )
 
         if "error" in result:
@@ -145,10 +207,23 @@ def register_route_frontend_authentication(app):
         # Get settings from database, with environment variable fallback
         from functions_settings import get_settings
         settings = get_settings()
-        home_redirect_url = settings.get('home_redirect_url') or HOME_REDIRECT_URL
         
-        logout_uri = home_redirect_url if home_redirect_url else url_for('index', _external=True, _scheme='https') # Where to land after logout
+        # Only use Front Door redirect URL if Front Door is enabled
+        if settings.get('enable_front_door', False):
+            front_door_url = settings.get('front_door_url')
+            if front_door_url:
+                home_url, login_redirect_url = build_front_door_urls(front_door_url)
+                logout_uri = home_url
+            elif HOME_REDIRECT_URL:
+                # Fall back to environment variable if Front Door is enabled but no URL is set
+                logout_uri = HOME_REDIRECT_URL
+            else:
+                logout_uri = url_for('index', _external=True, _scheme='https')
+        else:
+            logout_uri = url_for('index', _external=True, _scheme='https')
         
+        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        print(f"Front Door URL: {settings.get('front_door_url')}")
         print(f"Logout redirect URI: {logout_uri}")
         
         logout_url = (

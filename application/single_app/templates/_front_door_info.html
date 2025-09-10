@@ -1,0 +1,358 @@
+<!-- Front Door Configuration Information Modal -->
+<div class="modal fade" id="frontDoorInfoModal" tabindex="-1" aria-labelledby="frontDoorInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="frontDoorInfoModalLabel">
+                    <i class="bi bi-cloud-arrow-up me-2"></i>
+                    Azure Front Door Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What is Front Door?</strong> Azure Front Door is a global, scalable entry-point that uses the Microsoft global edge network to create fast, secure, and widely scalable web applications.
+                </div>
+
+                <!-- Current Configuration Display -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Current Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Front Door Enabled:</strong>
+                                <span id="modal-fd-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Front Door URL:</strong>
+                                <code id="modal-fd-url">Not configured</code>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Generated Home URL:</strong><br>
+                                <code id="modal-home-url">https://your-frontdoor.azurefd.net</code>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Generated OAuth2 Redirect:</strong><br>
+                                <code id="modal-oauth-url">https://your-frontdoor.azurefd.net/getAToken</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Azure AD Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-microsoft me-2"></i>Azure AD App Registration</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">You need to update your Azure AD App Registration with the Front Door URLs:</p>
+                        
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Redirect URIs to Add:</strong></label>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text">OAuth2</span>
+                                <input type="text" class="form-control" id="copy-oauth-uri" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-oauth-uri')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text">Auth Callback</span>
+                                <input type="text" class="form-control" id="copy-auth-callback" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-auth-callback')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Logout URL to Add:</strong></label>
+                            <div class="input-group">
+                                <span class="input-group-text">Logout</span>
+                                <input type="text" class="form-control" id="copy-logout-uri" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-logout-uri')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <strong>Important:</strong> Make sure to add these URLs to your Azure AD App Registration in the Azure Portal under "Authentication" → "Redirect URIs" and "Front-channel logout URL".
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Front Door Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-globe me-2"></i>Azure Front Door Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>1. Disable Caching on Route</h6>
+                            <p class="small text-muted mb-2">In your Front Door configuration, ensure caching is disabled for the route to prevent authentication issues:</p>
+                            <div class="alert alert-warning">
+                                <strong>Important:</strong> Go to your Front Door → Routes → Select your route → Set "Caching" to <strong>Disabled</strong>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>2. Enable Private Link Service</h6>
+                            <p class="small text-muted mb-3">Configure private connectivity between Front Door and your App Service:</p>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <strong>Region:</strong> <span class="text-muted">Same as your App Service location</span>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Target Sub Resource:</strong> <code>sites</code>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <strong>Request Message:</strong>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="private-link-message" readonly value="Adding front door to app service">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('private-link-message')">
+                                        <i class="bi bi-clipboard"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="alert alert-info">
+                                <strong>After creating the private link:</strong>
+                                <ol class="mb-0">
+                                    <li>Search for "Private Link" in the Azure Portal</li>
+                                    <li>Select "Pending connections" on the left-hand side</li>
+                                    <li>Check the box for your pending connection</li>
+                                    <li>Click "Approve" to complete the setup</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- App Service Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-cloud me-2"></i>Azure App Service Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <p>If you're using Azure App Service with Easy Auth, you may need to update your authentication settings. The simplest method is to use the Azure cloud shell and update the auth.json file:</p>
+                        
+                        <div class="mb-3">
+                            <h6>1. Export Current Settings</h6>
+                            <div class="bg-light p-2 rounded mb-2">
+                                <code class="small">az rest --uri /subscriptions/<span class="text-danger">SUBSCRIPTION-ID</span>/resourceGroups/<span class="text-danger">RESOURCE-GROUP</span>/providers/Microsoft.Web/sites/<span class="text-danger">APP-NAME</span>/config/authsettingsV2?api-version=2020-09-01 --method get > auth.json</code>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('az-export-cmd')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                            <input type="hidden" id="az-export-cmd" value='az rest --uri /subscriptions/SUBSCRIPTION-ID/resourceGroups/RESOURCE-GROUP/providers/Microsoft.Web/sites/APP-NAME/config/authsettingsV2?api-version=2020-09-01 --method get > auth.json'>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>2. Update HTTP Settings</h6>
+                            <p class="small text-muted">In your auth.json file, find and replace the forwardProxy convention:</p>
+                            
+                            <div class="mb-2">
+                                <strong>Replace this:</strong>
+                                <div class="bg-light p-2 rounded border-start border-danger border-3">
+                                    <code class="small text-danger">"forwardProxy": { "convention": "NoProxy" }</code>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-2">
+                                <strong>With this:</strong>
+                                <div class="bg-light p-2 rounded border-start border-success border-3">
+                                    <code class="small text-success">"forwardProxy": { "convention": "Standard" }</code>
+                                    <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('http-settings')">
+                                        <i class="bi bi-clipboard"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <input type="hidden" id="http-settings" value='"forwardProxy": { "convention": "Standard" }'>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>3. Import Updated Settings</h6>
+                            <div class="bg-light p-2 rounded mb-2">
+                                <code class="small">az rest --uri /subscriptions/<span class="text-danger">SUBSCRIPTION-ID</span>/resourceGroups/<span class="text-danger">RESOURCE-GROUP</span>/providers/Microsoft.Web/sites/<span class="text-danger">APP-NAME</span>/config/authsettingsV2?api-version=2020-09-01 --method put --body @auth.json</code>
+                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('az-import-cmd')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                            <input type="hidden" id="az-import-cmd" value='az rest --uri /subscriptions/SUBSCRIPTION-ID/resourceGroups/RESOURCE-GROUP/providers/Microsoft.Web/sites/APP-NAME/config/authsettingsV2?api-version=2020-09-01 --method put --body @auth.json'>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <strong>Documentation:</strong> 
+                            <a href="https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization#ensure-that-app-service-is-using-the-right-redirect-uri" target="_blank" rel="noopener">
+                                Azure App Service Authentication Guide <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Troubleshooting -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Troubleshooting</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="troubleshootingAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot1">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse1">
+                                        Login redirects to wrong URL
+                                    </button>
+                                </h2>
+                                <div id="collapse1" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Verify the Front Door URL is correctly configured</li>
+                                            <li>Check that Azure AD App Registration has the correct redirect URIs</li>
+                                            <li>Ensure App Service authentication settings use "Standard" forward proxy convention</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot2">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse2">
+                                        OAuth2 errors after login
+                                    </button>
+                                </h2>
+                                <div id="collapse2" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Check browser console for errors</li>
+                                            <li>Verify the /getAToken redirect URI is registered in Azure AD</li>
+                                            <li>Check application logs for authentication errors</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot3">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse3">
+                                        Users can't log out properly
+                                    </button>
+                                </h2>
+                                <div id="collapse3" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Ensure the Front Door logout URL is set as the "Front-channel logout URL" in Azure AD</li>
+                                            <li>Check that session clearing is working correctly</li>
+                                            <li>Verify Front Door is properly configured for session persistence</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot4">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse4">
+                                        Caching issues with authentication
+                                    </button>
+                                </h2>
+                                <div id="collapse4" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Ensure caching is disabled on your Front Door route</li>
+                                            <li>Check that query parameters are not being cached</li>
+                                            <li>Verify that authentication cookies are being passed through correctly</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot5">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse5">
+                                        Private Link connection not working
+                                    </button>
+                                </h2>
+                                <div id="collapse5" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Verify the private link connection is approved in the Azure Portal</li>
+                                            <li>Check that the region matches your App Service location</li>
+                                            <li>Ensure the target sub resource is set to "sites"</li>
+                                            <li>Wait a few minutes after approval for the connection to become active</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-book me-2"></i>View Full Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.value || element.textContent;
+    
+    navigator.clipboard.writeText(text).then(function() {
+        // Show success feedback
+        const button = element.nextElementSibling;
+        if (button) {
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-check"></i>';
+            button.classList.add('btn-success');
+            button.classList.remove('btn-outline-secondary');
+            
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-outline-secondary');
+            }, 2000);
+        }
+    }).catch(function(err) {
+        console.error('Could not copy text: ', err);
+    });
+}
+
+function updateFrontDoorModalInfo() {
+    const frontDoorEnabled = document.getElementById('enable_front_door')?.checked || false;
+    const frontDoorUrl = document.getElementById('front_door_url')?.value?.trim() || '';
+    
+    // Update modal status
+    document.getElementById('modal-fd-enabled').textContent = frontDoorEnabled ? 'Yes' : 'No';
+    document.getElementById('modal-fd-enabled').className = frontDoorEnabled ? 'badge bg-success' : 'badge bg-secondary';
+    
+    const baseUrl = frontDoorUrl || 'https://your-frontdoor.azurefd.net';
+    document.getElementById('modal-fd-url').textContent = frontDoorUrl || 'Not configured';
+    
+    // Update generated URLs
+    document.getElementById('modal-home-url').textContent = baseUrl;
+    document.getElementById('modal-oauth-url').textContent = `${baseUrl}/getAToken`;
+    
+    // Update copy fields
+    document.getElementById('copy-oauth-uri').value = `${baseUrl}/getAToken`;
+    document.getElementById('copy-auth-callback').value = `${baseUrl}/.auth/login/aad/callback`;
+    document.getElementById('copy-logout-uri').value = `${baseUrl}/logout`;
+}
+
+// Update modal info when the modal is opened
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('frontDoorInfoModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', updateFrontDoorModalInfo);
+    }
+});
+</script>
