@@ -567,42 +567,6 @@ def _test_safety_connection(payload):
     except Exception as e:
         return jsonify({'error': f'Safety connection error: {str(e)}'}), 500
 
-
-def _test_web_search_connection(payload):
-    """Attempt to connect to Bing (or your APIM-protected) web search endpoint."""
-    enabled = payload.get('enabled', False)
-    if not enabled:
-        return jsonify({'message': 'Web Search is disabled, skipping test'}), 200
-
-    enable_apim = payload.get('enable_apim', False)
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        subscription_key = apim_data.get('subscription_key')
-        # deployment, api_version, etc. if relevant
-        url = f"{endpoint.rstrip('/')}/bing/v7.0/search"
-        headers = {
-            'Ocp-Apim-Subscription-Key': subscription_key
-        }
-        params = { 'q': 'Test' }
-    else:
-        direct_data = payload.get('direct', {})
-        # For direct Bing calls, you typically do something like:
-        key = direct_data.get('key')
-        url = "https://api.bing.microsoft.com/v7.0/search"
-        headers = {
-            'Ocp-Apim-Subscription-Key': key
-        }
-        params = { 'q': 'Test' }
-
-    resp = requests.get(url, headers=headers, params=params, timeout=10)
-    if resp.status_code == 200:
-        return jsonify({'message': 'Web search connection successful'}), 200
-    else:
-        raise Exception(f"Web search connection error: {resp.status_code} - {resp.text}")
-
-
 def _test_azure_ai_search_connection(payload):
     """Attempt to connect to Azure Cognitive Search (or APIM-wrapped)."""
     enable_apim = payload.get('enable_apim', False)

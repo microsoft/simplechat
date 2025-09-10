@@ -8,7 +8,6 @@
     { "name": "CLIENT_ID", "value": "<your-client-id>", "slotSetting": false },
     { "name": "TENANT_ID", "value": "<your-tenant-id>", "slotSetting": false },
     { "name": "SECRET_KEY", "value": "<your-32-character-secret>", "slotSetting": false },
-    { "name": "BING_SEARCH_ENDPOINT", "value": "https://api.bing.microsoft.com/", "slotSetting": false },
     { "name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "true", "slotSetting": false },
     { "name": "WEBSITE_HTTPLOGGING_RETENTION_DAYS", "value": "7", "slotSetting": false },
     { "name": "APPINSIGHTS_INSTRUMENTATIONKEY", "value": "<your-instrumentation-key>", "slotSetting": false },

@@ -54,12 +54,12 @@ from route_plugin_logging import bpl as plugin_logging_bp
 
 app = Flask(__name__)
 
-app.config['EXECUTOR_TYPE'] = 'thread'
-app.config['EXECUTOR_MAX_WORKERS'] = 30
+app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
+app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
 executor = Executor()
 executor.init_app(app)
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = "0.226.102"
+app.config['SESSION_TYPE'] = SESSION_TYPE
+app.config['VERSION'] = VERSION
 
 Session(app)
 

@@ -502,7 +502,6 @@ def register_route_frontend_admin_settings(app):
 
                 # Search (Web Search Direct & APIM)
                 'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'bing_search_key': form_data.get('bing_search_key', '').strip(),
                 'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
                 'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
                 'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),

@@ -43,7 +43,7 @@ def get_user_info_by_id(user_id):
 
 def collect_conversation_metadata(user_message, conversation_id, user_id, active_group_id=None, 
                                 document_scope=None, selected_document_id=None, model_deployment=None,
-                                hybrid_search_enabled=False, bing_search_enabled=False, 
+                                hybrid_search_enabled=False, 
                                 image_gen_enabled=False, selected_documents=None, 
                                 selected_agent=None, search_results=None, web_search_results=None,
                                 conversation_item=None, additional_participants=None):
@@ -59,12 +59,10 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         selected_document_id: Specific document ID if selected
         model_deployment: The AI model deployment name used
         hybrid_search_enabled: Whether hybrid search was used
-        bing_search_enabled: Whether web search was used
         image_gen_enabled: Whether image generation was used
         selected_documents: List of documents actually used in the response
         selected_agent: Agent used if any
         search_results: Results from hybrid search
-        web_search_results: Results from web search
         conversation_item: Existing conversation item to update
         additional_participants: List of additional user IDs to include as participants
         
@@ -423,19 +421,6 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 "classification": doc_info['classification']
             }
             current_tags[doc_key] = doc_tag
-    
-    # Add web search tags (avoid duplicates)
-    if web_search_results:
-        for result in web_search_results:
-            url = result.get('url')
-            if url:
-                web_key = ('web', url)
-                if web_key not in current_tags:
-                    web_tag = {
-                        "category": "web",
-                        "value": url
-                    }
-                    current_tags[web_key] = web_tag
 
     # Add semantic tags based on user message content (avoid duplicates)
     semantic_keywords = _extract_semantic_keywords(user_message)

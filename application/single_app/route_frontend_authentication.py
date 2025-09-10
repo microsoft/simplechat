@@ -131,10 +131,10 @@ def register_route_frontend_authentication(app):
         from functions_settings import get_settings
         settings = get_settings()
         
-        print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
-        print(f"front_door_url (db): {settings.get('front_door_url')}")
-        print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
-        
+        print(f"DEBUG: HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
+        print(f"DEBUG: front_door_url (db): {settings.get('front_door_url')}")
+        print(f"DEBUG: Front Door enabled: {settings.get('enable_front_door', False)}")
+
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -147,7 +147,7 @@ def register_route_frontend_authentication(app):
                 print(f"Redirecting to environment HOME_REDIRECT_URL: {HOME_REDIRECT_URL}")
                 return redirect(HOME_REDIRECT_URL)
         
-        print("Front Door not enabled or URLs not set, falling back to url_for('index')")
+        print("DEBUG: Front Door not enabled or URLs not set, falling back to url_for('index')")
         return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
