@@ -5,7 +5,7 @@ applyTo: '**'
 # Functional Tests Management Instructions
 
 ## 📍 **Location**
-All functional tests are stored in: `.\simplechat\application\single_app\functional_tests\`
+All functional tests are stored in: `.\simplechat\functional_tests\`
 
 ## 📂 **Directory Structure**
 The functional tests directory contains:

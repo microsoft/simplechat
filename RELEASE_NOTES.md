@@ -1,6 +1,20 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
+### **(v0.227.007)**
+
+#### Breaking Changes
+
+*   **Bing Web Search Removal**
+    *   Removed all Bing Web Search functionality due to service deprecation by Microsoft. This includes:
+        *   Removed `functions_bing_search.py` module
+        *   Removed Bing configuration settings and UI elements
+        *   Removed web search button from chat interface
+        *   Removed Bing-related admin settings
+        *   Updated documentation to remove Bing references
+    *   **Impact**: Web search functionality is no longer available. Document search and other features remain fully functional.
+    *   **Migration**: No action required - existing conversations and data are preserved.
+
 ### **(v0.215.36)**
 
 #### New Features
