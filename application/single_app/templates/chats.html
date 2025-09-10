@@ -237,15 +237,6 @@
                             <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
                         </button>
                         {% endif %}
-                        {% if settings.enable_web_search %}
-                        <button
-                            id="search-web-btn"
-                            class="btn btn-outline-secondary btn-sm search-btn"
-                            data-bs-toggle="tooltip" data-bs-placement="top" title="Search the web using Bing"
-                        >
-                            <i class="bi bi-globe"></i> <span class="search-btn-text d-none d-md-inline">Web</span>
-                        </button>
-                        {% endif %}
                          <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv" style="display: none"/>
                          <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation">
                              <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>

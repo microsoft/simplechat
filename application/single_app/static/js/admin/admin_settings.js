@@ -1239,8 +1239,10 @@ function setupToggles() {
             showAgentSettingsFeedback('Error loading agent settings: ' + err.message, 'danger');
         }
     }
-    // Initial load
-    loadAgentSettings();
+    // Initial load - only if agents are enabled
+    if (typeof settings !== 'undefined' && settings && settings.enable_semantic_kernel) {
+        loadAgentSettings();
+    }
 
     // Handler for toggle changes
     function saveAgentSetting(settingName, value) {
@@ -2043,7 +2045,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 document.addEventListener('DOMContentLoaded', () => {
-    ['user','group'].forEach(type => {
+    ['user','group','public'].forEach(type => {
       const warnDiv     = document.getElementById(`index-warning-${type}`);
       const missingSpan = document.getElementById(`missing-fields-${type}`);
       const fixBtn      = document.getElementById(`fix-${type}-index-btn`);
@@ -2057,19 +2059,64 @@ document.addEventListener('DOMContentLoaded', () => {
         credentials: 'same-origin',
         body: JSON.stringify({ indexType: type })
       })
-      .then(r => r.json())
-      .then(({ missingFields }) => {
-        if (missingFields?.length) {
-          missingSpan.textContent = missingFields.join(', ');
-          warnDiv.style.display   = 'block';
+      .then(r => {
+        if (!r.ok) {
+          return r.json().then(errorData => {
+            throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
+          });
+        }
+        return r.json();
+      })
+      .then(response => {
+        if (response.missingFields && response.missingFields.length > 0) {
+          missingSpan.textContent = response.missingFields.join(', ');
+          warnDiv.style.display = 'block';
+          if (fixBtn) {
+            fixBtn.textContent = `Fix ${type} Index Fields`;
+            fixBtn.style.display = 'inline-block';
+          }
+        } else if (response.indexExists) {
+          // Index exists and is complete
+          if (warnDiv) warnDiv.style.display = 'none';
+          console.log(`${type} index is properly configured`);
         }
       })
-      .catch(err => console.error(`Error checking ${type} index:`, err));
+      .catch(err => {
+        console.warn(`Checking ${type} index fields:`, err.message);
+        
+        // Check if this is an index not found error
+        if (err.message.includes('does not exist yet') || err.message.includes('not found')) {
+          // Show a different message for missing index
+          if (warnDiv && missingSpan && fixBtn) {
+            missingSpan.textContent = `Index "${type}" does not exist yet`;
+            warnDiv.style.display = 'block';
+            fixBtn.textContent = `Create ${type} Index`;
+            fixBtn.style.display = 'inline-block';
+            fixBtn.dataset.action = 'create';
+          }
+        } else if (err.message.includes('not configured')) {
+          // Azure AI Search not configured
+          if (warnDiv && missingSpan) {
+            missingSpan.textContent = 'Azure AI Search not configured';
+            warnDiv.style.display = 'block';
+            if (fixBtn) fixBtn.style.display = 'none';
+          }
+        } else {
+          // Hide the warning div for other errors
+          if (warnDiv) warnDiv.style.display = 'none';
+        }
+      });
   
       // 2) wire up the “fix” button
       fixBtn.addEventListener('click', () => {
         fixBtn.disabled = true;
-        fetch('/api/admin/settings/fix_index_fields', {
+        const action = fixBtn.dataset.action || 'fix';
+        const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
+        const actionText = action === 'create' ? 'Creating' : 'Fixing';
+        
+        fixBtn.textContent = `${actionText}...`;
+        
+        fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -2077,18 +2124,28 @@ document.addEventListener('DOMContentLoaded', () => {
           credentials: 'same-origin',
           body: JSON.stringify({ indexType: type })
         })
-        .then(r => r.json())
+        .then(r => {
+          if (!r.ok) {
+            return r.json().then(errorData => {
+              throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
+            });
+          }
+          return r.json();
+        })
         .then(resp => {
           if (resp.status === 'success') {
+            alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
             window.location.reload();
           } else {
-            alert(`Failed to fix ${type} index: ${resp.error}`);
+            alert(`Failed to ${action} ${type} index: ${resp.error}`);
             fixBtn.disabled = false;
+            fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
           }
         })
         .catch(err => {
-          alert(`Error fixing ${type} index: ${err}`);
+          alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
           fixBtn.disabled = false;
+          fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
         });
       });
     });

@@ -177,12 +177,6 @@ def get_settings():
         'enable_conversation_archiving': False,
 
         # Search and Extract
-        'enable_web_search': False,
-        'bing_search_key': '',
-        'enable_web_search_apim': False,
-        'azure_apim_web_search_endpoint': '',
-        'azure_apim_web_search_subscription_key': '',
-
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
         'azure_ai_search_authentication_type': 'key',

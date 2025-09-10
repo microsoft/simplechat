@@ -12,26 +12,79 @@ def register_route_backend_settings(app):
     @login_required
     @admin_required
     def check_index_fields():
-        data     = request.get_json(force=True)
-        idx_type = data.get('indexType')  # 'user' or 'group'
+        try:
+            data = request.get_json(force=True)
+            idx_type = data.get('indexType')  # 'user', 'group', or 'public'
 
-        # load your golden JSON
-        fname = secure_filename(f'ai_search-index-{idx_type}.json')
-        base_path = os.path.join(current_app.root_path, 'static', 'json')
-        fpath = os.path.normpath(os.path.join(base_path, fname))
-        if os.path.commonpath([base_path, fpath]) != base_path:
-            raise Exception("Invalid file path")
-        with open(fpath, 'r') as f:
-            expected = json.load(f)
+            if not idx_type or idx_type not in ['user', 'group', 'public']:
+                return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
 
-        client  = get_index_client()
-        current = client.get_index(expected['name'])
+            # load your golden JSON
+            fname = secure_filename(f'ai_search-index-{idx_type}.json')
+            base_path = os.path.join(current_app.root_path, 'static', 'json')
+            fpath = os.path.normpath(os.path.join(base_path, fname))
+            if os.path.commonpath([base_path, fpath]) != base_path:
+                return jsonify({'error': 'Invalid file path'}), 400
+            
+            if not os.path.exists(fpath):
+                return jsonify({'error': f'Index schema file not found: {fname}'}), 404
+                
+            with open(fpath, 'r') as f:
+                expected = json.load(f)
 
-        existing_names   = { fld.name        for fld in current.fields }
-        expected_names   = { fld['name']      for fld in expected['fields'] }
-        missing          = sorted(expected_names - existing_names)
+            # Check if Azure AI Search is configured
+            settings = get_settings()
+            if not settings.get("azure_ai_search_endpoint"):
+                return jsonify({
+                    'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
+                    'needsConfiguration': True
+                }), 400
 
-        return jsonify({ 'missingFields': missing }), 200
+            try:
+                client = get_index_client()
+                current = client.get_index(expected['name'])
+                
+                existing_names = { fld.name for fld in current.fields }
+                expected_names = { fld['name'] for fld in expected['fields'] }
+                missing = sorted(expected_names - existing_names)
+
+                return jsonify({ 
+                    'missingFields': missing,
+                    'indexExists': True,
+                    'indexName': expected['name']
+                }), 200
+                
+            except ResourceNotFoundError as not_found_error:
+                # Index doesn't exist - this is the specific exception for "index not found"
+                return jsonify({
+                    'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
+                    'indexExists': False,
+                    'indexName': expected['name'],
+                    'needsCreation': True
+                }), 404
+            except Exception as search_error:
+                error_str = str(search_error).lower()
+                # Check for other index not found patterns (fallback)
+                if any(phrase in error_str for phrase in [
+                    "not found", "does not exist", "no index with the name", 
+                    "index does not exist", "could not find index"
+                ]):
+                    return jsonify({
+                        'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
+                        'indexExists': False,
+                        'indexName': expected['name'],
+                        'needsCreation': True
+                    }), 404
+                else:
+                    app.logger.error(f"Azure AI Search error: {search_error}")
+                    return jsonify({
+                        'error': f'Failed to connect to Azure AI Search: {str(search_error)}',
+                        'needsConfiguration': True
+                    }), 500
+
+        except Exception as e:
+            app.logger.error(f"Error in check_index_fields: {str(e)}")
+            return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 
     @app.route('/api/admin/settings/fix_index_fields', methods=['POST'])
@@ -112,6 +165,74 @@ def register_route_backend_settings(app):
 
         except Exception as e:
             return jsonify({ 'error': str(e) }), 500
+
+    @app.route('/api/admin/settings/create_index', methods=['POST'])
+    @login_required
+    @admin_required
+    def create_index():
+        """Create an AI Search index from scratch using the JSON schema."""
+        try:
+            data = request.get_json(force=True)
+            idx_type = data.get('indexType')  # 'user', 'group', or 'public'
+
+            if not idx_type or idx_type not in ['user', 'group', 'public']:
+                return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
+
+            # Load the JSON schema
+            json_name = secure_filename(f'ai_search-index-{idx_type}.json')
+            base_path = os.path.join(current_app.root_path, 'static', 'json')
+            json_path = os.path.normpath(os.path.join(base_path, json_name))
+            if os.path.commonpath([base_path, json_path]) != base_path:
+                return jsonify({'error': 'Invalid file path'}), 400
+            
+            if not os.path.exists(json_path):
+                return jsonify({'error': f'Index schema file not found: {json_name}'}), 404
+
+            with open(json_path, 'r') as f:
+                index_definition = json.load(f)
+
+            # Check if Azure AI Search is configured
+            settings = get_settings()
+            if not settings.get("azure_ai_search_endpoint"):
+                return jsonify({
+                    'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
+                    'needsConfiguration': True
+                }), 400
+
+            client = get_index_client()
+            
+            # Check if index already exists
+            try:
+                existing_index = client.get_index(index_definition['name'])
+                return jsonify({
+                    'error': f'Index "{index_definition["name"]}" already exists',
+                    'indexExists': True
+                }), 409
+            except ResourceNotFoundError:
+                # Index doesn't exist, which is what we want for creation
+                pass
+            except Exception as e:
+                # Other errors checking if index exists
+                app.logger.error(f"Error checking if index exists: {e}")
+                # Continue with creation attempt anyway
+
+            # Create the index using the JSON definition
+            from azure.search.documents.indexes.models import SearchIndex
+            index = SearchIndex.deserialize(index_definition)
+            
+            # Create the index
+            result = client.create_index(index)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Successfully created index "{result.name}"',
+                'indexName': result.name,
+                'fieldsCount': len(result.fields)
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error creating index: {str(e)}")
+            return jsonify({'error': f'Failed to create index: {str(e)}'}), 500
     
     @app.route('/api/admin/settings/test_connection', methods=['POST'])
     @login_required

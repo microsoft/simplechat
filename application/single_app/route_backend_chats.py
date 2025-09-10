@@ -15,7 +15,6 @@ from config import *
 from flask import g
 from functions_authentication import *
 from functions_search import *
-from functions_bing_search import *
 from functions_settings import *
 from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id
@@ -52,7 +51,6 @@ def register_route_backend_chats(app):
             conversation_id = data.get('conversation_id')
             hybrid_search_enabled = data.get('hybrid_search')
             selected_document_id = data.get('selected_document_id')
-            bing_search_enabled = data.get('bing_search')
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
             active_group_id = data.get('active_group_id')
@@ -77,7 +75,8 @@ def register_route_backend_chats(app):
             search_query = user_message # <--- ADD THIS LINE (Initialize search_query)
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
-            system_messages_for_augmentation = [] # Collect system messages from search/bing
+            bing_citations_list = [] # Empty list since Bing search is removed
+            system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
             selected_agent = None  # Initialize selected_agent early to prevent NameError
             # --- Configuration ---
@@ -96,8 +95,6 @@ def register_route_backend_chats(app):
             # Convert toggles from string -> bool if needed
             if isinstance(hybrid_search_enabled, str):
                 hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
-            if isinstance(bing_search_enabled, str):
-                bing_search_enabled = bing_search_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
 
@@ -281,7 +278,6 @@ def register_route_backend_chats(app):
             # Button states and selections
             user_metadata['button_states'] = {
                 'image_generation': image_gen_enabled,
-                'web_search': bing_search_enabled,
                 'document_search': hybrid_search_enabled
             }
             
@@ -535,7 +531,7 @@ def register_route_backend_chats(app):
                     print(f"[Content Safety] Unexpected error: {ex}")
 
             # ---------------------------------------------------------------------
-            # 4) Augmentation (Search, Bing, etc.) - Run *before* final history prep
+            # 4) Augmentation (Search, etc.) - Run *before* final history prep
             # ---------------------------------------------------------------------
             
             # Hybrid Search
@@ -709,53 +705,6 @@ def register_route_backend_chats(app):
                     if list(classifications_found) != conversation_item.get('classification', []):
                         conversation_item['classification'] = list(classifications_found)
                         # No need to upsert item here, will be updated later
-
-            # Bing Search
-            bing_results = []
-            bing_citations_list = []
-            
-            if bing_search_enabled:
-                # Collect citations for Bing results
-                try:
-                    bing_results = process_query_with_bing_and_llm(user_message) # Assuming this function exists and works
-                except Exception as e:
-                    print(f"Error during Bing search: {e}")
-                    # Optionally inform user or proceed
-
-                if bing_results:
-                    retrieved_texts_bing = []
-                    for r in bing_results:
-                        title = r.get("name", "Untitled")
-                        snippet = r.get("snippet", "No snippet available.")
-                        url = r.get("url", "#")
-                        citation = f"(Source: {title}) [{url}]"
-                        retrieved_texts_bing.append(f"{snippet}\n{citation}")
-                        
-                        # <<< Collect Bing citation data >>>
-                        bing_citation_data = {
-                            "title": title,
-                            "url": url,
-                            "snippet": snippet # Store the snippet used in the prompt
-                        }
-                        bing_citations_list.append(bing_citation_data)
-
-                    retrieved_content_bing = "\n\n".join(retrieved_texts_bing)
-                    system_prompt_bing = f"""You are an AI assistant. Use the following web search results to answer the user's question. Cite sources using the format (Source: page_title).
-
-                        Web Search Results:
-                        {retrieved_content_bing}
-
-                        Based *only* on the information provided above, answer the user's query. If the answer isn't in the results, say so.
-
-                        Example:
-                        User: What is the capital of France?
-                        Assistant: The capital of France is Paris (Source: OfficialFrancePage)
-                        """
-                    # Add to the temporary list
-                    system_messages_for_augmentation.append({
-                        'role': 'system',
-                        'content': system_prompt_bing
-                    })
 
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated

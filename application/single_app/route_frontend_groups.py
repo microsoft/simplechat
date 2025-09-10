@@ -13,8 +13,16 @@ def register_route_frontend_groups(app):
         """
         Renders the My Groups page (templates/my_groups.html).
         """
+        user = session.get('user', {})
+        settings = get_settings()
+        require_member_of_create_group = settings.get("require_member_of_create_group", False)
         
-        return render_template("my_groups.html")
+        # Check if user can create groups
+        can_create_groups = True
+        if require_member_of_create_group:
+            can_create_groups = 'roles' in user and 'CreateGroups' in user['roles']
+        
+        return render_template("my_groups.html", can_create_groups=can_create_groups)
 
     @app.route("/groups/<group_id>", methods=["GET"])
     @login_required
