@@ -2,8 +2,6 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 
-window.print = function() { console.trace("window.print called"); }
-
 export class PluginModalStepper {
   constructor() {
     this.currentStep = 1;
