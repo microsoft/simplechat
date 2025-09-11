@@ -11,6 +11,7 @@ import json
 import traceback
 from datetime import datetime
 
+from config import cosmos_global_actions_container
 
 def get_global_actions():
     """
@@ -20,8 +21,6 @@ def get_global_actions():
         list: List of global action dictionaries
     """
     try:
-        from config import cosmos_global_actions_container
-                
         actions = list(cosmos_global_actions_container.query_items(
             query="SELECT * FROM c",
             enable_cross_partition_query=True

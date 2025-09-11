@@ -15,6 +15,9 @@ import importlib.util
 from functions_plugins import get_merged_plugin_settings
 from semantic_kernel_plugins.base_plugin import BasePlugin
 
+from functions_global_actions import *
+from functions_personal_actions import *
+
 
 from json_schema_validation import validate_plugin
 
@@ -197,10 +200,6 @@ bpap = Blueprint('admin_plugins', __name__)
 @login_required
 def get_user_plugins():
     user_id = get_current_user_id()
-    
-    # Import the new personal actions functions
-    from functions_personal_actions import get_personal_actions, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
     
@@ -216,7 +215,6 @@ def get_user_plugins():
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if merge_global:
         # Import and get global actions from container
-        from functions_global_actions import get_global_actions
         global_plugins = get_global_actions()
         # Mark global plugins
         for plugin in global_plugins:
@@ -247,12 +245,8 @@ def set_user_plugins():
     user_id = get_current_user_id()
     plugins = request.json if isinstance(request.json, list) else []
     
-    # Import the new personal actions functions
-    from functions_personal_actions import save_personal_action, delete_personal_action, get_personal_actions
-    
     # Get global plugin names (case-insensitive)
-    settings = get_settings()
-    global_plugins = settings.get('semantic_kernel_plugins', [])
+    global_plugins = get_global_actions()
     global_plugin_names = set(p['name'].lower() for p in global_plugins if 'name' in p)
     
     # Get current personal actions to determine what to delete
@@ -289,6 +283,9 @@ def set_user_plugins():
             # SQL plugins don't use endpoints, but schema validation requires one
             # Use a placeholder that indicates it's a SQL plugin
             plugin.setdefault('endpoint', f'sql://{plugin_type}')
+        elif plugin_type == 'msgraph':
+            # MS Graph plugin does not require an endpoint, but schema validation requires one
+            plugin.setdefault('endpoint', 'https://graph.microsoft.com')
         else:
             # For other plugin types, require a real endpoint
             plugin.setdefault('endpoint', '')
@@ -308,6 +305,7 @@ def set_user_plugins():
             else:
                 plugin['type'] = 'unknown'  # Default type
         
+        print(f"Plugin build: {plugin}")
         validation_error = validate_plugin(plugin)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
@@ -421,9 +419,6 @@ def update_core_plugin_settings():
 @admin_required
 def list_plugins():
     try:
-        # Use new global actions container
-        from functions_global_actions import get_global_actions
-        
         plugins = get_global_actions()
         log_event("List plugins", extra={"action": "list", "user": str(getattr(request, 'user', 'unknown'))})
         return jsonify(plugins)
@@ -436,8 +431,6 @@ def list_plugins():
 @admin_required
 def add_plugin():
     try:
-        from functions_global_actions import get_global_actions, save_global_action
-        
         plugins = get_global_actions()
         new_plugin = request.json
         
@@ -491,8 +484,6 @@ def add_plugin():
 @admin_required
 def edit_plugin(plugin_name):
     try:
-        from functions_global_actions import get_global_actions, save_global_action, delete_global_action
-        
         plugins = get_global_actions()
         updated_plugin = request.json
         
@@ -561,8 +552,6 @@ def get_admin_plugin_types():
 @admin_required
 def delete_plugin(plugin_name):
     try:
-        from functions_global_actions import get_global_actions, delete_global_action
-        
         plugins = get_global_actions()
         
         # Find the plugin by name
