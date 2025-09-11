@@ -208,12 +208,12 @@
             <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
           </li>
           <li><hr class="dropdown-divider"></li>
-          {% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
+          {% if app_settings.enable_group_workspaces %}
           <li>
             <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
           </li>
           {% endif %}
-          {% if app_settings.enable_public_workspaces and (not app_settings.require_member_of_create_public_workspace or (session.get('user') and session['user'].get('roles') and 'CreatePublicWorkspaces' in session['user']['roles'])) %}
+          {% if app_settings.enable_public_workspaces %}
           <li>
             <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
           </li>

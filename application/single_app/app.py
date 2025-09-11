@@ -47,6 +47,7 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
@@ -54,12 +55,13 @@ from route_plugin_logging import bpl as plugin_logging_bp
 
 app = Flask(__name__)
 
-app.config['EXECUTOR_TYPE'] = 'thread'
-app.config['EXECUTOR_MAX_WORKERS'] = 30
+app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
+app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
 executor = Executor()
 executor.init_app(app)
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = "0.226.102"
+app.config['SESSION_TYPE'] = SESSION_TYPE
+app.config['VERSION'] = VERSION
+app.config['SECRET_KEY'] = SECRET_KEY
 
 Session(app)
 
@@ -72,6 +74,9 @@ app.register_blueprint(plugin_logging_bp)
 
 # Register OpenAPI routes
 register_openapi_routes(app)
+
+# Register Enhanced Citations routes
+register_enhanced_citations_routes(app)
 
 from flask import g
 from flask_session import Session
@@ -91,7 +96,7 @@ configure_azure_monitor()
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
-    print(f"DEBUG:Application settings: {settings}")
+    #print(f"DEBUG:Application settings: {settings}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured

@@ -177,12 +177,6 @@ def get_settings():
         'enable_conversation_archiving': False,
 
         # Search and Extract
-        'enable_web_search': False,
-        'bing_search_key': '',
-        'enable_web_search_apim': False,
-        'azure_apim_web_search_endpoint': '',
-        'azure_apim_web_search_subscription_key': '',
-
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
         'azure_ai_search_authentication_type': 'key',
@@ -198,8 +192,8 @@ def get_settings():
         'azure_apim_document_intelligence_subscription_key': '',
 
         # Authentication & Redirect Settings
-        'home_redirect_url': '',
-        'login_redirect_url': '',
+        'enable_front_door': False,
+        'front_door_url': '',
 
         # Other
         'max_file_size_mb': 150,

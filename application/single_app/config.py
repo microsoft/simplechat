@@ -84,6 +84,13 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 # Load environment variables from .env file
 load_dotenv()
 
+# Flask app configuration constants
+EXECUTOR_TYPE = 'thread'
+EXECUTOR_MAX_WORKERS = 30
+SESSION_TYPE = 'filesystem'
+VERSION = "0.228.009"
+SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
@@ -148,8 +155,6 @@ else:
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
-
-bing_search_endpoint = "https://api.bing.microsoft.com/"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"

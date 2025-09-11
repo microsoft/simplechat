@@ -15,10 +15,9 @@
     *   Content Safety analyzes the text for harmful content based on configured categories (Hate, Sexual, Violence, Self-Harm) and severity thresholds.
     *   Custom blocklists can also be applied.
 3.  **Decision Point**:
-    *   **If Safe**: The message proceeds to the intended service (e.g., Web Search, RAG, Direct Model Interaction, Image Generation).
+    *   **If Safe**: The message proceeds to the intended service (e.g., RAG, Direct Model Interaction, Image Generation).
     *   **If Unsafe**: The message is blocked. The user receives a generic notification (or configured message). Details of the violation may be logged (if configured) and potentially viewable by users with the `SafetyAdmin` role.
 4.  **Service Interaction (If Safe)**:
-    *   **Web Search**: The query is sent to Bing Search (if enabled).
     *   **RAG / AI Search**: The query is used to search Azure AI Search indexes (personal/group).
     *   **Direct Model Interaction**: The message is sent directly to the Azure OpenAI GPT model.
     *   **Image Generation**: The prompt is sent to the Azure OpenAI DALL-E model (if enabled).

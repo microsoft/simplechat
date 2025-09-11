@@ -43,12 +43,14 @@
   <hr/>
 
   <div class="row mb-3 gy-2">
+      {% if can_create_groups %}
       <div class="col-md-auto">
           <!-- Create Group Button trigger modal -->
           <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createGroupModal">
               <i class="bi bi-plus-circle-fill me-1"></i> Create New Group
           </button>
       </div>
+      {% endif %}
       <div class="col-md-auto">
           <!-- Find Group Button trigger modal -->
           <button type="button" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#findGroupModal">
@@ -112,6 +114,7 @@
 </div> <!-- End Container -->
 
 <!-- Create Group Modal -->
+{% if can_create_groups %}
 <!-- Keep Modal Structure As Is -->
 <div class="modal fade" id="createGroupModal" tabindex="-1" aria-labelledby="createGroupModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -139,6 +142,7 @@
     </form>
   </div>
 </div>
+{% endif %}
 
 <!-- Find Group Modal -->
 <!-- Keep Modal Structure As Is, maybe update search button ID -->
@@ -193,6 +197,7 @@
   let currentPage = 1;
   let pageSize = 10;
   let currentSearchQuery = ""; // Store the current search term
+  const canCreateGroups = {{ can_create_groups|tojson }}; // Pass permission from backend
 
   // DOM Elements (jQuery)
   const tableBody = $("#my-groups-table tbody");
@@ -201,7 +206,7 @@
   const searchInput = $("#searchQueryInput");
   const searchBtn = $("#searchGroupsBtn");
   const clearSearchBtn = $("#clearSearchBtn");
-  const createGroupModal = new bootstrap.Modal(document.getElementById('createGroupModal'));
+  const createGroupModal = canCreateGroups ? new bootstrap.Modal(document.getElementById('createGroupModal')) : null;
   const findGroupModal = new bootstrap.Modal(document.getElementById('findGroupModal')); // Keep reference if needed
 
   // --- DATA FETCHING & RENDERING ---
@@ -462,8 +467,10 @@
       fetchMyGroups();
     });
 
-    // Create Group form submission
-    $("#createGroupForm").on("submit", handleCreateGroup);
+    // Create Group form submission (only if user has permission)
+    if (canCreateGroups) {
+      $("#createGroupForm").on("submit", handleCreateGroup);
+    }
 
     // --- Event Delegation for Table Buttons ---
     tableBody.on("click", ".set-active-btn", function() {

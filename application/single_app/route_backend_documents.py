@@ -6,6 +6,7 @@ from functions_documents import *
 from functions_settings import *
 import os
 import requests
+from flask import current_app
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -174,7 +175,7 @@ def register_route_backend_documents(app):
 
                 # 3) Now run heavy-lifting in a background thread
                 # --- CHANGE: Pass original_filename ---
-                future = executor.submit_stored(
+                future = current_app.extensions['executor'].submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
@@ -499,7 +500,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': 'Metadata extraction not enabled'}), 403
 
         # Queue the background task and store with tracking key
-        future = executor.submit_stored(
+        future = current_app.extensions['executor'].submit_stored(
             f"{document_id}_metadata", 
             process_metadata_extraction_background, 
             document_id=document_id, 
