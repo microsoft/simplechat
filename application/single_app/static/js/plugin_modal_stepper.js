@@ -447,6 +447,27 @@ export class PluginModalStepper {
         }
       }
     }
+
+    if (stepNumber === 4) {
+      // Only run for new plugins (not editing)
+      if (!this.isEditMode) {
+        const typeField = document.getElementById('plugin-type');
+        const selectedType = typeField && typeField.value ? typeField.value : null;
+        if (selectedType) {
+          // Dynamically import fetchAndMergePluginSettings from plugin_common.js
+          import('./plugin_common.js').then(module => {
+            module.fetchAndMergePluginSettings(selectedType, {}).then(merged => {
+              document.getElementById('plugin-metadata').value = merged.metadata ? JSON.stringify(merged.metadata, null, 2) : '{}';
+              document.getElementById('plugin-additional-fields').value = merged.additionalFields ? JSON.stringify(merged.additionalFields, null, 2) : '{}';
+            });
+          });
+        } else {
+          // Fallback to empty objects if no type selected
+          document.getElementById('plugin-metadata').value = '{}';
+          document.getElementById('plugin-additional-fields').value = '{}';
+        }
+      }
+    }
   }
 
   updateStepIndicator() {
@@ -1518,6 +1539,7 @@ export class PluginModalStepper {
       endpoint = '';
     } else {
       // Collect generic plugin data
+      console.log("Collecting generic plugin data");
       endpoint = document.getElementById('plugin-endpoint-generic').value.trim();
       
       const authType = document.getElementById('plugin-auth-type-generic').value;
@@ -1648,7 +1670,7 @@ export class PluginModalStepper {
     } else if (isSqlType) {
       return document.getElementById('sql-connection-string').value.trim();
     } else {
-      return document.getElementById('plugin-generic-endpoint').value.trim();
+      return document.getElementById('plugin-endpoint-generic').value.trim();
     }
   }
 
@@ -1813,7 +1835,7 @@ export class PluginModalStepper {
       } else if (isSqlType) {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
       } else {
-        currentEndpoint = document.getElementById('plugin-generic-endpoint')?.value || '';
+        currentEndpoint = document.getElementById('plugin-endpoint-generic')?.value || '';
       }
       
       // Get authentication information
