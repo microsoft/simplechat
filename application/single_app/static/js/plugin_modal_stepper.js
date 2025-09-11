@@ -2,6 +2,8 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 
+window.print = function() { console.trace("window.print called"); }
+
 export class PluginModalStepper {
   constructor() {
     this.currentStep = 1;
@@ -1539,7 +1541,7 @@ export class PluginModalStepper {
       endpoint = '';
     } else {
       // Collect generic plugin data
-      print("Collecting generic plugin data");
+      console.log("Collecting generic plugin data");
       endpoint = document.getElementById('plugin-endpoint-generic').value.trim();
       
       const authType = document.getElementById('plugin-auth-type-generic').value;
