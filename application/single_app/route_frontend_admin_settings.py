@@ -351,10 +351,10 @@ def register_route_frontend_admin_settings(app):
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
 
             # --- Authentication & Redirect Settings ---
-            home_redirect_url = form_data.get('home_redirect_url', '').strip()
-            login_redirect_url = form_data.get('login_redirect_url', '').strip()
+            enable_front_door = form_data.get('enable_front_door') == 'on'
+            front_door_url = form_data.get('front_door_url', '').strip()
             
-            # Validate redirect URLs if provided
+            # Validate Front Door URL if provided
             def is_valid_url(url):
                 if not url:
                     return True  # Empty URL is valid (no redirect)
@@ -368,13 +368,9 @@ def register_route_frontend_admin_settings(app):
                     r'(?:/?|[/?]\S+)$', re.IGNORECASE)
                 return url_pattern.match(url) is not None
             
-            if home_redirect_url and not is_valid_url(home_redirect_url):
-                flash('Invalid Home Redirect URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
-                home_redirect_url = ''
-                
-            if login_redirect_url and not is_valid_url(login_redirect_url):
-                flash('Invalid Login Redirect URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
-                login_redirect_url = ''
+            if front_door_url and not is_valid_url(front_door_url):
+                flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
+                front_door_url = ''
 
             # --- Construct new_settings Dictionary ---
             new_settings = {
@@ -506,7 +502,6 @@ def register_route_frontend_admin_settings(app):
 
                 # Search (Web Search Direct & APIM)
                 'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'bing_search_key': form_data.get('bing_search_key', '').strip(),
                 'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
                 'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
                 'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
@@ -528,8 +523,8 @@ def register_route_frontend_admin_settings(app):
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
 
                 # Authentication & Redirect Settings
-                'home_redirect_url': home_redirect_url,
-                'login_redirect_url': login_redirect_url,
+                'enable_front_door': enable_front_door,
+                'front_door_url': front_door_url,
 
                 # Other
                 'max_file_size_mb': max_file_size_mb,

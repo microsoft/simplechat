@@ -20,7 +20,18 @@ export function loadUserPrompts() {
 
 export function loadGroupPrompts() {
   return fetch("/api/group_prompts")
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) {
+        // Handle 400 errors gracefully (e.g., no active group selected)
+        if (r.status === 400) {
+          console.log("No active group selected for group prompts");
+          groupPrompts = [];
+          return { prompts: [] }; // Return empty result to avoid further errors
+        }
+        throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      }
+      return r.json();
+    })
     .then(data => {
       if (data.prompts) {
         groupPrompts = data.prompts;

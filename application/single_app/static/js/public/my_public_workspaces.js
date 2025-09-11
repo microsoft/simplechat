@@ -11,7 +11,7 @@ $(document).ready(function () {
   const searchInput          = $("#searchQueryInput");
   const searchBtn            = $("#searchBtn");
   const clearSearchBtn       = $("#clearSearchBtn");
-  const createModal          = new bootstrap.Modal(document.getElementById('createPublicWorkspaceModal'));
+  const createModal          = window.canCreatePublicWorkspaces ? new bootstrap.Modal(document.getElementById('createPublicWorkspaceModal')) : null;
   const findModal            = new bootstrap.Modal(document.getElementById('findPublicWorkspaceModal'));
 
   // State
@@ -226,7 +226,9 @@ $(document).ready(function () {
       contentType: "application/json",
       data: JSON.stringify({ name, description }),
       success: function () {
-        createModal.hide();
+        if (createModal) {
+          createModal.hide();
+        }
         $("#createPublicWorkspaceForm")[0].reset();
         fetchWorkspaces();
       },
@@ -301,8 +303,10 @@ $(document).ready(function () {
     setActivePublicWorkspace(id, $(this));
   });
 
-  // Create form
-  $("#createPublicWorkspaceForm").on("submit", handleCreateForm);
+  // Create form (only if user has permission)
+  if (window.canCreatePublicWorkspaces) {
+    $("#createPublicWorkspaceForm").on("submit", handleCreateForm);
+  }
 
   // Search / clear
   searchBtn.on("click", function () {

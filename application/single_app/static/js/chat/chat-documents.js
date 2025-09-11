@@ -254,7 +254,18 @@ export function loadPersonalDocs() {
 export function loadGroupDocs() {
   // Use a large page_size to load all documents at once, without pagination
   return fetch("/api/group_documents?page_size=1000")
-    .then((r) => r.json())
+    .then((r) => {
+      if (!r.ok) {
+        // Handle 400 errors gracefully (e.g., no active group selected)
+        if (r.status === 400) {
+          console.log("No active group selected for group documents");
+          groupDocs = [];
+          return { documents: [] }; // Return empty result to avoid further errors
+        }
+        throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      }
+      return r.json();
+    })
     .then((data) => {
       if (data.error) {
         console.warn("Error fetching group docs:", data.error);

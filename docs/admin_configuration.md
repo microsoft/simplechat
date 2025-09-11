@@ -29,7 +29,6 @@ Key configuration sections include:
    - Configure **Admin Access RBAC**: Option to require `SafetyViolationAdmin` or `FeedbackAdmin` roles for respective admin views.
    - Enable/disable **Conversation Archiving**.
 8. **Search & Extract**:
-   - Enable/disable **Bing Web Search**. Configure **Bing Search API Key**. Test connection.
    - Configure **Azure AI Search** connection (Endpoint, Key/Managed Identity). Test connection. (Primarily for testing, main indexing uses backend logic).
    - Configure **Document Intelligence** connection (Endpoint, Key/Managed Identity). Test connection.
 9. **Other**:

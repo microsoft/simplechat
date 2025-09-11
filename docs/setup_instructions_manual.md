@@ -37,7 +37,6 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 | **Azure AI Search**          | Standard S1 (consider S2/S3 for larger scale/HA)             | Stores and indexes document chunks for RAG. Includes Semantic Ranker capacity. Scale units/replicas/partitions for performance/HA. |
 | **Content Safety**           | Standard S0 (Optional)                                       | Required only if Content Safety feature is enabled. Pay-as-you-go per 1k text records / 1k images. |
 | **Document Intelligence**    | Standard S0                                                  | Used for text/layout extraction from various file types during ingestion. Pay-as-you-go per page processed. |
-| **Bing Search**              | Standard S1 (Optional)                                       | Required only if Bing Web Search feature is enabled. Pay-as-you-go per 1k transactions. |
 | **Cosmos DB (NoSQL)**        | Autoscale provisioned throughput (Start ~1000 RU/s), Single-Region Write | Stores metadata, conversations, settings. Autoscale helps manage costs, but monitor RU consumption and adjust max RU for production loads. |
 | **Video Indexer**            | Standard Tier (Optional)                                     | Required only if Video Extraction feature is enabled. Pay-as-you-go per input content minute (All Insights). |
 | **Speech Service**           | Standard S0 (Optional)                                       | Required only if Audio Extraction feature is enabled. Pay-as-you-go per audio hour (Standard fast transcription). |
@@ -100,16 +99,12 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Select the **Standard S0** pricing tier.
     *   Review Networking settings.
     *   If using **Managed Identity**, grant the App Service's Managed Identity the `Cognitive Services Contributor` role on this resource.
-8.  **Deploy Bing Search Service (Optional)**:
-    *   If using the Bing Web Search feature, create a **Bing Search v7** resource.
-    *   Select the **S1** tier (or adjust based on expected query volume).
-    *   Note the **Endpoint** and one of the **Keys**. These will be configured in the application's Admin Settings later.
-9.  **Deploy Azure Video Indexer (Optional)**:
+8.  **Deploy Azure Video Indexer (Optional)**:
     *   If using the Video Extraction feature, create an **Azure Video Indexer** resource.
     *   You'll need to associate it with an Azure Media Services account (can be created during VI setup) and a Storage Account (used for temporary processing, can be new or existing).
     *   Managed Identity (System-assigned) is typically enabled by default.
     *   Note the **Account ID**, **Location**, and an **API Key** (Subscription level or Account level). These will be configured in Admin Settings.
-10. **Deploy Azure Speech Service (Optional)**:
+9.  **Deploy Azure Speech Service (Optional)**:
     *   If using the Audio Extraction feature, create an **Azure AI Speech** resource.
     *   Select the **Standard S0** pricing tier.
     *   Review Networking and Identity settings.
@@ -124,7 +119,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
     *   Note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
     *   After deployment, note the **Connection String** (under Access Keys or SAS token). This will be configured in Admin Settings. If using Managed Identity, grant the App Service's Managed Identity the `Storage Blob Data Contributor` role.
     *   Navigate to **Data Storage** > **Containers** > **+ Container**. Add two new containers - `user-documents` and `group-documents
-12. **Deploy Azure Cache for Redis (Optional)**:
+10. **Deploy Azure Cache for Redis (Optional)**:
     *   Create an **Azure Cache for Redis** service.
     *   **Name**: Choose a unique name for your Redis instance (e.g., `simplechat-redis`).
     *   **Region**: Select the same region as your App Service for lowest latency.
@@ -316,10 +311,6 @@ Core configuration values are managed via environment variables, typically set i
     # Options: "key", "connection_string", "managed_identity"
     AZURE_COSMOS_AUTHENTICATION_TYPE="key"
     
-    # Azure Bing Search (Only needed if Bing Search feature is enabled in Admin Settings)
-    # Endpoint is usually standard, Key obtained from Bing Search resource.
-    BING_SEARCH_ENDPOINT="https://api.bing.microsoft.com/"
-    
     # Azure AD Authentication (Required)
     CLIENT_ID="<your-app-registration-client-id>"
     TENANT_ID="<your-azure-ad-tenant-id>"
@@ -389,7 +380,6 @@ You can directly edit Application Settings in the Azure portal using the "Advanc
     { "name": "TENANT_ID", "value": "<your-azure-ad-tenant-id>", "slotSetting": false },
     { "name": "SECRET_KEY", "value": "<your-flask-secret-key>", "slotSetting": false },
     { "name": "AZURE_ENVIRONMENT", "value": "public", "slotSetting": false }, // or "usgovernment", or "custom"
-    { "name": "BING_SEARCH_ENDPOINT", "value": "https://api.bing.microsoft.com/", "slotSetting": false },
 
     // --- Build & Runtime Settings ---
     { "name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "true", "slotSetting": false }, // Ensures requirements.txt is processed

@@ -630,7 +630,7 @@ export function actuallySendMessage(finalMessageToSend) {
 
   const modelDeployment = modelSelect?.value;
 
-  // ... (keep existing logic for hybridSearchEnabled, selectedDocumentId, classificationsToSend, bingSearchEnabled, imageGenEnabled)
+  // ... (keep existing logic for hybridSearchEnabled, selectedDocumentId, classificationsToSend, imageGenEnabled)
   let hybridSearchEnabled = false;
   const sdbtn = document.getElementById("search-documents-btn");
   if (sdbtn && sdbtn.classList.contains("active")) {
@@ -656,12 +656,6 @@ export function actuallySendMessage(finalMessageToSend) {
   if (classificationInput) {
     classificationsToSend =
       classificationInput.value === "N/A" ? null : classificationInput.value;
-  }
-
-  let bingSearchEnabled = false;
-  const wbbtn = document.getElementById("search-web-btn");
-  if (wbbtn && wbbtn.classList.contains("active")) {
-    bingSearchEnabled = true;
   }
 
   let imageGenEnabled = false;
@@ -746,7 +740,6 @@ export function actuallySendMessage(finalMessageToSend) {
       hybrid_search: hybridSearchEnabled,
       selected_document_id: selectedDocumentId,
       classifications: classificationsToSend,
-      bing_search: bingSearchEnabled,
       image_generation: imageGenEnabled,
       doc_scope: effectiveDocScope,
       chat_type: chat_type,

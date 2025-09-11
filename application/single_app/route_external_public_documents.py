@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from flask import current_app
 
 def register_route_external_public_documents(app):
     """
@@ -85,7 +86,7 @@ def register_route_external_public_documents(app):
                     percentage_complete=0
                 )
 
-                future = executor.submit_stored(
+                future = current_app.extensions['executor'].submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
                     document_id=parent_document_id, 
@@ -373,7 +374,7 @@ def register_route_external_public_documents(app):
         active_workspace_id = request.form.get('active_workspace_id')
 
         # Queue the public metadata extraction task
-        future = executor.submit_stored(
+        future = current_app.extensions['executor'].submit_stored(
             f"{document_id}_public_metadata",
             process_metadata_extraction_background,
             document_id=document_id,

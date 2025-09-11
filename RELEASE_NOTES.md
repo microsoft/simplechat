@@ -1,6 +1,20 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
+### **(v0.227.007)**
+
+#### Breaking Changes
+
+*   **Bing Web Search Removal**
+    *   Removed all Bing Web Search functionality due to service deprecation by Microsoft. This includes:
+        *   Removed `functions_bing_search.py` module
+        *   Removed Bing configuration settings and UI elements
+        *   Removed web search button from chat interface
+        *   Removed Bing-related admin settings
+        *   Updated documentation to remove Bing references
+    *   **Impact**: Web search functionality is no longer available. Document search and other features remain fully functional.
+    *   **Migration**: No action required - existing conversations and data are preserved.
+
 ### **(v0.215.36)**
 
 #### New Features
@@ -333,9 +347,6 @@ The update introduces "Workspaces," allowing users and groups to store both **do
   AZURE_COSMOS_KEY="<your-cosmosdb-key>"
   AZURE_COSMOS_AUTHENTICATION_TYPE="key" # key or managed_identity
   
-  # Azure Bing Search
-  BING_SEARCH_ENDPOINT="https://api.bing.microsoft.com/"
-  
   # Azure AD Authentication
   CLIENT_ID="<your-client-id>"
   TENANT_ID="<your-tenant-id>"
@@ -345,9 +356,9 @@ The update introduces "Workspaces," allowing users and groups to store both **do
 
 - **Admin Settings Overhaul**:
 
-  - **Route & UI**: Added `route_backend_settings.py` and significantly expanded `admin_settings.html` to configure GPT, Embeddings, Image Gen, Content Safety, Web Search, AI Search, and Document Intelligence—all from a single Admin page.
+  - **Route & UI**: Added `route_backend_settings.py` and significantly expanded `admin_settings.html` to configure GPT, Embeddings, Image Gen, Content Safety, AI Search, and Document Intelligence—all from a single Admin page.
   - **APIM Toggles**: Each service (GPT, Embeddings, Image Generation, Content Safety, etc.) can now be routed through Azure API Management instead of direct endpoints by switching a toggle.
-  - **“Test Connection” Buttons**: Each service (GPT, Embeddings, Image Generation, Content Safety, Bing Web Search, Azure AI Search, and Document Intelligence) now has a dedicated “Test Connection” button that performs a live connectivity check.
+  - **“Test Connection” Buttons**: Each service (GPT, Embeddings, Image Generation, Content Safety, Azure AI Search, and Document Intelligence) now has a dedicated “Test Connection” button that performs a live connectivity check.
 
 - **Improved Safety Features**:
 
@@ -467,13 +478,12 @@ We introduced a robust user feedback system, expanded content-safety features fo
    - **Group Documents Page**: The front-end for Group Documents now checks whether “Enable My Groups” is turned on. If enabled, members can manage shared group files and see group-level search results.
    - **My Groups & Group Management**: Navigation includes “My Groups” (if group features are enabled). This leads to a new set of pages for viewing groups, managing memberships, transferring ownership, and more.
 4. **Search & Extract Tab**
-   - **Azure AI Search & Document Intelligence**: Moved Bing Web Search, Azure AI Search, and Azure Document Intelligence settings into a new “Search and Extract” tab (replacing the older “Web Search” tab).
-   - **Bing Search Toggle**: If you enable web search, the user can optionally include Bing results in chat queries.
+   - **Azure AI Search & Document Intelligence**: Azure AI Search, and Azure Document Intelligence settings into a new “Search and Extract” tab (replacing the older “Web Search” tab).
    - **Azure Document Intelligence**: Configure endpoints and keys for file ingestion (OCR, form analysis, etc.) in a more structured place within Admin Settings.
 5. **Updated UI & Navigation**
    - **Admin Dropdown**: Admin-specific features (App Settings, Safety Violations, etc.) are grouped in an “Admin” dropdown on the main navbar.
    - **Safety**: For Content Safety (as noted above).
-   - **Search & Extract**: For Bing Search, Azure AI Search, and Document Intelligence.
+   - **Search & Extract**: For Azure AI Search, and Document Intelligence.
    - **Minor Styling Adjustments**: Updated top navbar to show/hide “Groups” or “Documents” links based on new toggles (Enable Your Documents, Enable My Groups).
 
 ## (v0.191.0)
@@ -513,7 +523,7 @@ We introduced a robust user feedback system, expanded content-safety features fo
 ## v0.190.1
 
 1. **Admin Settings UI**  
-   - Configure Azure OpenAI GPT, Embeddings, Image Generation, and Bing Search settings directly through an in-app interface (rather than `.env`).  
+   - Configure Azure OpenAI GPT, Embeddings, and Image Generation settings directly through an in-app interface (rather than `.env`).  
    - Choose between **key-based** or **managed identity** authentication for GPT, Embeddings, and Image Generation.  
    - Dynamically switch models/deployments without redeploying the app.
 
@@ -529,9 +539,6 @@ We introduced a robust user feedback system, expanded content-safety features fo
 
 5. **Inline File Previews in Chat**  
    - Files attached to a conversation can be previewed directly from the chat, with text or data displayed in a pop-up.
-
-6. **Optional Bing Web Search**  
-   - Administrators can enable or disable web search. When enabled, the user can toggle “Search the Web” while chatting to incorporate Bing results.
 
 7. **Optional Image Generation**  
    - Users can toggle an “Image” button to create images via Azure OpenAI (e.g., DALL·E) when configured in Admin Settings.

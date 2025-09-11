@@ -49,3 +49,5 @@ azure-monitor-opentelemetry==1.6.13
 psycopg2-binary==2.9.10
 cython
 pyyaml==6.0.2
+aiohttp==3.12.15
+html2text==2025.4.15
