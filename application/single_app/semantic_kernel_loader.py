@@ -91,21 +91,26 @@ def resolve_agent_config(agent, settings):
     print(f"DEBUG: [SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
     print(f"DEBUG: [SK Loader] Agent config: {agent}")
     print(f"DEBUG: [SK Loader] Agent is_global flag: {agent.get('is_global')}")
-    
+
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
     print(f"DEBUG: [SK Loader] Global selected_model: {selected_model}")
     print(f"DEBUG: [SK Loader] Global selected_model deploymentName: {selected_model.get('deploymentName')}")
-    
+
     # User APIM enabled if agent has enable_agent_gpt_apim True (or 1, or 'true')
     user_apim_enabled = agent.get("enable_agent_gpt_apim") in [True, 1, "true", "True"]
     global_apim_enabled = settings.get("enable_gpt_apim", False)
     per_user_enabled = settings.get('per_user_semantic_kernel', False)
-    
+    allow_user_custom_agent_endpoints = settings.get('allow_user_custom_agent_endpoints', False)
+    allow_group_custom_agent_endpoints = settings.get('allow_group_custom_agent_endpoints', False)
+
     print(f"DEBUG: [SK Loader] user_apim_enabled: {user_apim_enabled}, global_apim_enabled: {global_apim_enabled}, per_user_enabled: {per_user_enabled}")
 
     def any_filled(*fields):
         return any(bool(f) for f in fields)
+
+    def all_filled(*fields):
+        return all(bool(f) for f in fields)
 
     def get_user_apim():
         return (
@@ -146,9 +151,11 @@ def resolve_agent_config(agent, settings):
     if not per_user_enabled:
         try:
             if global_apim_enabled:
-                endpoint, key, deployment, api_version = get_global_apim()
+                g_apim = get_global_apim()
+                endpoint, key, deployment, api_version = g_apim
             else:
-                endpoint, key, deployment, api_version = get_global_gpt()
+                g_gpt = get_global_gpt()
+                endpoint, key, deployment, api_version = g_gpt
             return {
                 "endpoint": endpoint,
                 "key": key,
@@ -161,50 +168,42 @@ def resolve_agent_config(agent, settings):
                 "display_name": agent.get("display_name", agent.get("name")),
                 "description": agent.get("description", ""),
                 "id": agent.get("id", ""),
-                "default_agent": agent.get("default_agent", False) #[Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
+                "default_agent": agent.get("default_agent", False),
+                "is_global": agent.get("is_global", False),
+                "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False)
             }
         except Exception as e:
             log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
 
-    # Decision tree for config resolution:
-    # 1. If user APIM is enabled and any user APIM values are set, use user APIM (with fallback to global APIM if enabled and any values)
-    # 2. If user APIM is enabled but no user APIM values are set, and global APIM is enabled and any values, use global APIM
-    # 3. If agent/user GPT config is set, use that
-    # 4. If global APIM is enabled and any values, use global APIM
-    # 5. Otherwise, use global GPT config
-
+    # --- PATCHED DECISION TREE ---
     u_apim = get_user_apim()
     g_apim = get_global_apim()
     u_gpt = get_user_gpt()
     g_gpt = get_global_gpt()
-    
-    # print(f"[SK Loader] Config sources:")
-    # print(f"  u_apim: {u_apim}")
-    # print(f"  g_apim: {g_apim}")
-    # print(f"  u_gpt: {u_gpt}")
-    # print(f"  g_gpt: {g_gpt}")
 
-    if user_apim_enabled and any_filled(*u_apim):
-        # User APIM is enabled and has values
+    # 1. User APIM enabled and any user APIM values set: use user APIM (merge with global APIM if needed)
+    if user_apim_enabled and any_filled(*u_apim) and allow_user_custom_agent_endpoints:
         print(f"[SK Loader] Using user APIM with global fallback")
         merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
-    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
-        # User APIM enabled but no user APIM values, use global APIM if enabled and has values
-        print(f"[SK Loader] Using global APIM")
+    # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
+    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim) and allow_group_custom_agent_endpoints:
+        print(f"[SK Loader] Using global APIM (user APIM enabled but not present)")
         endpoint, key, deployment, api_version = g_apim
-    elif any_filled(*u_gpt):
-        # Agent has some GPT config - merge with global GPT config for missing values
-        print(f"[SK Loader] Using agent GPT config merged with global GPT config")
-        merged = merge_fields(u_gpt, g_gpt)
-        print(f"DEBUG: [SK Loader] Merged result: {merged}")
-        endpoint, key, deployment, api_version = merged
+    # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
+    elif all_filled(*u_gpt) and allow_user_custom_agent_endpoints:
+        print(f"[SK Loader] Using agent GPT config (all fields filled)")
+        endpoint, key, deployment, api_version = u_gpt
+    # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
+    elif any_filled(*u_gpt) and not global_apim_enabled and allow_user_custom_agent_endpoints:
+        print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
+        endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
+    # 5. Global APIM enabled and present: use global APIM
     elif global_apim_enabled and any_filled(*g_apim):
-        # Use global APIM if enabled and has values
         print(f"[SK Loader] Using global APIM (fallback)")
         endpoint, key, deployment, api_version = g_apim
+    # 6. Fallback to global GPT config
     else:
-        # Fallback to global GPT config
         print(f"[SK Loader] Using global GPT config (fallback)")
         endpoint, key, deployment, api_version = g_gpt
 
@@ -220,11 +219,11 @@ def resolve_agent_config(agent, settings):
         "display_name": agent.get("display_name", agent.get("name")),
         "description": agent.get("description", ""),
         "id": agent.get("id", ""),
-        "default_agent": agent.get("default_agent", False), #[Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
+        "default_agent": agent.get("default_agent", False),  # [Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
         "is_global": agent.get("is_global", False),  # Ensure we have this field
         "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False)  # Use this to check if APIM is enabled for the agent
     }
-    
+
     print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
     return result
 
