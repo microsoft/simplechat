@@ -64,6 +64,8 @@ def register_route_frontend_admin_settings(app):
 
         if 'enable_appinsights_global_logging' not in settings:
             settings['enable_appinsights_global_logging'] = False
+        if 'enable_debug_logging' not in settings:
+            settings['enable_debug_logging'] = False
 
         # --- Add default for semantic_kernel ---
         if 'per_user_semantic_kernel' not in settings:
@@ -349,6 +351,9 @@ def register_route_frontend_admin_settings(app):
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
+            
+            # --- Debug Logging Toggle ---
+            enable_debug_logging = form_data.get('enable_debug_logging') == 'on'
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -376,6 +381,7 @@ def register_route_frontend_admin_settings(app):
             new_settings = {
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
+                'enable_debug_logging': enable_debug_logging,
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',

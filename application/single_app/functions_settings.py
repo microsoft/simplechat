@@ -10,6 +10,7 @@ def get_settings():
         'enable_health_check': True,
         # Security settings
         'enable_appinsights_global_logging': False,
+        'enable_debug_logging': False,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
         'enable_http_plugin': True,

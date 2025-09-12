@@ -96,7 +96,7 @@ configure_azure_monitor()
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
-    #print(f"DEBUG:Application settings: {settings}")
+    print(f"DEBUG:Application settings: {settings}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -257,7 +257,7 @@ def format_datetime_filter(value):
 @app.before_request
 def reload_kernel_if_needed():
     if getattr(builtins, "kernel_reload_needed", False):
-        print("[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
+        debug_print(f"[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
         """Commneted out because hot reload is not fully supported yet.
         log_event(
             "[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",

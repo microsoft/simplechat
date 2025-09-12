@@ -554,10 +554,12 @@
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Actions</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
                                 </div>
                             </div>
                         {% endif %}
@@ -568,30 +570,37 @@
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to get current date, time, and perform time-related calculations and conversions."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to make HTTP requests to websites for data retrieval and integration."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to pause execution for specified time periods, useful for delays and timing control in workflows."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-math-plugin" name="enable_math_plugin" {% if settings.enable_math_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-math-plugin">Enable Math Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform mathematical calculations, solve equations, and handle complex mathematical operations."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-text-plugin" name="enable_text_plugin" {% if settings.enable_text_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-text-plugin">Enable Text Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform text processing operations like formatting, validation, and manipulation of strings and text content."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
                             </div>
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
                             </div>
                         </div>
                         <table class="table table-bordered" id="plugins-table">
@@ -618,6 +627,7 @@
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the agents system powered by Semantic Kernel for AI-driven task automation and orchestration."></i>
                     </div>
                     <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
                 </div>
@@ -639,18 +649,22 @@
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level agents for personal use and customization."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-agent-endpoints" name="allow_user_custom_agent_endpoints" {% if settings.allow_user_custom_agent_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-custom-agent-endpoints">Allow User Custom Agent Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for their personal agents to connect to external services and models."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-agent-endpoints" name="allow_group_custom_agent_endpoints" {% if settings.allow_group_custom_agent_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-custom-agent-endpoints">Allow Group Custom Agent Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom API endpoints for group-level agents to connect to shared external services and models."></i>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
@@ -713,9 +727,14 @@
 
             <!-- Logging Tab Content -->
             <div class="tab-pane fade" id="logging" role="tabpanel" aria-labelledby="logging-tab">
-                <div class="mb-3">
-                    <h4>Application Insights Logging</h4>
-                    <div class="form-check form-switch">
+                <p class="text-muted">
+                    Configure logging settings for monitoring, debugging, and auditing purposes. These settings control various types of logging throughout the application including application insights, debug messages, and file processing events.
+                </p>
+                
+                <div class="card p-3 mb-3">
+                    <h5>Application Insights Logging</h5>
+                    <p class="text-muted">Enable global logging to Application Insights for all agents and orchestration events.</p>
+                    <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="enable_appinsights_global_logging" name="enable_appinsights_global_logging" {% if settings.enable_appinsights_global_logging %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_appinsights_global_logging">
                             Enable Application Insights Global Logging
@@ -724,6 +743,33 @@
                     </div>
                     <div class="alert alert-warning mt-3" role="alert">
                         <strong>Note:</strong> Changing this setting requires an application restart to take effect.
+                    </div>
+                </div>
+                
+                <div class="card p-3 mb-3">
+                    <h5>Debug Logging</h5>
+                    <p class="text-muted">Control debug print statements across the application for development and troubleshooting.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging" name="enable_debug_logging" {% if settings.enable_debug_logging %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_debug_logging">
+                            Enable Debug Logging
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable debug print statements across the application for troubleshooting and development."></i>
+                    </div>
+                    <div class="alert alert-info mt-2" role="alert">
+                        <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting.
+                    </div>
+                </div>
+                
+                <div class="card p-3 mb-3">
+                    <h5>File Processing Logs</h5>
+                    <p class="text-muted">Enable logging of file processing events for debugging and auditing purposes. Logs are stored in the file_processing container in Cosmos DB.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs" name="enable_file_processing_logs" {% if settings.enable_file_processing_logs %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_processing_logs">
+                            Enable File Processing Logs
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable logging of file processing events for debugging and auditing purposes."></i>
                     </div>
                 </div>
             </div>
@@ -743,11 +789,13 @@
                         <input type="checkbox" class="form-check-input" id="show_logo" name="show_logo"
                             {% if settings.show_logo %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="show_logo">Show Logo</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display the application logo in the header and navigation areas of the interface."></i>
                     </div>
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox" class="form-check-input" id="hide_app_title" name="hide_app_title"
                             {% if settings.hide_app_title %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Hide the application title from the header and navigation, showing only the logo if enabled."></i>
                     </div>
                     <div class="form-group mb-3">
                         <label for="logo_file">Upload Custom Logo (Light Mode)</label>
@@ -793,6 +841,7 @@
                         <label class="form-check-label ms-2" for="toggleLandingPageEditor">
                             Enable Markdown Editor
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the markdown editor for editing landing page content, otherwise text will be displayed as read-only preview."></i>
                     </div>
 
                     
@@ -833,6 +882,7 @@
                             <label class="form-check-label ms-2" for="enable_dark_mode_default">
                                 Enable Dark Mode by Default
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Set dark mode as the default theme for new users. Users can still toggle between themes individually."></i>
                         </div>
                         <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
                     </div>
@@ -850,6 +900,7 @@
                             <label class="form-check-label ms-2" for="enable_left_nav_default">
                                 Enable Left Nav by Default
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show the left navigation sidebar by default for new users. Users can still toggle the sidebar visibility individually."></i>
                         </div>
                         <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
                     </div>
@@ -867,6 +918,7 @@
                         <label class="form-check-label ms-2" for="enable_health_check">
                             Enable Health Check Endpoint
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /health endpoint for monitoring and load balancer health checks to verify application status."></i>
                     </div>
                     <p class="text-muted mb-0">
                         When enabled, the /health endpoint will respond to health check requests. Disable to turn off health check endpoint for this app.
@@ -881,6 +933,7 @@
                         <label class="form-check-label ms-2" for="classification_banner_enabled">
                             Enable Classification Banner
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a security classification banner at the top of every page to indicate data sensitivity level."></i>
                     </div>
                     <div class="mb-2">
                         <label for="classification_banner_text" class="form-label">Banner Text</label>
@@ -909,6 +962,7 @@
                         <label class="form-check-label ms-2" for="enable_external_links">
                             Enable External Links in Navigation
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a menu of external links in the navigation bar for quick access to external resources and websites."></i>
                     </div>
                     <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
                     
@@ -926,6 +980,7 @@
                             <label class="form-check-label ms-2" for="external_links_force_menu">
                                 Force Menu Display
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Always show external links as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu."></i>
                             <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
                         </div>
                         
@@ -963,6 +1018,7 @@
                         if settings.enable_gpt_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
                         endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
                 </div>
 
@@ -1101,7 +1157,7 @@
                         name="enable_embedding_apim" {% if settings.enable_embedding_apim %}checked{% endif %}>
                     <label class="form-check-label" for="enable_embedding_apim">Use APIM instead of direct to Azure
                         OpenAI endpoint</label>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route embedding model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
                 </div>
 
                 <div id="non_apim_embedding_settings" {% if settings.enable_embedding_apim %}style="display: none;" {%
@@ -1245,6 +1301,7 @@
                     <label class="form-check-label ms-2" for="enable_image_generation">
                         Enable Image Generation
                     </label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable AI-powered image generation capabilities using DALL-E models for creating images from text descriptions."></i>
                 </div>
                 <div id="image_gen_settings" {% if not settings.enable_image_generation %}style="display: none;" {%
                     endif %}>
@@ -1254,6 +1311,7 @@
                             name="enable_image_gen_apim" {% if settings.enable_image_gen_apim %}checked{% endif %}>
                         <label class="form-check-label" for="enable_image_gen_apim">Use APIM instead of direct to Azure
                             OpenAI endpoint.</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route image generation requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
                     </div>
 
                     <div id="non_apim_image_gen_settings" {% if settings.enable_image_gen_apim %}style="display: none;"
@@ -1410,6 +1468,7 @@
                         <label class="form-check-label ms-2" for="enable_redis_cache">
                             Enable Redis Cache
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable Redis Cache for distributed session storage, improving performance and enabling horizontal scaling across multiple application instances."></i>
                     </div>
                     <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
                         <div class="mb-3">
@@ -1459,6 +1518,7 @@
                         <label class="form-check-label ms-2" for="enable_front_door">
                             Enable Front Door Support
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable Azure Front Door integration for global load balancing, SSL termination, and improved performance with custom domain support."></i>
                     </div>
                     
                     <div class="mb-3" id="front-door-url-settings">
@@ -1499,6 +1559,7 @@
                         <label class="form-check-label ms-2" for="enable_user_workspace">
                             Enable Personal Workspaces
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
                     </div>
                 </div>
 
@@ -1518,6 +1579,7 @@
                         <label class="form-check-label ms-2" for="enable_group_workspaces">
                             Enable Group Workspaces
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and participate in shared group workspaces for team collaboration, document sharing, and collective knowledge building."></i>
                     </div>
 
                     
@@ -1555,6 +1617,7 @@
                         <label class="form-check-label ms-2" for="enable_public_workspaces">
                             Enable Public Workspaces
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow creation of public workspaces that are visible and accessible to all users in the organization for broad knowledge sharing."></i>
                     </div>
 
                     <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
@@ -1591,6 +1654,7 @@
                         <label class="form-check-label ms-2" for="enable_file_sharing">
                             Enable File Sharing
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload, share, and manage files within workspaces for document-based AI interactions and collaboration."></i>
                     </div>
                 </div>
 
@@ -1613,6 +1677,7 @@
                         <label class="form-check-label ms-2" for="enable_video_file_support">
                             Enable Video File Support
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow video file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
                     </div>
 
                     <div id="video_indexer_settings" class="card mb-3 p-3"
@@ -1699,6 +1764,7 @@
                         <label class="form-check-label ms-2" for="enable_audio_file_support">
                             Enable Audio File Support
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow audio file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
                     </div>
 
                     <div id="audio_service_settings" class="card mb-3 p-3"
@@ -1766,6 +1832,7 @@
                       <label class="form-check-label ms-2" for="enable_extract_meta_data">
                         Enable Extract Meta Data
                       </label>
+                      <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically extract and index metadata from uploaded files for enhanced search capabilities and content organization."></i>
                     </div>
                   
                     <div id="metadata_extraction_model_settings" class="mb-3"
@@ -1809,6 +1876,7 @@
                         <label class="form-check-label ms-2" for="enable_document_classification">
                             Enable Document Classification
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to classify uploaded documents with predefined categories for better organization and search filtering."></i>
                     </div>
 
                     
@@ -1877,6 +1945,7 @@
                         <label class="form-check-label ms-2" for="enable_enhanced_citations">
                             Enable Enhanced Citations
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store original files in Azure Storage and provide direct file references and previews in citations for improved source tracking."></i>
                     </div>
 
                     
@@ -2031,6 +2100,7 @@
                         <label class="form-check-label ms-2" for="enable_content_safety">
                             Enable Content Safety
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Filter user messages and AI responses through Azure Content Safety service to detect and block inappropriate content."></i>
                     </div>
 
                     
@@ -2049,6 +2119,7 @@
                             <label class="form-check-label" for="enable_content_safety_apim">
                                 Use APIM instead of direct Content Safety endpoint
                             </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route content safety requests through Azure API Management instead of directly to the Content Safety service for centralized monitoring and control."></i>
                         </div>
 
                         
@@ -2162,6 +2233,7 @@
                         <label class="form-check-label ms-2" for="enable_user_feedback">
                             Enable User Feedback (Thumbs Up/Down)
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to provide thumbs up/down feedback on AI responses for quality monitoring and improvement."></i>
                     </div>
                 </div>
                 
@@ -2180,6 +2252,7 @@
                         <label class="form-check-label ms-2" for="require_member_of_safety_violation_admin">
                             Require Membership for Safety Violation Admin View
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Restrict access to safety violation reports to users with the 'SafetyViolationAdmin' role instead of general admin access."></i>
                     </div>
                      <p class="text-muted small mb-3">
                         If enabled, only users who are members of the 'SafetyViolationAdmin' role (defined in your App registration) can access the Safety Violations admin page. If disabled, any user with the general 'Admin' role can access it.
@@ -2195,6 +2268,7 @@
                         <label class="form-check-label ms-2" for="require_member_of_feedback_admin">
                             Require Membership for Feedback Admin View
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Restrict access to user feedback reports to users with the 'FeedbackAdmin' role instead of general admin access."></i>
                     </div>
                      <p class="text-muted small mb-0">
                         If enabled, only users who are members of the 'FeedbackAdmin' role (defined in your App registration) can access the User Feedback admin page. If disabled, any user with the general 'Admin' role can access it. Requires 'Enable User Feedback' to be active.
@@ -2217,6 +2291,7 @@
                         <label class="form-check-label ms-2" for="enable_conversation_archiving">
                             Enable Conversation Archiving
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Archive conversations instead of permanently deleting them, allowing for recovery and compliance with data retention policies."></i>
                     </div>
                 </div>
             </div>
@@ -2245,6 +2320,7 @@
                         <label class="form-check-label" for="enable_ai_search_apim">
                             Use APIM instead of direct Azure AI Search
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route Azure AI Search requests through API Management for centralized monitoring and control instead of direct service access."></i>
                     </div>
 
                     <div>
@@ -2358,9 +2434,10 @@
                             name="enable_document_intelligence_apim"
                             {% if settings.enable_document_intelligence_apim %}checked{% endif %}
                         >
-                        <label class="form-check-label" for="enable_document_intelligence_apim"></label>
+                        <label class="form-check-label" for="enable_document_intelligence_apim">
                             Use APIM instead of direct Document Intelligence endpoint
                         </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route Document Intelligence requests through API Management for centralized monitoring and control instead of direct service access."></i>
                     </div>
 
                     <div>
@@ -2495,41 +2572,22 @@
                 </div>
 
                 <div class="card mb-3 p-3">
-                    <h5>File Processing Logs</h5>
+                    <h5>External Health Check</h5>
                     <p class="text-muted mb-2">
-                        Enable logging of file processing events for debugging and auditing purposes. Logs are stored in the file_processing container in cosmos.
+                        Enable or disable the /external/healthcheck endpoint for external health monitoring.
                     </p>
-
-                    
                     <div class="form-group form-check form-switch mb-3">
                         <input
                             type="checkbox"
                             class="form-check-input"
-                            id="enable_file_processing_logs"
-                            name="enable_file_processing_logs"
-                            {% if settings.enable_file_processing_logs %}checked{% endif %}
+                            id="enable_external_healthcheck"
+                            name="enable_external_healthcheck"
+                            {% if settings.enable_external_healthcheck %}checked{% endif %}
                         >
-                        <label class="form-check-label ms-2" for="enable_file_processing_logs">
-                            Enable File Processing Logs
+                        <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                            Enable External Health Check Endpoint
                         </label>
-                    </div>
-                    <div class="card mb-3 p-3">
-                        <h5>External Health Check</h5>
-                        <p class="text-muted mb-2">
-                            Enable or disable the /external/healthcheck endpoint for external health monitoring.
-                        </p>
-                        <div class="form-group form-check form-switch mb-3">
-                            <input
-                                type="checkbox"
-                                class="form-check-input"
-                                id="enable_external_healthcheck"
-                                name="enable_external_healthcheck"
-                                {% if settings.enable_external_healthcheck %}checked{% endif %}
-                            >
-                            <label class="form-check-label ms-2" for="enable_external_healthcheck">
-                                Enable External Health Check Endpoint
-                            </label>
-                        </div>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Provide a public health check endpoint at /external/healthcheck for external monitoring systems to verify application status."></i>
                     </div>
                 </div>
             </div>
