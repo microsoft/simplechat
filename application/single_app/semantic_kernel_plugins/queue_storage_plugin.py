@@ -7,6 +7,7 @@ from azure.identity import DefaultAzureCredential
 
 class QueueStoragePlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
+        super().__init__(manifest)
         self.manifest = manifest
         self.endpoint = manifest.get('endpoint')
         self.queue_name = manifest.get('queue_name')
