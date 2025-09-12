@@ -23,7 +23,8 @@ class ResultWithMetadata:
         return f"ResultWithMetadata(data={self.data!r}, metadata={self.metadata!r})"
 
 class DatabricksTablePlugin(BasePlugin):
-    def __init__(self, manifest):
+    def __init__(self, manifest: Dict[str, Any]):
+        super().__init__(manifest)
         self.manifest = manifest
         self.endpoint = manifest['endpoint']
         self.key = manifest.get('auth', {}).get('key', None)

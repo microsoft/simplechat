@@ -8,6 +8,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_log
 
 class BlobStoragePlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
+        super().__init__(manifest)
         self.manifest = manifest
         self.endpoint = manifest.get('endpoint')
         self.key = manifest.get('auth', {}).get('key')
