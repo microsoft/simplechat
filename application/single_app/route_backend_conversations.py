@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata
 from flask import Response, request
+from functions_debug import debug_print
 
 def register_route_backend_conversations(app):
 
@@ -30,9 +31,9 @@ def register_route_backend_conversations(app):
                 partition_key=conversation_id
             ))
             
-            print(f"DEBUG: Query returned {len(all_items)} total items")
+            debug_print(f"Query returned {len(all_items)} total items")
             for i, item in enumerate(all_items):
-                print(f"DEBUG: Item {i}: id={item.get('id')}, role={item.get('role')}")
+                debug_print(f"Item {i}: id={item.get('id')}, role={item.get('role')}")
             
             # Process messages and reassemble chunked images
             messages = []
@@ -67,12 +68,12 @@ def register_route_backend_conversations(app):
                     image_id = message.get('id')
                     total_chunks = message.get('metadata', {}).get('total_chunks', 1)
                     
-                    print(f"DEBUG: Reassembling chunked image {image_id} with {total_chunks} chunks")
-                    print(f"DEBUG: Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
+                    debug_print(f"Reassembling chunked image {image_id} with {total_chunks} chunks")
+                    debug_print(f"Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
                     
                     # Start with the content from the main message (chunk 0)
                     complete_content = message.get('content', '')
-                    print(f"DEBUG: Main message content length: {len(complete_content)} bytes")
+                    debug_print(f"Main message content length: {len(complete_content)} bytes")
                     
                     # Add remaining chunks in order (chunks 1, 2, 3, etc.)
                     if image_id in chunked_images:
@@ -81,17 +82,17 @@ def register_route_backend_conversations(app):
                             if chunk_index in chunks:
                                 chunk_content = chunks[chunk_index]
                                 complete_content += chunk_content
-                                print(f"DEBUG: Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
+                                debug_print(f"Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
                             else:
                                 print(f"WARNING: Missing chunk {chunk_index} for image {image_id}")
                     else:
                         print(f"WARNING: No chunks found for image {image_id} in chunked_images")
                     
-                    print(f"DEBUG: Final reassembled image total size: {len(complete_content)} bytes")
+                    debug_print(f"Final reassembled image total size: {len(complete_content)} bytes")
                     
                     # For large images (>1MB), use a URL reference instead of embedding in JSON
                     if len(complete_content) > 1024 * 1024:  # 1MB threshold
-                        print(f"DEBUG: Large image detected ({len(complete_content)} bytes), using URL reference")
+                        debug_print(f"Large image detected ({len(complete_content)} bytes), using URL reference")
                         # Store the complete content temporarily and provide a URL reference
                         message['content'] = f"/api/image/{image_id}"
                         message['metadata']['is_large_image'] = True
@@ -133,7 +134,7 @@ def register_route_backend_conversations(app):
             # Reconstruct conversation_id (everything except the last 3 parts)
             conversation_id = '_'.join(parts[:-3])
             
-            print(f"DEBUG: Serving image {image_id} from conversation {conversation_id}")
+            debug_print(f"Serving image {image_id} from conversation {conversation_id}")
             
             # Query for the main image document and chunks
             message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
@@ -146,29 +147,29 @@ def register_route_backend_conversations(app):
             main_image = None
             chunks = {}
             
-            print(f"DEBUG: Searching through {len(all_items)} items for image {image_id}")
+            debug_print(f"Searching through {len(all_items)} items for image {image_id}")
             
             for item in all_items:
                 item_id = item.get('id')
                 item_role = item.get('role')
-                print(f"DEBUG: Checking item {item_id}, role: {item_role}")
+                debug_print(f"Checking item {item_id}, role: {item_role}")
                 
                 if item_id == image_id and item_role == 'image':
                     main_image = item
-                    print(f"DEBUG: ✅ Found main image document: {item_id}")
-                    print(f"DEBUG: Main image content length: {len(item.get('content', ''))} bytes")
-                    print(f"DEBUG: Main image metadata: {item.get('metadata', {})}")
+                    debug_print(f"✅ Found main image document: {item_id}")
+                    debug_print(f"Main image content length: {len(item.get('content', ''))} bytes")
+                    debug_print(f"Main image metadata: {item.get('metadata', {})}")
                 elif (item_role == 'image_chunk' and 
                       item.get('parent_message_id') == image_id):
                     chunk_index = item.get('metadata', {}).get('chunk_index', 0)
                     chunk_content = item.get('content', '')
                     chunks[chunk_index] = chunk_content
-                    print(f"DEBUG: ✅ Found chunk {chunk_index}: {len(chunk_content)} bytes")
-                    print(f"DEBUG: Chunk {chunk_index} starts with: {chunk_content[:50]}...")
-                    print(f"DEBUG: Chunk {chunk_index} ends with: ...{chunk_content[-20:]}")
+                    debug_print(f"✅ Found chunk {chunk_index}: {len(chunk_content)} bytes")
+                    debug_print(f"Chunk {chunk_index} starts with: {chunk_content[:50]}...")
+                    debug_print(f"Chunk {chunk_index} ends with: ...{chunk_content[-20:]}")
             
-            print(f"DEBUG: Found main_image: {main_image is not None}")
-            print(f"DEBUG: Found chunks: {list(chunks.keys())}")
+            debug_print(f"Found main_image: {main_image is not None}")
+            debug_print(f"Found chunks: {list(chunks.keys())}")
             
             if not main_image:
                 print(f"ERROR: Main image not found for {image_id}")
@@ -178,12 +179,12 @@ def register_route_backend_conversations(app):
             complete_content = main_image.get('content', '')
             total_chunks = main_image.get('metadata', {}).get('total_chunks', 1)
             
-            print(f"DEBUG: Starting reassembly...")
-            print(f"DEBUG: Main content length: {len(complete_content)} bytes")
-            print(f"DEBUG: Expected total chunks: {total_chunks}")
-            print(f"DEBUG: Available chunk indices: {list(chunks.keys())}")
-            print(f"DEBUG: Main content starts with: {complete_content[:50]}...")
-            print(f"DEBUG: Main content ends with: ...{complete_content[-20:]}")
+            debug_print(f"Starting reassembly...")
+            debug_print(f"Main content length: {len(complete_content)} bytes")
+            debug_print(f"Expected total chunks: {total_chunks}")
+            debug_print(f"Available chunk indices: {list(chunks.keys())}")
+            debug_print(f"Main content starts with: {complete_content[:50]}...")
+            debug_print(f"Main content ends with: ...{complete_content[-20:]}")
             
             reassembly_log = []
             original_length = len(complete_content)
@@ -193,21 +194,21 @@ def register_route_backend_conversations(app):
                     chunk_content = chunks[chunk_index]
                     complete_content += chunk_content
                     reassembly_log.append(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
-                    print(f"DEBUG: Added chunk {chunk_index}: {len(chunk_content)} bytes")
-                    print(f"DEBUG: Total length now: {len(complete_content)} bytes")
+                    debug_print(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
+                    debug_print(f"Total length now: {len(complete_content)} bytes")
                 else:
                     error_msg = f"Missing chunk {chunk_index}"
                     reassembly_log.append(f"❌ {error_msg}")
                     print(f"WARNING: {error_msg}")
             
             final_length = len(complete_content)
-            print(f"DEBUG: Reassembly complete!")
-            print(f"DEBUG: Original length: {original_length} bytes")
-            print(f"DEBUG: Final length: {final_length} bytes")
-            print(f"DEBUG: Added: {final_length - original_length} bytes")
-            print(f"DEBUG: Reassembly log: {reassembly_log}")
-            print(f"DEBUG: Final content starts with: {complete_content[:50]}...")
-            print(f"DEBUG: Final content ends with: ...{complete_content[-20:]}")
+            debug_print(f"Reassembly complete!")
+            debug_print(f"Original length: {original_length} bytes")
+            debug_print(f"Final length: {final_length} bytes")
+            debug_print(f"Added: {final_length - original_length} bytes")
+            debug_print(f"Reassembly log: {reassembly_log}")
+            debug_print(f"Final content starts with: {complete_content[:50]}...")
+            debug_print(f"Final content ends with: ...{complete_content[-20:]}")
             
             # Return the image data with appropriate headers
             if complete_content.startswith('data:image/'):

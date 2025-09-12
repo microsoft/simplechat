@@ -15,6 +15,7 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
+from functions_debug import debug_print
 
 
 @dataclass
@@ -74,7 +75,7 @@ class PluginInvocationLogger:
             status = "SUCCESS" if invocation.success else "ERROR"
             
             # Keep minimal print for real-time monitoring
-            print(f"[Plugin {status}] {invocation.plugin_name}.{invocation.function_name} ({invocation.duration_ms:.1f}ms)")
+            debug_print(f"[Plugin {status}] {invocation.plugin_name}.{invocation.function_name} ({invocation.duration_ms:.1f}ms)")
             
             # Comprehensive structured logging for production
             log_data = {

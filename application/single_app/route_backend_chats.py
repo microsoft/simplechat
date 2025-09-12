@@ -20,6 +20,7 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
+from functions_debug import debug_print
 from flask import current_app
 
 
@@ -315,16 +316,16 @@ def register_route_backend_chats(app):
                 # Add scope-specific details
                 if document_scope == 'group' and active_group_id:
                     try:
-                        print(f"DEBUG: Workspace search - looking up group for id: {active_group_id}")
+                        debug_print(f"Workspace search - looking up group for id: {active_group_id}")
                         group_doc = find_group_by_id(active_group_id)
-                        print(f"DEBUG: Workspace search group lookup result: {group_doc}")
+                        debug_print(f"Workspace search group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
                             group_name = group_doc.get('name')
                             user_metadata['workspace_search']['group_name'] = group_name
-                            print(f"DEBUG: Workspace search - set group_name to: {group_name}")
+                            debug_print(f"Workspace search - set group_name to: {group_name}")
                         else:
-                            print(f"DEBUG: Workspace search - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
@@ -407,9 +408,9 @@ def register_route_backend_chats(app):
             }
             
             # Debug: Print the complete metadata being saved
-            # print(f"DEBUG: Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
-            # print(f"DEBUG: Final chat_context for message: {user_metadata['chat_context']}")
-            # print(f"DEBUG: document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
+            debug_print(f"Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+            debug_print(f"Final chat_context for message: {user_metadata['chat_context']}")
+            debug_print(f"document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
             
             # Note: Message-level chat_type will be updated after document search
             
@@ -722,8 +723,8 @@ def register_route_backend_chats(app):
             
             # Update the message-level chat_type in user_metadata
             user_metadata['chat_context']['chat_type'] = message_chat_type
-            print(f"DEBUG: Set message-level chat_type to: {message_chat_type}")
-            print(f"DEBUG: hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
+            debug_print(f"Set message-level chat_type to: {message_chat_type}")
+            debug_print(f"hybrid_search_enabled: {hybrid_search_enabled}, search_results count: {len(search_results) if search_results else 0}")
             
             # Add context-specific information based on message chat type
             if message_chat_type == 'group' and active_group_id:
@@ -731,19 +732,19 @@ def register_route_backend_chats(app):
                 # We may have already fetched this in workspace_search section
                 if 'workspace_search' in user_metadata and user_metadata['workspace_search'].get('group_name'):
                     user_metadata['chat_context']['group_name'] = user_metadata['workspace_search']['group_name']
-                    print(f"DEBUG: Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
+                    debug_print(f"Chat context - using group_name from workspace_search: {user_metadata['workspace_search']['group_name']}")
                 else:
                     try:
-                        print(f"DEBUG: Chat context - looking up group for id: {active_group_id}")
+                        debug_print(f"Chat context - looking up group for id: {active_group_id}")
                         group_doc = find_group_by_id(active_group_id)
-                        print(f"DEBUG: Chat context group lookup result: {group_doc}")
+                        debug_print(f"Chat context group lookup result: {group_doc}")
                         
                         if group_doc and group_doc.get('name'):
                             group_title = group_doc.get('name')
                             user_metadata['chat_context']['group_name'] = group_title
-                            print(f"DEBUG: Chat context - set group_name to: {group_title}")
+                            debug_print(f"Chat context - set group_name to: {group_title}")
                         else:
-                            print(f"DEBUG: Chat context - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Chat context - no group found or no name for id: {active_group_id}")
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
@@ -758,16 +759,16 @@ def register_route_backend_chats(app):
                     user_metadata['chat_context']['workspace_context'] = f"Public Document: {user_metadata['workspace_search']['document_name']}"
                 else:
                     user_metadata['chat_context']['workspace_context'] = "Public Workspace"
-                print(f"DEBUG: Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
+                debug_print(f"Set public workspace_context: {user_metadata['chat_context'].get('workspace_context')}")
             # For personal chat type or Model, no additional context needed beyond conversation_id
             
             # Update the user message document with the final metadata
             user_message_doc['metadata'] = user_metadata
-            print(f"DEBUG: Updated message metadata with chat_type: {message_chat_type}")
+            debug_print(f"Updated message metadata with chat_type: {message_chat_type}")
             
             # Update the user message in Cosmos DB with the final chat_type information
             cosmos_messages_container.upsert_item(user_message_doc)
-            print(f"DEBUG: User message re-saved to Cosmos DB with updated chat_context")
+            debug_print(f"User message re-saved to Cosmos DB with updated chat_context")
 
             # Image Generation
             if image_gen_enabled:
@@ -803,8 +804,8 @@ def register_route_backend_chats(app):
                             image_gen_model = selected_image_gen_model['deploymentName']
 
                 try:
-                    print(f"DEBUG: Generating image with model: {image_gen_model}")
-                    print(f"DEBUG: Using prompt: {user_message}")
+                    debug_print(f"Generating image with model: {image_gen_model}")
+                    debug_print(f"Using prompt: {user_message}")
                     
                     # Azure OpenAI doesn't support response_format parameter
                     # Different models return different formats automatically
@@ -814,16 +815,16 @@ def register_route_backend_chats(app):
                         model=image_gen_model
                     )
                     
-                    print(f"DEBUG: Image response received: {type(image_response)}")
+                    debug_print(f"Image response received: {type(image_response)}")
                     response_dict = json.loads(image_response.model_dump_json())
-                    print(f"DEBUG: Response dict: {response_dict}")
+                    debug_print(f"Response dict: {response_dict}")
                     
                     # Extract image URL or base64 data with validation
                     if 'data' not in response_dict or not response_dict['data']:
                         raise ValueError("No image data in response")
                     
                     image_data = response_dict['data'][0]
-                    print(f"DEBUG: Image data keys: {list(image_data.keys())}")
+                    debug_print(f"Image data keys: {list(image_data.keys())}")
                     
                     generated_image_url = None
                     
@@ -831,7 +832,7 @@ def register_route_backend_chats(app):
                     if 'url' in image_data and image_data['url']:
                         # dall-e-3 format: returns URL
                         generated_image_url = image_data['url']
-                        print(f"DEBUG: Using URL format: {generated_image_url}")
+                        debug_print(f"Using URL format: {generated_image_url}")
                     elif 'b64_json' in image_data and image_data['b64_json']:
                         # gpt-image-1 format: returns base64 data
                         b64_data = image_data['b64_json']
@@ -841,10 +842,10 @@ def register_route_backend_chats(app):
                         # Redacted logging for large base64 content
                         if len(b64_data) > 100:
                             redacted_content = f"{b64_data[:50]}...{b64_data[-50:]}"
-                            print(f"DEBUG: Using base64 format, length: {len(b64_data)}")
-                            print(f"DEBUG: Base64 content (redacted): {redacted_content}")
+                            debug_print(f"Using base64 format, length: {len(b64_data)}")
+                            debug_print(f"Base64 content (redacted): {redacted_content}")
                         else:
-                            print(f"DEBUG: Using base64 format, full content: {b64_data}")
+                            debug_print(f"Using base64 format, full content: {b64_data}")
                     else:
                         available_keys = list(image_data.keys())
                         raise ValueError(f"No URL or base64 data in image data. Available keys: {available_keys}")
@@ -860,14 +861,14 @@ def register_route_backend_chats(app):
                     max_content_size = 1500000  # 1.5MB in bytes
                     
                     if len(generated_image_url) > max_content_size:
-                        print(f"DEBUG: Large image detected ({len(generated_image_url)} bytes), splitting across multiple documents")
+                        debug_print(f"Large image detected ({len(generated_image_url)} bytes), splitting across multiple documents")
                         
                         # Split the data URL into manageable chunks
                         if generated_image_url.startswith('data:image/png;base64,'):
                             # Extract just the base64 part for splitting
                             data_url_prefix = 'data:image/png;base64,'
                             base64_content = generated_image_url[len(data_url_prefix):]
-                            print(f"DEBUG: Extracted base64 content length: {len(base64_content)} bytes")
+                            debug_print(f"Extracted base64 content length: {len(base64_content)} bytes")
                         else:
                             # For regular URLs, store as-is (shouldn't happen with large content)
                             data_url_prefix = ''
@@ -878,16 +879,16 @@ def register_route_backend_chats(app):
                         chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
                         total_chunks = len(chunks)
                         
-                        print(f"DEBUG: Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
+                        debug_print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
                         for i, chunk in enumerate(chunks):
-                            print(f"DEBUG: Chunk {i} length: {len(chunk)} bytes")
+                            debug_print(f"Chunk {i} length: {len(chunk)} bytes")
                         
                         # Verify we can reassemble before storing
                         reassembled_test = data_url_prefix + ''.join(chunks)
                         if len(reassembled_test) == len(generated_image_url):
-                            print(f"DEBUG: ✅ Chunking verification passed - can reassemble to original size")
+                            debug_print(f"✅ Chunking verification passed - can reassemble to original size")
                         else:
-                            print(f"DEBUG: ❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
+                            debug_print(f"❌ Chunking verification failed - {len(reassembled_test)} vs {len(generated_image_url)}")
                         
                         
                         # Create main image document with metadata
@@ -929,23 +930,23 @@ def register_route_backend_chats(app):
                             chunk_docs.append(chunk_doc)
                         
                         # Store all documents
-                        print(f"DEBUG: Storing main document with content length: {len(main_image_doc['content'])} bytes")
+                        debug_print(f"Storing main document with content length: {len(main_image_doc['content'])} bytes")
                         cosmos_messages_container.upsert_item(main_image_doc)
                         
                         for i, chunk_doc in enumerate(chunk_docs):
-                            print(f"DEBUG: Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
+                            debug_print(f"Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
                             cosmos_messages_container.upsert_item(chunk_doc)
                             
-                        print(f"DEBUG: Successfully stored image in {total_chunks} documents")
-                        print(f"DEBUG: Main doc content starts with: {main_image_doc['content'][:50]}...")
-                        print(f"DEBUG: Main doc content ends with: ...{main_image_doc['content'][-50:]}")
+                        debug_print(f"Successfully stored image in {total_chunks} documents")
+                        debug_print(f"Main doc content starts with: {main_image_doc['content'][:50]}...")
+                        debug_print(f"Main doc content ends with: ...{main_image_doc['content'][-50:]}")
                         
                         # Return the full image URL for immediate display
                         response_image_url = generated_image_url
                         
                     else:
                         # Small image - store normally in single document
-                        print(f"DEBUG: Small image ({len(generated_image_url)} bytes), storing in single document")
+                        debug_print(f"Small image ({len(generated_image_url)} bytes), storing in single document")
                         
                         image_doc = {
                             'id': image_message_id,
@@ -976,10 +977,10 @@ def register_route_backend_chats(app):
                         'message_id': image_message_id
                     }), 200
                 except Exception as e:
-                    print(f"DEBUG: Image generation error: {str(e)}")
-                    print(f"DEBUG: Error type: {type(e)}")
+                    debug_print(f"Image generation error: {str(e)}")
+                    debug_print(f"Error type: {type(e)}")
                     import traceback
-                    print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                    debug_print(f"Traceback: {traceback.format_exc()}")
                     
                     # Handle different types of errors appropriately
                     error_message = str(e)
@@ -1475,7 +1476,7 @@ def register_route_backend_chats(app):
                         
                         # Get the actual model deployment used by the agent
                         actual_model_deployment = getattr(selected_agent, 'deployment_name', None) or agent_used
-                        print(f"DEBUG: Agent '{agent_used}' using deployment: {actual_model_deployment}")
+                        debug_print(f"Agent '{agent_used}' using deployment: {actual_model_deployment}")
                         
                         # Extract detailed plugin invocations for enhanced agent citations
                         plugin_logger = get_plugin_logger()
@@ -1674,7 +1675,7 @@ def register_route_backend_chats(app):
                         prompt_tokens = getattr(service, "prompt_tokens", None)
                         completion_tokens = getattr(service, "completion_tokens", None)
                         total_tokens = getattr(service, "total_tokens", None)
-                        print(f"Service {getattr(service, 'service_id', None)} prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}")
+                        debug_print(f"Service {getattr(service, 'service_id', None)} prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}")
                         log_event(
                             f"[Tokens] Service token usage: prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}",
                             extra={

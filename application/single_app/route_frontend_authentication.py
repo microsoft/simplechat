@@ -3,6 +3,7 @@
 from unittest import result
 from config import *
 from functions_authentication import _build_msal_app, _load_cache, _save_cache
+from functions_debug import debug_print
 
 def build_front_door_urls(front_door_url):
     """
@@ -52,10 +53,10 @@ def register_route_frontend_authentication(app):
         else:
             redirect_uri = url_for('authorized', _external=True, _scheme='https')
         
-        print(f"DEBUG: LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
-        print(f"DEBUG: front_door_url (db): {settings.get('front_door_url')}")
-        print(f"DEBUG: Front Door enabled: {settings.get('enable_front_door', False)}")
-        print(f"DEBUG: Using redirect_uri for Azure AD: {redirect_uri}")
+        debug_print(f"LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
+        debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
+        debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
+        debug_print(f"Using redirect_uri for Azure AD: {redirect_uri}")
 
         auth_url = msal_app.get_authorization_request_url(
             scopes=SCOPE, # Use SCOPE from config (includes offline_access)
@@ -113,9 +114,9 @@ def register_route_frontend_authentication(app):
 
         # --- Store results ---
         # Store user identity info (claims from ID token)
-        print(f"DEBUG:  [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
-        print(f"DEBUG:  [claims] User claims: {result.get('id_token_claims', {})}")
-        print(f"DEBUG:  [claims] User token: {result.get('access_token', 'Unknown')}")
+        debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
+        debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
+        debug_print(f" [claims] User token: {result.get('access_token', 'Unknown')}")
 
         session["user"] = result.get("id_token_claims")
 
@@ -129,9 +130,9 @@ def register_route_frontend_authentication(app):
         from functions_settings import get_settings
         settings = get_settings()
         
-        print(f"DEBUG: HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
-        print(f"DEBUG: front_door_url (db): {settings.get('front_door_url')}")
-        print(f"DEBUG: Front Door enabled: {settings.get('enable_front_door', False)}")
+        debug_print(f"HOME_REDIRECT_URL (env): {HOME_REDIRECT_URL}")
+        debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
+        debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
 
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
@@ -145,7 +146,7 @@ def register_route_frontend_authentication(app):
                 print(f"Redirecting to environment HOME_REDIRECT_URL: {HOME_REDIRECT_URL}")
                 return redirect(HOME_REDIRECT_URL)
         
-        print("DEBUG: Front Door not enabled or URLs not set, falling back to url_for('index')")
+        debug_print(f"Front Door not enabled or URLs not set, falling back to url_for('index')")
         return redirect(url_for('index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.

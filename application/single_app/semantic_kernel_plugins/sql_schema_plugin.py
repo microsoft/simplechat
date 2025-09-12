@@ -11,6 +11,7 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from functions_debug import debug_print
 
 # Helper class to wrap results with metadata
 class ResultWithMetadata:
@@ -246,7 +247,7 @@ class SQLSchemaPlugin(BasePlugin):
             
             # Get tables list
             tables_query = self._get_tables_query(include_system_tables, table_filter)
-            print(f"DEBUG: [SQLSchemaPlugin] Executing tables query: {tables_query}")
+            debug_print(f"[SQLSchemaPlugin] Executing tables query: {tables_query}")
             cursor.execute(tables_query)
             tables = cursor.fetchall()
             

@@ -7,7 +7,7 @@ from functions_authentication import get_current_user_info
 from functions_group import find_group_by_id
 from functions_public_workspaces import find_public_workspace_by_id
 from functions_documents import get_document_metadata
-
+from functions_debug import debug_print
 
 def get_user_info_by_id(user_id):
     """
@@ -156,16 +156,16 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 existing_primary.get('id') == primary_context.get('id')):
                 # Same workspace - update existing primary context (e.g., refresh name)
                 existing_primary.update(primary_context)
-                print(f"DEBUG: Updated existing primary context: {existing_primary}")
+                debug_print(f"Updated existing primary context: {existing_primary}")
             else:
                 # Different workspace - this should become a secondary context
-                print(f"DEBUG: Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
+                debug_print(f"Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")
                 # We'll handle this in the secondary context logic below
                 primary_context = None  # Don't set as primary, will be added as secondary
         else:
             # No existing primary context - set this as primary
             conversation_item['context'].append(primary_context)
-            print(f"DEBUG: Set new primary context: {primary_context}")
+            debug_print(f"Set new primary context: {primary_context}")
     elif not existing_primary:
         # No documents used and no existing primary context - this is a model-only conversation
         # We'll add Model context as secondary later
@@ -194,7 +194,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             if is_different_from_primary:
                 context_key = (scope_info['scope'], scope_info['id'])
                 document_secondary_contexts.add(context_key)
-                print(f"DEBUG: Adding workspace to secondary contexts: {scope_info['scope']}:{scope_info['id']}")
+                debug_print(f"Adding workspace to secondary contexts: {scope_info['scope']}:{scope_info['id']}")
     
     # Add secondary contexts from other workspaces with names
     existing_secondary_ids = {ctx.get('id') for ctx in conversation_item['context'] if ctx.get('type') == 'secondary'}
