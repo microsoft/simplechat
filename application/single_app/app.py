@@ -90,7 +90,6 @@ from route_external_health import *
 configure_azure_monitor()
 
 
-
 # =================== Helper Functions ===================
 @app.before_first_request
 def before_first_request():
@@ -428,6 +427,7 @@ if __name__ == '__main__':
         # Local development with HTTPS
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
     else:
-        # Production - typically run via WSGI server (Gunicorn) on Azure
+        # Production
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)
+

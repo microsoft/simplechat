@@ -102,7 +102,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ## Demos
 
-> <a href="#simple-chat" style="text-decoration: none;">Return to top</a>
+<a href="#simple-chat" style="text-decoration: none;">Return to top</a>
 
 ### Upload document and review metadata
 
