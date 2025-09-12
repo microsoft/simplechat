@@ -1,7 +1,259 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
-### **(v0.227.007)**
+### **(v0.229.001)**
+
+#### New Features
+
+*   **Public Workspaces**
+    *   Introduced organization-wide document repositories accessible to all users, enabling shared knowledge repositories and improved organization-wide knowledge discovery.
+    *   Features include: centralized document management, seamless workspace scope switching, and organization-wide read access with admin-controlled write permissions.
+    *   (Ref: `public_documents_container`, Azure AI Search integration, workspace scope UI)
+
+*   **Enhanced Plugin System with Action Logging and Citations**
+    *   Comprehensive logging system for all Semantic Kernel actions/plugin invocations, capturing function calls, parameters, results, and execution times.
+    *   Features include: automatic logging, user tracking, Azure Application Insights integration, RESTful API endpoints for accessing logs and statistics.
+    *   (Ref: `plugin_invocation_logger.py`, `logged_plugin_loader.py`, `route_plugin_logging.py`)
+
+*   **SQL Actions/Plugins for Database Integration**
+    *   Complete SQL plugin system enabling AI agents to interact with SQL databases effectively across multiple platforms (SQL Server, PostgreSQL, MySQL, SQLite).
+    *   Features include: schema extraction, query execution with safety features, multi-database support, SQL injection protection, and read-only mode enforcement.
+    *   (Ref: `sql_schema_plugin.py`, `sql_query_plugin.py`)
+
+*   **Configurable OpenAPI Actions/Plugins**
+    *   Flexible OpenAPI plugin system allowing users to expose any OpenAPI-compliant API as Semantic Kernel plugin functions.
+    *   Features include: user-configurable specs, flexible authentication, secure file uploads, web UI integration, and support for both YAML and JSON formats.
+    *   (Ref: OpenAPI plugin factory, security validation, modal interface configuration)
+
+*   **Left-Hand Navigation Menu**
+    *   Complete redesign of navigation paradigm with persistent sidebar interface providing access to conversations, workspaces, and key features.
+    *   Features include: responsive collapsible design, state management, dynamic loading, and full keyboard accessibility support.
+    *   (Ref: Sidebar CSS framework, JavaScript components, conversation lists)
+
+*   **Consolidated Account Menu**
+    *   Unified dropdown-based navigation system consolidating all user account-related functions into a single, intuitive interface.
+    *   Features include: single-point access to account functions, streamlined navigation, responsive design, and dynamic content based on user permissions.
+    *   (Ref: Bootstrap dropdown component, state management, role-based menu items)
+
+*   **Dark Mode and Light Mode Logo Support**
+    *   Intelligent logo management that automatically switches between different logo variants based on the user's selected theme.
+    *   Features include: dual logo storage, automatic theme detection, CSS-based logo switching, and admin configuration for both variants.
+    *   (Ref: Theme detection, database schema for logo variants, admin upload interface)
+
+*   **Message Metadata Display**
+    *   Comprehensive tracking and display of detailed information about each message including timestamps, token usage, model information, and processing times.
+    *   Features include: real-time metadata collection, structured storage in Cosmos DB, expandable UI display, and performance tracking.
+    *   (Ref: Message metadata schema, UI integration, token usage monitoring)
+
+*   **Copy Text Message Feature**
+    *   Convenient one-click copying of message content with support for various content types including plain text, formatted content, and code blocks.
+    *   Features include: universal copy support, format preservation, smart content detection, and modern clipboard API integration.
+    *   (Ref: `MessageCopyManager`, clipboard API, content type detection)
+
+*   **External Links Configuration**
+    *   Administrative ability to configure and display custom navigation links to external resources and services within the SimpleChat interface.
+    *   Features include: admin configuration, database storage, URL validation, responsive design, and role-based link visibility.
+    *   (Ref: External links schema, admin interface, security validation)
+
+*   **Enhanced Citations Managed Identity Authentication**
+    *   Added Managed Identity authentication option to Enhanced Citations Storage Account configuration, eliminating need for stored connection strings.
+    *   Features include: dropdown selection for authentication method, dynamic form fields, validation logic, and Azure RBAC support for fine-grained access control.
+    *   Benefits include: enhanced security posture, elimination of stored secrets, and support for enterprise security policies.
+    *   (Ref: `enhanced_citations_storage_authentication_type`, storage client initialization, RBAC documentation)
+
+#### User Interface Enhancements
+
+*   **Comprehensive UI Performance Enhancements**
+    *   Multiple interconnected improvements including group name display in workspace scope selection, personal and group workspace UI improvements, and enhanced file upload performance.
+    *   Improvements include: 50x tabular data performance improvement, smart HTTP plugin with PDF support, user-friendly feedback displays, and improved group management UI.
+    *   (Ref: `WorkspaceScopeManager`, performance optimizations, UI component updates)
+
+*   **Improved Chat UI Input Layout**
+    *   Comprehensive redesign of chat interface's input and button layout creating more space for typing and streamlined user experience.
+    *   Features include: responsive grid system, component-based design, CSS Grid and Flexbox layout, and touch-optimized controls.
+    *   (Ref: Chat input container, responsive layout, mobile optimization)
+
+*   **Double-Click Conversation Title Editing**
+    *   Intuitive conversation renaming through double-click gesture directly within the chat interface, eliminating need for separate edit dialogs.
+    *   Features include: inline editing, event handling with debouncing, auto-save functionality, and keyboard support (Enter to save, Escape to cancel).
+    *   (Ref: `ConversationTitleEditor`, inline editing, event handling)
+
+*   **Conversation Metadata Modal Width Enhancement**
+    *   Enhanced conversation metadata modal to be wider so conversation IDs and long text content display properly without wrapping.
+    *   Changes include: increased modal width from `modal-lg` to `modal-xl`, updated CSS for 1200px max-width, and enhanced code element styling.
+    *   (Ref: `templates/chats.html`, modal width enhancements, readability improvements)
+
+*   **Comprehensive File Content Inclusion Enhancement**
+    *   Unified content limits for all file types, increasing from 1KB to 50KB for non-tabular files to match tabular file limits.
+    *   Benefits include: consistent LLM performance regardless of file type, complete document analysis, enhanced code review capabilities, and simplified logic.
+    *   (Ref: `route_backend_chats.py`, unified content limits, LLM context enhancement)
+
+#### Bug Fixes
+
+##### Agent and Plugin System Fixes
+
+*   **Agent Citations Cross-Conversation Contamination Fix**
+    *   Fixed critical bug where agent citations leaked between different conversations due to global singleton logger returning all invocations without filtering.
+    *   (Ref: `route_backend_chats.py`, plugin invocation logger filtering)
+
+*   **Agent Citations Per-Message Isolation Fix**
+    *   Resolved issue where agent citations accumulated across messages within the same conversation instead of being specific to each user interaction.
+    *   (Ref: message-specific citation tracking, plugin logger timestamp filtering)
+
+*   **Agents/Plugins Blueprint Registration Fix**
+    *   Fixed registration issues with agent and plugin blueprints preventing proper initialization and route handling.
+    *   (Ref: blueprint registration order, route conflicts resolution)
+
+*   **Agent JavaScript Loading Error Fix**
+    *   Resolved JavaScript loading errors in agent configuration interface that prevented proper agent management.
+    *   (Ref: agent settings UI, JavaScript dependency loading)
+
+*   **Agent Model Display Fixes**
+    *   Fixed display issues with agent model selection and configuration in the admin interface.
+    *   (Ref: model dropdown rendering, agent configuration UI)
+
+*   **Plugin Duplication Bug Fix**
+    *   Eliminated duplicate plugin registrations that caused conflicts and unexpected behavior in plugin execution.
+    *   (Ref: plugin loader deduplication, registration tracking)
+
+*   **Smart HTTP Plugin Citations Integration Fix**
+    *   Added missing citation support for Smart HTTP Plugin calls to ensure consistent citation display across all plugin types.
+    *   (Ref: `@plugin_function_logger` decorator integration, citation system uniformity)
+
+*   **Smart HTTP Plugin Content Management Fix**
+    *   Improved content handling and processing for Smart HTTP Plugin responses and data management.
+    *   (Ref: HTTP response processing, content formatting)
+
+*   **SQL Plugin Validation Fix**
+    *   Enhanced SQL plugin input validation and error handling for safer database interactions.
+    *   (Ref: SQL injection protection, query validation)
+
+##### File Processing and Data Handling Fixes
+
+*   **Tabular Data CSV Storage Optimization Fix**
+    *   Replaced inefficient HTML table storage format with clean CSV format, reducing storage overhead by up to 50x and improving LLM processing efficiency.
+    *   (Ref: CSV format preservation, token usage optimization)
+
+*   **Tabular Data LLM Content Inclusion Fix**
+    *   Improved integration of tabular data content into LLM context for better analytical capabilities.
+    *   (Ref: content formatting, LLM context optimization)
+
+*   **CSV Column Consistency Fix**
+    *   Fixed DataTables errors caused by inconsistent column counts in CSV files by implementing column normalization.
+    *   (Ref: DataTables compatibility, column padding)
+
+*   **File Upload Executor Fix**
+    *   Resolved file upload processing issues in the executor system for more reliable file handling.
+    *   (Ref: upload pipeline, error handling)
+
+*   **Document Upload Azure DI Fix**
+    *   Fixed Azure Document Intelligence integration issues during document upload processing.
+    *   (Ref: Azure DI parameter handling, document processing pipeline)
+
+*   **Workspace Upload Conversation Fix**
+    *   Resolved issues with file uploads not properly associating with conversations in workspace context.
+    *   (Ref: conversation context preservation, file association)
+
+##### Azure Integration Fixes
+
+*   **Azure DI Parameter Fix**
+    *   Corrected Azure Document Intelligence parameter handling and configuration issues.
+    *   (Ref: DI service configuration, parameter validation)
+
+*   **Azure Search Exception Handling Fix**
+    *   Improved error handling for Azure Search operations with better user feedback and graceful degradation.
+    *   (Ref: search service error handling, user notifications)
+
+*   **AI Search Index Management and Agent Settings Fix**
+    *   Fixed 404 errors when agents are disabled and improved AI Search index field checking with better error handling.
+    *   (Ref: conditional loading, index management UI)
+
+*   **Sovereign Cloud Managed Identity Authentication Fix**
+    *   Fixed Document Intelligence, Content Safety, and AI Search client initialization issues when using Managed Identity in Government and custom cloud contexts.
+    *   Implemented proper credential scopes, API versions, and audience specifications for sovereign cloud environments.
+    *   (Ref: credential scope configuration, sovereign cloud authentication, RBAC requirements)
+
+*   **Client Reinitialization on Settings Update Fix**
+    *   Added automatic client reinitialization when admin settings are updated, eliminating need for application restart when changing authentication methods.
+    *   (Ref: `route_frontend_admin_settings.py`, dynamic client management)
+
+*   **Video Indexer Setup Walkthrough Fix**
+    *   Updated Video Indexer settings validation to make API Key optional since the service now requires ARM authentication via Entra ID instead of API Key authentication.
+    *   (Ref: setup walkthrough validation, ARM authentication requirements)
+
+##### User Interface and Navigation Fixes
+
+*   **Enhanced Citations PDF Modal Fix**
+    *   Improved PDF display and interaction within citation modals for better document viewing experience.
+    *   (Ref: PDF rendering, modal interface)
+
+*   **Enhanced Citations Server-Side Rendering Fix**
+    *   Fixed server-side rendering issues with citation display for improved performance and reliability.
+    *   (Ref: SSR optimization, citation rendering)
+
+*   **Conversation ID Display Fix**
+    *   Resolved issues with conversation ID visibility and formatting in the user interface.
+    *   (Ref: conversation metadata display, UI formatting)
+
+*   **Navigation Menu Access Fix**
+    *   Fixed navigation menu accessibility and functionality issues across different user roles and permissions.
+    *   (Ref: menu rendering, permission handling)
+
+*   **Sidebar Title Length Control Fix**
+    *   Implemented proper title truncation and display control for sidebar conversation titles.
+    *   (Ref: CSS text handling, title display)
+
+*   **Find Group Modal Enhancements**
+    *   Improved group discovery and selection modal functionality and user experience.
+    *   (Ref: group search interface, modal interactions)
+
+*   **Logging Tab UI Improvement**
+    *   Enhanced logging interface display and functionality for better debugging and monitoring.
+    *   (Ref: logging UI, tab interface improvements)
+
+##### Permissions and Access Control Fixes
+
+*   **Create Group Permission Display Fix**
+    *   Fixed permission validation and display for group creation functionality based on user roles.
+    *   (Ref: permission checking, UI conditional rendering)
+
+*   **Create Public Workspace Permission Display Fix**
+    *   Resolved permission display issues for public workspace creation based on admin settings and user roles.
+    *   (Ref: workspace permissions, admin controls)
+
+*   **Group API Error Handling Fix**
+    *   Improved error handling and user feedback for group-related API operations.
+    *   (Ref: API error responses, user notifications)
+
+##### System and Performance Fixes
+
+*   **Message Metadata Loading Fix**
+    *   Resolved issues with message metadata loading and display in conversation interfaces.
+    *   (Ref: metadata processing, conversation loading)
+
+*   **Large API Response Enhancement**
+    *   Improved handling of large API responses for better system stability and performance.
+    *   (Ref: response processing, memory management)
+
+*   **Large PDF Summarization Support**
+    *   Enhanced PDF processing capabilities for large documents with improved chunking and summarization.
+    *   (Ref: PDF processing pipeline, document chunking)
+
+*   **PDF Processing Limits Optimization**
+    *   Resolved inconsistent and overly restrictive PDF processing limits, aligning with Azure Document Intelligence's actual capabilities.
+    *   (Ref: SmartHttpPlugin processing limits, Azure DI integration)
+
+*   **Image Generation Model Compatibility Fix**
+    *   Fixed compatibility issues with various image generation models and configurations.
+    *   (Ref: model integration, image generation pipeline)
+
+*   **Debug Logging Toggle Feature**
+    *   Added configurable debug logging controls for better system monitoring and troubleshooting.
+    *   (Ref: logging configuration, debug controls)
+
+*   **Duplicate Logo Version Setting Fix**
+    *   Removed duplicate `logo_version` setting in admin settings configuration to prevent configuration conflicts.
+    *   (Ref: `route_frontend_admin_settings.py` line 389, configuration cleanup)
 
 #### Breaking Changes
 
