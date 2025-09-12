@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
 """
-Smart HTTP Plugin with Content Size Management.
-Version: 0.228.014
+Smart HTTP Plugin with Content Size Management and Large PDF Support.
+Version: 0.228.022
 Implemented in: 0.228.003
 Updated in: 0.228.004 (increased content size to 75k chars ≈ 50k tokens)
 Updated in: 0.228.005 (added PDF URL support with Document Intelligence integration)
 Updated in: 0.228.006 (added agent citation support with function call tracking)
-Updated in: 0.228.013 (integrated with plugin_function_logger decorator for proper citation display)
+Updated in: 0.228.013 (integrated with plugin_function_logge                     result += f"📍 Source: {uri}\n"                result += f"📍 Source: {uri}\n"ecorator for proper citation display)
 Updated in: 0.228.014 (fixed async compatibility issue - citations now show actual results, not coroutine objects)
+Updated in: 0.228.015 (added large PDF support with chunked summarization for files that exceed normal size limits)
+Updated in: 0.228.019 (enhanced user messaging for large PDF summarization - clear transparency about processing and reduction)
+Updated in: 0.228.020 (comprehensive summarization metrics - shows original vs summarized pages, characters, words, tokens, exact limits, and per-chunk reduction details)
+Updated in: 0.228.021 (improved clarity of summarization messaging - separate lines for each metric for easy parsing)
+Updated in: 0.228.022 (fixed duplicate output formatting bug causing incorrect display of summarization details)
 
 This plugin wraps the standard HttpPlugin with intelligent content size management
 to prevent token limit exceeded errors when scraping large websites. Now includes
 PDF processing capabilities using Azure Document Intelligence for high-quality
 text extraction from PDF URLs, plus comprehensive agent citation support using
 an async-compatible plugin logging system for seamless integration with agent responses.
+
+For large PDFs that exceed normal size limits, the plugin automatically processes
+the entire document with Document Intelligence, then uses chunked summarization
+via Azure OpenAI to reduce the content to a manageable size while preserving
+key information and context. Users receive detailed transparency about the entire
+process including: original document metrics (pages/chars/words/tokens), specific
+processing limits that triggered summarization, chunking details, per-section
+reduction percentages, and final summarized equivalent page count.
 """
 
 import asyncio
@@ -215,12 +228,22 @@ class SmartHttpPlugin:
                         self._track_function_call("get_web_content", parameters, error_result, call_start, uri, "error")
                         return error_result
                     
-                    # Check content length header
+                    # Check content length header - allow larger PDFs for summarization
                     content_length = response.headers.get('content-length')
-                    if content_length and int(content_length) > self.max_content_size * 2:
-                        error_result = f"Error: Content too large ({content_length} bytes). Try a different URL or specific page."
-                        self._track_function_call("get_web_content", parameters, error_result, call_start, uri, "error")
-                        return error_result
+                    content_type = response.headers.get('content-type', '').lower()
+                    is_pdf = self._is_pdf_url(uri) or 'application/pdf' in content_type
+                    
+                    # Use Azure Document Intelligence limits for PDFs vs conservative limits for other content
+                    # Azure DI supports 500MB for S0 tier, 4MB for F0 tier - we'll use a conservative 100MB
+                    size_limit = 100 * 1024 * 1024 if is_pdf else self.max_content_size * 2  # 100MB for PDFs
+                    
+                    if content_length and int(content_length) > size_limit:
+                        if is_pdf:
+                            self.logger.info(f"Large PDF detected ({content_length} bytes), will attempt processing with summarization")
+                        else:
+                            error_result = f"Error: Content too large ({content_length} bytes). Try a different URL or specific page."
+                            self._track_function_call("get_web_content", parameters, error_result, call_start, uri, "error")
+                            return error_result
                     
                     # Read content with size limit
                     raw_content = await self._read_limited_content(response)
@@ -359,32 +382,53 @@ class SmartHttpPlugin:
         return truncated + truncation_info
 
     async def _process_pdf_content(self, pdf_bytes: bytes, uri: str, response) -> str:
-        """Process PDF content using Document Intelligence."""
+        """Process PDF content using Document Intelligence with large PDF support."""
         try:
             # Import here to avoid circular imports
             from functions_content import extract_content_with_azure_di
+            from functions_settings import get_settings
+            from config import initialize_clients, CLIENTS
             
             # Check if pdf_bytes is actually string content (error case)
             if isinstance(pdf_bytes, str):
                 return f"Error: Expected PDF binary data but received text content from {uri}"
             
-            # Create temporary file for PDF processing
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-                if isinstance(pdf_bytes, str):
-                    # If we somehow got string content, convert to bytes
-                    temp_file.write(pdf_bytes.encode('utf-8'))
-                else:
-                    # Write binary PDF content
-                    temp_file.write(pdf_bytes)
-                temp_file_path = temp_file.name
+            # Validate PDF header to ensure we have valid PDF data
+            if not pdf_bytes.startswith(b'%PDF-'):
+                self.logger.error(f"Invalid PDF header for {uri}: {pdf_bytes[:20]}")
+                return f"📄 **INVALID PDF FORMAT**\n📍 Source: {uri}\n❌ Error: File does not appear to be a valid PDF document\n\n⚠️  The downloaded file does not have a valid PDF header. This could be due to:\n• Server returning HTML error page instead of PDF\n• Corrupted download\n• URL redirecting to non-PDF content\n• Access restrictions requiring authentication"
             
+            # Debug: Log PDF header and size info
+            self.logger.debug(f"PDF validation for {uri}: Header: {pdf_bytes[:10]}, Size: {len(pdf_bytes)} bytes")
+            
+            # Ensure Document Intelligence client is initialized
+            if 'document_intelligence_client' not in CLIENTS or CLIENTS['document_intelligence_client'] is None:
+                self.logger.info("Initializing Document Intelligence client for PDF processing")
+                settings = get_settings()
+                initialize_clients(settings)
+            
+            # Create temporary file for PDF processing with better handling
+            temp_file_path = None
             try:
-                # Use Document Intelligence to extract content
-                self.logger.info(f"Processing PDF from {uri} with Document Intelligence")
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+                    # Write binary PDF content directly (no string conversion)
+                    temp_file.write(pdf_bytes)
+                    temp_file.flush()  # Ensure all data is written
+                    temp_file_path = temp_file.name
+                
+                # Get file size for diagnostics
+                pdf_size = len(pdf_bytes)
+                self.logger.info(f"Processing PDF from {uri} with Document Intelligence (size: {pdf_size:,} bytes)")
+                
+                # Check if file size exceeds reasonable limits for Document Intelligence
+                max_di_size = 500 * 1024 * 1024  # 500MB - typical Azure DI limit
+                if pdf_size > max_di_size:
+                    return f"📄 **PDF TOO LARGE FOR PROCESSING**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes (exceeds {max_di_size:,} byte limit for Document Intelligence)\n\n⚠️  This PDF is too large for automated text extraction. Please try:\n• A smaller PDF document\n• Specific sections of the document\n• Contact the document provider for a text version"
+                
                 pages_data = extract_content_with_azure_di(temp_file_path)
                 
                 if not pages_data:
-                    return f"PDF processed from {uri} but no text content was extracted."
+                    return f"📄 **PDF PROCESSING COMPLETED BUT NO TEXT FOUND**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes\n🔄 Processing: Document Intelligence completed successfully\n\n⚠️  The PDF was processed but contained no extractable text. This could be due to:\n• Image-only PDF (scanned document)\n• Encrypted or secured PDF\n• Unsupported PDF format\n• Empty or corrupted file"
                 
                 # Combine all pages into a single text
                 combined_text = []
@@ -399,40 +443,266 @@ class SmartHttpPlugin:
                 
                 full_text = "\n\n".join(combined_text)
                 
-                # Add URL context
-                result = f"PDF Content from: {uri}\n"
-                result += f"Pages processed: {len(pages_data)}\n"
-                result += f"Extracted via Document Intelligence\n\n{full_text}"
+                # Check if the content needs summarization based on token limits
+                # Most models have context limits around 128k tokens, so we'll use 100k tokens as our limit
+                max_tokens_for_processing = 100000  # ~400k characters
+                max_chars_for_processing = max_tokens_for_processing * 4  # Rough estimate: 1 token ≈ 4 chars
                 
-                return self._truncate_content(result, "PDF content")
+                if len(full_text) > max_chars_for_processing:
+                    original_char_count = len(full_text)
+                    original_word_count = len(full_text.split())
+                    # Rough token estimate (1 token ≈ 4 characters for English text)
+                    estimated_token_count = original_char_count // 4
+                    
+                    # Our processing limits based on model token limits
+                    char_limit = max_chars_for_processing  # 400,000 characters
+                    token_limit = max_tokens_for_processing  # 100,000 tokens
+                    
+                    self.logger.info(f"PDF from {uri} is very large ({original_char_count} chars), attempting summarization")
+                    summarized_text = await self._summarize_large_content(full_text, uri, len(pages_data))
+                    
+                    # Calculate final metrics
+                    final_char_count = len(summarized_text) if summarized_text else 0
+                    final_word_count = len(summarized_text.split()) if summarized_text else 0
+                    final_token_estimate = final_char_count // 4
+                    
+                    # Calculate reduction percentages
+                    char_reduction_pct = round((1 - final_char_count / original_char_count) * 100, 1) if original_char_count > 0 else 0
+                    
+                    # Estimate "virtual pages" after summarization (assuming ~2500 chars per page typical for dense text)
+                    chars_per_page = 2500
+                    estimated_summarized_pages = max(1, round(final_char_count / chars_per_page))
+                    
+                    # Add comprehensive header with detailed summarization explanation
+                    result = f"📄 **LARGE PDF PROCESSED WITH AI SUMMARIZATION**\n"
+                    result += f"📍 Source: {uri}\n"
+                    result += f"📊 Original Document: {len(pages_data)} pages • {original_char_count:,} characters • ~{original_word_count:,} words • ~{estimated_token_count:,} tokens\n"
+                    result += f"� Processing Limits: {char_limit:,} characters • ~{token_limit:,} tokens (content exceeded limits by {round((original_char_count/char_limit - 1) * 100, 1)}%)\n"
+                    result += f"🔄 Processing Method: Full text extracted using Azure Document Intelligence, then AI summarization\n\n"
+                    result += f"📏 Processing limits: {char_limit:,} characters (~{token_limit:,} tokens)\n"
+                    result += f"⚠️  Original content exceeded limits by {round((original_char_count/char_limit - 1) * 100, 1)}% so we summarized the document\n"
+                    result += f"📉 Summarization reduced document size: ~{char_reduction_pct}%\n"
+                    result += f"📊 Character counts: {original_char_count:,} characters → {final_char_count:,} characters\n"
+                    result += f"📄 Page counts: {len(pages_data)} pages summarized to ~{estimated_summarized_pages} pages\n"
+                    result += f"🔢 Token estimates: ~{estimated_token_count:,} tokens → ~{final_token_estimate:,} tokens\n\n"
+                    result += f"⚠️  Important: This is an AI-summarized version preserving key information. For complete details, access the original PDF.\n\n"
+                    result += f"{'='*80}\n"
+                    result += f"SUMMARIZED CONTENT ({estimated_summarized_pages} EQUIVALENT PAGES)\n"
+                    result += f"{'='*80}\n\n"
+                    result += summarized_text
+                    
+                    return result
+                else:
+                    # Add URL context for normal-sized PDFs
+                    char_count = len(full_text)
+                    word_count = len(full_text.split())
+                    token_estimate = char_count // 4
+                    
+                    result = f"📄 **PDF CONTENT**\n"
+                    result += f"📍 Source: {uri}\n"
+                    result += f"📊 Document: {len(pages_data)} pages • {char_count:,} characters • ~{word_count:,} words • ~{token_estimate:,} tokens\n"
+                    result += f"🔄 Processing: Extracted using Azure Document Intelligence\n"
+                    result += f"✅ Status: Complete content included (within {max_chars_for_processing:,} character processing limit)\n\n"
+                    result += f"{'='*60}\n"
+                    result += f"FULL CONTENT\n"
+                    result += f"{'='*60}\n\n"
+                    result += full_text
+                    
+                    return self._truncate_content(result, "PDF content")
                 
             finally:
                 # Clean up temporary file
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as cleanup_error:
-                    self.logger.warning(f"Failed to cleanup temp PDF file: {cleanup_error}")
+                if temp_file_path:
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as cleanup_error:
+                        self.logger.warning(f"Failed to cleanup temp PDF file: {cleanup_error}")
                     
         except ImportError:
-            return f"Error: Document Intelligence not available for PDF processing from {uri}. Please ensure the system is properly configured."
+            return f"📄 **CONFIGURATION ERROR**\n📍 Source: {uri}\n\n❌ Document Intelligence not available for PDF processing. Please ensure the system is properly configured with Azure Document Intelligence credentials."
         except Exception as e:
-            self.logger.error(f"Error processing PDF from {uri}: {str(e)}")
-            return f"Error processing PDF content from {uri}: {str(e)}"
+            error_msg = str(e)
+            pdf_size = len(pdf_bytes) if pdf_bytes else 0
+            
+            # Check for specific Document Intelligence errors
+            if "InvalidContent" in error_msg or "corrupted or format is unsupported" in error_msg:
+                return f"📄 **PDF FORMAT NOT SUPPORTED**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes\n❌ Error: Document Intelligence cannot process this PDF format\n\n⚠️  This could be due to:\n• Unsupported PDF version or format\n• Password-protected or encrypted PDF\n• Corrupted file during download\n• PDF contains only images/scans without OCR\n• File exceeds Document Intelligence size/complexity limits\n\n💡 Suggestions:\n• Try a different PDF document\n• Ensure the PDF is not password-protected\n• Check if the PDF opens correctly in a PDF viewer\n• For scanned documents, try a PDF with OCR text layer"
+            elif "InvalidRequest" in error_msg:
+                return f"📄 **PROCESSING REQUEST FAILED**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes\n❌ Error: Document Intelligence rejected the processing request\n\n⚠️  This could be due to:\n• File size exceeds service limits\n• PDF format not supported by Document Intelligence\n• Temporary service availability issues\n• Authentication or configuration problems\n\n💡 Try again with a smaller or different PDF document."
+            else:
+                self.logger.error(f"Error processing PDF from {uri}: {error_msg}")
+                return f"📄 **PDF PROCESSING ERROR**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes\n❌ Error: {error_msg}\n\n⚠️  Unable to extract text from this PDF. Please try a different document or contact support if the issue persists."
 
     async def _read_limited_content(self, response) -> bytes:
-        """Read response content with size limits, returning bytes for PDFs."""
+        """Read response content with size limits, returning bytes for PDFs. Allow larger sizes for PDFs that will be summarized."""
         chunks = []
         total_size = 0
+        content_type = response.headers.get('content-type', '').lower()
+        is_pdf = 'application/pdf' in content_type
+        
+        # Use Azure Document Intelligence limits - 100MB conservative limit for downloads
+        size_limit = 100 * 1024 * 1024 if is_pdf else self.max_content_size * 3  # 100MB for PDFs
         
         async for chunk in response.content.iter_chunked(8192):
             chunks.append(chunk)
             total_size += len(chunk)
             
             # Stop reading if we exceed size limit
-            if total_size > self.max_content_size * 3:  # Allow 3x for processing
+            if total_size > size_limit:
                 break
                 
         return b''.join(chunks)
+
+    async def _summarize_large_content(self, content: str, uri: str, page_count: int = None) -> str:
+        """Summarize large content by chunking and summarizing each piece."""
+        try:
+            # Import settings and AzureOpenAI here to avoid circular imports
+            from functions_settings import get_settings
+            from openai import AzureOpenAI
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            
+            settings = get_settings()
+            
+            # Set up Azure OpenAI client (similar to functions_documents.py)
+            enable_gpt_apim = settings.get('enable_gpt_apim', False)
+            gpt_model = settings.get('gpt_model', {}).get('selected', [{}])[0].get('deploymentName') or settings.get('azure_openai_gpt_deployment')
+            
+            if not gpt_model:
+                self.logger.error("No GPT model available for summarization")
+                return self._truncate_content(content, "Large PDF content (summarization unavailable)")
+            
+            # Create Azure OpenAI client
+            if enable_gpt_apim:
+                gpt_client = AzureOpenAI(
+                    api_version=settings.get('azure_apim_gpt_api_version'),
+                    azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                    api_key=settings.get('azure_apim_gpt_subscription_key')
+                )
+            else:
+                if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
+                    cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+                    token_provider = get_bearer_token_provider(
+                        DefaultAzureCredential(), 
+                        cognitive_services_scope
+                    )
+                    gpt_client = AzureOpenAI(
+                        api_version=settings.get('azure_openai_gpt_api_version'),
+                        azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                        azure_ad_token_provider=token_provider
+                    )
+                else:
+                    gpt_client = AzureOpenAI(
+                        api_version=settings.get('azure_openai_gpt_api_version'),
+                        azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                        api_key=settings.get('azure_openai_gpt_key')
+                    )
+            
+            # Chunk the content into manageable pieces (about 100k chars each)
+            chunk_size = 100000
+            chunks = []
+            
+            for i in range(0, len(content), chunk_size):
+                chunk = content[i:i + chunk_size]
+                chunks.append(chunk)
+            
+            page_info = f" from {page_count}-page PDF" if page_count else ""
+            self.logger.info(f"Summarizing content{page_info} from {uri} in {len(chunks)} chunks of ~{chunk_size:,} characters each")
+            
+            # Summarize each chunk
+            summaries = []
+            for i, chunk in enumerate(chunks):
+                try:
+                    # More specific instructions for document summarization
+                    chunk_char_count = len(chunk)
+                    chunk_word_count = len(chunk.split())
+                    chunk_token_estimate = chunk_char_count // 4
+                    
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": f"You are an expert at summarizing documents. Create a comprehensive summary that preserves all key information, main points, important details, data, and actionable insights from this document{page_info}. Maintain structure and context while being concise. This is part {i+1} of {len(chunks)} from a larger document that exceeded normal processing limits. This chunk contains {chunk_char_count:,} characters (~{chunk_word_count:,} words, ~{chunk_token_estimate:,} tokens)."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Please provide a detailed and comprehensive summary of this document section (chunk {i+1} of {len(chunks)}, {chunk_char_count:,} characters). Preserve all important information, data points, conclusions, and actionable insights:\n\n{chunk}"
+                        }
+                    ]
+                    
+                    response = gpt_client.chat.completions.create(
+                        model=gpt_model,
+                        messages=messages,
+                        max_tokens=2500,  # Increased for more comprehensive summaries
+                        temperature=0.3   # Low temperature for consistent summarization
+                    )
+                    
+                    chunk_summary = response.choices[0].message.content.strip()
+                    summary_char_count = len(chunk_summary)
+                    chunk_reduction = round((1 - summary_char_count / chunk_char_count) * 100, 1) if chunk_char_count > 0 else 0
+                    
+                    summaries.append(f"📄 **SECTION {i+1} OF {len(chunks)}** (Original: {chunk_char_count:,} chars → Summary: {summary_char_count:,} chars, {chunk_reduction}% reduction)\n{chunk_summary}")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error summarizing chunk {i+1}: {str(e)}")
+                    # Fallback to truncation for this chunk
+                    truncated_chunk = chunk[:4000] + "... [Content truncated due to summarization error]"
+                    summaries.append(f"📄 **SECTION {i+1} OF {len(chunks)} (AI Summarization Failed - Partial Original Content)**\n{truncated_chunk}")
+            
+            # Combine all summaries
+            summary_header = f"🔄 **AI-GENERATED SUMMARY SECTIONS**\n"
+            summary_header += f"The original content was divided into {len(chunks)} chunks of ~{chunk_size:,} characters each for processing.\n"
+            summary_header += f"Each section below represents an intelligent summary preserving key information:\n\n"
+            
+            final_summary = summary_header + "\n\n".join(summaries)
+            
+            # If the combined summary is still too large, create a final executive summary
+            if len(final_summary) > self.max_content_size:
+                try:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": f"You are an expert at creating executive summaries. Create a comprehensive overview that captures the most important information, key findings, main conclusions, and actionable insights from this {page_count}-page document{page_info if page_count else ''}. The content was too large for normal processing and was intelligently summarized in sections."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Please create a comprehensive executive summary of these section summaries from a large document{page_info}. Focus on key findings, main points, important data, and actionable insights:\n\n{final_summary}"
+                        }
+                    ]
+                    
+                    response = gpt_client.chat.completions.create(
+                        model=gpt_model,
+                        messages=messages,
+                        max_tokens=4000,  # More space for executive summary
+                        temperature=0.3
+                    )
+                    
+                    executive_summary = response.choices[0].message.content.strip()
+                    
+                    # Create layered summary structure
+                    layered_summary = f"📋 **EXECUTIVE SUMMARY**\n{executive_summary}\n\n"
+                    layered_summary += f"📑 **DETAILED SECTION SUMMARIES**\n"
+                    layered_summary += f"The following sections provide more detailed summaries of each part:\n\n"
+                    
+                    # Add truncated section summaries if space allows
+                    remaining_space = self.max_content_size - len(layered_summary)
+                    if remaining_space > 1000:
+                        truncated_sections = final_summary[:remaining_space-100] + "... [Additional sections truncated]"
+                        layered_summary += truncated_sections
+                    
+                    final_summary = layered_summary
+                    
+                except Exception as e:
+                    self.logger.error(f"Error creating executive summary: {str(e)}")
+                    # Fallback to truncation with clear messaging
+                    final_summary = f"⚠️  **CONTENT SIZE NOTICE**\nThe document was too large even after initial summarization. Here's the available content:\n\n" + final_summary[:self.max_content_size-200]
+            
+            return final_summary
+            
+        except ImportError as e:
+            self.logger.error(f"Missing dependencies for summarization: {str(e)}")
+            return self._truncate_content(content, "Large PDF content (summarization dependencies unavailable)")
+        except Exception as e:
+            self.logger.error(f"Error in content summarization: {str(e)}")
+            return self._truncate_content(content, "Large PDF content (summarization failed)")
 
     @async_plugin_logger("SmartHttpPlugin")
     @kernel_function(
