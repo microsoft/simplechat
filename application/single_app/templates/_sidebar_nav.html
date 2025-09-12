@@ -36,12 +36,12 @@
           <img id="sidebar-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="32" class="me-2" />
         {% endif %}
         {% if not app_settings.hide_app_title %}
-          <span id="sidebar-app-title" class="fw-bold">{{ app_settings.app_title }}</span>
+          <span id="sidebar-app-title" class="fw-bold sidebar-title-truncate" data-title="{{ app_settings.app_title }}" data-show-logo="{{ app_settings.show_logo }}" title="{{ app_settings.app_title }}">{{ app_settings.app_title }}</span>
         {% endif %}
       </a>
     {% elif not app_settings.hide_app_title %}
       <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
-        <span id="sidebar-app-title">{{ app_settings.app_title }}</span>
+        <span id="sidebar-app-title" class="sidebar-title-truncate" data-title="{{ app_settings.app_title }}" data-show-logo="false" title="{{ app_settings.app_title }}">{{ app_settings.app_title }}</span>
       </a>
     {% endif %}
   </div>
@@ -422,6 +422,20 @@
       /* Dark mode hover effect */
       [data-bs-theme="dark"] #floating-expand-btn:hover {
         background-color: var(--bs-gray-800, #343a40) !important;
+      }
+      
+      /* Sidebar title truncation styles */
+      .sidebar-title-truncate {
+        display: inline-block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        max-width: 140px; /* Default max width for no logo scenario (18 chars approx) */
+      }
+      
+      /* When logo is present, reduce max width */
+      [data-show-logo="true"].sidebar-title-truncate {
+        max-width: 80px; /* Reduced width for logo scenario (10 chars approx) */
       }
     `;
     document.head.appendChild(style);
