@@ -286,6 +286,10 @@
 <div class="modal fade" id="publicPromptModal" tabindex="-1"><div class="modal-dialog modal-xl"><form id="public-prompt-form"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="publicPromptModalLabel">Create Public Prompt</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="public-prompt-id" /><div class="mb-3"><label for="public-prompt-name" class="form-label">Prompt Name</label><input type="text" class="form-control" id="public-prompt-name" required /></div><div class="mb-3"><label for="public-prompt-content" class="form-label">Prompt Content</label><textarea class="form-control" id="public-prompt-content" rows="10"></textarea></div></div><div class="modal-footer"><button id="public-prompt-save-btn" type="submit" class="btn btn-primary">Save Prompt</button></div></div></form></div></div>
 {% endblock %}
 {% block scripts %}
+<script>
+  // Pass settings to JavaScript
+  window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
+</script>
 <script src="/static/js/public/public_workspace.js"></script>
 <script>
   // --- Filter toggle button logic and upload status/progress visibility ---
