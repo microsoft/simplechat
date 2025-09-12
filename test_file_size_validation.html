@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Size Validation Test</title>
+</head>
+<body>
+    <h1>File Size Validation Test</h1>
+    
+    <h2>Workspace Upload Test</h2>
+    <input type="file" id="workspace-file-input" multiple>
+    <button onclick="testWorkspaceUpload()">Test Workspace Upload</button>
+    <div id="workspace-result"></div>
+    
+    <h2>Group Upload Test</h2>
+    <input type="file" id="group-file-input" multiple>
+    <button onclick="testGroupUpload()">Test Group Upload</button>
+    <div id="group-result"></div>
+    
+    <h2>Public Upload Test</h2>
+    <input type="file" id="public-file-input" multiple>
+    <button onclick="testPublicUpload()">Test Public Upload</button>
+    <div id="public-result"></div>
+
+    <script>
+        // Simulate the max file size setting (5MB for testing)
+        window.max_file_size_mb = 5;
+        
+        function testFileSizeValidation(files, workspace) {
+            const maxFileSizeMB = window.max_file_size_mb || 16;
+            const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+            
+            for (const file of files) {
+                if (file.size > maxFileSizeBytes) {
+                    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                    return `File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`;
+                }
+            }
+            return `All files are within the ${maxFileSizeMB} MB limit. Upload would proceed.`;
+        }
+        
+        function testWorkspaceUpload() {
+            const fileInput = document.getElementById('workspace-file-input');
+            const result = document.getElementById('workspace-result');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                result.innerHTML = '<span style="color: red;">Please select at least one file.</span>';
+                return;
+            }
+            
+            const validationResult = testFileSizeValidation(fileInput.files, 'workspace');
+            const isValid = !validationResult.includes('exceeds');
+            result.innerHTML = `<span style="color: ${isValid ? 'green' : 'red'};">${validationResult}</span>`;
+        }
+        
+        function testGroupUpload() {
+            const fileInput = document.getElementById('group-file-input');
+            const result = document.getElementById('group-result');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                result.innerHTML = '<span style="color: red;">Please select at least one file.</span>';
+                return;
+            }
+            
+            const validationResult = testFileSizeValidation(fileInput.files, 'group');
+            const isValid = !validationResult.includes('exceeds');
+            result.innerHTML = `<span style="color: ${isValid ? 'green' : 'red'};">${validationResult}</span>`;
+        }
+        
+        function testPublicUpload() {
+            const fileInput = document.getElementById('public-file-input');
+            const result = document.getElementById('public-result');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                result.innerHTML = '<span style="color: red;">Please select at least one file.</span>';
+                return;
+            }
+            
+            const validationResult = testFileSizeValidation(fileInput.files, 'public');
+            const isValid = !validationResult.includes('exceeds');
+            result.innerHTML = `<span style="color: ${isValid ? 'green' : 'red'};">${validationResult}</span>`;
+        }
+    </script>
+</body>
+</html>

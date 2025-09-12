@@ -833,6 +833,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     window.enable_extract_meta_data = "{{ enable_extract_meta_data | tojson }}";
     window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
+    window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
 </script>
 
 <script>
@@ -973,6 +974,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (!files || files.length === 0) {
       alert("Please select file(s) to upload.");
       return;
+    }
+
+    // Client-side file size validation
+    const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
+    const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+    
+    for (const file of files) {
+        if (file.size > maxFileSizeBytes) {
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+            return;
+        }
     }
 
     groupUploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
@@ -2642,6 +2655,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (!files || files.length === 0) {
       alert("Please select file(s) to upload.");
       return;
+    }
+
+    // Client-side file size validation
+    const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
+    const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+    
+    for (const file of files) {
+        if (file.size > maxFileSizeBytes) {
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+            return;
+        }
     }
 
     groupUploadBtn.disabled = true;

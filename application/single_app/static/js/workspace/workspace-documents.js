@@ -229,6 +229,18 @@ async function uploadWorkspaceFiles(files) {
        return;
    }
 
+   // Client-side file size validation
+   const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
+   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+   
+   for (const file of files) {
+       if (file.size > maxFileSizeBytes) {
+           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+           alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+           return;
+       }
+   }
+
    uploadStatusSpan.textContent = `Preparing ${files.length} file(s)...`;
 
    // Per-file progress container

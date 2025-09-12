@@ -888,6 +888,7 @@
     window.enable_video_file_support = "{{ enable_video_file_support | tojson }}";
     window.enable_audio_file_support = "{{ enable_audio_file_support | tojson }}";
     window.enable_file_sharing = "{{ enable_file_sharing | tojson }}";
+    window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
     
     // Pass current user ID for ownership checks
     window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
