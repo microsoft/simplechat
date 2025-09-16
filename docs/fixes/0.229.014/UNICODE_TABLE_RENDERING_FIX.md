@@ -1,5 +1,7 @@
 # Unicode Table Rendering Fix
 
+**Fixed in version: 0.229.014**
+
 ## Overview
 Fixed the issue where AI-generated tables (particularly from the ESAM Agent) were not rendering as proper HTML tables in the chat interface. The problem was that AI agents were generating Unicode box-drawing tables instead of markdown table format.
 

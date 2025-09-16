@@ -1,6 +1,6 @@
 # Public Workspace Management Permission Fix
 
-**Fixed in version: 0.229.009**
+**Fixed in version: 0.229.014**
 
 ## Issue Description
 
