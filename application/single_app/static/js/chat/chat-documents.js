@@ -49,6 +49,7 @@ export let publicDocs = [];
 let activeGroupName = "";
 let activePublicWorkspaceName = "";
 let publicWorkspaceIdToName = {};
+let visiblePublicWorkspaceIds = []; // Store IDs of public workspaces visible to the user
 
 /* ---------------------------------------------------------------------------
    Populate the Document Dropdown Based on the Scope
@@ -315,6 +316,7 @@ export function loadPublicDocs() {
               const visibleWorkspaceIds = Object.keys(publicDirectorySettings).filter(
                 id => publicDirectorySettings[id] === true
               );
+              visiblePublicWorkspaceIds = visibleWorkspaceIds; // Store for use in scope label updates
               if (visibleWorkspaceIds.length === 1) {
                 activePublicWorkspaceName = publicWorkspaceIdToName[visibleWorkspaceIds[0]] || "Unknown";
               } else {
@@ -337,6 +339,7 @@ export function loadPublicDocs() {
           publicDocs = data.documents || [];
           publicWorkspaceIdToName = {};
           activePublicWorkspaceName = "All Public Workspaces";
+          visiblePublicWorkspaceIds = []; // Reset visible workspace IDs
         });
     })
     .catch((err) => {
@@ -344,7 +347,39 @@ export function loadPublicDocs() {
       publicDocs = [];
       publicWorkspaceIdToName = {};
       activePublicWorkspaceName = "";
+      visiblePublicWorkspaceIds = []; // Reset visible workspace IDs
     });
+}
+
+/**
+ * Updates the scope option labels to show dynamic workspace names
+ */
+function updateScopeLabels() {
+  if (!docScopeSelect) return;
+  
+  // Update public option text based on visible workspaces
+  const publicOption = docScopeSelect.querySelector('option[value="public"]');
+  if (publicOption) {
+    // Get names of visible public workspaces
+    const visibleWorkspaceNames = visiblePublicWorkspaceIds
+      .map(id => publicWorkspaceIdToName[id])
+      .filter(name => name && name !== "Unknown");
+    
+    let publicLabel = "Public";
+    
+    if (visibleWorkspaceNames.length === 0) {
+      publicLabel = "Public";
+    } else if (visibleWorkspaceNames.length === 1) {
+      publicLabel = `Public: ${visibleWorkspaceNames[0]}`;
+    } else if (visibleWorkspaceNames.length <= 3) {
+      publicLabel = `Public: ${visibleWorkspaceNames.join(", ")}`;
+    } else {
+      publicLabel = `Public: ${visibleWorkspaceNames.slice(0, 3).join(", ")}, 3+`;
+    }
+    
+    publicOption.textContent = publicLabel;
+    console.log(`Updated public scope label to: ${publicLabel}`);
+  }
 }
 
 export function loadAllDocs() {
@@ -428,6 +463,8 @@ export function loadAllDocs() {
   return Promise.all([loadPersonalDocs(), loadGroupDocs(), loadPublicDocs()])
     .then(() => {
       console.log("All documents loaded. Personal:", personalDocs.length, "Group:", groupDocs.length, "Public:", publicDocs.length);
+      // Update scope labels after loading data
+      updateScopeLabels();
       // After loading, populate the select and set initial classification state
       populateDocumentSelectScope();
       // handleDocumentSelectChange(); // Called within populateDocumentSelectScope now
