@@ -1,13 +1,5 @@
 # Demo Questions for the ESAM Agent
 
-what software licenses do we have any number of licenses used for each
-
-what is the per unit cost of Office 365
-
-How many times did we purchase Office 365 and what is the per unit cost for each?
-
-does it seem like we get a cost break for larger purchase volumes?
-
 ## 1. Procurement History & Vendor Tracking
 
 - What software did we purchase last quarter, and from which vendors?
