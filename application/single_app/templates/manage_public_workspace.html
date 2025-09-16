@@ -3,6 +3,10 @@
 {% block content %}
 <div class="container">
   <h2>Manage Public Workspace</h2>
+  <form method="POST" action="/set_active_public_workspace" style="display:inline;">
+    <input type="hidden" name="workspace_id" value="{{ workspace_id }}">
+    <button type="submit" class="btn btn-outline-primary btn-sm mb-3">Go to Public Workspace</button>
+  </form>
   <div id="workspaceInfoContainer" class="mb-3"></div>
 
   <!-- Owner actions -->

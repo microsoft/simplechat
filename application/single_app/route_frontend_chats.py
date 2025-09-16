@@ -165,7 +165,6 @@ def register_route_frontend_chats(app):
     @app.route("/view_pdf", methods=["GET"])
     @login_required
     @user_required
-    @enabled_required("enable_user_workspace")
     def view_pdf():
         """
         1) Grab 'doc_id' and 'page' from query params.
@@ -191,12 +190,28 @@ def register_route_frontend_chats(app):
             return doc_response, status_code
 
         raw_doc = doc_response.get_json()
-        blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+        
+        # Determine workspace type and appropriate container
+        settings = get_settings()
+        if raw_doc.get('public_workspace_id'):
+            if not settings.get('enable_public_workspaces', False):
+                return jsonify({"error": "Public workspaces are not enabled"}), 403
+            container_name = storage_account_public_documents_container_name
+            blob_name = f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
+        elif raw_doc.get('group_id'):
+            if not settings.get('enable_group_workspaces', False):
+                return jsonify({"error": "Group workspaces are not enabled"}), 403
+            container_name = storage_account_group_documents_container_name
+            blob_name = f"{raw_doc['group_id']}/{raw_doc['file_name']}"
+        else:
+            if not settings.get('enable_user_workspace', False):
+                return jsonify({"error": "User workspaces are not enabled"}), 403
+            container_name = storage_account_user_documents_container_name
+            blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
 
         # 3) Generate the SAS URL (short-lived, read-only)
-        settings = get_settings()
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        container_client = blob_service_client.get_container_client(storage_account_user_documents_container_name)
+        container_client = blob_service_client.get_container_client(container_name)
 
         sas_token = generate_blob_sas(
             account_name=blob_service_client.account_name,
@@ -304,7 +319,6 @@ def register_route_frontend_chats(app):
     @app.route('/view_document')
     @login_required
     @user_required
-    @enabled_required("enable_user_workspace")
     def view_document():
         settings = get_settings()
         download_location = tempfile.gettempdir()
@@ -333,8 +347,22 @@ def register_route_frontend_chats(app):
         if not file_name:
              return jsonify({"error": "Internal server error: Document metadata incomplete."}), 500
 
-        # Construct blob name using the owner's user_id from the document record
-        blob_name = f"{owner_user_id}/{file_name}"
+        # Determine workspace type and appropriate container
+        if raw_doc.get('public_workspace_id'):
+            if not settings.get('enable_public_workspaces', False):
+                return jsonify({"error": "Public workspaces are not enabled"}), 403
+            container_name = storage_account_public_documents_container_name
+            blob_name = f"{raw_doc['public_workspace_id']}/{file_name}"
+        elif raw_doc.get('group_id'):
+            if not settings.get('enable_group_workspaces', False):
+                return jsonify({"error": "Group workspaces are not enabled"}), 403
+            container_name = storage_account_group_documents_container_name
+            blob_name = f"{raw_doc['group_id']}/{file_name}"
+        else:
+            if not settings.get('enable_user_workspace', False):
+                return jsonify({"error": "User workspaces are not enabled"}), 403
+            container_name = storage_account_user_documents_container_name
+            blob_name = f"{owner_user_id}/{file_name}"
         file_ext = os.path.splitext(file_name)[-1].lower()
 
         # Ensure download location exists (good practice, especially if using mount)
@@ -349,7 +377,6 @@ def register_route_frontend_chats(app):
             blob_service_client = CLIENTS.get("storage_account_office_docs_client")
             storage_account_key = settings.get("office_docs_key")
             storage_account_name = blob_service_client.account_name # Get from client
-            container_name = storage_account_user_documents_container_name # From config
 
             if not all([blob_service_client, storage_account_key, container_name]):
                 return jsonify({"error": "Internal server error: Storage access not configured."}), 500

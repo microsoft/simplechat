@@ -12,6 +12,8 @@ import io
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings, enabled_required
 from functions_documents import get_document_metadata
+from functions_group import get_user_groups
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name
 
 def register_enhanced_citations_routes(app):
@@ -172,10 +174,59 @@ def register_enhanced_citations_routes(app):
 
 def get_document(user_id, doc_id):
     """
-    Get document metadata - using the existing function from functions_documents
+    Get document metadata - searches across all enabled workspace types
     """
     from functions_documents import get_document as backend_get_document
-    return backend_get_document(user_id, doc_id)
+    from functions_settings import get_settings
+    
+    settings = get_settings()
+    
+    # Try to get document from different workspace types based on what's enabled
+    # Start with personal workspace (most common)
+    if settings.get('enable_user_workspace', False):
+        try:
+            doc_response, status_code = backend_get_document(user_id, doc_id)
+            if status_code == 200:
+                return doc_response, status_code
+        except:
+            pass
+    
+    # Try group workspaces if enabled
+    if settings.get('enable_group_workspaces', False):
+        # We need to find which group this document belongs to
+        # This is more complex - we need to search across user's groups
+        try:
+            user_groups = get_user_groups(user_id)
+            for group in user_groups:
+                group_id = group.get('id')
+                if group_id:
+                    try:
+                        doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
+                        if status_code == 200:
+                            return doc_response, status_code
+                    except:
+                        continue
+        except:
+            pass
+    
+    # Try public workspaces if enabled
+    if settings.get('enable_public_workspaces', False):
+        # We need to find which public workspace this document belongs to
+        # This requires checking user's accessible public workspaces
+        try:
+            accessible_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            for workspace_id in accessible_workspace_ids:
+                try:
+                    doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
+                    if status_code == 200:
+                        return doc_response, status_code
+                except:
+                    continue
+        except:
+            pass
+    
+    # If document not found in any workspace
+    return {"error": "Document not found or access denied"}, 404
 
 def determine_workspace_type_and_container(raw_doc):
     """
@@ -187,6 +238,17 @@ def determine_workspace_type_and_container(raw_doc):
         return 'group', storage_account_group_documents_container_name
     else:
         return 'personal', storage_account_user_documents_container_name
+
+def get_blob_name(raw_doc, workspace_type):
+    """
+    Determine the correct blob name based on workspace type
+    """
+    if workspace_type == 'public':
+        return f"{raw_doc['public_workspace_id']}/{raw_doc['file_name']}"
+    elif workspace_type == 'group':
+        return f"{raw_doc['group_id']}/{raw_doc['file_name']}"
+    else:
+        return f"{raw_doc['user_id']}/{raw_doc['file_name']}"
 
 def serve_enhanced_citation_content(raw_doc, content_type=None):
     """
@@ -204,8 +266,8 @@ def serve_enhanced_citation_content(raw_doc, content_type=None):
     workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
     container_client = blob_service_client.get_container_client(container_name)
     
-    # Build blob name
-    blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+    # Build blob name based on workspace type
+    blob_name = get_blob_name(raw_doc, workspace_type)
     
     try:
         # Download blob content directly
@@ -268,8 +330,8 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number):
     workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
     container_client = blob_service_client.get_container_client(container_name)
     
-    # Build blob name
-    blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+    # Build blob name based on workspace type
+    blob_name = get_blob_name(raw_doc, workspace_type)
     
     try:
         # Download blob content directly

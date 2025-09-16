@@ -31,7 +31,6 @@ def register_route_frontend_public_workspaces(app):
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
-    @create_public_workspace_role_required
     def manage_public_workspace(workspace_id):
         settings = get_settings()
         public_settings = sanitize_settings_for_user(settings)
@@ -99,3 +98,17 @@ def register_route_frontend_public_workspaces(app):
             settings=public_settings,
             app_settings=public_settings
         )
+
+    @app.route('/set_active_public_workspace', methods=['POST'])
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def set_active_public_workspace():
+        user_id = get_current_user_id()
+        workspace_id = request.form.get("workspace_id")
+        if not user_id or not workspace_id:
+            return "Missing user or workspace id", 400
+        success = update_user_settings(user_id, {"activePublicWorkspaceOid": workspace_id})
+        if not success:
+            return "Failed to update user settings", 500
+        return redirect(url_for('public_workspaces'))
