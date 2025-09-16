@@ -268,7 +268,37 @@ def reload_kernel_if_needed():
 
 @app.after_request
 def add_security_headers(response):
+    # Prevent MIME sniffing attacks
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Prevent clickjacking attacks
+    response.headers['X-Frame-Options'] = 'DENY'
+    
+    # Enable XSS protection in browsers
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Prevent content type sniffing for specific content types
+    if response.content_type and any(ct in response.content_type.lower() for ct in ['text/', 'application/json', 'application/javascript']):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Add Referrer Policy for privacy
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    
+    # Content Security Policy for additional protection
+    # Note: This is a basic CSP - you may need to adjust based on your specific needs
+    csp_policy = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https://cdn.jsdelivr.net; "
+        "connect-src 'self' https:; "
+        "media-src 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none';"
+    )
+    response.headers['Content-Security-Policy'] = csp_policy
+    
     return response
 
 # Register a custom Jinja filter for Markdown
@@ -425,7 +455,7 @@ if __name__ == '__main__':
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
+        app.run(host="0.0.0.0", port=5001, debug=True, ssl_context='adhoc')
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))

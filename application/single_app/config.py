@@ -88,8 +88,32 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.014"
+VERSION = "0.229.019"
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Security Headers Configuration
+SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-XSS-Protection': '1; mode=block',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Content-Security-Policy': (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "img-src 'self' data: https: blob:; "
+        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "connect-src 'self' https: wss: ws:; "
+        "media-src 'self' blob:; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
+    )
+}
+
+# Security Configuration
+ENABLE_STRICT_TRANSPORT_SECURITY = os.getenv('ENABLE_HSTS', 'false').lower() == 'true'
+HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))  # 1 year default
 
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
@@ -604,28 +628,31 @@ def initialize_clients(settings):
 
         try:
             if enable_enhanced_citations:
+                blob_service_client = None
                 if settings.get("office_docs_authentication_type") == "key":
                     blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
                     CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                if settings.get("office_docs_authentication_type") == "managed_identity":
+                elif settings.get("office_docs_authentication_type") == "managed_identity":
                     blob_service_client = BlobServiceClient(account_url=settings.get("office_docs_storage_account_blob_endpoint"), credential=DefaultAzureCredential())
                     CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                    # Create containers if they don't exist
-                    # This addresses the issue where the application assumes containers exist
-                for container_name in [
-                    storage_account_user_documents_container_name, 
-                    storage_account_group_documents_container_name, 
-                    storage_account_public_documents_container_name
-                    ]:
-                    try:
-                        container_client = blob_service_client.get_container_client(container_name)
-                        if not container_client.exists():
-                            print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
-                            container_client.create_container()
-                            print(f"DEBUG: Container '{container_name}' created successfully.")
-                        else:
-                            print(f"DEBUG: Container '{container_name}' already exists.")
-                    except Exception as container_error:
-                        print(f"Error creating container {container_name}: {str(container_error)}")
+                
+                # Create containers if they don't exist
+                # This addresses the issue where the application assumes containers exist
+                if blob_service_client:
+                    for container_name in [
+                        storage_account_user_documents_container_name, 
+                        storage_account_group_documents_container_name, 
+                        storage_account_public_documents_container_name
+                        ]:
+                        try:
+                            container_client = blob_service_client.get_container_client(container_name)
+                            if not container_client.exists():
+                                print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
+                                container_client.create_container()
+                                print(f"DEBUG: Container '{container_name}' created successfully.")
+                            else:
+                                print(f"DEBUG: Container '{container_name}' already exists.")
+                        except Exception as container_error:
+                            print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:
             print(f"Failed to initialize Blob Storage clients: {e}")

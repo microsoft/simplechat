@@ -1,0 +1,386 @@
+<!-- Azure Video Indexer Configuration Information Modal -->
+<div class="modal fade" id="videoIndexerInfoModal" tabindex="-1" aria-labelledby="videoIndexerInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="videoIndexerInfoModalLabel">
+                    <i class="bi bi-camera-video me-2"></i>
+                    Azure AI Video Indexer Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What is Azure AI Video Indexer?</strong> Azure AI Video Indexer is a cloud application, part of Azure Applied AI Services, built on Azure AI services (such as Face, Translator, Speech, and Vision). It enables you to extract insights from your videos.
+                </div>
+
+                <!-- Current Configuration Display -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Current Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Video File Support Enabled:</strong>
+                                <span id="modal-video-enabled" class="badge bg-secondary">No</span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Video Indexer Endpoint:</strong>
+                                <code id="modal-video-endpoint">Not configured</code>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Account ID:</strong><br>
+                                <code id="modal-account-id">Not configured</code>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Location:</strong><br>
+                                <code id="modal-location">Not configured</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Account Creation -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Azure AI Video Indexer Account</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>Prerequisites</h6>
+                            <ul class="mb-3">
+                                <li>An Azure subscription</li>
+                                <li>At the subscription level, either the <strong>Owner</strong> role, or both <strong>Contributor</strong> and <strong>User Access Administrator</strong> roles</li>
+                            </ul>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>1. Create Resource in Azure Portal</h6>
+                            <ol class="mb-3">
+                                <li>In the Azure portal, select <strong>+ Create a resource</strong></li>
+                                <li>Search for and select <strong>Azure AI Video Indexer</strong></li>
+                                <li>On the Marketplace page, select <strong>Create</strong> and then select <strong>Azure AI Video Indexer</strong></li>
+                                <li>Create a resource group (or select an existing one) and select a <strong>Region</strong></li>
+                                <li>Enter an account name in the <strong>Resource name</strong> field</li>
+                                <li>Connect the account to a <strong>Storage account</strong> (must be Standard StorageV2)</li>
+                                <li>Select or create a <strong>User-assigned managed identity</strong></li>
+                                <li>Agree to the terms and conditions and select <strong>Review + create</strong></li>
+                                <li>When validation completes, select <strong>Create</strong></li>
+                            </ol>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <strong>Important:</strong> Storage accounts for Video Indexer must be a <strong>Standard StorageV2 (general-purpose v2)</strong> storage account.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Key Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-key me-2"></i>Get API Keys and Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>1. Sign in to Developer Portal</h6>
+                            <p class="mb-3">Sign in to the <a href="https://api-portal.videoindexer.ai/" target="_blank" rel="noopener">Azure AI Video Indexer API developer portal <i class="bi bi-box-arrow-up-right"></i></a> with the account you created.</p>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>2. Find Your Subscription Keys</h6>
+                            <ol class="mb-3">
+                                <li>Go to your <strong>Profile</strong> section</li>
+                                <li>Navigate to the <strong>Subscriptions</strong> section</li>
+                                <li>Find your <strong>Primary key</strong> and <strong>Secondary key</strong></li>
+                                <li>Select the <strong>Show</strong> link for both keys</li>
+                                <li>Copy and save these keys securely</li>
+                            </ol>
+                        </div>
+
+                        <div class="mb-4">
+                            <h6>3. Get Account Information</h6>
+                            <p class="mb-2">You'll need the following information from your Azure portal:</p>
+                            <ul class="mb-3">
+                                <li><strong>Account ID:</strong> Found in the Video Indexer resource overview</li>
+                                <li><strong>Location:</strong> The Azure region where you created the resource</li>
+                                <li><strong>Resource Group:</strong> The resource group containing your Video Indexer</li>
+                                <li><strong>Subscription ID:</strong> Your Azure subscription ID</li>
+                                <li><strong>Account Name:</strong> The name you gave to your Video Indexer resource</li>
+                            </ul>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <strong>Tip:</strong> You can find most of this information in the Azure portal by navigating to your Video Indexer resource and checking the <strong>Overview</strong> tab.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Configuration Values -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Configuration Values Reference</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Field</th>
+                                        <th>Description</th>
+                                        <th>Example</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Endpoint</strong></td>
+                                        <td>Azure Video Indexer API endpoint</td>
+                                        <td><code>https://api.videoindexer.ai</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>ARM API Version</strong></td>
+                                        <td>Azure Resource Manager API version</td>
+                                        <td><code>2021-11-10-preview</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Location</strong></td>
+                                        <td>Azure region (lowercase, no spaces)</td>
+                                        <td><code>eastus</code>, <code>westeurope</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Account ID</strong></td>
+                                        <td>GUID from Azure portal resource overview</td>
+                                        <td><code>12345678-1234-1234-1234-123456789012</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>API Key</strong></td>
+                                        <td>Primary or Secondary key from developer portal</td>
+                                        <td><code>abcd1234efgh5678ijkl9012mnop3456</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Resource Group</strong></td>
+                                        <td>Name of the Azure resource group</td>
+                                        <td><code>my-video-indexer-rg</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Subscription ID</strong></td>
+                                        <td>Azure subscription GUID</td>
+                                        <td><code>87654321-4321-4321-4321-210987654321</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Account Name</strong></td>
+                                        <td>Name of your Video Indexer resource</td>
+                                        <td><code>my-video-indexer</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Timeout</strong></td>
+                                        <td>Processing timeout in seconds</td>
+                                        <td><code>600</code> (10 minutes)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Account Types -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Account Types</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-header bg-light">
+                                        <h6 class="mb-0">Trial Account</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <ul class="mb-0">
+                                            <li>Up to 2,400 minutes of free indexing</li>
+                                            <li>No Azure subscription required</li>
+                                            <li>Use via website or API</li>
+                                            <li>Account deleted after 12 months of inactivity</li>
+                                            <li>Not available for Azure Government</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-header bg-primary text-white">
+                                        <h6 class="mb-0">Azure Resource Manager (ARM) Account</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <ul class="mb-0">
+                                            <li>Full Azure integration</li>
+                                            <li>Production-ready</li>
+                                            <li>Scalable processing</li>
+                                            <li>Enterprise security features</li>
+                                            <li><strong>Recommended for this application</strong></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Special Considerations -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Special Considerations</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-warning">
+                            <h6>Face Recognition Features</h6>
+                            <p class="mb-2">Face identification, customization, and celebrity recognition features have limited access based on eligibility and usage criteria to support Responsible AI principles.</p>
+                            <p class="mb-0">These features are only available to Microsoft managed customers and partners. Use the <a href="#" target="_blank">Face Recognition intake form</a> to apply for access.</p>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <h6>Azure Government</h6>
+                            <ul class="mb-0">
+                                <li>Only paid accounts are available</li>
+                                <li>No manual content moderation available</li>
+                                <li>Bing descriptions for celebrities/entities not presented</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Troubleshooting -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Troubleshooting</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="videoIndexerTroubleshootingAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootVI1">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseVI1">
+                                        Authentication errors when uploading videos
+                                    </button>
+                                </h2>
+                                <div id="collapseVI1" class="accordion-collapse collapse" data-bs-parent="#videoIndexerTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Verify your API key is correct and active</li>
+                                            <li>Check that your Account ID matches the one in Azure portal</li>
+                                            <li>Ensure the Location field matches your Azure region exactly</li>
+                                            <li>Confirm your managed identity has the correct permissions</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootVI2">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseVI2">
+                                        Video processing timeouts
+                                    </button>
+                                </h2>
+                                <div id="collapseVI2" class="accordion-collapse collapse" data-bs-parent="#videoIndexerTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Increase the timeout value for longer videos</li>
+                                            <li>Check if your video file size exceeds limits</li>
+                                            <li>Verify your storage account is properly connected</li>
+                                            <li>Monitor Azure Service Health for any service issues</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootVI3">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseVI3">
+                                        Missing video insights or poor transcription quality
+                                    </button>
+                                </h2>
+                                <div id="collapseVI3" class="accordion-collapse collapse" data-bs-parent="#videoIndexerTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Ensure video has clear audio for better transcription</li>
+                                            <li>Check video format is supported (MP4, MOV, AVI, etc.)</li>
+                                            <li>Verify language settings match your video content</li>
+                                            <li>Consider uploading higher quality video files</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootVI4">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseVI4">
+                                        Storage account connection issues
+                                    </button>
+                                </h2>
+                                <div id="collapseVI4" class="accordion-collapse collapse" data-bs-parent="#videoIndexerTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Confirm storage account is Standard StorageV2 (general-purpose v2)</li>
+                                            <li>Check that managed identity has Storage Blob Data Contributor role</li>
+                                            <li>Verify storage account and Video Indexer are in the same region</li>
+                                            <li>Ensure no network restrictions are blocking access</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshootVI5">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseVI5">
+                                    API rate limiting or quota exceeded
+                                    </button>
+                                </h2>
+                                <div id="collapseVI5" class="accordion-collapse collapse" data-bs-parent="#videoIndexerTroubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Monitor your API usage in the developer portal</li>
+                                            <li>Consider upgrading to a higher tier if needed</li>
+                                            <li>Implement retry logic with exponential backoff</li>
+                                            <li>Check Azure portal for any quota alerts</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="https://learn.microsoft.com/en-us/azure/azure-video-indexer/" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-book me-2"></i>View Full Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateVideoIndexerModalInfo() {
+    const videoEnabled = document.getElementById('enable_video_file_support')?.checked || false;
+    const videoEndpoint = document.getElementById('video_indexer_endpoint')?.value?.trim() || '';
+    const accountId = document.getElementById('video_indexer_account_id')?.value?.trim() || '';
+    const location = document.getElementById('video_indexer_location')?.value?.trim() || '';
+    
+    // Update modal status
+    document.getElementById('modal-video-enabled').textContent = videoEnabled ? 'Yes' : 'No';
+    document.getElementById('modal-video-enabled').className = videoEnabled ? 'badge bg-success' : 'badge bg-secondary';
+    
+    // Update configuration display
+    document.getElementById('modal-video-endpoint').textContent = videoEndpoint || 'https://api.videoindexer.ai';
+    document.getElementById('modal-account-id').textContent = accountId || 'Not configured';
+    document.getElementById('modal-location').textContent = location || 'Not configured';
+}
+
+// Update modal info when the modal is opened
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('videoIndexerInfoModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', updateVideoIndexerModalInfo);
+    }
+});
+</script>
