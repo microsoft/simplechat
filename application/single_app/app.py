@@ -268,36 +268,24 @@ def reload_kernel_if_needed():
 
 @app.after_request
 def add_security_headers(response):
-    # Prevent MIME sniffing attacks
-    response.headers['X-Content-Type-Options'] = 'nosniff'
+    """
+    Add comprehensive security headers to all responses to protect against
+    various web vulnerabilities including MIME sniffing attacks.
+    """
+    from config import SECURITY_HEADERS, ENABLE_STRICT_TRANSPORT_SECURITY, HSTS_MAX_AGE
     
-    # Prevent clickjacking attacks
-    response.headers['X-Frame-Options'] = 'DENY'
+    # Apply all configured security headers
+    for header_name, header_value in SECURITY_HEADERS.items():
+        response.headers[header_name] = header_value
     
-    # Enable XSS protection in browsers
-    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Add HSTS header only if HTTPS is enabled and configured
+    if ENABLE_STRICT_TRANSPORT_SECURITY and request.is_secure:
+        response.headers['Strict-Transport-Security'] = f'max-age={HSTS_MAX_AGE}; includeSubDomains; preload'
     
-    # Prevent content type sniffing for specific content types
-    if response.content_type and any(ct in response.content_type.lower() for ct in ['text/', 'application/json', 'application/javascript']):
+    # Ensure X-Content-Type-Options is always present for specific content types
+    # This provides extra protection against MIME sniffing attacks
+    if response.content_type and any(ct in response.content_type.lower() for ct in ['text/', 'application/json', 'application/javascript', 'application/octet-stream']):
         response.headers['X-Content-Type-Options'] = 'nosniff'
-    
-    # Add Referrer Policy for privacy
-    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    
-    # Content Security Policy for additional protection
-    # Note: This is a basic CSP - you may need to adjust based on your specific needs
-    csp_policy = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' https://cdn.jsdelivr.net; "
-        "connect-src 'self' https:; "
-        "media-src 'self'; "
-        "object-src 'none'; "
-        "frame-ancestors 'none';"
-    )
-    response.headers['Content-Security-Policy'] = csp_policy
     
     return response
 
