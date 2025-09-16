@@ -1,6 +1,41 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
+### **(v0.229.014)**
+
+#### Bug Fixes
+
+##### Public Workspace Management Fixes
+
+*   **Public Workspace Management Permission Fix**
+    *   Fixed incorrect permission checking for public workspace management operations when "Require Membership to Create Public Workspaces" setting was enabled.
+    *   **Issue**: Users with legitimate access to manage workspaces (Owner/Admin/DocumentManager) were incorrectly shown "Forbidden" errors when accessing management functionality.
+    *   **Root Cause**: The `manage_public_workspace` route was incorrectly decorated with `@create_public_workspace_role_required`, conflating creation permissions with management permissions.
+    *   **Solution**: Removed the incorrect permission decorator from the management route, allowing workspace-specific membership roles to properly control access.
+    *   (Ref: `route_frontend_public_workspaces.py`, workspace permission logic)
+
+*   **Public Workspace Scope Display Enhancement**
+    *   Enhanced the Public Workspace scope selector in chat interface to show specific workspace names instead of generic "Public" label.
+    *   **Display Logic**: 
+        *   No visible workspaces: `"Public"`
+        *   1 visible workspace: `"Public: [Workspace Name]"`
+        *   2-3 visible workspaces: `"Public: [Name1], [Name2], [Name3]"`
+        *   More than 3 workspaces: `"Public: [Name1], [Name2], [Name3], 3+"`
+    *   **Benefits**: Improved workspace identification, consistent with Group scope naming pattern, better navigation between workspace scopes.
+    *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
+
+##### User Interface and Content Rendering Fixes
+
+*   **Unicode Table Rendering Fix**
+    *   Fixed issue where AI-generated tables using Unicode box-drawing characters were not rendering as proper HTML tables in the chat interface.
+    *   **Problem**: AI agents (particularly ESAM Agent) generated Unicode tables that appeared as plain text instead of formatted tables.
+    *   **Solution**: 
+        *   Added `convertUnicodeTableToMarkdown()` function to detect and convert Unicode table patterns to markdown format
+        *   Enhanced message processing pipeline to handle table preprocessing before markdown parsing
+        *   Improved `unwrapTablesFromCodeBlocks()` function to detect tables mistakenly wrapped in code blocks
+    *   **Impact**: Tables now render properly as HTML, improving readability and data presentation in chat responses.
+    *   (Ref: `chat-messages.js`, Unicode table conversion, markdown processing pipeline)
+
 ### **(v0.229.001)**
 
 #### New Features
