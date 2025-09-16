@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII Dash Table Conversion Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .message-text table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .message-text thead {
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+        }
+        .message-text th, .message-text td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+            vertical-align: top;
+        }
+        .message-text th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+        .message-text tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .message-text tbody tr:hover {
+            background-color: #e9ecef;
+            transition: background-color 0.2s ease;
+        }
+        .debug-section {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        pre {
+            background: #fff;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>ASCII Dash Table Conversion Test</h1>
+        <p class="lead">Testing conversion of ASCII dash tables (like those from RVA Agent) to markdown format.</p>
+        
+        <div class="debug-section">
+            <h3>Step 1: Original RVA Agent Content</h3>
+            <pre id="original-content"></pre>
+        </div>
+        
+        <div class="debug-section">
+            <h3>Step 2: After ASCII Table Conversion</h3>
+            <pre id="converted-content"></pre>
+        </div>
+        
+        <div class="debug-section">
+            <h3>Step 3: Final HTML Rendering</h3>
+            <div class="message-text" id="final-render"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <script>
+        // Configure marked
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            tables: true
+        });
+
+        // ASCII dash table content from RVA agent
+        const originalContent = `Below is the available Q2 2025 comparison for the IRS and CMS, plus an explanation tied to Treasury (refund) data. Note that no CMS data was returned from the database for this period.
+
+─────────────────────────────────────────────────────────────────
+ AGENCY          MONTH/YEAR   FORECAST        ACTUAL         VARIANCE  
+─────────────────────────────────────────────────────────────────
+ IRS             Apr 2025     $4.02B          $3.86B         -$0.16B   
+ IRS             May 2025     $4.13B          $4.23B         +$0.11B   
+ IRS             Jun 2025     $4.14B          $3.99B         -$0.14B   
+ CMS             Apr–Jun 2025 —              —              —          
+─────────────────────────────────────────────────────────────────
+
+Explanation with Treasury Refund Context:
+
+• April Shortfall: From Daily Income Tax Refunds data, early April shows high refund issuance, which can pull down net collections and partially explains the IRS's -$0.16B variance.  
+• May Over-Collection: Refunds typically peak in April (around major filing deadlines) and then taper. This easing of refunds likely helped push IRS actuals above forecast by +$0.11B.  
+• June Shortfall: By June, the IRS dipped back under forecast. While refunds are lower than in April, broader factors (e.g., payment timing shifts or slower inflows) could have contributed.  
+• CMS Data Omission: No CMS forecasts or collections for Q2 2025 were found within the database, so CMS is not displayed in the table.
+
+Overall, the IRS's monthly swings correlate partly with the pattern of national tax refunds, which spike in April and gradually decline into May and June.`;
+
+        function convertASCIIDashTableToMarkdown(content) {
+            console.log('Converting ASCII dash table to markdown...');
+            
+            // Pattern to match ASCII tables with em-dash separators
+            const asciiTablePattern = /─{10,}[^\\n]*\\n[\\s\\S]*?─{10,}/g;
+            
+            return content.replace(asciiTablePattern, (match) => {
+                console.log('🔧 Converting ASCII dash table to markdown format');
+                
+                try {
+                    const lines = match.split('\\n');
+                    const dataLines = [];
+                    let headerLine = null;
+                    
+                    // Extract data from ASCII table
+                    for (const line of lines) {
+                        // Skip separator lines (lines that are mostly dashes)
+                        if (line.includes('─') && line.replace(/[─\\s]/g, '').length === 0) {
+                            continue;
+                        }
+                        
+                        // Process data lines (lines with actual content)
+                        if (line.trim() && !line.match(/^─+$/)) {
+                            // Split by multiple spaces (assuming columns are separated by multiple spaces)
+                            const cells = line.split(/\\s{2,}/)
+                                .map(cell => cell.trim())
+                                .filter(cell => cell !== '');
+                            
+                            if (cells.length > 1) {
+                                if (!headerLine) {
+                                    headerLine = cells;
+                                    console.log('ASCII Header row:', headerLine);
+                                } else {
+                                    dataLines.push(cells);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (headerLine && dataLines.length > 0) {
+                        console.log(`Extracted ${dataLines.length} data rows from ASCII table`);
+                        
+                        // Build markdown table
+                        let markdownTable = '\\n\\n';
+                        
+                        // Header row
+                        markdownTable += '| ' + headerLine.join(' | ') + ' |\\n';
+                        
+                        // Separator row
+                        markdownTable += '|' + headerLine.map(() => '---').join('|') + '|\\n';
+                        
+                        // Data rows (limit to first 10 for display)
+                        const displayRows = dataLines.slice(0, 10);
+                        for (const row of displayRows) {
+                            // Ensure we have the same number of columns as header
+                            while (row.length < headerLine.length) {
+                                row.push('—');
+                            }
+                            markdownTable += '| ' + row.join(' | ') + ' |\\n';
+                        }
+                        
+                        if (dataLines.length > 10) {
+                            markdownTable += '\\n*Showing first 10 of ' + dataLines.length + ' total rows*\\n';
+                        }
+                        
+                        markdownTable += '\\n';
+                        return markdownTable;
+                    }
+                } catch (error) {
+                    console.error('Error converting ASCII dash table:', error);
+                }
+                
+                // If conversion fails, return original content
+                return match;
+            });
+        }
+
+        // Process content step by step
+        document.getElementById('original-content').textContent = originalContent;
+        
+        const convertedContent = convertASCIIDashTableToMarkdown(originalContent);
+        document.getElementById('converted-content').textContent = convertedContent;
+        
+        const htmlContent = DOMPurify.sanitize(marked.parse(convertedContent));
+        document.getElementById('final-render').innerHTML = htmlContent;
+        
+        // Check if conversion was successful
+        const hasTable = document.getElementById('final-render').querySelector('table');
+        if (hasTable) {
+            console.log('✅ SUCCESS: ASCII dash table converted to HTML table');
+            console.log('Table rows found:', hasTable.querySelectorAll('tr').length);
+        } else {
+            console.log('❌ FAILED: No HTML table generated');
+        }
+    </script>
+</body>
+</html>

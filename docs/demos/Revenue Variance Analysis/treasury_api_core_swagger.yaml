@@ -1,0 +1,833 @@
+openapi: 3.0.3
+info:
+  title: U.S. Treasury Fiscal Data API - Core Endpoints
+  description: |
+    Essential U.S. Treasury API endpoints for the most common financial data queries.
+    This focused API includes key endpoints for debt, revenue, spending, auctions, and interest rates.
+    
+    ## Features
+    - RESTful API accepting GET requests
+    - Returns JSON responses by default
+    - Supports CSV and XML formats
+    - Standard HTTP response codes
+    - No authentication required
+    - Rate limiting applied
+    
+    ## API Endpoint URL Structure
+    **Base URL:** `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/`
+    
+    **Full Request Format:** Base URL + Endpoint + Parameters (optional)
+    
+    **Example:** `https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny?fields=record_date,tot_pub_debt_out_amt&sort=-record_date&page[size]=10`
+  version: 1.0.0
+  contact:
+    name: U.S. Treasury Fiscal Service
+    url: https://fiscaldata.treasury.gov
+  license:
+    name: Public Domain
+    url: https://fiscaldata.treasury.gov
+
+servers:
+  - url: https://api.fiscaldata.treasury.gov/services/api/fiscal_service
+    description: Production server
+
+security: []
+
+components:
+  parameters:
+    fields:
+      name: fields
+      in: query
+      description: |
+        Comma-separated list of field names to include in the response. 
+        Use this to get only the data fields you need.
+        Note: Omitting fields can result in automatically aggregated and summed data results.
+      required: false
+      schema:
+        type: string
+      example: "record_date,tot_pub_debt_out_amt,debt_held_public_amt"
+      
+    filter:
+      name: filter
+      in: query
+      description: |
+        Filter to view a subset of data based on specific criteria.
+        Format: field_name:operator:value
+        Operators: eq (equals), lt (less than), lte (less than or equal), gt (greater than), gte (greater than or equal), in (in list)
+        Multiple filters: Use comma separation for AND logic
+        **Date Format:** YYYY-MM-DD
+      required: false
+      schema:
+        type: string
+      example: "record_date:gte:2020-01-01"
+      
+    sort:
+      name: sort
+      in: query
+      description: |
+        Sort field(s) in ascending or descending order.
+        Use minus (-) prefix for descending order.
+        Supports nested sorting with comma-separated field names.
+      required: false
+      schema:
+        type: string
+      example: "-record_date"
+      
+    format:
+      name: format
+      in: query
+      description: Output format for the response
+      required: false
+      schema:
+        type: string
+        enum:
+          - json
+          - csv
+          - xml
+        default: json
+      example: "json"
+      
+    pageNumber:
+      name: page[number]
+      in: query
+      description: Page number for pagination (starts at 1)
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 999999
+        default: 1
+      example: 1
+      
+    pageSize:
+      name: page[size]
+      in: query
+      description: Number of records per page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 100
+      example: 100
+
+  schemas:
+    MetaObject:
+      type: object
+      description: Metadata about the API response
+      properties:
+        count:
+          type: integer
+          description: Number of records returned in this response
+        dataTypes:
+          type: object
+          description: Data types for each field
+        dataFormats:
+          type: object
+          description: Format specifications for each field
+        total-count:
+          type: integer
+          description: Total number of records available
+        total-pages:
+          type: integer
+          description: Total number of pages available
+      example:
+        count: 12
+        dataTypes:
+          record_date: "DATE"
+          tot_pub_debt_out_amt: "NUMBER"
+        dataFormats:
+          record_date: "YYYY-MM-DD"
+          tot_pub_debt_out_amt: "$10,000"
+        total-count: 1250
+        total-pages: 1
+        
+    LinksObject:
+      type: object
+      description: Pagination links for navigating through pages
+      properties:
+        self:
+          type: string
+          description: Link to current page
+        first:
+          type: string
+          description: Link to first page
+        prev:
+          type: string
+          description: Link to previous page (if applicable)
+        next:
+          type: string
+          description: Link to next page (if applicable)
+        last:
+          type: string
+          description: Link to last page
+      example:
+        self: "&page%5Bnumber%5D=1&page%5Bsize%5D=100"
+        first: "&page%5Bnumber%5D=1&page%5Bsize%5D=100"
+        next: "&page%5Bnumber%5D=2&page%5Bsize%5D=100"
+        last: "&page%5Bnumber%5D=1&page%5Bsize%5D=100"
+        
+    ApiResponse:
+      type: object
+      description: Standard API response structure
+      properties:
+        data:
+          type: array
+          description: Array of data records
+          items:
+            type: object
+        meta:
+          $ref: '#/components/schemas/MetaObject'
+        links:
+          $ref: '#/components/schemas/LinksObject'
+      required:
+        - data
+        - meta
+        - links
+        
+    ErrorResponse:
+      type: object
+      description: Error response structure
+      properties:
+        error:
+          type: string
+          description: Error type
+        message:
+          type: string
+          description: Detailed error message
+      required:
+        - error
+        - message
+      example:
+        error: "Invalid Query Param"
+        message: "Invalid query parameter 'sorts' with value '[-record_date]'. For more information please see the documentation."
+
+  responses:
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+            
+    BadRequest:
+      description: Bad Request - Request was malformed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+            
+    NotFound:
+      description: Not Found - When a non-existent resource is requested
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+            
+    MethodNotAllowed:
+      description: Method Not Allowed - Only GET requests are supported
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+            
+    TooManyRequests:
+      description: Too Many Requests - Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+            
+    InternalServerError:
+      description: Internal Server Error - The server failed to fulfill the request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+paths:
+  # DEBT & FINANCIAL POSITION (8 endpoints)
+  /v2/accounting/od/debt_to_penny:
+    get:
+      tags:
+        - "Public Debt"
+      summary: "Daily Public Debt Outstanding"
+      description: |
+        Outstanding U.S. debt on a daily basis. This is the most current and comprehensive debt data available.
+      operationId: getDebtToPenny
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v2/accounting/od/debt_outstanding:
+    get:
+      tags:
+        - "Public Debt"
+      summary: "Historical Debt Outstanding"
+      description: |
+        U.S. debt outstanding at the end of each fiscal year for historical analysis.
+      operationId: getHistoricalDebtOutstanding
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v2/accounting/od/interest_expense:
+    get:
+      tags:
+        - "Public Debt"
+      summary: "Interest Expense on Public Debt"
+      description: |
+        Monthly summary of the cost of interest on U.S. debt, including Treasury notes, bonds, and other securities.
+      operationId: getInterestExpense
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/debt/mspd/mspd_table_1:
+    get:
+      tags:
+        - "Public Debt"
+      summary: "Summary of Treasury Securities Outstanding"
+      description: |
+        Summarizes amounts outstanding for all securities issued by the Bureau of the Fiscal Service.
+      operationId: getTreasurySecuritiesOutstandingSummary
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # REVENUE & SPENDING (4 endpoints)
+  /v2/revenue/rcm:
+    get:
+      tags:
+        - "Government Revenue"
+      summary: "Daily Government Revenue Collections"
+      description: |
+        Daily overview of federal revenue collections including income taxes, customs duties, fees, and other revenue sources.
+      operationId: getDailyRevenueCollections
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/mts/mts_table_1:
+    get:
+      tags:
+        - "Government Revenue"
+      summary: "Monthly Receipts, Outlays, and Deficit/Surplus"
+      description: |
+        Monthly summary of total receipts, outlays, and budget surplus/deficit for current and prior fiscal years.
+      operationId: getMonthlyBudgetSummary
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/dts/operating_cash_balance:
+    get:
+      tags:
+        - "Cash Flow"
+      summary: "Daily Treasury Operating Cash Balance"
+      description: |
+        Daily Treasury General Account balance showing the government's available cash.
+      operationId: getDailyOperatingCashBalance
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/dts/deposits_withdrawals_operating_cash:
+    get:
+      tags:
+        - "Cash Flow"
+      summary: "Daily Deposits and Withdrawals"
+      description: |
+        Daily deposits and withdrawals from the Treasury General Account showing government cash flows.
+      operationId: getDailyDepositsWithdrawals
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # TREASURY SECURITIES & AUCTIONS (6 endpoints)
+  /v1/accounting/od/auctions_query:
+    get:
+      tags:
+        - "Treasury Securities"
+      summary: "Treasury Securities Auction Data"
+      description: |
+        Data on announced and auctioned marketable Treasury securities including rates, yields, and auction results.
+      operationId: getTreasuryAuctionData
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/od/upcoming_auctions:
+    get:
+      tags:
+        - "Treasury Securities"
+      summary: "Upcoming Treasury Auctions"
+      description: |
+        Information about upcoming auctions on marketable Treasury securities including announcement and auction dates.
+      operationId: getUpcomingTreasuryAuctions
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v2/accounting/od/avg_interest_rates:
+    get:
+      tags:
+        - "Interest Rates"
+      summary: "Average Interest Rates on Treasury Securities"
+      description: |
+        Average interest rates for marketable and non-marketable Treasury securities.
+      operationId: getAverageInterestRates
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/od/rates_of_exchange:
+    get:
+      tags:
+        - "Exchange Rates"
+      summary: "Treasury Reporting Rates of Exchange"
+      description: |
+        Foreign currency exchange rates for Treasury reporting purposes, updated quarterly.
+      operationId: getTreasuryExchangeRates
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/debt/mspd/mspd_table_3_market:
+    get:
+      tags:
+        - "Treasury Securities"
+      summary: "Marketable Treasury Securities Outstanding Details"
+      description: |
+        Detailed information by CUSIP on outstanding marketable Treasury securities including Bills, Notes, Bonds, and TIPS.
+      operationId: getMarketableSecuritiesDetails
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/od/frn_daily_indexes:
+    get:
+      tags:
+        - "Interest Rates"
+      summary: "Floating Rate Notes Daily Indexes"
+      description: |
+        Daily index rates and interest accrual information for Treasury Floating Rate Notes (FRNs).
+      operationId: getFRNDailyIndexes
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # TAX & RECEIPTS (4 endpoints)
+  /v1/accounting/dts/federal_tax_deposits:
+    get:
+      tags:
+        - "Tax Collections"
+      summary: "Daily Federal Tax Deposits"
+      description: |
+        Daily breakdown of federal tax deposits by type showing government tax revenue collection patterns.
+      operationId: getDailyFederalTaxDeposits
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/dts/income_tax_refunds_issued:
+    get:
+      tags:
+        - "Tax Collections"
+      summary: "Daily Income Tax Refunds Issued"
+      description: |
+        Daily breakdown of tax refunds by recipient type and payment method.
+      operationId: getDailyIncomeTaxRefunds
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # SAVINGS BONDS (2 endpoints)
+  /v1/accounting/od/i_bonds_interest_rates:
+    get:
+      tags:
+        - "Savings Bonds"
+      summary: "I Bonds Interest Rates"
+      description: |
+        Interest rates for Series I savings bonds including fixed rates, inflation rates, and composite rates.
+      operationId: getIBondsInterestRates
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v2/accounting/od/redemption_tables:
+    get:
+      tags:
+        - "Savings Bonds"
+      summary: "Savings Bonds Redemption Tables"
+      description: |
+        Monthly redemption values, interest earned, and yields for accrual savings bonds.
+      operationId: getSavingsBondsRedemptionTables
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # TRUST FUNDS (2 endpoints)
+  /v2/accounting/od/utf_qtr_yields:
+    get:
+      tags:
+        - "Trust Funds"
+      summary: "Unemployment Trust Fund Quarterly Yields"
+      description: |
+        Quarterly yields earned from Unemployment Trust Funds from 1999 to present.
+      operationId: getUnemploymentTrustFundYields
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /v1/accounting/od/highway_trust_fund:
+    get:
+      tags:
+        - "Trust Funds"
+      summary: "Highway Trust Fund Financial Data"
+      description: |
+        Financial data for the Highway Trust Fund including receipts, expenditures, and fund balance.
+      operationId: getHighwayTrustFundData
+      parameters:
+        - $ref: '#/components/parameters/fields'
+        - $ref: '#/components/parameters/filter'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/format'
+        - $ref: '#/components/parameters/pageNumber'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'

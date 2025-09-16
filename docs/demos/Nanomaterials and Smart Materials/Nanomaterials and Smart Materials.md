@@ -3,17 +3,17 @@
 ```sql
 -- 1. Materials registry
 CREATE TABLE Materials (
-    MaterialID SERIAL PRIMARY KEY,
+    MaterialID INT IDENTITY(1,1) PRIMARY KEY,
     Name VARCHAR(150) NOT NULL,
     Type VARCHAR(100) NOT NULL,        -- e.g., Nanostructured, Smart Polymer
     Composition TEXT,                  -- chemical or structural description
-    DateCreated DATE DEFAULT CURRENT_DATE,
+    DateCreated DATE DEFAULT GETDATE(),
     Status VARCHAR(50) DEFAULT 'Active'
 );
 
 -- 2. Properties catalog
 CREATE TABLE Properties (
-    PropertyID SERIAL PRIMARY KEY,
+    PropertyID INT IDENTITY(1,1) PRIMARY KEY,
     Name VARCHAR(100) NOT NULL,        -- e.g., Tensile Strength, Thermal Conductivity
     Unit VARCHAR(20) NOT NULL,         -- e.g., GPa, W/mK
     Description TEXT
@@ -21,7 +21,7 @@ CREATE TABLE Properties (
 
 -- 3. Researchers
 CREATE TABLE Researchers (
-    ResearcherID SERIAL PRIMARY KEY,
+    ResearcherID INT IDENTITY(1,1) PRIMARY KEY,
     FirstName VARCHAR(100) NOT NULL,
     LastName VARCHAR(100) NOT NULL,
     Affiliation VARCHAR(150),          -- e.g., university or federal lab
@@ -30,7 +30,7 @@ CREATE TABLE Researchers (
 
 -- 4. Experiments
 CREATE TABLE Experiments (
-    ExperimentID SERIAL PRIMARY KEY,
+    ExperimentID INT IDENTITY(1,1) PRIMARY KEY,
     MaterialID INT NOT NULL,
     ResearcherID INT NOT NULL,
     StartDate DATE,
@@ -43,15 +43,16 @@ CREATE TABLE Experiments (
 
 -- 5. Measurements
 CREATE TABLE Measurements (
-    MeasurementID BIGSERIAL PRIMARY KEY,
+    MeasurementID BIGINT IDENTITY(1,1) PRIMARY KEY,
     ExperimentID INT NOT NULL,
     PropertyID INT NOT NULL,
     MeasuredValue NUMERIC(12,6) NOT NULL,
-    MeasurementTimestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    MeasurementTimestamp DATETIME DEFAULT GETDATE(),
     Notes TEXT,
     FOREIGN KEY (ExperimentID) REFERENCES Experiments(ExperimentID),
     FOREIGN KEY (PropertyID) REFERENCES Properties(PropertyID)
 );
+
 ```
 
 ### **Schema Notes**

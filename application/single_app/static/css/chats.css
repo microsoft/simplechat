@@ -1287,3 +1287,160 @@ ol {
   padding: 2px 4px;
   border-radius: 3px;
 }
+
+/* ========================================
+   Markdown Table Styles for Chat Messages
+   ======================================== */
+
+/* Base table styling in message content */
+.message-text table {
+  width: 100%;
+  max-width: 100%;
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+  border-spacing: 0;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background-color: var(--bs-body-bg);
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  font-size: 0.875rem;
+}
+
+.message-text table th,
+.message-text table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #dee2e6;
+  border-right: 1px solid #dee2e6;
+  text-align: left;
+  vertical-align: top;
+  word-wrap: break-word;
+  line-height: 1.4;
+}
+
+/* Remove right border on last cell in each row */
+.message-text table th:last-child,
+.message-text table td:last-child {
+  border-right: none;
+}
+
+/* Header styling */
+.message-text table thead th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #495057;
+  border-bottom: 2px solid #dee2e6;
+}
+
+/* Zebra striping for better readability */
+.message-text table tbody tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Hover effect for table rows */
+.message-text table tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+  transition: background-color 0.15s ease-in-out;
+}
+
+/* Responsive table wrapper for horizontal scrolling on small screens */
+.message-text table {
+  display: block;
+  white-space: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 768px) {
+  .message-text table {
+    display: table;
+    white-space: normal;
+  }
+}
+
+/* Text alignment classes for table cells */
+.message-text table th[align="center"],
+.message-text table td[align="center"] {
+  text-align: center;
+}
+
+.message-text table th[align="right"],
+.message-text table td[align="right"] {
+  text-align: right;
+}
+
+.message-text table th[align="left"],
+.message-text table td[align="left"] {
+  text-align: left;
+}
+
+/* Dark mode table styles */
+[data-bs-theme="dark"] .message-text table {
+  border-color: #495057;
+  background-color: var(--bs-dark);
+  color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .message-text table th,
+[data-bs-theme="dark"] .message-text table td {
+  border-color: #495057;
+}
+
+[data-bs-theme="dark"] .message-text table thead th {
+  background-color: #343a40;
+  color: #e9ecef;
+  border-bottom-color: #495057;
+}
+
+[data-bs-theme="dark"] .message-text table tbody tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-bs-theme="dark"] .message-text table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Code blocks within tables */
+.message-text table code {
+  background-color: rgba(0, 0, 0, 0.1);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.8em;
+}
+
+[data-bs-theme="dark"] .message-text table code {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Links within tables */
+.message-text table a {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.message-text table a:hover {
+  color: #0a58ca;
+  text-decoration: underline;
+}
+
+[data-bs-theme="dark"] .message-text table a {
+  color: #86b7fe;
+}
+
+[data-bs-theme="dark"] .message-text table a:hover {
+  color: #b6d7ff;
+}
+
+/* Table caption styling */
+.message-text table caption {
+  padding: 0.5rem;
+  color: #6c757d;
+  text-align: left;
+  caption-side: bottom;
+  font-size: 0.8em;
+  font-style: italic;
+}
+
+[data-bs-theme="dark"] .message-text table caption {
+  color: #adb5bd;
+}

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleChat Table Support Validation</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .message-text table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .message-text thead {
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+        }
+        .message-text th, .message-text td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+            vertical-align: top;
+        }
+        .message-text th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+        .message-text tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .message-text tbody tr:hover {
+            background-color: #e9ecef;
+            transition: background-color 0.2s ease;
+        }
+        .test-section {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .failure { background-color: #f8d7da; color: #721c24; }
+        pre {
+            background: #fff;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>🧪 SimpleChat Table Support Validation</h1>
+        
+        <div class="test-section">
+            <h3>✅ Test: ASCII Dash Table (RVA Agent Format)</h3>
+            <p>Testing the specific format provided by the user</p>
+            <div class="message-text" id="ascii-result"></div>
+            <div id="ascii-status" class="mt-3 p-3 rounded"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>✅ Test: Complete Processing Pipeline</h3>
+            <p>Testing all conversion functions together</p>
+            <div class="message-text" id="pipeline-result"></div>
+            <div id="pipeline-status" class="mt-3 p-3 rounded"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <script>
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            tables: true
+        });
+
+        function convertASCIIDashTableToMarkdown(content) {
+            const asciiTablePattern = /─{10,}[^\n]*\n[\s\S]*?─{10,}/g;
+            return content.replace(asciiTablePattern, (match) => {
+                try {
+                    const lines = match.split('\n');
+                    const dataLines = [];
+                    let headerLine = null;
+                    
+                    for (const line of lines) {
+                        if (line.includes('─') && line.replace(/[─\s]/g, '').length === 0) {
+                            continue;
+                        }
+                        
+                        if (line.trim() && !line.match(/^─+$/)) {
+                            const cells = line.split(/\s{2,}/)
+                                .map(cell => cell.trim())
+                                .filter(cell => cell !== '');
+                            
+                            if (cells.length > 1) {
+                                if (!headerLine) {
+                                    headerLine = cells;
+                                } else {
+                                    dataLines.push(cells);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (headerLine && dataLines.length > 0) {
+                        let markdownTable = '\n\n';
+                        markdownTable += '| ' + headerLine.join(' | ') + ' |\n';
+                        markdownTable += '|' + headerLine.map(() => '---').join('|') + '|\n';
+                        
+                        for (const row of dataLines) {
+                            while (row.length < headerLine.length) {
+                                row.push('—');
+                            }
+                            markdownTable += '| ' + row.join(' | ') + ' |\n';
+                        }
+                        markdownTable += '\n';
+                        return markdownTable;
+                    }
+                } catch (error) {
+                    console.error('Error converting ASCII dash table:', error);
+                }
+                return match;
+            });
+        }
+
+        // Original RVA Agent content
+        const rvaContent = `Below is the available Q2 2025 comparison for the IRS and CMS:
+
+─────────────────────────────────────────────────────────────────
+ AGENCY          MONTH/YEAR   FORECAST        ACTUAL         VARIANCE  
+─────────────────────────────────────────────────────────────────
+ IRS             Apr 2025     $4.02B          $3.86B         -$0.16B   
+ IRS             May 2025     $4.13B          $4.23B         +$0.11B   
+ IRS             Jun 2025     $4.14B          $3.99B         -$0.14B   
+ CMS             Apr–Jun 2025 —               —              —          
+─────────────────────────────────────────────────────────────────
+
+This data shows the quarterly comparison.`;
+
+        // Test ASCII conversion
+        const convertedContent = convertASCIIDashTableToMarkdown(rvaContent);
+        const htmlContent = DOMPurify.sanitize(marked.parse(convertedContent));
+        document.getElementById('ascii-result').innerHTML = htmlContent;
+
+        // Check results
+        const table = document.getElementById('ascii-result').querySelector('table');
+        if (table) {
+            const rows = table.querySelectorAll('tr').length;
+            const cols = table.querySelector('tr').querySelectorAll('th, td').length;
+            document.getElementById('ascii-status').innerHTML = `
+                <strong>✅ SUCCESS</strong><br>
+                Generated HTML table with ${rows} rows and ${cols} columns<br>
+                ASCII dash table successfully converted to markdown format
+            `;
+            document.getElementById('ascii-status').className = 'mt-3 p-3 rounded success';
+            console.log('✅ ASCII dash table conversion successful');
+        } else {
+            document.getElementById('ascii-status').innerHTML = `
+                <strong>❌ FAILED</strong><br>
+                No HTML table was generated from the ASCII dash table
+            `;
+            document.getElementById('ascii-status').className = 'mt-3 p-3 rounded failure';
+            console.log('❌ ASCII dash table conversion failed');
+        }
+
+        // Test complete pipeline with mixed content
+        const mixedContent = `Here are multiple data formats:
+
+Regular markdown table:
+| Product | Price |
+|---------|-------|
+| Coffee | $4.50 |
+
+ASCII dash table from RVA Agent:
+─────────────────────────────────────────
+ ITEM            STOCK        COST      
+─────────────────────────────────────────
+ Laptops         25           $899.99   
+ Monitors        15           $299.99   
+─────────────────────────────────────────
+
+Both should render as proper HTML tables.`;
+
+        const pipelineHtml = DOMPurify.sanitize(marked.parse(convertASCIIDashTableToMarkdown(mixedContent)));
+        document.getElementById('pipeline-result').innerHTML = pipelineHtml;
+
+        const pipelineTables = document.getElementById('pipeline-result').querySelectorAll('table');
+        if (pipelineTables.length >= 2) {
+            document.getElementById('pipeline-status').innerHTML = `
+                <strong>✅ PIPELINE SUCCESS</strong><br>
+                Found ${pipelineTables.length} HTML tables in mixed content<br>
+                Both markdown and ASCII dash tables rendered correctly
+            `;
+            document.getElementById('pipeline-status').className = 'mt-3 p-3 rounded success';
+            console.log('✅ Complete pipeline test successful');
+        } else {
+            document.getElementById('pipeline-status').innerHTML = `
+                <strong>❌ PIPELINE INCOMPLETE</strong><br>
+                Only found ${pipelineTables.length} HTML tables (expected 2)
+            `;
+            document.getElementById('pipeline-status').className = 'mt-3 p-3 rounded failure';
+            console.log('❌ Complete pipeline test failed');
+        }
+
+        console.log('🧪 Table support validation completed');
+    </script>
+</body>
+</html>

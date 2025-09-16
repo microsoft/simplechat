@@ -17,6 +17,293 @@ import { escapeHtml, isColorLight } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
 
+/**
+ * Unwraps markdown tables that are mistakenly wrapped in code blocks.
+ * This fixes the issue where AI responses contain tables in code blocks,
+ * preventing them from being rendered as proper HTML tables.
+ * 
+ * @param {string} content - The markdown content to process
+ * @returns {string} - Content with tables unwrapped from code blocks
+ */
+function unwrapTablesFromCodeBlocks(content) {
+  // Pattern to match code blocks that contain markdown tables
+  const codeBlockTablePattern = /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g;
+  
+  return content.replace(codeBlockTablePattern, (match, tableContent) => {
+    // Check if the content inside the code block looks like a markdown table
+    const lines = tableContent.trim().split('\n');
+    
+    // A markdown table should have:
+    // 1. At least 2 lines
+    // 2. Lines containing pipe characters (|)
+    // 3. Potentially a separator line with dashes and pipes
+    if (lines.length >= 2) {
+      const hasTableStructure = lines.every(line => line.includes('|'));
+      const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
+      
+      // If it looks like a table, unwrap it from the code block
+      if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
+        console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
+        return '\n\n' + tableContent.trim() + '\n\n';
+      }
+    }
+    
+    // If it doesn't look like a table, keep it as a code block
+    return match;
+  });
+}
+
+/**
+ * Converts Unicode box-drawing tables to markdown table format.
+ * This handles the case where AI agents generate ASCII art tables using
+ * Unicode box-drawing characters instead of markdown table syntax.
+ * 
+ * @param {string} content - The content containing Unicode tables
+ * @returns {string} - Content with Unicode tables converted to markdown
+ */
+function convertUnicodeTableToMarkdown(content) {
+  // Pattern to match Unicode box-drawing tables
+  const unicodeTablePattern = /┌[─┬]+┐\n(?:│[^│\n]*│[^│\n]*│[^\n]*\n)+├[─┼]+┤\n(?:│[^│\n]*│[^│\n]*│[^\n]*\n)+└[─┴]+┘/g;
+  
+  return content.replace(unicodeTablePattern, (match) => {
+    console.log('🔧 Converting Unicode table to markdown format');
+    
+    try {
+      const lines = match.split('\n');
+      const dataLines = [];
+      let headerLine = null;
+      
+      // Extract data from Unicode table
+      for (const line of lines) {
+        if (line.includes('│') && !line.includes('┌') && !line.includes('├') && !line.includes('└')) {
+          // Remove Unicode characters and extract cell data
+          const cells = line.split('│')
+            .filter(cell => cell.trim() !== '')
+            .map(cell => cell.trim());
+          
+          if (cells.length > 0) {
+            if (!headerLine) {
+              headerLine = cells;
+            } else {
+              dataLines.push(cells);
+            }
+          }
+        }
+      }
+      
+      if (headerLine && dataLines.length > 0) {
+        // Build markdown table
+        let markdownTable = '\n\n';
+        
+        // Header row
+        markdownTable += '| ' + headerLine.join(' | ') + ' |\n';
+        
+        // Separator row
+        markdownTable += '|' + headerLine.map(() => '---').join('|') + '|\n';
+        
+        // Data rows (limit to first 10 for display)
+        const displayRows = dataLines.slice(0, 10);
+        for (const row of displayRows) {
+          markdownTable += '| ' + row.join(' | ') + ' |\n';
+        }
+        
+        if (dataLines.length > 10) {
+          markdownTable += '\n*Showing first 10 of ' + dataLines.length + ' total rows*\n';
+        }
+        
+        markdownTable += '\n';
+        
+        return markdownTable;
+      }
+    } catch (error) {
+      console.error('Error converting Unicode table:', error);
+    }
+    
+    // If conversion fails, return original content
+    return match;
+  });
+}
+
+/**
+ * Converts pipe-separated values (PSV) in code blocks to markdown table format.
+ * This handles cases where AI agents generate tabular data as pipe-separated
+ * format inside code blocks instead of proper markdown tables.
+ * 
+ * @param {string} content - The content containing PSV code blocks
+ * @returns {string} - Content with PSV converted to markdown tables
+ */
+function convertPSVCodeBlockToMarkdown(content) {
+  // Pattern to match code blocks that contain pipe-separated data
+  const psvCodeBlockPattern = /```(?:\w+)?\n([^`]+?)\n```/g;
+  
+  return content.replace(psvCodeBlockPattern, (match, codeContent) => {
+    const lines = codeContent.trim().split('\n');
+    
+    // Check if this looks like pipe-separated tabular data
+    if (lines.length >= 2) {
+      const firstLine = lines[0];
+      const hasConsistentPipes = lines.every(line => {
+        const pipeCount = (line.match(/\|/g) || []).length;
+        const firstLinePipeCount = (firstLine.match(/\|/g) || []).length;
+        return pipeCount === firstLinePipeCount && pipeCount > 0;
+      });
+      
+      if (hasConsistentPipes) {
+        console.log('🔧 Converting PSV code block to markdown table');
+        
+        try {
+          // Extract header and data rows
+          const headerRow = lines[0].split('|').map(cell => cell.trim());
+          const dataRows = lines.slice(1).map(line => 
+            line.split('|').map(cell => cell.trim())
+          );
+          
+          // Build markdown table
+          let markdownTable = '\n\n';
+          markdownTable += '| ' + headerRow.join(' | ') + ' |\n';
+          markdownTable += '|' + headerRow.map(() => '---').join('|') + '|\n';
+          
+          // Add data rows (limit to first 50 for readability)
+          const displayRows = dataRows.slice(0, 50);
+          for (const row of displayRows) {
+            markdownTable += '| ' + row.join(' | ') + ' |\n';
+          }
+          
+          if (dataRows.length > 50) {
+            markdownTable += '\n*Showing first 50 of ' + dataRows.length + ' total rows*\n';
+          }
+          
+          markdownTable += '\n';
+          
+          return markdownTable;
+        } catch (error) {
+          console.error('Error converting PSV to markdown:', error);
+        }
+      }
+    }
+    
+    // If it doesn't look like PSV data, keep as code block
+    return match;
+  });
+}
+
+/**
+ * Converts ASCII dash tables to markdown table format.
+ * This handles cases where AI agents generate tables using em-dash characters
+ * and spaces for table formatting instead of proper markdown tables.
+ * 
+ * @param {string} content - The content containing ASCII dash tables
+ * @returns {string} - Content with ASCII tables converted to markdown
+ */
+function convertASCIIDashTableToMarkdown(content) {
+  console.log('🔧 Converting ASCII dash tables to markdown format');
+  
+  try {
+    const lines = content.split('\n');
+    const dashLineIndices = [];
+    
+    // Find all lines that are primarily dash characters (table boundaries)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('─') && line.replace(/[─\s]/g, '').length === 0 && line.length > 10) {
+        dashLineIndices.push(i);
+      }
+    }
+    
+    console.log('Found dash line boundaries at:', dashLineIndices);
+    
+    // Process each complete table (from first dash to last dash in a sequence)
+    let processedContent = content;
+    
+    if (dashLineIndices.length >= 2) {
+      // Process tables in reverse order to avoid index shifting issues
+      let i = dashLineIndices.length - 1;
+      while (i >= 0) {
+        // Find the start of this table group
+        let tableStart = i;
+        while (tableStart > 0 && 
+               dashLineIndices[tableStart] - dashLineIndices[tableStart - 1] <= 10) {
+          tableStart--;
+        }
+        
+        const firstDashIdx = dashLineIndices[tableStart];
+        const lastDashIdx = dashLineIndices[i];
+        
+        console.log(`Processing complete ASCII table from line ${firstDashIdx} to ${lastDashIdx}`);
+        
+        // Extract header and data lines
+        const headerLine = lines[firstDashIdx + 1]; // Line immediately after first dash
+        
+        if (headerLine && headerLine.trim()) {
+          // Process header
+          const headerCells = headerLine.split(/\s{2,}/)
+            .map(cell => cell.trim())
+            .filter(cell => cell !== '');
+          
+          // Process data rows (skip intermediate dash lines)
+          const processedDataRows = [];
+          for (let lineIdx = firstDashIdx + 2; lineIdx < lastDashIdx; lineIdx++) {
+            const line = lines[lineIdx];
+            // Skip dash separator lines
+            if (line.includes('─') && line.replace(/[─\s]/g, '').length === 0) {
+              continue;
+            }
+            
+            if (line.trim()) {
+              const dataCells = line.split(/\s{2,}/)
+                .map(cell => cell.trim())
+                .filter(cell => cell !== '');
+              
+              if (dataCells.length > 1) {
+                processedDataRows.push(dataCells);
+              }
+            }
+          }
+          
+          console.log('Processed header:', headerCells);
+          console.log('Processed data rows:', processedDataRows);
+          
+          if (headerCells.length > 1 && processedDataRows.length > 0) {
+            console.log(`✅ Converting ASCII table: ${headerCells.length} columns, ${processedDataRows.length} rows`);
+            
+            // Build markdown table
+            let markdownTable = '\n\n';
+            markdownTable += '| ' + headerCells.join(' | ') + ' |\n';
+            markdownTable += '|' + headerCells.map(() => '---').join('|') + '|\n';
+            
+            for (const row of processedDataRows) {
+              // Ensure we have the same number of columns as header
+              while (row.length < headerCells.length) {
+                row.push('—');
+              }
+              // Trim extra columns if any
+              const trimmedRow = row.slice(0, headerCells.length);
+              markdownTable += '| ' + trimmedRow.join(' | ') + ' |\n';
+            }
+            markdownTable += '\n';
+            
+            // Replace the original table section with markdown
+            const tableSection = lines.slice(firstDashIdx, lastDashIdx + 1);
+            const originalTableText = tableSection.join('\n');
+            processedContent = processedContent.replace(originalTableText, markdownTable);
+            
+            console.log('✅ ASCII table successfully converted to markdown');
+          }
+        }
+        
+        // Move to the next table group
+        i = tableStart - 1;
+      }
+    }
+    
+    return processedContent;
+    
+  } catch (error) {
+    console.error('Error converting ASCII dash table:', error);
+    return content;
+  }
+}
+
 export const userInput = document.getElementById("user-input");
 const sendBtn = document.getElementById("send-btn");
 const promptSelectionContainer = document.getElementById(
@@ -264,11 +551,15 @@ export function appendMessage(
       senderLabel = "AI";
     }
 
-    // Parse content
+    // Parse content with comprehensive table processing
     let cleaned = messageContent.trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
     const withInlineCitations = parseCitations(cleaned);
-    const htmlContent = DOMPurify.sanitize(marked.parse(withInlineCitations));
+    const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
+    const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
+    const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
+    const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
+    const htmlContent = DOMPurify.sanitize(marked.parse(withASCIITables));
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
     // --- Footer Content (Copy, Feedback, Citations) ---

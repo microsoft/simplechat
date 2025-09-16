@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table Processing Analysis</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Copy table styles from chats.css */
+        .message-text table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .message-text thead {
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+        }
+        .message-text th, .message-text td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+            vertical-align: top;
+        }
+        .message-text th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+        .message-text tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .message-text tbody tr:hover {
+            background-color: #e9ecef;
+            transition: background-color 0.2s ease;
+        }
+        .test-case {
+            border: 1px solid #ddd;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .input-content {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            margin: 10px 0;
+        }
+        .result-good { border-left: 5px solid #28a745; }
+        .result-bad { border-left: 5px solid #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Table Processing Analysis</h1>
+        <p class="lead">Analyzing how different markdown formats are processed to identify AI response issues.</p>
+
+        <div class="test-case" id="test-0">
+            <h3>Raw Table Markdown</h3>
+            <p><strong>Expected:</strong> Should render as HTML table</p>
+            
+            <h5>Input:</h5>
+            <div class="input-content">| License Type | Description | Price |
+|--------------|-------------|-------|
+| Standard     | Basic features | $10  |
+| Premium      | Advanced features | $25 |</div>
+            
+            <h5>Rendered Output:</h5>
+            <div class="message-text" id="output-0"></div>
+        </div>
+
+        <div class="test-case" id="test-1">
+            <h3>Table in Code Block</h3>
+            <p><strong>Expected:</strong> Should render as code block (NOT table)</p>
+            
+            <h5>Input:</h5>
+            <div class="input-content">```
+| License Type | Description | Price |
+|--------------|-------------|-------|
+| Standard     | Basic features | $10  |
+| Premium      | Advanced features | $25 |
+```</div>
+            
+            <h5>Rendered Output:</h5>
+            <div class="message-text" id="output-1"></div>
+        </div>
+
+        <div class="test-case" id="test-2">
+            <h3>Mixed Content with Table</h3>
+            <p><strong>Expected:</strong> Should render text + HTML table + text</p>
+            
+            <h5>Input:</h5>
+            <div class="input-content">Here are the license options:
+
+| License Type | Description | Price |
+|--------------|-------------|-------|
+| Standard     | Basic features | $10  |
+| Premium      | Advanced features | $25 |
+
+Choose the one that fits your needs.</div>
+            
+            <h5>Rendered Output:</h5>
+            <div class="message-text" id="output-2"></div>
+        </div>
+
+        <div class="test-case" id="test-3">
+            <h3>AI Response Simulation - Wrapped in Code</h3>
+            <p><strong>Expected:</strong> Text + code block (table won't render)</p>
+            
+            <h5>Input:</h5>
+            <div class="input-content">Here's the information you requested:
+
+```
+| License Type | Description | Price |
+|--------------|-------------|-------|
+| Standard     | Basic features | $10  |
+| Premium      | Advanced features | $25 |
+```
+
+This format prevents table rendering.</div>
+            
+            <h5>Rendered Output:</h5>
+            <div class="message-text" id="output-3"></div>
+        </div>
+
+        <div class="test-case" id="test-4">
+            <h3>AI Response Simulation - Proper Format</h3>
+            <p><strong>Expected:</strong> Text + HTML table + text</p>
+            
+            <h5>Input:</h5>
+            <div class="input-content">Here's the information you requested:
+
+| License Type | Description | Price |
+|--------------|-------------|-------|
+| Standard     | Basic features | $10  |
+| Premium      | Advanced features | $25 |
+
+This format allows table rendering.</div>
+            
+            <h5>Rendered Output:</h5>
+            <div class="message-text" id="output-4"></div>
+        </div>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <script>
+        // Configure marked for GFM (should support tables by default)
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            tables: true
+        });
+
+        const testCases = [{"name": "Raw Table Markdown", "content": "| License Type | Description | Price |\n|--------------|-------------|-------|\n| Standard     | Basic features | $10  |\n| Premium      | Advanced features | $25 |", "expected": "Should render as HTML table"}, {"name": "Table in Code Block", "content": "```\n| License Type | Description | Price |\n|--------------|-------------|-------|\n| Standard     | Basic features | $10  |\n| Premium      | Advanced features | $25 |\n```", "expected": "Should render as code block (NOT table)"}, {"name": "Mixed Content with Table", "content": "Here are the license options:\n\n| License Type | Description | Price |\n|--------------|-------------|-------|\n| Standard     | Basic features | $10  |\n| Premium      | Advanced features | $25 |\n\nChoose the one that fits your needs.", "expected": "Should render text + HTML table + text"}, {"name": "AI Response Simulation - Wrapped in Code", "content": "Here"s the information you requested:\n\n```\n| License Type | Description | Price |\n|--------------|-------------|-------|\n| Standard     | Basic features | $10  |\n| Premium      | Advanced features | $25 |\n```\n\nThis format prevents table rendering.", "expected": "Text + code block (table won"t render)"}, {"name": "AI Response Simulation - Proper Format", "content": "Here"s the information you requested:\n\n| License Type | Description | Price |\n|--------------|-------------|-------|\n| Standard     | Basic features | $10  |\n| Premium      | Advanced features | $25 |\n\nThis format allows table rendering.", "expected": "Text + HTML table + text"}];
+
+        // Process each test case
+        testCases.forEach((testCase, index) => {
+            const outputDiv = document.getElementById(`output-${index}`);
+            const testDiv = document.getElementById(`test-${index}`);
+            
+            try {
+                const htmlContent = DOMPurify.sanitize(marked.parse(testCase.content));
+                outputDiv.innerHTML = htmlContent;
+                
+                // Check if table was rendered
+                const hasTable = outputDiv.querySelector('table');
+                const hasCodeBlock = outputDiv.querySelector('pre code');
+                
+                if (hasTable && !hasCodeBlock) {
+                    testDiv.classList.add('result-good');
+                    console.log(`✅ ${testCase.name}: Table rendered correctly`);
+                } else if (hasCodeBlock && testCase.name.includes('Code Block')) {
+                    testDiv.classList.add('result-good');
+                    console.log(`✅ ${testCase.name}: Code block rendered correctly (expected)`);
+                } else if (hasCodeBlock && testCase.content.includes('```')) {
+                    testDiv.classList.add('result-bad');
+                    console.log(`❌ ${testCase.name}: Table in code block (prevents table rendering)`);
+                } else {
+                    testDiv.classList.add('result-bad');
+                    console.log(`❌ ${testCase.name}: Unexpected result`);
+                }
+                
+                console.log(`${testCase.name}:`, {
+                    hasTable: !!hasTable,
+                    hasCodeBlock: !!hasCodeBlock,
+                    html: htmlContent.substring(0, 200) + '...'
+                });
+                
+            } catch (error) {
+                console.error(`Error processing ${testCase.name}:`, error);
+                outputDiv.innerHTML = '<div class="alert alert-danger">Error processing content</div>';
+                testDiv.classList.add('result-bad');
+            }
+        });
+    </script>
+</body>
+</html>

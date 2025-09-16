@@ -142,6 +142,37 @@ class OpenApiPlugin(BasePlugin):
         except Exception as e:
             raise ValueError(f"Error loading OpenAPI specification: {e}")
 
+    def _resolve_ref(self, ref_obj: Any) -> Any:
+        """Resolve $ref references in OpenAPI specification objects."""
+        if isinstance(ref_obj, dict) and "$ref" in ref_obj:
+            ref_path = ref_obj["$ref"]
+            if ref_path.startswith("#/"):
+                # Handle internal references like #/components/parameters/fields
+                path_parts = ref_path[2:].split("/")  # Remove #/ prefix
+                current = self.openapi
+                try:
+                    for part in path_parts:
+                        current = current[part]
+                    return current
+                except (KeyError, TypeError):
+                    logging.warning(f"[OpenAPI Plugin] Failed to resolve reference: {ref_path}")
+                    return ref_obj
+            else:
+                logging.warning(f"[OpenAPI Plugin] External references not supported: {ref_path}")
+                return ref_obj
+        elif isinstance(ref_obj, list):
+            # Recursively resolve references in lists
+            return [self._resolve_ref(item) for item in ref_obj]
+        elif isinstance(ref_obj, dict):
+            # Recursively resolve references in dictionaries
+            resolved = {}
+            for key, value in ref_obj.items():
+                resolved[key] = self._resolve_ref(value)
+            return resolved
+        else:
+            # Return non-dict/list objects as-is
+            return ref_obj
+
     @property
     def display_name(self) -> str:
         api_title = self.openapi.get("info", {}).get("title", "Unknown API")
@@ -168,8 +199,10 @@ class OpenApiPlugin(BasePlugin):
                 op_id = op.get("operationId", f"{method}_{path.replace('/', '_')}")
                 description = op.get("description", "")
                 parameters = []
-                # Path/query parameters
-                for param in op.get("parameters", []):
+                # Path/query parameters - resolve $ref references first
+                raw_parameters = op.get("parameters", [])
+                resolved_parameters = self._resolve_ref(raw_parameters)
+                for param in resolved_parameters:
                     parameters.append({
                         "name": param.get("name"),
                         "type": param.get("schema", {}).get("type", "string"),
@@ -309,8 +342,9 @@ class OpenApiPlugin(BasePlugin):
                 
                 # Create a dynamic function for this operation
                 def create_operation_function(op_id, op_path, op_method, op_data):
-                    # Extract parameters from OpenAPI spec
-                    parameters = op_data.get("parameters", [])
+                    # Extract parameters from OpenAPI spec and resolve $ref references
+                    raw_parameters = op_data.get("parameters", [])
+                    parameters = self._resolve_ref(raw_parameters)
                     
                     # Create function signature based on OpenAPI parameters
                     required_params = []
@@ -685,7 +719,9 @@ class OpenApiPlugin(BasePlugin):
             query_params = {}
             
             # Extract parameters from operation definition
-            parameters = operation_data.get("parameters", [])
+            raw_parameters = operation_data.get("parameters", [])
+            # Resolve $ref references in parameters
+            parameters = self._resolve_ref(raw_parameters)
             
             debug_print(f"===== STARTING {operation_id} CALL =====")
             debug_print(f"Received kwargs: {kwargs}")
@@ -795,20 +831,35 @@ class OpenApiPlugin(BasePlugin):
                 
                 if param_value is not None:
                     if param_in == "path":
-                        # Replace path parameter placeholders
-                        final_path = final_path.replace(f"{{{param_name}}}", str(param_value))
-                        path_params[param_name] = param_value
-                        debug_print(f"Set path parameter '{param_name}'={param_value}")
-                        logging.info(f"[OpenAPI Plugin] Set path parameter {param_name}={param_value}")
+                        # Replace path parameter placeholders - add safety checks for None values
+                        if final_path is not None and param_name is not None:
+                            final_path = final_path.replace(f"{{{param_name}}}", str(param_value))
+                            path_params[param_name] = param_value
+                            debug_print(f"Set path parameter '{param_name}'={param_value}")
+                            logging.info(f"[OpenAPI Plugin] Set path parameter {param_name}={param_value}")
+                        else:
+                            debug_print(f"SAFETY CHECK: final_path={final_path}, param_name={param_name}")
+                            logging.warning(f"[OpenAPI Plugin] Safety check failed: final_path={final_path}, param_name={param_name}")
                     elif param_in == "query":
-                        # Add to query parameters
-                        query_params[param_name] = param_value
-                        debug_print(f"Set query parameter '{param_name}'={param_value}")
-                        logging.info(f"[OpenAPI Plugin] Set query parameter {param_name}={param_value}")
+                        # Add to query parameters - add safety check for param_name
+                        if param_name is not None:
+                            query_params[param_name] = param_value
+                            debug_print(f"Set query parameter '{param_name}'={param_value}")
+                            logging.info(f"[OpenAPI Plugin] Set query parameter {param_name}={param_value}")
+                        else:
+                            debug_print(f"SAFETY CHECK: param_name is None for query parameter")
+                            logging.warning(f"[OpenAPI Plugin] Safety check failed: param_name is None for query parameter")
                 else:
                     debug_print(f"Parameter '{param_name}' has no value - skipping")
             
-            # Build the full URL
+            # Build the full URL - add safety checks for None values
+            if self.base_url is None:
+                raise ValueError("base_url is None - cannot construct API URL")
+            if final_path is None:
+                final_path = ""  # Use empty string if path is None
+                debug_print("WARNING: final_path was None, using empty string")
+                logging.warning("[OpenAPI Plugin] final_path was None, using empty string")
+            
             full_url = f"{self.base_url}{final_path}"
             debug_print(f"Base URL + path: {full_url}")
             debug_print(f"Query params before auth: {query_params}")
