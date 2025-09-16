@@ -1,6 +1,6 @@
 # External Health Check Duplication Fix
 
-**Fixed in version: 0.229.015**
+**Fixed in version:** 0.229.019
 
 ## Issue Description
 
