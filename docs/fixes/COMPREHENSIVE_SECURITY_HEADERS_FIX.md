@@ -1,7 +1,8 @@
 # COMPREHENSIVE_SECURITY_HEADERS_FIX
 
+**Fixed in version:** 0.229.019
+
 ## Overview
-**Fixed/Implemented in version: 0.229.019**
 
 This fix addresses security vulnerabilities related to missing or incomplete security headers, specifically resolving the "missing X-Content-Type-Options header" security warning that could leave the application vulnerable to MIME sniffing attacks.
 

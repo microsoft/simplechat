@@ -1,7 +1,6 @@
 # Document Intelligence Test Connection Button Fix
 
-**Version:** 0.229.018  
-**Fixed in version:** **0.229.018**
+**Fixed in version:** 0.229.019
 
 ## Issue Description
 

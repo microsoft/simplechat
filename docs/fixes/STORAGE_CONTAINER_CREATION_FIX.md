@@ -1,6 +1,6 @@
 # Storage Account Container Creation Fix
 
-**Fixed in version: 0.229.016**
+**Fixed in version:** 0.229.019
 
 ## Issue Description
 
