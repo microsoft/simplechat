@@ -189,8 +189,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     <span id="user-role" class="fw-bold"></span>
   </div>
 
-  <!-- Nav Tabs -->
-  <ul class="nav nav-tabs" id="groupWorkspaceTab" role="tablist">
+  <!-- Nav Tabs - Hide when left nav is enabled -->
+  <ul class="nav nav-tabs{% if nav_layout == 'left' %} d-none{% endif %}" id="groupWorkspaceTab" role="tablist">
     <li class="nav-item" role="presentation">
       <button
         class="nav-link active"
@@ -822,6 +822,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 <!-- Include group document sharing JS -->
 <script src="/static/js/workspace/group-documents-sharing.js"></script>
+<script src="/static/js/workspace_sidebar_nav.js"></script>
 
 <!-- Pass backend flags to JS -->
 <script>

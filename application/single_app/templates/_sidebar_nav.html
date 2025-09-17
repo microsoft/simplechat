@@ -73,16 +73,70 @@
         <ul class="nav flex-column mb-2">
           {% if app_settings.enable_user_workspace %}
           <li class="nav-item">
+            {% if request.endpoint == 'workspace' %}
+            <!-- Personal workspace with expandable sub-menu when on workspace page -->
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="personal-workspace-submenu">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
+              <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="personal-workspace-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Documents</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
+                </a>
+              </li>
+              {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab">
+                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
+                </a>
+              </li>
+              {% endif %}
+            </ul>
+            {% else %}
+            <!-- Regular Personal workspace link when not on workspace page -->
             <a class="nav-link d-flex align-items-center" href="{{ url_for('workspace') }}">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
             </a>
+            {% endif %}
           </li>
           {% endif %}
           {% if app_settings.enable_group_workspaces %}
           <li class="nav-item">
+            {% if request.endpoint == 'group_workspaces' %}
+            <!-- Group workspace with expandable sub-menu when on group workspace page -->
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="group-workspace-submenu">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
+              <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="group-workspace-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Documents</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
+                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
+                </a>
+              </li>
+            </ul>
+            {% else %}
+            <!-- Regular Groups workspace link when not on group workspace page -->
             <a class="nav-link d-flex align-items-center" href="{{ url_for('group_workspaces') }}">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
             </a>
+            {% endif %}
           </li>
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
@@ -142,9 +196,24 @@
     <!-- Admin Settings Section - Only show when on admin settings page and user is admin -->
     {% if request.endpoint == 'admin_settings' and 'Admin' in session['user']['roles'] %}
     <div class="overflow-auto">
-      <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
-        <span class="nav-text">Admin Settings</span>
-        <i id="admin-settings-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div class="d-flex align-items-center">
+          <span class="nav-text">Admin Settings</span>
+          <i id="admin-settings-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <button id="admin-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Admin Settings">
+          <i class="bi bi-search" style="font-size: 0.9em;"></i>
+        </button>
+      </div>
+      
+      <!-- Admin Search Field -->
+      <div id="admin-search-container" class="px-3 mb-2" style="display: none;">
+        <div class="input-group input-group-sm">
+          <input type="text" id="admin-search-input" class="form-control form-control-sm" placeholder="Search admin settings..." style="font-size: 0.85em;">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="admin-search-clear">
+            <i class="bi bi-x" style="font-size: 0.8em;"></i>
+          </button>
+        </div>
       </div>
       <div id="admin-settings-section">
         <ul class="nav flex-column mb-2">

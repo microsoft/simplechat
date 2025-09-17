@@ -12,12 +12,63 @@ function initAdminSidebarNav() {
     const adminToggle = document.getElementById('admin-settings-toggle');
     const adminSection = document.getElementById('admin-settings-section');
     const adminCaret = document.getElementById('admin-settings-caret');
+    const adminSearchBtn = document.getElementById('admin-search-btn');
+    const adminSearchContainer = document.getElementById('admin-search-container');
+    const adminSearchInput = document.getElementById('admin-search-input');
+    const adminSearchClear = document.getElementById('admin-search-clear');
     
     if (adminToggle) {
-        adminToggle.addEventListener('click', function() {
+        adminToggle.addEventListener('click', function(e) {
+            // Don't toggle if clicking on search button
+            if (e.target.closest('#admin-search-btn')) {
+                return;
+            }
+            
             const isCollapsed = adminSection.style.display === 'none';
             adminSection.style.display = isCollapsed ? 'block' : 'none';
             adminCaret.classList.toggle('rotate-180', !isCollapsed);
+        });
+    }
+    
+    // Set up admin search functionality
+    if (adminSearchBtn) {
+        adminSearchBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const isVisible = adminSearchContainer.style.display !== 'none';
+            adminSearchContainer.style.display = isVisible ? 'none' : 'block';
+            
+            if (!isVisible) {
+                // Ensure admin section is expanded when search is opened
+                adminSection.style.display = 'block';
+                adminCaret.classList.add('rotate-180');
+                
+                // Focus on search input
+                setTimeout(() => adminSearchInput.focus(), 100);
+            } else {
+                // Clear search when hiding
+                clearAdminSearch();
+            }
+        });
+    }
+    
+    // Set up search input functionality
+    if (adminSearchInput) {
+        adminSearchInput.addEventListener('input', function() {
+            filterAdminSections(this.value);
+        });
+        
+        adminSearchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                clearAdminSearch();
+                adminSearchContainer.style.display = 'none';
+            }
+        });
+    }
+    
+    // Set up clear button
+    if (adminSearchClear) {
+        adminSearchClear.addEventListener('click', function() {
+            clearAdminSearch();
         });
     }
     
@@ -193,5 +244,150 @@ style.textContent = `
     .admin-nav-section:hover {
         background-color: rgba(0, 0, 0, 0.05);
     }
+    .admin-search-highlight {
+        background-color: rgba(255, 193, 7, 0.3) !important;
+        font-weight: 500;
+    }
+    .admin-search-hidden {
+        display: none !important;
+    }
 `;
 document.head.appendChild(style);
+
+// Admin search functionality
+function filterAdminSections(searchTerm) {
+    const normalizedSearch = searchTerm.toLowerCase().trim();
+    
+    if (!normalizedSearch) {
+        // Show all sections if search is empty
+        showAllAdminSections();
+        return;
+    }
+    
+    let hasVisibleSections = false;
+    
+    // Get all admin nav items
+    const allTabs = document.querySelectorAll('.admin-nav-tab');
+    const allSections = document.querySelectorAll('.admin-nav-section');
+    
+    // Hide all sections and tabs initially
+    allTabs.forEach(tab => {
+        tab.closest('li').classList.add('admin-search-hidden');
+        // Hide submenu
+        const submenu = document.getElementById(tab.getAttribute('data-tab') + '-submenu');
+        if (submenu) {
+            submenu.style.display = 'none';
+        }
+    });
+    
+    allSections.forEach(section => {
+        section.closest('li').classList.add('admin-search-hidden');
+        section.classList.remove('admin-search-highlight');
+    });
+    
+    // Search through tabs and sections
+    allTabs.forEach(tab => {
+        const tabText = tab.querySelector('.nav-text').textContent.toLowerCase();
+        const tabId = tab.getAttribute('data-tab');
+        let tabHasMatch = false;
+        
+        // Check if tab name matches
+        if (tabText.includes(normalizedSearch)) {
+            tab.closest('li').classList.remove('admin-search-hidden');
+            tab.classList.add('admin-search-highlight');
+            tabHasMatch = true;
+            hasVisibleSections = true;
+            
+            // Show submenu for matched tab
+            const submenu = document.getElementById(tabId + '-submenu');
+            if (submenu) {
+                submenu.style.display = 'block';
+                // Show all sections under this tab
+                submenu.querySelectorAll('.admin-nav-section').forEach(section => {
+                    section.closest('li').classList.remove('admin-search-hidden');
+                });
+            }
+        }
+        
+        // Check sections under this tab
+        const sections = document.querySelectorAll(`.admin-nav-section[data-tab="${tabId}"]`);
+        let sectionHasMatch = false;
+        
+        sections.forEach(section => {
+            const sectionText = section.querySelector('.nav-text').textContent.toLowerCase();
+            
+            if (sectionText.includes(normalizedSearch)) {
+                // Show the section
+                section.closest('li').classList.remove('admin-search-hidden');
+                section.classList.add('admin-search-highlight');
+                sectionHasMatch = true;
+                hasVisibleSections = true;
+                
+                // Show the parent tab
+                tab.closest('li').classList.remove('admin-search-hidden');
+                
+                // Show the submenu
+                const submenu = document.getElementById(tabId + '-submenu');
+                if (submenu) {
+                    submenu.style.display = 'block';
+                }
+            }
+        });
+        
+        // If tab has matching sections but doesn't match itself, remove tab highlight
+        if (sectionHasMatch && !tabHasMatch) {
+            tab.classList.remove('admin-search-highlight');
+        }
+    });
+    
+    // Show "No results" message if nothing found
+    showSearchResults(hasVisibleSections, normalizedSearch);
+}
+
+function showAllAdminSections() {
+    // Remove all search-related classes and show all items
+    document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(item => {
+        item.closest('li').classList.remove('admin-search-hidden');
+        item.classList.remove('admin-search-highlight');
+    });
+    
+    // Hide all submenus (normal collapsed state)
+    document.querySelectorAll('[id$="-submenu"]').forEach(submenu => {
+        submenu.style.display = 'none';
+    });
+    
+    // Remove search results message
+    hideSearchResults();
+}
+
+function clearAdminSearch() {
+    const searchInput = document.getElementById('admin-search-input');
+    if (searchInput) {
+        searchInput.value = '';
+        showAllAdminSections();
+    }
+}
+
+function showSearchResults(hasResults, searchTerm) {
+    // Remove existing search results message
+    hideSearchResults();
+    
+    if (!hasResults && searchTerm) {
+        const adminSection = document.getElementById('admin-settings-section');
+        const noResultsDiv = document.createElement('div');
+        noResultsDiv.id = 'admin-search-no-results';
+        noResultsDiv.className = 'px-3 py-2 text-muted text-center small';
+        noResultsDiv.innerHTML = `
+            <i class="bi bi-search me-1"></i>
+            No settings found for "${searchTerm}"
+        `;
+        adminSection.appendChild(noResultsDiv);
+    }
+}
+
+function hideSearchResults() {
+    const noResults = document.getElementById('admin-search-no-results');
+    if (noResults) {
+        noResults.remove();
+    }
+}
