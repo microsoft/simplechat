@@ -452,34 +452,27 @@
         </div>
         
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
+            <!-- Core Settings -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
                     type="button" role="tab" aria-controls="general" aria-selected="true">
                     General
                 </button>
             </li>
+            
+            <!-- AI Models Group -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="gpt-tab" data-bs-toggle="tab" data-bs-target="#gpt" type="button"
-                    role="tab" aria-controls="gpt" aria-selected="false">
-                    GPT
+                <button class="nav-link" id="ai-models-tab" data-bs-toggle="tab" data-bs-target="#ai-models"
+                    type="button" role="tab" aria-controls="ai-models" aria-selected="false">
+                    AI Models
                 </button>
             </li>
+            
+            <!-- Content Processing Group -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="embeddings-tab" data-bs-toggle="tab" data-bs-target="#embeddings"
-                    type="button" role="tab" aria-controls="embeddings" aria-selected="false">
-                    Embeddings
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="image-gen-tab" data-bs-toggle="tab" data-bs-target="#image-gen"
-                    type="button" role="tab" aria-controls="image-gen" aria-selected="false">
-                    Image Generation
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
-                    type="button" role="tab" aria-controls="scale" aria-selected="false">
-                    Scale
+                <button class="nav-link" id="search-extract-tab" data-bs-toggle="tab" data-bs-target="#search-extract"
+                    type="button" role="tab" aria-controls="search-extract" aria-selected="false">
+                    Search and Extract
                 </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -494,135 +487,55 @@
                     Citations
                 </button>
             </li>
+            
+            <!-- Security -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
                     type="button" role="tab" aria-controls="safety" aria-selected="false">
                     Safety
                 </button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="search-extract-tab" data-bs-toggle="tab" data-bs-target="#search-extract"
-                    type="button" role="tab" aria-controls="search-extract" aria-selected="false">
-                    Search and Extract
-                </button>
-            </li>
-            <!-- Agents Admin Tab -->
+            
+            <!-- User Features -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
                 </button>
             </li>
-            <!-- Actions Admin Tab -->
+            
+            <!-- System Administration -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="plugins-tab" data-bs-toggle="tab" data-bs-target="#plugins" type="button" role="tab" aria-controls="plugins" aria-selected="false">
-                    Actions
+                <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
+                    type="button" role="tab" aria-controls="scale" aria-selected="false">
+                    Scale
                 </button>
             </li>
-            <!-- Logging Admin Tab -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="other-tab" data-bs-toggle="tab" data-bs-target="#other" type="button"
-                    role="tab" aria-controls="other" aria-selected="false">
-                    Other
-                </button>
-            </li>
         </ul>
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            <!-- Actions Tab Content -->
-            <div class="tab-pane fade" id="plugins" role="tabpanel" aria-labelledby="plugins-tab">
+            <!-- Agents Tab Content (Consolidated: Agents + Actions) -->
+            <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
+                
+                <p class="text-muted">
+                    Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
+                </p>
+                
                 <div class="alert alert-warning mb-3" role="alert">
                     <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
                 </div>
-                {% if not settings.enable_semantic_kernel %}
-                    <div class="alert alert-info">
-                        <strong>Actions are not available while agents are disabled.</strong>
-                    </div>
-                {% else %}
-                    <div>
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4>Global Actions</h4>
-                            <button type="button" class="btn btn-primary" id="add-plugin-btn">Add Action</button>
-                        </div>
-                        {% if settings.per_user_semantic_kernel %}
-                        <!-- Action Feature Flags -->
-                            <div class="card p-3 mb-3" id="plugin-feature-toggles">
-                                <h6 class="mb-2">Workspace Action Feature Toggles</h6>
-                                <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Actions</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
-                                </div>
-                                <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
-                                </div>
-                            </div>
-                        {% endif %}
-                        
-                        <!-- Core Plugin Toggles -->
-                        <div class="card p-3 mb-3" id="core-plugin-toggles">
-                            <h6 class="mb-2">Core Action Toggles</h6>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to get current date, time, and perform time-related calculations and conversions."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to make HTTP requests to websites for data retrieval and integration."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to pause execution for specified time periods, useful for delays and timing control in workflows."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-math-plugin" name="enable_math_plugin" {% if settings.enable_math_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-math-plugin">Enable Math Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform mathematical calculations, solve equations, and handle complex mathematical operations."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-text-plugin" name="enable_text_plugin" {% if settings.enable_text_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-text-plugin">Enable Text Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform text processing operations like formatting, validation, and manipulation of strings and text content."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
-                                <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
-                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
-                            </div>
-                        </div>
-                        <table class="table table-bordered" id="plugins-table">
-                            <thead>
-                                <tr>
-                                    <th>Display Name</th>
-                                    <th>Description</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="admin-plugins-table-body"></tbody>
-                        </table>
-                    </div>
-                {% endif %}
-            </div>
 
-
-            <!-- Agents Tab Content -->
-            <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
-                <div class="alert alert-warning mb-3" role="alert">
-                    <strong>Note:</strong> All changes to global agents and plugins require a restart of the web app to take effect.
-                </div>
+                <!-- Agents Configuration Section -->
+                <div class="card p-3 mb-4">
+                    <h5 class="card-title">
+                        <i class="bi bi-robot me-2"></i>Agents Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure AI agents powered by Semantic Kernel for task automation and orchestration.
+                    </p>
                 <div class="mb-3">
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
@@ -722,6 +635,96 @@
                         </table>
                     </div>
                 {% endif %}
+                </div>
+
+                <!-- Actions Configuration Section -->
+                <div class="card p-3 mb-4">
+                    <h5 class="card-title">
+                        <i class="bi bi-gear me-2"></i>Actions Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
+                    </p>
+
+                    {% if not settings.enable_semantic_kernel %}
+                        <div class="alert alert-info">
+                            <strong>Actions are not available while agents are disabled.</strong> Enable agents above to configure actions.
+                        </div>
+                    {% else %}
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6>Global Actions</h6>
+                                <button type="button" class="btn btn-primary btn-sm" id="add-plugin-btn">Add Action</button>
+                            </div>
+                            {% if settings.per_user_semantic_kernel %}
+                            <!-- Action Feature Flags -->
+                                <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                    <h6 class="mb-2">Workspace Action Feature Toggles</h6>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
+                                    </div>
+                                </div>
+                            {% endif %}
+                            
+                            <!-- Core Plugin Toggles -->
+                            <div class="card p-3 mb-3" id="core-plugin-toggles">
+                                <h6 class="mb-2">Core Action Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to get current date, time, and perform time-related calculations and conversions."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to make HTTP requests to websites for data retrieval and integration."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to pause execution for specified time periods, useful for delays and timing control in workflows."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-math-plugin" name="enable_math_plugin" {% if settings.enable_math_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-math-plugin">Enable Math Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform mathematical calculations, solve equations, and handle complex mathematical operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-text-plugin" name="enable_text_plugin" {% if settings.enable_text_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-text-plugin">Enable Text Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform text processing operations like formatting, validation, and manipulation of strings and text content."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
+                                </div>
+                            </div>
+                            <table class="table table-bordered" id="plugins-table">
+                                <thead>
+                                    <tr>
+                                        <th>Display Name</th>
+                                        <th>Description</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-plugins-table-body"></tbody>
+                            </table>
+                        </div>
+                    {% endif %}
+                </div>
             </div>
 
 
@@ -905,10 +908,13 @@
                         <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
                     </div>
                 </div>
-                <!-- Health Check Toggle -->
+                <!-- Health Check Configuration -->
                 <div class="card p-3 mb-3">
-                    <h5>Health Check</h5>
-                    <div class="form-check form-switch mb-2">
+                    <h5>Health Check Endpoints</h5>
+                    <p class="text-muted mb-3">Configure health check endpoints for monitoring and load balancer health checks.</p>
+                    
+                    <!-- Standard Health Check -->
+                    <div class="form-check form-switch mb-3">
                         <input
                             type="checkbox"
                             class="form-check-input"
@@ -916,13 +922,26 @@
                             name="enable_health_check"
                             {% if settings.enable_health_check %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_health_check">
-                            Enable Health Check Endpoint
+                            Enable Standard Health Check Endpoint (/health)
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /health endpoint for monitoring and load balancer health checks to verify application status."></i>
                     </div>
-                    <p class="text-muted mb-0">
-                        When enabled, the /health endpoint will respond to health check requests. Disable to turn off health check endpoint for this app.
-                    </p>
+                    <p class="text-muted small mb-3">Standard health check endpoint used by Azure Load Balancer and most monitoring systems.</p>
+                    
+                    <!-- External Health Check -->
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_external_healthcheck"
+                            name="enable_external_healthcheck"
+                            {% if settings.enable_external_healthcheck %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                            Enable External Health Check Endpoint (/external/healthcheck)
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /external/healthcheck endpoint for specialized external monitoring systems that require a different endpoint path."></i>
+                    </div>
+                    <p class="text-muted small mb-0">Specialized health check endpoint for external monitoring systems that require a different endpoint path.</p>
                 </div>
                 <!-- New Classification Banner Section -->
                 <div class="card p-3 mb-3">
@@ -1004,14 +1023,51 @@
                         <input type="hidden" name="external_links_json" id="external_links_json">
                     </div>
                 </div>
+
+                <!-- System Settings Section -->
+                <div class="card p-3 mb-3">
+                    <h5>
+                        <i class="bi bi-gear-fill me-2"></i>System Settings
+                    </h5>
+                    <p class="text-muted">
+                        System-level settings that control application behavior, including file size limits, conversation history, 
+                        and default prompts.
+                    </p>
+                    <div class="mb-3">
+                        <label for="max_file_size_mb" class="form-label">Maximum File Size (MB)</label>
+                        <input type="number" class="form-control" id="max_file_size_mb" name="max_file_size_mb"
+                            value="{{ settings.max_file_size_mb }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="conversation_history_limit" class="form-label">
+                            Conversation History Limit
+                        </label>
+                        <input type="number" class="form-control" id="conversation_history_limit"
+                            name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="default_system_prompt" class="form-label">Default System Prompt</label>
+                        <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
+                            rows="5">{{ settings.default_system_prompt }}</textarea>
+                    </div>
+                </div>
             </div>
 
             
-            <div class="tab-pane fade" id="gpt" role="tabpanel" aria-labelledby="gpt-tab">
+            <div class="tab-pane fade" id="ai-models" role="tabpanel" aria-labelledby="ai-models-tab">
                 
-                 <p class="text-muted">
-                    Configure your GPT model settings. These are used for generating AI text responses.
+                <p class="text-muted">
+                    Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
                 </p>
+
+                <!-- GPT Configuration Section -->
+                <div class="card p-3 mb-4">
+                    <h5 class="card-title">
+                        <i class="bi bi-chat-text me-2"></i>GPT Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure your GPT model settings. These are used for generating AI text responses.
+                    </p>
 
                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                     <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
@@ -1139,18 +1195,20 @@
                     </div>
                 </div>
 
-                <button type="button" class="btn btn-secondary" id="test_gpt_button">
+                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
                     Test GPT Connection
                 </button>
                 <div id="test_gpt_result" class="mt-2"></div>
-            </div>
+                </div>
 
-            
-            <div class="tab-pane fade" id="embeddings" role="tabpanel" aria-labelledby="embeddings-tab">
-                
-                 <p class="text-muted">
-                    Configure your embeddings settings. These are used for semantic search, knowledge-base lookups, etc.
-                </p>
+                <!-- Embeddings Configuration Section -->
+                <div class="card p-3 mb-4">
+                    <h5 class="card-title">
+                        <i class="bi bi-vector-pen me-2"></i>Embeddings Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure your embeddings settings. These are used for semantic search, knowledge-base lookups, etc.
+                    </p>
 
                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                     <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
@@ -1282,18 +1340,20 @@
                     </div>
                 </div>
 
-                <button type="button" class="btn btn-secondary" id="test_embedding_button">
-                    Test Embeddings Connection
+                <button type="button" class="btn btn-secondary mt-3" id="test_embedding_button">
+                    Test Embedding Connection
                 </button>
                 <div id="test_embedding_result" class="mt-2"></div>
-            </div>
+                </div>
 
-            
-            <div class="tab-pane fade" id="image-gen" role="tabpanel" aria-labelledby="image-gen-tab">
-                
-                <p class="text-muted">
-                    Configure image generation settings. Enable/disable, set endpoints, and choose a model.
-                </p>
+                <!-- Image Generation Configuration Section -->
+                <div class="card p-3 mb-4">
+                    <h5 class="card-title">
+                        <i class="bi bi-image me-2"></i>Image Generation Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure image generation settings. Enable/disable, set endpoints, and choose a model.
+                    </p>
 
                 <div class="form-group form-check form-switch mb-3">
                     <input type="checkbox" class="form-check-input" id="enable_image_generation"
@@ -1446,6 +1506,7 @@
                     Test Image Connection
                 </button>
                 <div id="test_image_result" class="mt-2"></div>
+                </div>
             </div>
 
             <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
@@ -2547,55 +2608,6 @@
                 </div>
             </div>
 
-            
-            <div class="tab-pane fade" id="other" role="tabpanel" aria-labelledby="other-tab">
-                
-                 <p class="text-muted">
-                    Miscellaneous or rarely changed settings, such as maximum file size, conversation history limits,
-                    etc.
-                </p>
-                <div class="card p-3 mb-3">
-                    <div class="mb-3">
-                        <label for="max_file_size_mb" class="form-label">Maximum File Size (MB)</label>
-                        <input type="number" class="form-control" id="max_file_size_mb" name="max_file_size_mb"
-                            value="{{ settings.max_file_size_mb }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="conversation_history_limit" class="form-label">
-                            Conversation History Limit
-                        </label>
-                        <input type="number" class="form-control" id="conversation_history_limit"
-                            name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="default_system_prompt" class="form-label">Default System Prompt</label>
-                        <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
-                            rows="5">{{ settings.default_system_prompt }}</textarea>
-                    </div>
-
-
-                </div>
-
-                <div class="card mb-3 p-3">
-                    <h5>External Health Check</h5>
-                    <p class="text-muted mb-2">
-                        Enable or disable the /external/healthcheck endpoint for external health monitoring.
-                    </p>
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_external_healthcheck"
-                            name="enable_external_healthcheck"
-                            {% if settings.enable_external_healthcheck %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_external_healthcheck">
-                            Enable External Health Check Endpoint
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Provide a public health check endpoint at /external/healthcheck for external monitoring systems to verify application status."></i>
-                    </div>
-                </div>
-            </div>
         </div> 
     </form>
     

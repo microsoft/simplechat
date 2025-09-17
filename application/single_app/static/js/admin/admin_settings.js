@@ -1559,6 +1559,218 @@ function setupToggles() {
             markFormAsModified();
         });
     }
+    
+    // --- Workspace Dependency Validation ---
+    setupWorkspaceDependencyValidation();
+}
+
+/**
+ * Set up validation for workspace dependencies
+ */
+function setupWorkspaceDependencyValidation() {
+    const userWorkspaceToggle = document.getElementById('enable_user_workspace');
+    const groupWorkspaceToggle = document.getElementById('enable_group_workspaces');
+    const publicWorkspaceToggle = document.getElementById('enable_public_workspaces');
+    
+    // Create or find notification area for workspace dependencies
+    let notificationArea = document.getElementById('workspace-dependency-notifications');
+    if (!notificationArea) {
+        notificationArea = document.createElement('div');
+        notificationArea.id = 'workspace-dependency-notifications';
+        notificationArea.className = 'mb-3';
+        
+        // Insert at the beginning of the workspaces tab content
+        const workspacesTab = document.getElementById('workspaces');
+        if (workspacesTab) {
+            const firstCard = workspacesTab.querySelector('.card');
+            if (firstCard) {
+                workspacesTab.insertBefore(notificationArea, firstCard);
+            } else {
+                workspacesTab.appendChild(notificationArea);
+            }
+        }
+    }
+    
+    /**
+     * Check if workspace dependencies are configured
+     */
+    function checkWorkspaceDependencies() {
+        const userEnabled = userWorkspaceToggle?.checked || false;
+        const groupEnabled = groupWorkspaceToggle?.checked || false;
+        const publicEnabled = publicWorkspaceToggle?.checked || false;
+        const workspacesEnabled = userEnabled || groupEnabled || publicEnabled;
+        
+        if (!workspacesEnabled) {
+            notificationArea.innerHTML = '';
+            return;
+        }
+        
+        const missingDependencies = [];
+        
+        // Check Embeddings configuration
+        const embeddingConfigured = checkEmbeddingConfiguration();
+        if (!embeddingConfigured) {
+            missingDependencies.push('Embeddings');
+        }
+        
+        // Check Azure AI Search configuration
+        const searchConfigured = checkAzureSearchConfiguration();
+        if (!searchConfigured) {
+            missingDependencies.push('Azure AI Search');
+        }
+        
+        // Check Document Intelligence configuration
+        const docIntelConfigured = checkDocumentIntelligenceConfiguration();
+        if (!docIntelConfigured) {
+            missingDependencies.push('Document Intelligence');
+        }
+        
+        // Display notification if dependencies are missing
+        if (missingDependencies.length > 0) {
+            const enabledWorkspaces = [];
+            if (userEnabled) enabledWorkspaces.push('Personal Workspaces');
+            if (groupEnabled) enabledWorkspaces.push('Group Workspaces');
+            if (publicEnabled) enabledWorkspaces.push('Public Workspaces');
+            
+            notificationArea.innerHTML = `
+                <div class="alert alert-warning" role="alert">
+                    <div class="d-flex align-items-start">
+                        <div class="me-3">
+                            <i class="bi bi-exclamation-triangle-fill text-warning" style="font-size: 1.2rem;"></i>
+                        </div>
+                        <div class="flex-grow-1">
+                            <h6 class="alert-heading mb-2">Missing Required Configuration</h6>
+                            <p class="mb-2">
+                                You have enabled <strong>${enabledWorkspaces.join(', ')}</strong> but some required services are not configured.
+                            </p>
+                            <p class="mb-2">
+                                <strong>Missing configurations:</strong> ${missingDependencies.join(', ')}
+                            </p>
+                            <hr class="my-2">
+                            <p class="mb-0 small">
+                                <strong>To fix this:</strong> Please configure the missing services in their respective tabs:
+                                ${missingDependencies.includes('Embeddings') ? '<a href="#ai-models" class="alert-link text-decoration-none" onclick="activateTab(\'#ai-models\')">AI Models</a>' : ''}
+                                ${missingDependencies.includes('Azure AI Search') ? '<a href="#search-extract" class="alert-link text-decoration-none" onclick="activateTab(\'#search-extract\')">Search and Extract</a>' : ''}
+                                ${missingDependencies.includes('Document Intelligence') ? '<a href="#search-extract" class="alert-link text-decoration-none" onclick="activateTab(\'#search-extract\')">Search and Extract</a>' : ''}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            notificationArea.innerHTML = `
+                <div class="alert alert-success" role="alert">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-check-circle-fill text-success me-2"></i>
+                        <strong>Workspace Configuration Complete</strong> - All required dependencies are configured.
+                    </div>
+                </div>
+            `;
+        }
+    }
+    
+    /**
+     * Check if embeddings are properly configured
+     */
+    function checkEmbeddingConfiguration() {
+        const useApim = document.getElementById('enable_embedding_apim')?.checked || false;
+        
+        if (useApim) {
+            const endpoint = document.getElementById('azure_apim_embedding_endpoint')?.value;
+            const key = document.getElementById('azure_apim_embedding_subscription_key')?.value;
+            return endpoint && endpoint.trim() !== '' && key && key.trim() !== '';
+        } else {
+            const endpoint = document.getElementById('azure_openai_embedding_endpoint')?.value;
+            const authType = document.getElementById('azure_openai_embedding_authentication_type')?.value;
+            
+            if (!endpoint || endpoint.trim() === '') return false;
+            
+            if (authType === 'key') {
+                const key = document.getElementById('azure_openai_embedding_key')?.value;
+                return key && key.trim() !== '';
+            }
+            
+            return true; // Managed identity doesn't need key
+        }
+    }
+    
+    /**
+     * Check if Azure AI Search is properly configured
+     */
+    function checkAzureSearchConfiguration() {
+        const useApim = document.getElementById('enable_ai_search_apim')?.checked || false;
+        
+        if (useApim) {
+            const endpoint = document.getElementById('azure_apim_ai_search_endpoint')?.value;
+            const key = document.getElementById('azure_apim_ai_search_subscription_key')?.value;
+            return endpoint && endpoint.trim() !== '' && key && key.trim() !== '';
+        } else {
+            const endpoint = document.getElementById('azure_ai_search_endpoint')?.value;
+            const authType = document.getElementById('azure_ai_search_authentication_type')?.value;
+            
+            if (!endpoint || endpoint.trim() === '') return false;
+            
+            if (authType === 'key') {
+                const key = document.getElementById('azure_ai_search_key')?.value;
+                return key && key.trim() !== '';
+            }
+            
+            return true; // Managed identity doesn't need key
+        }
+    }
+    
+    /**
+     * Check if Document Intelligence is properly configured
+     */
+    function checkDocumentIntelligenceConfiguration() {
+        const useApim = document.getElementById('enable_document_intelligence_apim')?.checked || false;
+        
+        if (useApim) {
+            const endpoint = document.getElementById('azure_apim_document_intelligence_endpoint')?.value;
+            const key = document.getElementById('azure_apim_document_intelligence_subscription_key')?.value;
+            return endpoint && endpoint.trim() !== '' && key && key.trim() !== '';
+        } else {
+            const endpoint = document.getElementById('azure_document_intelligence_endpoint')?.value;
+            const authType = document.getElementById('azure_document_intelligence_authentication_type')?.value;
+            
+            if (!endpoint || endpoint.trim() === '') return false;
+            
+            if (authType === 'key') {
+                const key = document.getElementById('azure_document_intelligence_key')?.value;
+                return key && key.trim() !== '';
+            }
+            
+            return true; // Managed identity doesn't need key
+        }
+    }
+    
+    /**
+     * Helper function to activate a tab
+     */
+    function activateTab(tabId) {
+        const tabTrigger = document.querySelector(`[data-bs-target="${tabId}"]`);
+        if (tabTrigger) {
+            const tab = new bootstrap.Tab(tabTrigger);
+            tab.show();
+        }
+    }
+    
+    // Make activateTab globally available for the alert links
+    window.activateTab = activateTab;
+    
+    // Add event listeners to workspace toggles
+    if (userWorkspaceToggle) {
+        userWorkspaceToggle.addEventListener('change', checkWorkspaceDependencies);
+    }
+    if (groupWorkspaceToggle) {
+        groupWorkspaceToggle.addEventListener('change', checkWorkspaceDependencies);
+    }
+    if (publicWorkspaceToggle) {
+        publicWorkspaceToggle.addEventListener('change', checkWorkspaceDependencies);
+    }
+    
+    // Initial check
+    checkWorkspaceDependencies();
 }
 
 function setupTestButtons() {
@@ -2531,16 +2743,16 @@ function handleTabNavigation(stepNumber) {
     // Map steps to tabs that need to be activated
     const stepToTab = {
         1: 'general-tab',     // App title and logo (General tab)
-        2: 'gpt-tab',         // GPT settings
-        3: 'gpt-tab',         // GPT model selection
+        2: 'ai-models-tab',   // GPT settings (now in AI Models tab)
+        3: 'ai-models-tab',   // GPT model selection (now in AI Models tab)
         4: 'workspaces-tab',  // Workspace and groups settings
-        5: 'embeddings-tab',  // Embedding settings
+        5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
         6: 'search-extract-tab', // AI Search settings
         7: 'search-extract-tab', // Document Intelligence settings
         8: 'workspaces-tab',  // Video support
         9: 'workspaces-tab',  // Audio support
         10: 'safety-tab',     // Content safety
-        11: 'other-tab',      // User feedback and archiving
+        11: 'system-tab',     // User feedback and archiving (renamed from other-tab)
         12: 'citation-tab'    // Enhanced Citations and Image Generation
     };
     
