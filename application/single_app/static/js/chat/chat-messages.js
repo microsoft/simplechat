@@ -13,7 +13,7 @@ import {
   addConversationToList
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
-import { escapeHtml, isColorLight } from "./chat-utils.js";
+import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
 
@@ -559,7 +559,8 @@ export function appendMessage(
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const htmlContent = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const htmlContent = addTargetBlankToExternalLinks(sanitizedHtml);
     const mainMessageHtml = `<div class="message-text">${htmlContent}</div>`; // Renamed for clarity
 
     // --- Footer Content (Copy, Feedback, Citations) ---
@@ -738,9 +739,10 @@ export function appendMessage(
         avatarImg = "/static/images/user-avatar.png";
       }
       
-      messageContentHtml = DOMPurify.sanitize(
+      const sanitizedUserHtml = DOMPurify.sanitize(
         marked.parse(escapeHtml(messageContent))
       );
+      messageContentHtml = addTargetBlankToExternalLinks(sanitizedUserHtml);
     } else if (sender === "File") {
       messageClass = "file-message";
       senderLabel = "File Added";
@@ -777,9 +779,10 @@ export function appendMessage(
       avatarAltText = "Content Safety Avatar";
       avatarImg = "/static/images/alert.png";
       const linkToViolations = `<br><small><a href="/safety_violations" target="_blank" rel="noopener" style="font-size: 0.85em; color: #6c757d;">View My Safety Violations</a></small>`;
-      messageContentHtml = DOMPurify.sanitize(
+      const sanitizedSafetyHtml = DOMPurify.sanitize(
         marked.parse(messageContent + linkToViolations)
       );
+      messageContentHtml = addTargetBlankToExternalLinks(sanitizedSafetyHtml);
     } else if (sender === "Error") {
       messageClass = "error-message";
       senderLabel = "System Error";

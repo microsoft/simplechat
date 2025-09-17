@@ -48,3 +48,42 @@ export function escapeHtml(unsafe) {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
 }
+
+// Add target="_blank" and rel="noopener noreferrer" to external links in HTML content
+export function addTargetBlankToExternalLinks(htmlContent) {
+  if (!htmlContent || typeof htmlContent !== 'string') return htmlContent;
+  
+  // Create a temporary DOM element to parse and modify the HTML
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = htmlContent;
+  
+  // Find all anchor tags
+  const links = tempDiv.querySelectorAll('a[href]');
+  
+  links.forEach(link => {
+    const href = link.getAttribute('href');
+    
+    // Check if it's an external link (starts with http:// or https://)
+    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+      // Add target="_blank" if not already present
+      if (!link.hasAttribute('target')) {
+        link.setAttribute('target', '_blank');
+      }
+      
+      // Add rel="noopener noreferrer" for security
+      const currentRel = link.getAttribute('rel') || '';
+      const relValues = currentRel.split(/\s+/).filter(val => val.length > 0);
+      
+      if (!relValues.includes('noopener')) {
+        relValues.push('noopener');
+      }
+      if (!relValues.includes('noreferrer')) {
+        relValues.push('noreferrer');
+      }
+      
+      link.setAttribute('rel', relValues.join(' '));
+    }
+  });
+  
+  return tempDiv.innerHTML;
+}
