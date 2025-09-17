@@ -762,12 +762,54 @@
                     </h5>
                     <p class="text-muted">Control debug print statements across the application for development and troubleshooting.</p>
                     <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging" name="enable_debug_logging" {% if settings.enable_debug_logging %}checked{% endif %}>
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging" name="enable_debug_logging" {% if settings.enable_debug_logging %}checked{% endif %} onchange="toggleTimeControls('debug')">
                         <label class="form-check-label ms-2" for="enable_debug_logging">
                             Enable Debug Logging
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable debug print statements across the application for troubleshooting and development."></i>
                     </div>
+                    
+                    <!-- Time-based turnoff controls for Debug Logging -->
+                    <div id="debug-time-controls" class="mt-3" style="{% if not settings.enable_debug_logging %}display: none;{% endif %}">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging_timer" name="enable_debug_logging_timer" {% if settings.debug_logging_timer_enabled %}checked{% endif %} onchange="toggleTimerInputs('debug')">
+                            <label class="form-check-label ms-2" for="enable_debug_logging_timer">
+                                Enable Time-based Auto Turnoff
+                            </label>
+                            <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable debug logging after a specified time period to manage cost and risk."></i>
+                        </div>
+                        
+                        <div id="debug-timer-inputs" class="row g-3" style="{% if not settings.debug_logging_timer_enabled %}display: none;{% endif %}">
+                            <div class="col-md-4">
+                                <label for="debug_timer_value" class="form-label">Duration</label>
+                                <input type="number" class="form-control" id="debug_timer_value" name="debug_timer_value" min="1" max="120" value="{{ settings.debug_timer_value or 1 }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="debug_timer_unit" class="form-label">Time Unit</label>
+                                <select class="form-select" id="debug_timer_unit" name="debug_timer_unit">
+                                    <option value="minutes" {% if settings.debug_timer_unit == 'minutes' %}selected{% endif %}>Minutes (1-120)</option>
+                                    <option value="hours" {% if settings.debug_timer_unit == 'hours' %}selected{% endif %}>Hours (1-24)</option>
+                                    <option value="days" {% if settings.debug_timer_unit == 'days' %}selected{% endif %}>Days (1-7)</option>
+                                    <option value="weeks" {% if settings.debug_timer_unit == 'weeks' %}selected{% endif %}>Weeks (1-52)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Will turn off at:</label>
+                                <div id="debug-turnoff-time" class="form-control-plaintext text-info fw-bold">
+                                    {% if settings.debug_logging_turnoff_time %}
+                                        {% if settings.debug_logging_turnoff_time is string %}
+                                            {{ settings.debug_logging_turnoff_time }}
+                                        {% else %}
+                                            {{ settings.debug_logging_turnoff_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                        {% endif %}
+                                    {% else %}
+                                        Will be calculated when saved
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="alert alert-info mt-2" role="alert">
                         <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting. Tokens and keys will be collected during this process.
                     </div>
@@ -779,11 +821,52 @@
                     </h5>
                     <p class="text-muted">Enable logging of file processing events for debugging and auditing purposes. Logs are stored in the file_processing container in Cosmos DB.</p>
                     <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs" name="enable_file_processing_logs" {% if settings.enable_file_processing_logs %}checked{% endif %}>
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs" name="enable_file_processing_logs" {% if settings.enable_file_processing_logs %}checked{% endif %} onchange="toggleTimeControls('file')">
                         <label class="form-check-label ms-2" for="enable_file_processing_logs">
                             Enable File Processing Logs
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable logging of file processing events for debugging and auditing purposes."></i>
+                    </div>
+                    
+                    <!-- Time-based turnoff controls for File Processing Logs -->
+                    <div id="file-time-controls" class="mt-3" style="{% if not settings.enable_file_processing_logs %}display: none;{% endif %}">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs_timer" name="enable_file_processing_logs_timer" {% if settings.file_processing_logs_timer_enabled %}checked{% endif %} onchange="toggleTimerInputs('file')">
+                            <label class="form-check-label ms-2" for="enable_file_processing_logs_timer">
+                                Enable Time-based Auto Turnoff
+                            </label>
+                            <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable file processing logs after a specified time period to manage cost and risk."></i>
+                        </div>
+                        
+                        <div id="file-timer-inputs" class="row g-3" style="{% if not settings.file_processing_logs_timer_enabled %}display: none;{% endif %}">
+                            <div class="col-md-4">
+                                <label for="file_timer_value" class="form-label">Duration</label>
+                                <input type="number" class="form-control" id="file_timer_value" name="file_timer_value" min="1" max="120" value="{{ settings.file_timer_value or 1 }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="file_timer_unit" class="form-label">Time Unit</label>
+                                <select class="form-select" id="file_timer_unit" name="file_timer_unit">
+                                    <option value="minutes" {% if settings.file_timer_unit == 'minutes' %}selected{% endif %}>Minutes (1-120)</option>
+                                    <option value="hours" {% if settings.file_timer_unit == 'hours' %}selected{% endif %}>Hours (1-24)</option>
+                                    <option value="days" {% if settings.file_timer_unit == 'days' %}selected{% endif %}>Days (1-7)</option>
+                                    <option value="weeks" {% if settings.file_timer_unit == 'weeks' %}selected{% endif %}>Weeks (1-52)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Will turn off at:</label>
+                                <div id="file-turnoff-time" class="form-control-plaintext text-info fw-bold">
+                                    {% if settings.file_processing_logs_turnoff_time %}
+                                        {% if settings.file_processing_logs_turnoff_time is string %}
+                                            {{ settings.file_processing_logs_turnoff_time }}
+                                        {% else %}
+                                            {{ settings.file_processing_logs_turnoff_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                        {% endif %}
+                                    {% else %}
+                                        Will be calculated when saved
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3005,6 +3088,81 @@
         // Submit the form
         document.getElementById('admin-settings-form').submit();
     }
+
+    // Time-based turnoff functionality
+    function toggleTimeControls(type) {
+        const mainToggle = document.getElementById(`enable_${type}_${type === 'debug' ? 'logging' : 'processing_logs'}`);
+        const timeControls = document.getElementById(`${type}-time-controls`);
+        
+        if (timeControls) {
+            timeControls.style.display = mainToggle.checked ? 'block' : 'none';
+        }
+    }
+
+    function toggleTimerInputs(type) {
+        const timerToggle = document.getElementById(`enable_${type}_${type === 'debug' ? 'logging' : 'processing_logs'}_timer`);
+        const timerInputs = document.getElementById(`${type}-timer-inputs`);
+        
+        if (timerInputs) {
+            timerInputs.style.display = timerToggle.checked ? 'block' : 'none';
+        }
+        
+        // Update the max values based on selected unit
+        updateTimerLimits(type);
+    }
+
+    function updateTimerLimits(type) {
+        const unitSelect = document.getElementById(`${type}_timer_unit`);
+        const valueInput = document.getElementById(`${type}_timer_value`);
+        
+        if (unitSelect && valueInput) {
+            const unit = unitSelect.value;
+            let max = 1;
+            
+            switch(unit) {
+                case 'minutes':
+                    max = 120;
+                    break;
+                case 'hours':
+                    max = 24;
+                    break;
+                case 'days':
+                    max = 7;
+                    break;
+                case 'weeks':
+                    max = 52;
+                    break;
+            }
+            
+            valueInput.max = max;
+            if (parseInt(valueInput.value) > max) {
+                valueInput.value = max;
+            }
+            if (parseInt(valueInput.value) < 1) {
+                valueInput.value = 1;
+            }
+        }
+    }
+
+    // Add event listeners when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add change listeners for timer unit dropdowns
+        ['debug', 'file'].forEach(type => {
+            const unitSelect = document.getElementById(`${type}_timer_unit`);
+            if (unitSelect) {
+                unitSelect.addEventListener('change', () => updateTimerLimits(type));
+            }
+            
+            const valueInput = document.getElementById(`${type}_timer_value`);
+            if (valueInput) {
+                valueInput.addEventListener('input', () => updateTimerLimits(type));
+            }
+        });
+        
+        // Initialize timer limits
+        updateTimerLimits('debug');
+        updateTimerLimits('file');
+    });
 
 </script>
 {% endblock %}

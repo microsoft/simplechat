@@ -11,6 +11,10 @@ def get_settings():
         # Security settings
         'enable_appinsights_global_logging': False,
         'enable_debug_logging': False,
+        'debug_logging_timer_enabled': False,
+        'debug_timer_value': 1,
+        'debug_timer_unit': 'hours',
+        'debug_logging_turnoff_time': None,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
         'enable_http_plugin': True,
@@ -201,6 +205,10 @@ def get_settings():
         'conversation_history_limit': 10,
         'default_system_prompt': '',
         'enable_file_processing_logs': True,
+        'file_processing_logs_timer_enabled': False,
+        'file_timer_value': 1,
+        'file_timer_unit': 'hours',
+        'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings

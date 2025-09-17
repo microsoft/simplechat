@@ -1,6 +1,6 @@
 # Video Indexer Debug Logging Enhancement Fix
 
-**Fixed in version: 0.229.041**
+**Version:** 0.229.032
 
 ## Issue Description
 

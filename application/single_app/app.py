@@ -18,6 +18,10 @@ from functions_search import *
 from functions_settings import *
 from functions_appinsights import *
 
+import threading
+import time
+from datetime import datetime
+
 from route_frontend_authentication import *
 from route_frontend_profile import *
 from route_frontend_admin_settings import *
@@ -104,6 +108,69 @@ def before_first_request():
     logging.basicConfig(level=logging.DEBUG)
     print("Application initialized.")
     ensure_default_global_agent_exists()
+
+    # Background task to check for expired logging timers
+    def check_logging_timers():
+        """Background task that checks for expired logging timers and disables logging accordingly"""
+        while True:
+            try:
+                settings = get_settings()
+                current_time = datetime.now()
+                settings_changed = False
+                
+                # Check debug logging timer
+                if (settings.get('enable_debug_logging', False) and 
+                    settings.get('debug_logging_timer_enabled', False) and 
+                    settings.get('debug_logging_turnoff_time')):
+                    
+                    turnoff_time = settings.get('debug_logging_turnoff_time')
+                    if isinstance(turnoff_time, str):
+                        try:
+                            turnoff_time = datetime.fromisoformat(turnoff_time)
+                        except:
+                            turnoff_time = None
+                    
+                    if turnoff_time and current_time >= turnoff_time:
+                        print(f"Debug logging timer expired at {turnoff_time}. Disabling debug logging.")
+                        settings['enable_debug_logging'] = False
+                        settings['debug_logging_timer_enabled'] = False
+                        settings['debug_logging_turnoff_time'] = None
+                        settings_changed = True
+                
+                # Check file processing logs timer
+                if (settings.get('enable_file_processing_logs', False) and 
+                    settings.get('file_processing_logs_timer_enabled', False) and 
+                    settings.get('file_processing_logs_turnoff_time')):
+                    
+                    turnoff_time = settings.get('file_processing_logs_turnoff_time')
+                    if isinstance(turnoff_time, str):
+                        try:
+                            turnoff_time = datetime.fromisoformat(turnoff_time)
+                        except:
+                            turnoff_time = None
+                    
+                    if turnoff_time and current_time >= turnoff_time:
+                        print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
+                        settings['enable_file_processing_logs'] = False
+                        settings['file_processing_logs_timer_enabled'] = False
+                        settings['file_processing_logs_turnoff_time'] = None
+                        settings_changed = True
+                
+                # Save settings if any changes were made
+                if settings_changed:
+                    update_settings(settings)
+                    print("Logging settings updated due to timer expiration.")
+                
+            except Exception as e:
+                print(f"Error in logging timer check: {e}")
+            
+            # Check every 60 seconds
+            time.sleep(60)
+
+    # Start the background timer check thread
+    timer_thread = threading.Thread(target=check_logging_timers, daemon=True)
+    timer_thread.start()
+    print("Logging timer background task started.")
 
 
     # Setup session handling
