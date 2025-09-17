@@ -250,6 +250,11 @@ def get_video_indexer_account_token(settings, video_id=None):
     2) POST to the ARM generateAccessToken endpoint
     3) Return the account-level accessToken
     """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    
     # 1) ARM token
     if AZURE_ENVIRONMENT == "usgovernment":
         arm_scope = "https://management.usgovcloudapi.net/.default"
@@ -258,15 +263,25 @@ def get_video_indexer_account_token(settings, video_id=None):
     else:
         arm_scope = "https://management.azure.com/.default"
     
-    credential = DefaultAzureCredential()
-    arm_token = credential.get_token(arm_scope).token
-    print("[VIDEO] ARM token acquired", flush=True)
+    debug_print(f"[VIDEO INDEXER AUTH] Using ARM scope: {arm_scope}")
+    
+    try:
+        credential = DefaultAzureCredential()
+        debug_print(f"[VIDEO INDEXER AUTH] DefaultAzureCredential initialized successfully")
+        arm_token = credential.get_token(arm_scope).token
+        debug_print(f"[VIDEO INDEXER AUTH] ARM token acquired successfully (length: {len(arm_token) if arm_token else 0})")
+        print("[VIDEO] ARM token acquired", flush=True)
+    except Exception as e:
+        debug_print(f"[VIDEO INDEXER AUTH] ERROR acquiring ARM token: {str(e)}")
+        raise
 
     # 2) Call the generateAccessToken API
     rg       = settings["video_indexer_resource_group"]
     sub      = settings["video_indexer_subscription_id"]
     acct     = settings["video_indexer_account_name"]
     api_ver  = settings.get("video_indexer_arm_api_version", "2021-11-10-preview")
+    
+    debug_print(f"[VIDEO INDEXER AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
     
     if AZURE_ENVIRONMENT == "usgovernment":
         url = (
@@ -290,6 +305,8 @@ def get_video_indexer_account_token(settings, video_id=None):
         f"/generateAccessToken?api-version={api_ver}"
         )
 
+    debug_print(f"[VIDEO INDEXER AUTH] ARM API URL: {url}")
+
     body = {
         "permissionType": "Contributor",
         "scope": "Account"
@@ -297,15 +314,40 @@ def get_video_indexer_account_token(settings, video_id=None):
     if video_id:
         body["videoId"] = video_id
 
-    resp = requests.post(
-        url,
-        json=body,
-        headers={"Authorization": f"Bearer {arm_token}"}
-    )
-    resp.raise_for_status()
-    ai = resp.json().get("accessToken")
-    print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
-    return ai
+    debug_print(f"[VIDEO INDEXER AUTH] Request body: {body}")
+
+    try:
+        resp = requests.post(
+            url,
+            json=body,
+            headers={"Authorization": f"Bearer {arm_token}"}
+        )
+        debug_print(f"[VIDEO INDEXER AUTH] ARM API response status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            debug_print(f"[VIDEO INDEXER AUTH] ARM API response text: {resp.text}")
+            
+        resp.raise_for_status()
+        response_data = resp.json()
+        debug_print(f"[VIDEO INDEXER AUTH] ARM API response keys: {list(response_data.keys())}")
+        
+        ai = response_data.get("accessToken")
+        if not ai:
+            debug_print(f"[VIDEO INDEXER AUTH] ERROR: No accessToken in response: {response_data}")
+            raise ValueError("No accessToken found in ARM API response")
+            
+        debug_print(f"[VIDEO INDEXER AUTH] Account token acquired successfully (length: {len(ai)})")
+        print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
+        return ai
+    except requests.exceptions.RequestException as e:
+        debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            debug_print(f"[VIDEO INDEXER AUTH] Error response status: {e.response.status_code}")
+            debug_print(f"[VIDEO INDEXER AUTH] Error response text: {e.response.text}")
+        raise
+    except Exception as e:
+        debug_print(f"[VIDEO INDEXER AUTH] Unexpected error: {str(e)}")
+        raise
 
 
 JWKS_CACHE = {}

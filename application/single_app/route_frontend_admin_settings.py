@@ -396,7 +396,6 @@ def register_route_frontend_admin_settings(app):
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
-                'enable_health_check': form_data.get('enable_health_check') == 'on',
                 'enable_external_healthcheck': form_data.get('enable_external_healthcheck') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',

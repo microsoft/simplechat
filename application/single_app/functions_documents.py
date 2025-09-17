@@ -222,6 +222,11 @@ def save_video_chunk(
     Saves one 30-second video chunk to the search index, with separate fields for transcript and OCR.
     The chunk_id is built from document_id and the integer second offset to ensure a valid key.
     """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
+    debug_print(f"[VIDEO CHUNK] Transcript length: {len(page_text_content)}, OCR length: {len(ocr_chunk_text)}")
+    
     try:
         current_time = datetime.now(timezone.utc).isoformat()
         is_group = group_id is not None
@@ -229,22 +234,30 @@ def save_video_chunk(
         # Convert start_time "HH:MM:SS.mmm" to integer seconds
         h, m, s = start_time.split(':')
         seconds = int(h) * 3600 + int(m) * 60 + int(float(s))
+        
+        debug_print(f"[VIDEO CHUNK] Converted start_time {start_time} to {seconds} seconds")
 
         # 1) generate embedding on the transcript text
         try:
+            debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
             embedding = generate_embedding(page_text_content)
+            debug_print(f"[VIDEO CHUNK] Embedding generated successfully")
             print(f"[VideoChunk] EMBEDDING OK for {document_id}@{start_time}", flush=True)
         except Exception as e:
+            debug_print(f"[VIDEO CHUNK] Embedding generation failed: {str(e)}")
             print(f"[VideoChunk] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 2) build chunk document
         try:
+            debug_print(f"[VIDEO CHUNK] Retrieving document metadata")
             meta = get_document_metadata(document_id, user_id, group_id)
             version = meta.get("version", 1) if meta else 1
+            debug_print(f"[VIDEO CHUNK] Document version: {version}")
 
             # Use integer seconds to build a safe document key
             chunk_id = f"{document_id}_{seconds}"
+            debug_print(f"[VIDEO CHUNK] Generated chunk ID: {chunk_id}")
 
             chunk = {
                 "id":                   chunk_id,
@@ -262,27 +275,35 @@ def save_video_chunk(
             if is_group:
                 chunk["group_id"] = group_id
                 client = CLIENTS["search_client_group"]
+                debug_print(f"[VIDEO CHUNK] Using group search client for group_id: {group_id}")
             else:
                 # Get shared_user_ids from document metadata for personal documents
                 shared_user_ids = meta.get('shared_user_ids', []) if meta else []
                 chunk["user_id"] = user_id
                 chunk["shared_user_ids"] = shared_user_ids
                 client = CLIENTS["search_client_user"]
+                debug_print(f"[VIDEO CHUNK] Using user search client for user_id: {user_id}, shared_user_ids: {shared_user_ids}")
 
+            debug_print(f"[VIDEO CHUNK] Built chunk document with ID: {chunk_id}")
             print(f"[VideoChunk] CHUNK BUILT {chunk_id}", flush=True)
 
         except Exception as e:
+            debug_print(f"[VIDEO CHUNK] Error building chunk document: {str(e)}")
             print(f"[VideoChunk] CHUNK BUILD ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 3) upload to search index
         try:
+            debug_print(f"[VIDEO CHUNK] Uploading chunk to search index")
             client.upload_documents(documents=[chunk])
+            debug_print(f"[VIDEO CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VideoChunk] UPLOAD OK for {chunk_id}", flush=True)
         except Exception as e:
+            debug_print(f"[VIDEO CHUNK] Upload to search index failed: {str(e)}")
             print(f"[VideoChunk] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
     except Exception as e:
+        debug_print(f"[VIDEO CHUNK] Unexpected error processing chunk: {str(e)}")
         print(f"[VideoChunk] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
 
 def process_video_document(
@@ -298,6 +319,11 @@ def process_video_document(
     Processes a video by dividing transcript into 30-second chunks,
     extracting OCR separately, and saving each as a chunk with safe IDs.
     """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO INDEXER] Starting video processing for file: {original_filename}")
+    debug_print(f"[VIDEO INDEXER] Document ID: {document_id}, User ID: {user_id}, Group ID: {group_id}, Public Workspace ID: {public_workspace_id}")
+    debug_print(f"[VIDEO INDEXER] Temp file path: {temp_file_path}")
 
     def to_seconds(ts: str) -> float:
         parts = ts.split(':')
@@ -311,11 +337,15 @@ def process_video_document(
 
     settings = get_settings()
     if not settings.get("enable_video_file_support", False):
+        debug_print("[VIDEO INDEXER] Video file support is disabled in settings")
         print("[VIDEO] indexing disabled in settings", flush=True)
         update_callback(status="VIDEO: indexing disabled")
         return 0
     
+    debug_print("[VIDEO INDEXER] Video file support is enabled, proceeding with indexing")
+    
     if settings.get("enable_enhanced_citations", False):
+        debug_print("[VIDEO INDEXER] Enhanced citations enabled, uploading to blob storage")
         update_callback(status="Uploading video for enhanced citations...")
         try:
             # this helper is already in your file below
@@ -328,8 +358,10 @@ def process_video_document(
                 group_id,
                 public_workspace_id
             )
+            debug_print(f"[VIDEO INDEXER] Blob upload successful: {blob_path}")
             update_callback(status=f"Enhanced citations: video at {blob_path}")
         except Exception as e:
+            debug_print(f"[VIDEO INDEXER] Blob upload failed: {str(e)}")
             print(f"[VIDEO] BLOB UPLOAD ERROR: {e}", flush=True)
             update_callback(status=f"VIDEO: blob upload failed → {e}")
 
@@ -338,11 +370,34 @@ def process_video_document(
         settings["video_indexer_location"],
         settings["video_indexer_account_id"]
     )
+    
+    debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
+
+    # Validate required settings
+    required_settings = {
+        "video_indexer_endpoint": vi_ep,
+        "video_indexer_location": vi_loc,
+        "video_indexer_account_id": vi_acc,
+        "video_indexer_resource_group": settings.get("video_indexer_resource_group"),
+        "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
+        "video_indexer_account_name": settings.get("video_indexer_account_name")
+    }
+    
+    missing_settings = [key for key, value in required_settings.items() if not value]
+    if missing_settings:
+        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings: {missing_settings}")
+        update_callback(status=f"VIDEO: missing settings - {', '.join(missing_settings)}")
+        return 0
+
+    debug_print("[VIDEO INDEXER] All required settings are present")
 
     # 1) Auth
     try:
+        debug_print("[VIDEO INDEXER] Attempting to acquire authentication token")
         token = get_video_indexer_account_token(settings)
+        debug_print(f"[VIDEO INDEXER] Authentication successful, token length: {len(token) if token else 0}")
     except Exception as e:
+        debug_print(f"[VIDEO INDEXER] Authentication failed: {str(e)}")
         print(f"[VIDEO] AUTH ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: auth failed → {e}")
         return 0
@@ -351,26 +406,56 @@ def process_video_document(
     try:
         url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos"
         params = {"accessToken": token, "name": original_filename}
+        
+        debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
+        debug_print(f"[VIDEO INDEXER] Upload params: {params}")
+        debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
+        
         with open(temp_file_path, "rb") as f:
             resp = requests.post(url, params=params, files={"file": f})
+        
+        debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            debug_print(f"[VIDEO INDEXER] Upload response text: {resp.text}")
+            
         resp.raise_for_status()
-        vid = resp.json().get("id")
+        response_data = resp.json()
+        debug_print(f"[VIDEO INDEXER] Upload response keys: {list(response_data.keys())}")
+        
+        vid = response_data.get("id")
         if not vid:
+            debug_print(f"[VIDEO INDEXER] ERROR: No video ID in response: {response_data}")
             raise ValueError("no video ID returned")
+            
+        debug_print(f"[VIDEO INDEXER] Upload successful, video ID: {vid}")
         print(f"[VIDEO] UPLOAD OK, videoId={vid}", flush=True)
         update_callback(status=f"VIDEO: uploaded id={vid}")
+        
         try:
             # Update the document's metadata with the video indexer ID
+            debug_print(f"[VIDEO INDEXER] Updating document metadata with video_indexer_id: {vid}")
             update_document(
                 document_id=document_id,
                 user_id=user_id,
                 group_id=group_id,
                 video_indexer_id=vid
             )
+            debug_print(f"[VIDEO INDEXER] Document metadata updated successfully")
         except Exception as e:
+            debug_print(f"[VIDEO INDEXER] Failed to update document metadata: {str(e)}")
             print(f"[VIDEO] Failed to update document metadata with video_indexer_id: {e}", flush=True)
 
+    except requests.exceptions.RequestException as e:
+        debug_print(f"[VIDEO INDEXER] Upload request failed: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            debug_print(f"[VIDEO INDEXER] Upload error response status: {e.response.status_code}")
+            debug_print(f"[VIDEO INDEXER] Upload error response text: {e.response.text}")
+        print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
+        update_callback(status=f"VIDEO: upload failed → {e}")
+        return 0
     except Exception as e:
+        debug_print(f"[VIDEO INDEXER] Upload unexpected error: {str(e)}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
         return 0
@@ -380,33 +465,88 @@ def process_video_document(
         f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
         f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
     )
+    
+    debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
+    debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
+    
+    poll_count = 0
+    max_polls = 180  # 90 minutes maximum (30 second intervals)
+    
     while True:
-        r = requests.get(index_url)
-        if r.status_code in (401, 404):
-            time.sleep(30); continue
-        if r.status_code == 429:
-            time.sleep(int(r.headers.get("Retry-After", 30))); continue
-        if r.status_code == 504:
-            time.sleep(30); continue
-        r.raise_for_status()
-        data = r.json()
-
+        poll_count += 1
+        debug_print(f"[VIDEO INDEXER] Polling attempt {poll_count}/{max_polls}")
+        
+        try:
+            r = requests.get(index_url)
+            debug_print(f"[VIDEO INDEXER] Poll response status: {r.status_code}")
+            
+            if r.status_code in (401, 404):
+                debug_print(f"[VIDEO INDEXER] Poll returned {r.status_code}, waiting 30s and retrying")
+                time.sleep(30)
+                continue
+            if r.status_code == 429:
+                retry_after = int(r.headers.get("Retry-After", 30))
+                debug_print(f"[VIDEO INDEXER] Rate limited, waiting {retry_after}s")
+                time.sleep(retry_after)
+                continue
+            if r.status_code == 504:
+                debug_print(f"[VIDEO INDEXER] Timeout received, waiting 30s and retrying")
+                time.sleep(30)
+                continue
+                
+            r.raise_for_status()
+            data = r.json()
+            debug_print(f"[VIDEO INDEXER] Poll response keys: {list(data.keys())}")
+            
+        except requests.exceptions.RequestException as e:
+            debug_print(f"[VIDEO INDEXER] Poll request failed: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                debug_print(f"[VIDEO INDEXER] Poll error response status: {e.response.status_code}")
+                debug_print(f"[VIDEO INDEXER] Poll error response text: {e.response.text}")
+            if poll_count >= max_polls:
+                update_callback(status="VIDEO: polling timeout")
+                return 0
+            time.sleep(30)
+            continue
+        except Exception as e:
+            debug_print(f"[VIDEO INDEXER] Poll unexpected error: {str(e)}")
+            if poll_count >= max_polls:
+                update_callback(status="VIDEO: polling timeout")
+                return 0
+            time.sleep(30)
+            continue
 
         info = data.get("videos", [{}])[0]
         prog = info.get("processingProgress", "0%").rstrip("%")
         state = info.get("state", "").lower()
+        
+        debug_print(f"[VIDEO INDEXER] Processing progress: {prog}%, State: {state}")
         update_callback(status=f"VIDEO: {prog}%")
+        
         if state == "failed":
+            debug_print(f"[VIDEO INDEXER] Processing failed for video ID: {vid}")
             update_callback(status="VIDEO: indexing failed")
             return 0
         if prog == "100":
+            debug_print(f"[VIDEO INDEXER] Processing completed for video ID: {vid}")
             break
+            
+        if poll_count >= max_polls:
+            debug_print(f"[VIDEO INDEXER] Maximum polling attempts reached for video ID: {vid}")
+            update_callback(status="VIDEO: processing timeout")
+            return 0
+            
         time.sleep(30)
 
     # 4) Extract transcript & OCR
+    debug_print(f"[VIDEO INDEXER] Starting insights extraction for video ID: {vid}")
+    
     insights = info.get("insights", {})
     transcript = insights.get("transcript", [])
     ocr_blocks = insights.get("ocr", [])
+    
+    debug_print(f"[VIDEO INDEXER] Transcript segments found: {len(transcript)}")
+    debug_print(f"[VIDEO INDEXER] OCR blocks found: {len(ocr_blocks)}")
 
     speech_context = [
         {"text": seg["text"].strip(), "start": inst["start"]}
@@ -419,9 +559,14 @@ def process_video_document(
         for inst in block.get("instances", [])
     ]
 
+    debug_print(f"[VIDEO INDEXER] Speech context items: {len(speech_context)}")
+    debug_print(f"[VIDEO INDEXER] OCR context items: {len(ocr_context)}")
+
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
     ocr_context.sort(key=lambda x: to_seconds(x["start"]))
 
+    debug_print(f"[VIDEO INDEXER] Starting 30-second chunk processing")
+    
     total = 0
     idx_s = 0
     n_s = len(speech_context)
@@ -446,16 +591,26 @@ def process_video_document(
         chunk_text = " ".join(speech_lines).strip()
         ocr_text = " ".join(ocr_lines).strip()
 
+        debug_print(f"[VIDEO INDEXER] Processing chunk {total + 1} at timestamp {start_ts}")
+        debug_print(f"[VIDEO INDEXER] Chunk text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
+        
         update_callback(current_file_chunk=total+1, status=f"VIDEO: saving chunk @ {start_ts}")
-        save_video_chunk(
-            page_text_content=chunk_text,
-            ocr_chunk_text=ocr_text,
-            start_time=start_ts,
-            file_name=original_filename,
-            user_id=user_id,
-            document_id=document_id,
-            group_id=group_id
-        )
+        
+        try:
+            save_video_chunk(
+                page_text_content=chunk_text,
+                ocr_chunk_text=ocr_text,
+                start_time=start_ts,
+                file_name=original_filename,
+                user_id=user_id,
+                document_id=document_id,
+                group_id=group_id
+            )
+            debug_print(f"[VIDEO INDEXER] Chunk {total + 1} saved successfully")
+        except Exception as e:
+            debug_print(f"[VIDEO INDEXER] Failed to save chunk {total + 1}: {str(e)}")
+            print(f"[VIDEO] CHUNK SAVE ERROR for chunk {total + 1}: {e}", flush=True)
+            
         total += 1
 
     # Extract metadata if enabled and chunks were processed
@@ -1435,6 +1590,10 @@ def delete_from_blob_storage(document_id, user_id, file_name, group_id=None, pub
 
 def delete_document(user_id, document_id, group_id=None, public_workspace_id=None):
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
+    from functions_debug import debug_print
+    
+    debug_print(f"[DELETE DOCUMENT] Starting deletion for document: {document_id}, user: {user_id}, group: {group_id}, public_workspace: {public_workspace_id}")
+    
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     
@@ -1469,22 +1628,51 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
 
         # First try to delete video from Video Indexer if applicable
         if file_ext in ('.mp4', '.mov', '.avi', '.mkv', '.flv'):
+            debug_print(f"[VIDEO INDEXER DELETE] Video file detected, attempting Video Indexer deletion for document: {document_id}")
             try:
                 settings = get_settings()
                 vi_ep = settings.get("video_indexer_endpoint")
                 vi_loc = settings.get("video_indexer_location")
                 vi_acc = settings.get("video_indexer_account_id")
-                token = get_video_indexer_account_token(settings)
-                # You need to store the video ID in the document metadata when uploading
-                video_id = document_item.get("video_indexer_id")
-                if video_id:
-                    delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
-                    resp = requests.delete(delete_url, timeout=60)
-                    resp.raise_for_status()
-                    print(f"Deleted video from Video Indexer: {video_id}")
+                
+                debug_print(f"[VIDEO INDEXER DELETE] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
+                
+                if not all([vi_ep, vi_loc, vi_acc]):
+                    debug_print(f"[VIDEO INDEXER DELETE] Missing video indexer configuration, skipping deletion")
+                    print("Missing video indexer configuration; skipping Video Indexer deletion.")
                 else:
-                    print("No video_indexer_id found in document metadata; skipping Video Indexer deletion.")
+                    debug_print(f"[VIDEO INDEXER DELETE] Acquiring authentication token")
+                    token = get_video_indexer_account_token(settings)
+                    debug_print(f"[VIDEO INDEXER DELETE] Token acquired successfully")
+                    
+                    # You need to store the video ID in the document metadata when uploading
+                    video_id = document_item.get("video_indexer_id")
+                    debug_print(f"[VIDEO INDEXER DELETE] Video ID from document metadata: {video_id}")
+                    
+                    if video_id:
+                        delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
+                        debug_print(f"[VIDEO INDEXER DELETE] Delete URL: {delete_url}")
+                        
+                        resp = requests.delete(delete_url, timeout=60)
+                        debug_print(f"[VIDEO INDEXER DELETE] Delete response status: {resp.status_code}")
+                        
+                        if resp.status_code != 200:
+                            debug_print(f"[VIDEO INDEXER DELETE] Delete response text: {resp.text}")
+                            
+                        resp.raise_for_status()
+                        debug_print(f"[VIDEO INDEXER DELETE] Successfully deleted video ID: {video_id}")
+                        print(f"Deleted video from Video Indexer: {video_id}")
+                    else:
+                        debug_print(f"[VIDEO INDEXER DELETE] No video_indexer_id found in document metadata")
+                        print("No video_indexer_id found in document metadata; skipping Video Indexer deletion.")
+            except requests.exceptions.RequestException as e:
+                debug_print(f"[VIDEO INDEXER DELETE] Request error: {str(e)}")
+                if hasattr(e, 'response') and e.response is not None:
+                    debug_print(f"[VIDEO INDEXER DELETE] Error response status: {e.response.status_code}")
+                    debug_print(f"[VIDEO INDEXER DELETE] Error response text: {e.response.text}")
+                print(f"Error deleting video from Video Indexer: {e}")
             except Exception as e:
+                debug_print(f"[VIDEO INDEXER DELETE] Unexpected error: {str(e)}")
                 print(f"Error deleting video from Video Indexer: {e}")
 
         # Second try to delete from blob storage

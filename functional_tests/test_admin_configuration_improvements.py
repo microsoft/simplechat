@@ -145,25 +145,16 @@ def test_health_check_consolidation():
             
         page_content = response.text
         
-        # Count occurrences of health check configuration
-        health_check_occurrences = page_content.count('enable_health_check')
+        # Count occurrences of external health check configuration
         external_health_check_occurrences = page_content.count('enable_external_healthcheck')
         
-        # Should only appear once each (in General tab, not duplicated)
-        if health_check_occurrences > 2:  # Once for input, once for label
-            print(f"❌ Health check configuration appears {health_check_occurrences} times (should be 2)")
-            return False
-            
+        # Should only appear once (in General tab, not duplicated)
         if external_health_check_occurrences > 2:  # Once for input, once for label
             print(f"❌ External health check configuration appears {external_health_check_occurrences} times (should be 2)")
             return False
             
-        # Check that health checks are in General tab section
+        # Check that external health check is in General tab section
         general_tab_section = page_content[page_content.find('id="general"'):page_content.find('id="gpt"')]
-        if 'enable_health_check' not in general_tab_section:
-            print("❌ Health check configuration not found in General tab")
-            return False
-            
         if 'enable_external_healthcheck' not in general_tab_section:
             print("❌ External health check configuration not found in General tab")
             return False
@@ -183,17 +174,6 @@ def test_health_check_endpoints():
     
     try:
         base_url = "http://localhost:5000"
-        
-        # Test standard health check endpoint
-        health_url = urljoin(base_url, "/health")
-        try:
-            response = requests.get(health_url, timeout=5)
-            if response.status_code == 200:
-                print("✅ Standard health check endpoint (/health) is accessible")
-            else:
-                print(f"⚠️ Standard health check endpoint returned: {response.status_code}")
-        except requests.exceptions.RequestException:
-            print("⚠️ Standard health check endpoint not accessible (may be disabled)")
             
         # Test external health check endpoint  
         external_health_url = urljoin(base_url, "/external/healthcheck")
@@ -230,7 +210,6 @@ def test_admin_form_processing():
         
         # Check that form includes all necessary fields for new functionality
         required_form_fields = [
-            'name="enable_health_check"',
             'name="enable_external_healthcheck"',
             'name="enable_workspaces"',
             'name="azure_search_service_endpoint"',

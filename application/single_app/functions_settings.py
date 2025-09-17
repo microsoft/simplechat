@@ -6,8 +6,8 @@ from functions_appinsights import log_event
 def get_settings():
     import secrets
     default_settings = {
-        # Health check
-        'enable_health_check': True,
+        # External health check
+        'enable_external_healthcheck': True,
         # Security settings
         'enable_appinsights_global_logging': False,
         'enable_debug_logging': False,

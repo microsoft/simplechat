@@ -645,7 +645,7 @@
                 <!-- Actions Configuration Section -->
                 <div class="card p-3 mb-4" id="actions-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-gear me-2"></i>Actions Configuration
+                        <i class="bi bi-plugin me-2"></i>Actions Configuration
                     </h5>
                     <p class="text-muted small">
                         Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
@@ -769,7 +769,7 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable debug print statements across the application for troubleshooting and development."></i>
                     </div>
                     <div class="alert alert-info mt-2" role="alert">
-                        <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting.
+                        <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting. Tokens and keys will be collected during this process.
                     </div>
                 </div>
                 
@@ -934,22 +934,7 @@
                     <h5>
                         <i class="bi bi-heart-pulse me-2"></i>Health Check
                     </h5>
-                    <p class="text-muted mb-3">Configure health check endpoints for monitoring and load balancer health checks.</p>
-                    
-                    <!-- Standard Health Check -->
-                    <div class="form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_health_check"
-                            name="enable_health_check"
-                            {% if settings.enable_health_check %}checked{% endif %}>
-                        <label class="form-check-label ms-2" for="enable_health_check">
-                            Enable Standard Health Check Endpoint (/health)
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /health endpoint for monitoring and load balancer health checks to verify application status."></i>
-                    </div>
-                    <p class="text-muted small mb-3">Standard health check endpoint used by Azure Load Balancer and most monitoring systems.</p>
+                    <p class="text-muted mb-3">Configure health check endpoint for external monitoring systems.</p>
                     
                     <!-- External Health Check -->
                     <div class="form-check form-switch mb-2">
@@ -962,9 +947,9 @@
                         <label class="form-check-label ms-2" for="enable_external_healthcheck">
                             Enable External Health Check Endpoint (/external/healthcheck)
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /external/healthcheck endpoint for specialized external monitoring systems that require a different endpoint path."></i>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the /external/healthcheck endpoint for external monitoring systems."></i>
                     </div>
-                    <p class="text-muted small mb-0">Specialized health check endpoint for external monitoring systems that require a different endpoint path.</p>
+                    <p class="text-muted small mb-0">Health check endpoint for external monitoring systems that require endpoint verification.</p>
                 </div>
                 <!-- New Classification Banner Section -->
                 <div class="card p-3 mb-3" id="classification-banner-section">
