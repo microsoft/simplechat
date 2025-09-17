@@ -130,15 +130,20 @@ function initAdminSidebarNav() {
         });
     });
     
-    // Set the initial active tab (General)
-    const firstTab = document.querySelector('.admin-nav-tab[data-tab="general"]');
-    if (firstTab) {
-        firstTab.classList.add('active');
-        showAdminTab('general');
+    // Set the initial active tab (General) - but only if no tab is already active
+    const activeTab = document.querySelector('.admin-nav-tab.active, .admin-nav-section.active');
+    if (!activeTab) {
+        const firstTab = document.querySelector('.admin-nav-tab[data-tab="general"]');
+        if (firstTab) {
+            firstTab.classList.add('active');
+            showAdminTab('general');
+        }
+    } else {
+        console.log('initAdminSidebarNav - Found existing active tab, preserving current state:', activeTab.getAttribute('data-tab'));
     }
 }
 
-function showAdminTab(tabId) {
+function showAdminTab(tabId) {    
     // Hide all tab panes
     document.querySelectorAll('.tab-pane').forEach(pane => {
         pane.classList.remove('show', 'active');
@@ -148,11 +153,16 @@ function showAdminTab(tabId) {
     const targetTab = document.getElementById(tabId);
     if (targetTab) {
         targetTab.classList.add('show', 'active');
+    } else {
+        console.warn('❌ showAdminTab - Could not find tab pane with ID:', tabId);
     }
     
     // Update the hash in URL for deep linking
     window.location.hash = tabId;
 }
+
+// Make function globally available
+window.showAdminTab = showAdminTab;
 
 function scrollToSection(sectionId) {
     // Map section IDs to actual element IDs/classes in the admin settings

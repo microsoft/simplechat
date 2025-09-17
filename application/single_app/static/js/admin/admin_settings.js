@@ -83,6 +83,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (adminForm) {
         adminForm.addEventListener('submit', function(e) {
             try {
+                console.log('🚀 Form submission started - gathering tab information...');
+                
+                // Capture the current active tab before form submission
+                const activeTab = getCurrentActiveTab();
+                
+                if (activeTab) {
+                    // Store the active tab in sessionStorage to restore after redirect
+                    sessionStorage.setItem('adminSettingsActiveTab', activeTab);
+                } else {
+                    console.warn('⚠️ Form submission - No active tab detected, tab preservation may not work');
+                }
+                
                 // Ensure classification categories is valid JSON before submission
                 if (classificationJsonInput) {
                     const jsonString = updateClassificationJsonInput();
@@ -105,13 +117,175 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+/**
+ * Gets the current active tab's target hash (e.g., "#general", "#agents")
+ * @returns {string|null} The hash of the currently active tab, or null if none found
+ */
+function getCurrentActiveTab() {    
+    // First check if we're using sidebar navigation
+    const sidebarToggle = document.getElementById('admin-settings-toggle');
+    
+    if (sidebarToggle) {
+        
+        // For sidebar navigation, check for active sidebar nav links
+        // First check for active section (more specific)
+        const activeSidebarSection = document.querySelector('.admin-nav-section.active');
+        if (activeSidebarSection) {
+            const tabId = activeSidebarSection.getAttribute('data-tab');
+            return tabId ? '#' + tabId : null;
+        }
+        
+        // Then check for active tab (less specific)
+        const activeSidebarTab = document.querySelector('.admin-nav-tab.active');
+        console.log('🔍 getCurrentActiveTab - Looking for .admin-nav-tab.active:', activeSidebarTab);
+        if (activeSidebarTab) {
+            const tabId = activeSidebarTab.getAttribute('data-tab');
+            return tabId ? '#' + tabId : null;
+        }
+        
+        // Fallback: check which tab pane is currently visible for sidebar nav
+        const activeTabPane = document.querySelector('.tab-pane.show.active');
+        if (activeTabPane) {
+            return '#' + activeTabPane.id;
+        }
+        
+        // If no active tab found but we have a hash, use that
+        if (window.location.hash) {
+            return window.location.hash;
+        }
+                
+        // Debug: List all available sidebar navigation elements
+        const allSections = document.querySelectorAll('.admin-nav-section');
+        const allTabs = document.querySelectorAll('.admin-nav-tab');
+        const allPanes = document.querySelectorAll('.tab-pane');
+        allSections.forEach(section => {
+            console.log('  - Section:', section.getAttribute('data-tab'), 'active:', section.classList.contains('active'));
+        });
+        allTabs.forEach(tab => {
+            console.log('  - Tab:', tab.getAttribute('data-tab'), 'active:', tab.classList.contains('active'));
+        });
+        allPanes.forEach(pane => {
+            console.log('  - Pane:', pane.id, 'show:', pane.classList.contains('show'), 'active:', pane.classList.contains('active'));
+        });
+        
+    } else {
+        
+        // For tab navigation, check Bootstrap tab buttons
+        const activeTabButton = document.querySelector('button.nav-link.active[data-bs-target]');
+        console.log('🔍 getCurrentActiveTab - Looking for button.nav-link.active[data-bs-target]:', activeTabButton);
+        if (activeTabButton) {
+            const target = activeTabButton.getAttribute('data-bs-target');
+            return target;
+        }
+        
+        // Fallback: check which tab pane is currently visible for tab nav
+        const activeTabPane = document.querySelector('.tab-pane.fade.show.active');
+        console.log('🔍 getCurrentActiveTab - Looking for .tab-pane.fade.show.active:', activeTabPane);
+        if (activeTabPane) {
+            return '#' + activeTabPane.id;
+        }
+        
+        console.log('❌ getCurrentActiveTab - No active Bootstrap tab elements found');
+    }
+    
+    console.log('❌ getCurrentActiveTab - No active tab found anywhere');
+    return null;
+}
+
 function activateTabFromHash() {
-    const hash = window.location.hash;
+    const timestamp = new Date().toLocaleTimeString();
+    console.log('activateTabFromHash - Called');
+    
+    let hash = window.location.hash;
+    
+    // If no hash in URL, check sessionStorage for saved tab from form submission
+    if (!hash) {
+        const savedTab = sessionStorage.getItem('adminSettingsActiveTab');
+        
+        if (savedTab) {
+            hash = savedTab;
+            
+            // Clear the saved tab to prevent it from affecting future navigation
+            sessionStorage.removeItem('adminSettingsActiveTab');
+            
+            // Update URL with the restored hash
+            history.replaceState(null, null, hash);
+        } else {
+            console.log(`❌ [${timestamp}] activateTabFromHash - No saved tab found in sessionStorage`);
+        }
+    } else {
+        console.log(`✅ [${timestamp}] activateTabFromHash - Hash found in URL:`, hash);
+    }
+    
     if (hash) {
-        const tabButton = document.querySelector(`button.nav-link[data-bs-target="${hash}"]`);
-        if (tabButton) {
-            const tab = new bootstrap.Tab(tabButton);
-            tab.show();
+        const tabId = hash.startsWith('#') ? hash.substring(1) : hash;
+        
+        // Check if we're using sidebar navigation
+        const sidebarToggle = document.getElementById('admin-settings-toggle');
+        
+        if (sidebarToggle) {
+            // Try different ways to access the showAdminTab function
+            let showTabFunction = null;
+            if (typeof showAdminTab === 'function') {
+                showTabFunction = showAdminTab;
+            } else if (typeof window.showAdminTab === 'function') {
+                showTabFunction = window.showAdminTab;
+            }
+            
+            if (showTabFunction) {
+                showTabFunction(tabId);
+            } else {
+                // Manual tab activation fallback
+                // Hide all tab panes
+                document.querySelectorAll('.tab-pane').forEach(pane => {
+                    pane.classList.remove('show', 'active');
+                });
+                
+                // Show the selected tab pane
+                const targetTab = document.getElementById(tabId);
+                if (targetTab) {
+                    targetTab.classList.add('show', 'active');
+                }
+            }
+            
+            // Set active nav link for sidebar - handle both tab and section level
+            
+            // First clear all active states
+            const allTabs = document.querySelectorAll('.admin-nav-tab');
+            const allSections = document.querySelectorAll('.admin-nav-section');
+            
+            allTabs.forEach(link => {
+                link.classList.remove('active');
+            });
+            allSections.forEach(link => {
+                link.classList.remove('active');
+            });
+            
+            // Set the main tab as active
+            const navLink = document.querySelector(`.admin-nav-tab[data-tab="${tabId}"]`);
+            const navSection = document.querySelector(`.admin-nav-section[data-tab="${tabId}"]`);
+            
+            if (navLink) {
+                navLink.classList.add('active');
+            }
+            
+            if (navSection) {
+                navSection.classList.add('active');
+            }
+            
+            // Also expand the submenu if it exists
+            const submenu = document.getElementById(tabId + '-submenu');
+            if (submenu) {
+                submenu.style.display = 'block';
+            }
+            
+        } else {
+            // Use Bootstrap tab navigation
+            const tabButton = document.querySelector(`button.nav-link[data-bs-target="${hash}"]`);
+            if (tabButton) {
+                const tab = new bootstrap.Tab(tabButton);
+                tab.show();
+            }
         }
     }
 }
