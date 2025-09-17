@@ -5,8 +5,6 @@
 
 #### New Features
 
-##### Admin Interface Enhancements
-
 *   **Admin Left-Hand Navigation Enhancement**
     *   Introduced an innovative dual-navigation approach for admin settings, providing both traditional top-nav tabs and a modern left-hand hierarchical navigation system.
     *   **Key Features**: Conditional navigation that automatically detects layout preference, hierarchical structure with two-level navigation (tabs → sections), smart state management for active states and submenus.
@@ -43,8 +41,6 @@
 
 #### Bug Fixes
 
-##### Admin Interface and Configuration Fixes
-
 *   **Admin Configuration Improvements**
     *   Addressed user feedback about admin settings organization and implemented critical improvements to reduce confusion and provide better guidance.
     *   **Duplicate Health Check Fix**: Consolidated health check configuration in General tab, removed duplicate from Other tab, added missing form field processing.
@@ -66,8 +62,6 @@
     *   **Impact**: Consistent behavior between document and prompt filtering, improved workflow efficiency for users working within specific workspace contexts.
     *   (Ref: `chat-prompts.js`, `chat-global.js`, scope filtering implementation)
 
-##### User Interface and Functionality Fixes
-
 *   **External Links New Window Fix**
     *   Fixed web links in AI responses and user messages to open in new windows/tabs instead of replacing current chat session.
     *   **Root Cause**: External links in markdown content didn't include `target="_blank"` attribute after DOMPurify sanitization.
@@ -86,8 +80,6 @@
 
 #### Bug Fixes
 
-##### Public Workspace Management Fixes
-
 *   **Public Workspace Management Permission Fix**
     *   Fixed incorrect permission checking for public workspace management operations when "Require Membership to Create Public Workspaces" setting was enabled.
     *   **Issue**: Users with legitimate access to manage workspaces (Owner/Admin/DocumentManager) were incorrectly shown "Forbidden" errors when accessing management functionality.
@@ -104,8 +96,6 @@
         *   More than 3 workspaces: `"Public: [Name1], [Name2], [Name3], 3+"`
     *   **Benefits**: Improved workspace identification, consistent with Group scope naming pattern, better navigation between workspace scopes.
     *   (Ref: `chat-documents.js`, scope label updates, dynamic workspace display)
-
-##### User Interface and Content Rendering Fixes
 
 *   **Unicode Table Rendering Fix**
     *   Fixed issue where AI-generated tables using Unicode box-drawing characters were not rendering as proper HTML tables in the chat interface.
