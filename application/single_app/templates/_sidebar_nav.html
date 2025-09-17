@@ -139,6 +139,238 @@
     </div>
     {% endif %}
 
+    <!-- Admin Settings Section - Only show when on admin settings page and user is admin -->
+    {% if request.endpoint == 'admin_settings' and 'Admin' in session['user']['roles'] %}
+    <div class="overflow-auto">
+      <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">Admin Settings</span>
+        <i id="admin-settings-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="admin-settings-section">
+        <ul class="nav flex-column mb-2">
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="general">
+              <i class="bi bi-gear me-2"></i><span class="nav-text">General</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="general-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="branding-section">
+                  <i class="bi bi-palette me-2" style="font-size: 0.8em;"></i><span class="nav-text">Branding</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="home-page-text-section">
+                  <i class="bi bi-house me-2" style="font-size: 0.8em;"></i><span class="nav-text">Home Page Text</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="appearance-section">
+                  <i class="bi bi-brush me-2" style="font-size: 0.8em;"></i><span class="nav-text">Appearance</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="classification-banner-section">
+                  <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Classification Banner</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="external-links-section">
+                  <i class="bi bi-box-arrow-up-right me-2" style="font-size: 0.8em;"></i><span class="nav-text">External Links</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="system-settings-section">
+                  <i class="bi bi-gear-fill me-2" style="font-size: 0.8em;"></i><span class="nav-text">System Settings</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="ai-models">
+              <i class="bi bi-cpu me-2"></i><span class="nav-text">AI Models</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="ai-models-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="gpt-config">
+                  <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">GPT Configuration</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="embeddings-config">
+                  <i class="bi bi-vector-pen me-2" style="font-size: 0.8em;"></i><span class="nav-text">Embeddings</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="image-config">
+                  <i class="bi bi-image me-2" style="font-size: 0.8em;"></i><span class="nav-text">Image Generation</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="agents">
+              <i class="bi bi-robot me-2"></i><span class="nav-text">Agents</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="agents-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="agents-config">
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents Configuration</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="actions-config">
+                  <i class="bi bi-gear me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions Configuration</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="logging">
+              <i class="bi bi-journal-text me-2"></i><span class="nav-text">Logging</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="logging-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="application-insights-section">
+                  <i class="bi bi-graph-up me-2" style="font-size: 0.8em;"></i><span class="nav-text">Application Insights</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="debug-logging-section">
+                  <i class="bi bi-bug me-2" style="font-size: 0.8em;"></i><span class="nav-text">Debug Logging</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="file-processing-logs-section">
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Process Logging</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="scale">
+              <i class="bi bi-diagram-3 me-2"></i><span class="nav-text">Scale</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="scale-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="redis-cache-section">
+                  <i class="bi bi-database me-2" style="font-size: 0.8em;"></i><span class="nav-text">Redis Cache</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="front-door-section">
+                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Front Door</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
+              <i class="bi bi-folder me-2"></i><span class="nav-text">Workspaces</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="workspaces-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="personal-workspaces-section">
+                  <i class="bi bi-person me-2" style="font-size: 0.8em;"></i><span class="nav-text">Personal Workspaces</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="group-workspaces-section">
+                  <i class="bi bi-people me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Workspaces</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="public-workspaces-section">
+                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Public Workspaces</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="file-sharing-section">
+                  <i class="bi bi-share me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Sharing</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="metadata-extraction-section">
+                  <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">Metadata Extraction</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="document-classification-section">
+                  <i class="bi bi-tags me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Classification</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="citation">
+              <i class="bi bi-quote me-2"></i><span class="nav-text">Citations</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="citation-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="citation" data-section="standard-citations-section">
+                  <i class="bi bi-quote me-2" style="font-size: 0.8em;"></i><span class="nav-text">Standard</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="citation" data-section="enhanced-citations-section">
+                  <i class="bi bi-star me-2" style="font-size: 0.8em;"></i><span class="nav-text">Enhanced</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="safety">
+              <i class="bi bi-shield-check me-2"></i><span class="nav-text">Safety</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="safety-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="content-safety-section">
+                  <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Content Safety</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="user-feedback-section">
+                  <i class="bi bi-chat-square-heart me-2" style="font-size: 0.8em;"></i><span class="nav-text">User Feedback</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="permissions-section">
+                  <i class="bi bi-person-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Permissions</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="conversation-archiving-section">
+                  <i class="bi bi-archive me-2" style="font-size: 0.8em;"></i><span class="nav-text">Conversation Archiving</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="search-extract">
+              <i class="bi bi-search me-2"></i><span class="nav-text">Search & Extract</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="search-extract-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="azure-ai-search-section">
+                  <i class="bi bi-search me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure AI Search</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="document-intelligence-section">
+                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Intelligence</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="multimedia-support-section">
+                  <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multimedia Support</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">

@@ -1,6 +1,6 @@
 # Public Workspace Management Enhancement: Go to Public Workspace Button
 
-**Implemented in version: 0.229.010**
+**Version:** 0.229.032
 
 ## Feature Description
 

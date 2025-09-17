@@ -1,5 +1,7 @@
 # External Links New Window Fix
 
+**Version:** 0.229.032
+
 ## Issue Description
 Web links in AI responses and user messages were opening in the same window/tab, replacing the current chat session. This created a poor user experience as users would lose their conversation context when clicking on external links.
 

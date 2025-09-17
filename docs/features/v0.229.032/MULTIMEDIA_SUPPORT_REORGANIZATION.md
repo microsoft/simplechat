@@ -1,7 +1,6 @@
 # Multimedia Support Reorganization and Video Indexer Configuration Guide
 
-**Version: 0.229.017**  
-**Implemented in: 0.229.017**
+**Version:** 0.229.032
 
 ## Overview
 

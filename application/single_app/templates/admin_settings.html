@@ -451,6 +451,9 @@
             </div>
         </div>
         
+        <!-- Hide tabs when left navigation is enabled -->
+        {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+        {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
             <!-- Core Settings -->
             <li class="nav-item" role="presentation">
@@ -516,6 +519,8 @@
                 </button>
             </li>
         </ul>
+        {% endif %}
+        
         <div class="tab-content mt-3" id="adminSettingsTabContent">
             <!-- Agents Tab Content (Consolidated: Agents + Actions) -->
             <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
@@ -529,7 +534,7 @@
                 </div>
 
                 <!-- Agents Configuration Section -->
-                <div class="card p-3 mb-4">
+                <div class="card p-3 mb-4" id="agents-configuration">
                     <h5 class="card-title">
                         <i class="bi bi-robot me-2"></i>Agents Configuration
                     </h5>
@@ -638,7 +643,7 @@
                 </div>
 
                 <!-- Actions Configuration Section -->
-                <div class="card p-3 mb-4">
+                <div class="card p-3 mb-4" id="actions-configuration">
                     <h5 class="card-title">
                         <i class="bi bi-gear me-2"></i>Actions Configuration
                     </h5>
@@ -734,8 +739,10 @@
                     Configure logging settings for monitoring, debugging, and auditing purposes. These settings control various types of logging throughout the application including application insights, debug messages, and file processing events.
                 </p>
                 
-                <div class="card p-3 mb-3">
-                    <h5>Application Insights Logging</h5>
+                <div class="card p-3 mb-3" id="application-insights-section">
+                    <h5>
+                        <i class="bi bi-graph-up me-2"></i>Application Insights Logging
+                    </h5>
                     <p class="text-muted">Enable global logging to Application Insights for all agents and orchestration events.</p>
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="enable_appinsights_global_logging" name="enable_appinsights_global_logging" {% if settings.enable_appinsights_global_logging %}checked{% endif %}>
@@ -749,8 +756,10 @@
                     </div>
                 </div>
                 
-                <div class="card p-3 mb-3">
-                    <h5>Debug Logging</h5>
+                <div class="card p-3 mb-3" id="debug-logging-section">
+                    <h5>
+                        <i class="bi bi-bug me-2"></i>Debug Logging
+                    </h5>
                     <p class="text-muted">Control debug print statements across the application for development and troubleshooting.</p>
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging" name="enable_debug_logging" {% if settings.enable_debug_logging %}checked{% endif %}>
@@ -764,8 +773,10 @@
                     </div>
                 </div>
                 
-                <div class="card p-3 mb-3">
-                    <h5>File Processing Logs</h5>
+                <div class="card p-3 mb-3" id="file-processing-logs-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-text me-2"></i>File Process Logging
+                    </h5>
                     <p class="text-muted">Enable logging of file processing events for debugging and auditing purposes. Logs are stored in the file_processing container in Cosmos DB.</p>
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs" name="enable_file_processing_logs" {% if settings.enable_file_processing_logs %}checked{% endif %}>
@@ -782,12 +793,18 @@
                  <p class="text-muted">
                     Configure general application settings, including the application's title, logo, and landing page text.
                 </p>
-                <div class="card p-3 mb-3">
+                <div class="card p-3 mb-3" id="branding-section">
+                    <h5>
+                        <i class="bi bi-palette me-2"></i>Branding
+                    </h5>
+                    <p class="text-muted small">
+                        Configure your application's title, logo, and branding elements.
+                    </p>
                     <div class="mb-3">
                         <label for="app_title" class="form-label">Application Title</label>
                         <input type="text" class="form-control" id="app_title" name="app_title" value="{{ settings.app_title }}">
                     </div>
-                    <h5 class="mt-3">Logo Settings</h5>
+                    <h6 class="mt-3">Logo Settings</h6>
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox" class="form-check-input" id="show_logo" name="show_logo"
                             {% if settings.show_logo %}checked{% endif %}>
@@ -818,9 +835,11 @@
                 </div>
 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Page Text (Markdown)</h5>
-                    <p class="text-muted mb-1">You can either edit the text in a Markdown editor or switch to a preview mode.</p>
+                <div class="card p-3 mb-3" id="home-page-text-section">
+                    <h5>
+                        <i class="bi bi-house me-2"></i>Home Page Text
+                    </h5>
+                    <p class="text-muted small">Configure the text content displayed on your application's home page using Markdown formatting.</p>
 
                     <!-- Alignment Selector -->
                     <div class="mb-3">
@@ -868,9 +887,11 @@
 
 
                 <!-- Dark Mode Card -->
-                <div class="card p-3 mb-3">
-                    <h5>Appearance</h5>
-                    <p class="text-muted mb-1">Configure the app appearance and theme settings.</p>
+                <div class="card p-3 mb-3" id="appearance-section">
+                    <h5>
+                        <i class="bi bi-brush me-2"></i>Appearance
+                    </h5>
+                    <p class="text-muted small">Configure the app appearance and theme settings.</p>
                     
                     <div class="mb-3">
                         <label class="form-label">Default Theme</label>
@@ -909,8 +930,10 @@
                     </div>
                 </div>
                 <!-- Health Check Configuration -->
-                <div class="card p-3 mb-3">
-                    <h5>Health Check Endpoints</h5>
+                <div class="card p-3 mb-3" id="health-check-section">
+                    <h5>
+                        <i class="bi bi-heart-pulse me-2"></i>Health Check
+                    </h5>
                     <p class="text-muted mb-3">Configure health check endpoints for monitoring and load balancer health checks.</p>
                     
                     <!-- Standard Health Check -->
@@ -944,8 +967,10 @@
                     <p class="text-muted small mb-0">Specialized health check endpoint for external monitoring systems that require a different endpoint path.</p>
                 </div>
                 <!-- New Classification Banner Section -->
-                <div class="card p-3 mb-3">
-                    <h5>Classification Banner</h5>
+                <div class="card p-3 mb-3" id="classification-banner-section">
+                    <h5>
+                        <i class="bi bi-shield-exclamation me-2"></i>Classification Banner
+                    </h5>
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" id="classification_banner_enabled" name="classification_banner_enabled"
                             {% if settings.classification_banner_enabled %}checked{% endif %}>
@@ -973,8 +998,10 @@
                 </div>
 
                 <!-- External Links Section -->
-                <div class="card p-3 mb-3">
-                    <h5>External Links</h5>
+                <div class="card p-3 mb-3" id="external-links-section">
+                    <h5>
+                        <i class="bi bi-box-arrow-up-right me-2"></i>External Links
+                    </h5>
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" id="enable_external_links" name="enable_external_links"
                             {% if settings.enable_external_links %}checked{% endif %}>
@@ -1025,7 +1052,7 @@
                 </div>
 
                 <!-- System Settings Section -->
-                <div class="card p-3 mb-3">
+                <div class="card p-3 mb-3" id="system-settings-section">
                     <h5>
                         <i class="bi bi-gear-fill me-2"></i>System Settings
                     </h5>
@@ -1061,7 +1088,7 @@
                 </p>
 
                 <!-- GPT Configuration Section -->
-                <div class="card p-3 mb-4">
+                <div class="card p-3 mb-4" id="gpt-configuration">
                     <h5 class="card-title">
                         <i class="bi bi-chat-text me-2"></i>GPT Configuration
                     </h5>
@@ -1202,7 +1229,7 @@
                 </div>
 
                 <!-- Embeddings Configuration Section -->
-                <div class="card p-3 mb-4">
+                <div class="card p-3 mb-4" id="embeddings-configuration">
                     <h5 class="card-title">
                         <i class="bi bi-vector-pen me-2"></i>Embeddings Configuration
                     </h5>
@@ -1347,7 +1374,7 @@
                 </div>
 
                 <!-- Image Generation Configuration Section -->
-                <div class="card p-3 mb-4">
+                <div class="card p-3 mb-4" id="image-generation-configuration">
                     <h5 class="card-title">
                         <i class="bi bi-image me-2"></i>Image Generation Configuration
                     </h5>
@@ -1513,8 +1540,10 @@
                 <p class="text-muted">
                     Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
                 </p>
-                <div class="card p-3 mb-3">
-                    <h5>Redis Cache</h5>
+                <div class="card p-3 mb-3" id="redis-cache-section">
+                    <h5>
+                        <i class="bi bi-database me-2"></i>Redis Cache
+                    </h5>
                     <p class="text-muted">
                         Enable Redis Cache to store session data in a distributed cache. This is recommended for production and multi-instance deployments.
                     </p>
@@ -1558,10 +1587,12 @@
                     </div>
                 </div>
 
-                <!-- Authentication & Redirect Settings Card -->
-                <div class="card p-3 mb-3">
+                <!-- Front Door Configuration Card -->
+                <div class="card p-3 mb-3" id="front-door-section">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="mb-0">Authentication & Redirect Settings</h5>
+                        <h5 class="mb-0">
+                            <i class="bi bi-globe me-2"></i>Front Door
+                        </h5>
                         <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#frontDoorInfoModal">
                             <i class="bi bi-info-circle me-1"></i>Configuration Guide
                         </button>
@@ -1605,9 +1636,10 @@
                 </p>
 
                 
-                <div class="card mb-3 p-3">
-                    
-                    <h5>Enable Personal Workspaces</h5>
+                <div class="card mb-3 p-3" id="personal-workspaces-section">
+                    <h5>
+                        <i class="bi bi-person me-2"></i>Personal Workspaces
+                    </h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of your personal workspace.
                     </p>
@@ -1625,9 +1657,10 @@
                 </div>
 
                
-               <div class="card mb-3 p-3">
-                    
-                    <h5>Enable Group Workspaces</h5>
+               <div class="card mb-3 p-3" id="group-workspaces-section">
+                    <h5>
+                        <i class="bi bi-people me-2"></i>Group Workspaces
+                    </h5>
                     <p class="text-muted">
                         Turn this on to allow access and management of group workspaces, as well as group collaboration features.
                     </p>
@@ -1663,9 +1696,10 @@
                     
                 </div>
 
-                <div class="card mb-3 p-3">
-                    
-                    <h5>Enable Public Workspaces</h5>
+                <div class="card mb-3 p-3" id="public-workspaces-section">
+                    <h5>
+                        <i class="bi bi-globe me-2"></i>Public Workspaces
+                    </h5>
                     <p class="text-muted">
                         Turn this on to enable public workspaces that are visible to everyone in the organization.
                     </p>
@@ -1700,9 +1734,10 @@
                     
                 </div>
 
-                <div class="card mb-3 p-3">
-                    
-                    <h5>Enable File Sharing</h5>
+                <div class="card mb-3 p-3" id="file-sharing-section">
+                    <h5>
+                        <i class="bi bi-share me-2"></i>File Sharing
+                    </h5>
                     <p class="text-muted">
                         Turn this on to enable file sharing capabilities between users and workspaces.
                     </p>
@@ -1719,8 +1754,10 @@
                     </div>
                 </div>
 
-                <div class="card mb-3 p-3">
-                    <h5>Metadata Extraction</h5>
+                <div class="card mb-3 p-3" id="metadata-extraction-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-code me-2"></i>Metadata Extraction
+                    </h5>
                     <p class="text-muted">
                       Enable this to automatically parse and store file metadata for advanced indexing and search.
                     </p>
@@ -1763,8 +1800,10 @@
                   
 
                 
-                <div class="card mb-3 p-3">
-                    <h5>Document Classification</h5>
+                <div class="card mb-3 p-3" id="document-classification-section">
+                    <h5>
+                        <i class="bi bi-tags me-2"></i>Document Classification
+                    </h5>
                     <p class="text-muted">
                         Enable this feature to allow users to classify documents uploaded to their workspaces using predefined categories.
                     </p>
@@ -1816,8 +1855,10 @@
                 </p>
 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Standard Citations</h5>
+                <div class="card p-3 mb-3" id="standard-citations-section">
+                    <h5>
+                        <i class="bi bi-quote me-2"></i>Standard Citations
+                    </h5>
                     <p class="text-muted">
                         Standard citations is always enabled for both Your Workspace and Group Workspace.
                     </p>
@@ -1827,8 +1868,10 @@
                 </div>
 
                 
-                <div class="card p-3">
-                    <h5>Enhanced Citations</h5>
+                <div class="card p-3" id="enhanced-citations-section">
+                    <h5>
+                        <i class="bi bi-star me-2"></i>Enhanced Citations
+                    </h5>
                     <p class="text-muted mb-2">
                         Enable Enhanced Citation to store files in a Storage Account,
                         and show direct references (Preview feature, files are saved to storage, presentation 
@@ -1987,9 +2030,10 @@
                     messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see
                     thumbs up/down to provide feedback on AI responses.
                 </p>
-                <div class="card p-3 mb-3">
-                    
-                    <h5>Content Safety</h5>
+                <div class="card p-3 mb-3" id="content-safety-section">
+                    <h5>
+                        <i class="bi bi-shield-exclamation me-2"></i>Content Safety
+                    </h5>
                     <p class="text-muted">Enable content safety to filter out inappropriate content.</p>
                     <div class="form-group form-check form-switch mb-3">
                         <input
@@ -2121,8 +2165,10 @@
                 </div>
 
                 
-                <div class="card p-3 mb-3">
-                    <h5>User Feedback</h5>
+                <div class="card p-3 mb-3" id="user-feedback-section">
+                    <h5>
+                        <i class="bi bi-chat-square-heart me-2"></i>User Feedback
+                    </h5>
                     <p class="text-muted">Enable user feedback (thumbs up/down) for AI responses.</p>
                     <div class="form-group form-check form-switch mb-3">
                         <input
@@ -2140,8 +2186,10 @@
                 </div>
                 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Admin Access Permissions</h5>
+                <div class="card p-3 mb-3" id="permissions-section">
+                    <h5>
+                        <i class="bi bi-person-check me-2"></i>Permissions
+                    </h5>
                     <p class="text-muted">Control which users can access specific administrative views related to safety and feedback.</p>
 
                     
@@ -2179,8 +2227,10 @@
                 
                 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Conversation Archiving</h5>
+                <div class="card p-3 mb-3" id="conversation-archiving-section">
+                    <h5>
+                        <i class="bi bi-archive me-2"></i>Conversation Archiving
+                    </h5>
                     <p class="text-muted">When enabled, conversation deletions will be archived instead of permanently deleted.</p>
                     <div class="form-group form-check form-switch mb-3">
                         <input
@@ -2206,8 +2256,8 @@
                 </p>
 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Azure AI Search</h5>
+                <div class="card p-3 mb-3" id="azure-ai-search-section">
+                    <h5><i class="bi bi-search me-2"></i>Azure AI Search</h5>
                     <p class="text-muted">
                         Configure Azure AI Search settings.
                     </p>
@@ -2323,8 +2373,8 @@
                 </div>
 
                 
-                <div class="card p-3 mb-3">
-                    <h5>Document Intelligence</h5>
+                <div class="card p-3 mb-3" id="document-intelligence-section">
+                    <h5><i class="bi bi-file-earmark-text me-2"></i>Document Intelligence</h5>
                     <p class="text-muted">
                         Configure Azure Document Intelligence settings.
                     </p>
@@ -2444,9 +2494,9 @@
                 </div>
 
                 <!-- Multimedia Support Section -->
-                <div class="card p-3 mb-3">
+                <div class="card p-3 mb-3" id="multimedia-support-section">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="mb-0">Multimedia Support</h5>
+                        <h5 class="mb-0"><i class="bi bi-play-circle me-2"></i>Multimedia Support</h5>
                         <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
                             <i class="bi bi-info-circle me-1"></i>Configuration Guide
                         </button>
@@ -2764,6 +2814,7 @@
 
 </script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
