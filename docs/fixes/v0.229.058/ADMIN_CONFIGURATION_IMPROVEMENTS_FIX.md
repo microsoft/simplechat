@@ -1,6 +1,6 @@
 # Admin Configuration Improvements
 
-**Version:** 0.229.032
+**Version:** 0.229.058
 
 ## Overview
 This update addresses user feedback about admin settings organization and implements critical improvements to reduce confusion and provide better user guidance when configuring workspace dependencies.

@@ -1,6 +1,6 @@
 # WORKSPACE_SCOPE_PROMPTS_FIX
 
-**Version:** 0.229.032
+**Version:** 0.229.058
 
 ## Issue Description
 The workspace scope selector in the chat interface was only affecting document filtering but not prompt filtering. When users selected different scopes (All, Personal, Group, Public), the prompts dropdown would continue to show all prompts regardless of the selected scope, creating an inconsistent user experience.

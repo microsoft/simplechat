@@ -1,6 +1,6 @@
 # Admin Left-Hand Navigation Enhancement
 
-**Version:** 0.229.032
+**Version:** 0.229.058
 
 ---
 

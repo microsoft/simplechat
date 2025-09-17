@@ -1,6 +1,6 @@
 # Admin Settings Tab Preservation Fix
 
-**Version:** 0.229.032
+**Version:** 0.229.058
 
 ## Issue Description
 
