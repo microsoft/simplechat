@@ -9,31 +9,21 @@
         /* Initial layout styles to prevent shifting when top nav is active */
         {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
         {% if nav_layout != 'sidebar' and not (not nav_layout and app_settings.enable_left_nav_default) %}
-        /* Clean docked layout styles */
-        body.layout-docked #left-pane {
-            position: fixed !important;
-            top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %} !important;
-            left: 0 !important;
-            width: 320px !important;
-            height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %}) !important;
-            z-index: 1031 !important;
-            background: var(--bs-body-bg, white) !important;
-            border-right: 1px solid var(--bs-border-color, #dee2e6) !important;
+        /* Top navigation layout - hide left pane and expand right pane (same as sidebar layout) */
+        #left-pane {
+            display: none !important;
         }
         
-        body.layout-docked #right-pane {
-            margin-left: 320px !important;
-            width: calc(100% - 320px) !important;
-            height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %}) !important;
-            position: relative !important;
-            /* Center content horizontally */
+        #right-pane {
+            width: 100% !important;
+            height: 100% !important;
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
         }
         
-        /* Center and limit width of right pane content */
-        body.layout-docked #right-pane > div {
+        /* Center and limit width of right pane content when using top nav */
+        #right-pane > div {
             width: 100% !important;
             max-width: 1000px !important;
         }
