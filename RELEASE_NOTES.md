@@ -1,6 +1,17 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
+### **(v0.229.060)**
+
+#### Bug Fixes
+
+*   **Chat Page Top Navigation Left Sidebar Fix**
+    *   Fixed positioning and layout issues when using top navigation mode where the chat page left-hand menu was overlapping with the top navigation bar.
+    *   Created a new short sidebar template (`_sidebar_short_nav.html`) optimized for top navigation layout without brand/logo area.
+    *   Modified chat page layout to hide built-in left pane when top nav is enabled, preventing redundant navigation elements.
+    *   Implemented proper positioning calculations to account for top navigation bar height with and without classification banner.
+    *   (Ref: `_sidebar_short_nav.html`, `base.html`, `chats.html`, conditional template inclusion, layout positioning fixes)
+
 ### **(v0.229.058)**
 
 #### New Features
