@@ -220,15 +220,21 @@
     </div>
   {% endif %}
   <!-- Navigation Bar -->
+  {% set left_sidebar_enabled = false %}
   {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
   {% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
     {% include "_sidebar_nav.html" %}
+    {% set left_sidebar_enabled = true %}
   {% else %}
     {% include "_top_nav.html" %}
+    {% if request.endpoint == 'chats' %}
+      {% include "_sidebar_short_nav.html" %}
+      {% set left_sidebar_enabled = true %}
+    {% endif %}
   {% endif %}
 
   <!-- Main Content Area -->
-  <div class="container main-content{% if nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %} sidebar-padding{% endif %}" id="main-content">
+  <div class="container main-content{% if left_sidebar_enabled %} sidebar-padding{% endif %}" id="main-content">
     
     {% block content %}{% endblock %}
   </div>

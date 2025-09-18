@@ -1,0 +1,325 @@
+{# Sidebar Navigation Partial - Short version without brand/logo #}
+<div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}58px{% endif %}; height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}102px{% else %}62px{% endif %}); z-index: 1040; transition: transform 0.3s ease;">
+  
+  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
+    <ul class="nav flex-column">
+      {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+        <li class="nav-item">
+          {% if request.endpoint == 'chats' %}
+          <button class="nav-link" id="sidebar-new-chat-btn" title="Start a new chat" style="background: none; border: none; text-align: left; width: 100%;">
+            <i class="bi bi-chat-right-text me-2"></i><span class="nav-text">New Chat</span>
+          </button>
+          {% else %}
+          <a class="nav-link" href="{{ url_for('chats') }}">
+            <i class="bi bi-chat-square-text me-2"></i><span class="nav-text">Chat</span>
+          </a>
+          {% endif %}
+        </li>
+      {% endif %}
+    </ul>
+
+    <!-- Conversations Section - Only show on chats page -->
+    {% if request.endpoint == 'chats' %}
+    <div id="conversations-section" class="flex-grow-1 overflow-auto">
+      <div id="conversations-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div class="d-flex align-items-center">
+          <span class="nav-text">Conversations</span>
+          <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+          <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
+            <i class="bi bi-trash-fill"></i>
+          </button>
+        </div>
+      </div>
+      <div id="conversations-list-container" class="px-2">
+        <div id="sidebar-conversations-list" class="list-group list-group-flush">
+          <div class="text-center p-2 text-muted small">Loading conversations...</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  
+  <!-- Fixed User Account Section at Bottom -->
+  <div id="sidebar-user-account" class="border-top p-3 position-absolute bottom-0 start-0 end-0" style="background: inherit; z-index: 1050;">
+    {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
+      <div class="dropdown">
+        <a class="nav-link dropdown-toggle p-0 d-flex align-items-center w-100" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
+          {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
+          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+            {% if profile_image %}
+              <!-- Render profile image directly from server data -->
+              <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
+            {% else %}
+              <!-- Fallback to initials with class for JS targeting -->
+              <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
+            {% endif %}
+          </div>
+          <div class="d-flex flex-column justify-content-center flex-grow-1" style="line-height: 1; min-width: 0;">
+            <span class="fw-semibold text-truncate" style="font-size: 1rem;" title="{{ session['user'].get('name', 'User') }}">{{ session['user'].get('name', 'User') }}</span>
+            <span class="text-muted text-truncate" style="font-size: 0.75rem;">
+              {% if 'Admin' in session['user']['roles'] %}
+                Admin account
+              {% else %}
+                Personal Account
+              {% endif %}
+            </span>
+          </div>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sidebarUserDropdown">
+          <li>
+            <a class="dropdown-item" href="{{ url_for('profile') }}">
+              <i class="bi bi-person-circle me-2"></i> {{ session['user'].get('name') }}
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item dark-mode-toggle" id="sidebarDarkModeToggle" role="button" href="#">
+              <span id="sidebarSwitchToDarkText">
+                <i class="bi bi-moon-fill me-2"></i>Dark Mode
+              </span>
+              <span id="sidebarSwitchToLightText" class="d-none">
+                <i class="bi bi-sun-fill me-2"></i>Light Mode
+              </span>
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
+          </li>
+          <li><hr class="dropdown-divider"></li>
+          {% if app_settings.enable_group_workspaces %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_public_workspaces %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_user_feedback %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+          </li>
+          {% endif %}
+          {% if app_settings.enable_content_safety %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+          </li>
+          {% endif %}
+          {% if 'Admin' in session['user']['roles'] %}
+          <li><hr class="dropdown-divider"></li>
+          <div class="px-3 pt-2 pb-1 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
+            Admin
+          </div>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
+          </li>
+          {% if app_settings.enable_content_safety %}
+            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
+            </li>
+            {% endif %}
+          {% endif %}
+          {% if app_settings.enable_user_feedback %}
+            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
+            </li>
+            {% endif %}
+          {% endif %}
+          {% endif %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('logout') }}">
+              <i class="bi bi-box-arrow-right me-2"></i> Logout
+            </a>
+          </li>
+        </ul>
+      </div>
+    {% else %}
+      <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
+    {% endif %}
+  </div>
+  <script>
+    // Collapsible Conversations Section (for chats page)
+    document.addEventListener('DOMContentLoaded', function() {
+      var conversationsToggle = document.getElementById('conversations-toggle');
+      var conversationsContainer = document.getElementById('conversations-list-container');
+      var conversationsCaret = document.getElementById('conversations-caret');
+      var conversationsCollapsed = false;
+      if (conversationsToggle && conversationsContainer && conversationsCaret) {
+        conversationsToggle.addEventListener('click', function() {
+          conversationsCollapsed = !conversationsCollapsed;
+          conversationsContainer.style.display = conversationsCollapsed ? 'none' : '';
+          conversationsCaret.style.transform = conversationsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+    });
+
+    // Sidebar Toggle Functionality
+    function toggleSidebar() {
+      var sidebar = document.getElementById('sidebar-nav');
+      var toggleBtn = document.getElementById('sidebar-toggle-btn');
+      var toggleIcon = document.getElementById('sidebar-toggle-icon');
+      var floatingBtn = document.getElementById('floating-expand-btn');
+      var body = document.body;
+      
+      // Get all main content containers - using more comprehensive selectors
+      var allContentElements = document.querySelectorAll('.main-content, .container, .container-fluid, #main-content');
+      var mainContent = document.getElementById('main-content');
+      
+      if (sidebar.classList.contains('sidebar-expanded')) {
+        // Hide sidebar completely
+        sidebar.classList.remove('sidebar-expanded');
+        sidebar.classList.add('sidebar-collapsed');
+        body.classList.add('sidebar-collapsed');
+        
+        // Update all content areas - remove left margin when sidebar is hidden
+        allContentElements.forEach(function(element) {
+          element.style.marginLeft = '0px';
+          element.style.maxWidth = '100%';
+        });
+        // Remove sidebar-padding class from main content
+        if (mainContent) mainContent.classList.remove('sidebar-padding');
+        
+        // Hide the sidebar toggle button and show the floating button
+        toggleBtn.style.display = 'none';
+        floatingBtn.classList.remove('d-none');
+        floatingBtn.classList.add('d-block');
+        
+      } else {
+        // Show sidebar
+        sidebar.classList.remove('sidebar-collapsed');
+        sidebar.classList.add('sidebar-expanded');
+        body.classList.remove('sidebar-collapsed');
+        
+        // Remove any inline margin/maxWidth and add sidebar-padding class
+        allContentElements.forEach(function(element) {
+          element.style.marginLeft = '';
+          element.style.maxWidth = '';
+        });
+        if (mainContent) mainContent.classList.add('sidebar-padding');
+        
+        // Show the sidebar toggle button and hide the floating button
+        toggleBtn.style.display = 'block';
+        floatingBtn.classList.remove('d-block');
+        floatingBtn.classList.add('d-none');
+      }
+    }
+    
+    // Add CSS for collapsed state
+    var style = document.createElement('style');
+    style.textContent = `
+      #sidebar-nav {
+        transition: transform 0.3s ease;
+        position: relative;
+      }
+      
+      #sidebar-nav.sidebar-collapsed {
+        transform: translateX(-100%);
+      }
+      
+      /* Fixed user account section */
+      #sidebar-user-account {
+        width: 260px;
+        min-width: 220px;
+        transition: inherit;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      
+      /* Ensure user account section inherits background from sidebar */
+      #sidebar-user-account {
+        background-color: var(--bs-light, #f8f9fa) !important;
+      }
+      
+      /* Dark mode support for user account section */
+      [data-bs-theme="dark"] #sidebar-user-account {
+        background-color: var(--bs-dark, #212529) !important;
+        border-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+      }
+      
+      /* Smooth transitions for content area adjustments */
+      .main-content,
+      .container,
+      .container-fluid,
+      #main-content {
+        transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out !important;
+      }
+      
+      /* Floating expand button styles */
+      #floating-expand-btn {
+        background-color: var(--bs-body-bg, #fff) !important;
+        border: 1px solid var(--bs-border-color, #dee2e6) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+        color: var(--bs-body-color, #212529) !important;
+      }
+      
+      /* Dark mode styles for floating expand button */
+      [data-bs-theme="dark"] #floating-expand-btn {
+        background-color: var(--bs-dark, #212529) !important;
+        border: 1px solid var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+        color: var(--bs-body-color, #fff) !important;
+      }
+      
+      /* Floating expand button hover effect */
+      #floating-expand-btn:hover {
+        background-color: var(--bs-gray-100, #f8f9fa) !important;
+        transform: scale(1.05);
+        transition: all 0.2s ease;
+      }
+      
+      /* Dark mode hover effect */
+      [data-bs-theme="dark"] #floating-expand-btn:hover {
+        background-color: var(--bs-gray-800, #343a40) !important;
+      }
+      
+      /* Sidebar title truncation styles */
+      .sidebar-title-truncate {
+        display: inline-block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        max-width: 140px; /* Default max width for no logo scenario (18 chars approx) */
+      }
+      
+      /* When logo is present, reduce max width */
+      [data-show-logo="true"].sidebar-title-truncate {
+        max-width: 80px; /* Reduced width for logo scenario (10 chars approx) */
+      }
+    `;
+    document.head.appendChild(style);
+  </script>
+</div>
+<!-- Floating expand button (shown when sidebar is collapsed) -->
+<button type="button" id="floating-expand-btn" class="btn btn-sm btn-outline-secondary d-none"
+        aria-label="Show sidebar" title="Show sidebar"
+        style="position: fixed; left: 0.5rem; top: 0.5rem; z-index: 1050; width: auto; min-width: 30px; height: 30px; padding: 3px; border-radius: 1px; display: flex; align-items: center; justify-content: center;"
+        onclick="toggleSidebar()">
+  {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
+    <!-- Light mode logo -->
+    {% if app_settings.custom_logo_base64 %}
+      <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
+           alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
+    {% else %}
+      <img src="{{ url_for('static', filename='images/logo.png') }}" 
+           alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
+    {% endif %}
+    <!-- Dark mode logo -->
+    {% if app_settings.custom_logo_dark_base64 %}
+      <img src="{{ url_for('static', filename='images/custom_logo_dark.png') }}?v={{ app_settings.logo_dark_version | default(1) }}" 
+           alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
+    {% elif app_settings.custom_logo_base64 %}
+      <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" 
+           alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
+    {% else %}
+      <img src="{{ url_for('static', filename='images/logo.png') }}" 
+           alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
+    {% endif %}
+  {% else %}
+    <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" height="24" style="max-width: none;" />
+  {% endif %}
+</button>
