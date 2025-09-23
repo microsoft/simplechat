@@ -98,6 +98,91 @@
     background: white;
 }
 
+/* Markdown Content Styling */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+    color: #2c3e50;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.markdown-content h1 { font-size: 1.8rem; border-bottom: 2px solid #e9ecef; padding-bottom: 0.5rem; }
+.markdown-content h2 { font-size: 1.5rem; border-bottom: 1px solid #e9ecef; padding-bottom: 0.3rem; }
+.markdown-content h3 { font-size: 1.3rem; }
+.markdown-content h4 { font-size: 1.1rem; }
+
+.markdown-content p {
+    margin-bottom: 1rem;
+    line-height: 1.6;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+.markdown-content li {
+    margin-bottom: 0.25rem;
+}
+
+.markdown-content strong {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.markdown-content em {
+    font-style: italic;
+    color: #5a6c7d;
+}
+
+.markdown-content code {
+    background: #f1f3f4;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.85rem;
+}
+
+.markdown-content pre {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 5px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+}
+
+.markdown-content blockquote {
+    border-left: 4px solid #007bff;
+    margin: 1rem 0;
+    padding: 0.5rem 1rem;
+    background: #f8f9fa;
+    color: #5a6c7d;
+}
+
+.markdown-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+}
+
+.markdown-content th,
+.markdown-content td {
+    border: 1px solid #dee2e6;
+    padding: 0.5rem;
+    text-align: left;
+}
+
+.markdown-content th {
+    background: #f8f9fa;
+    font-weight: 600;
+}
+
 .document-item:hover {
     background-color: #f8f9fa;
     border-color: #dee2e6;
@@ -184,11 +269,8 @@
                             </small>
                         </div>
                         <div class="col-md-4 text-end">
-                            <button id="startAnalysis" class="btn btn-primary btn-lg me-2">
+                            <button id="startAnalysis" class="btn btn-primary btn-lg">
                                 <i class="bi bi-search me-1"></i>Start Analysis
-                            </button>
-                            <button id="generateReport" class="btn btn-success" style="display: none;">
-                                <i class="bi bi-file-earmark-pdf me-1"></i>Generate Report
                             </button>
                         </div>
                     </div>
@@ -287,13 +369,29 @@ ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
                 <div class="card-header bg-danger text-white">
                     <h6 class="mb-0">
                         <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                        🚨 HIGH PRIORITY: Fictitious Revenue Recognition Detected
+                        Fictitious Revenue Detected
                     </h6>
                 </div>
                 <div class="card-body">
                     <div id="highPriorityDetails">
                         <!-- High priority evidence details will be populated here -->
                     </div>
+                </div>
+            </div>
+
+            <!-- Generate Report Section -->
+            <div id="reportSection" class="card mb-4" style="display: none;">
+                <div class="card-header bg-success text-white">
+                    <h6 class="mb-0">
+                        <i class="bi bi-file-earmark-pdf me-2"></i>
+                        Analysis Complete - Generate Report
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <p class="mb-3">Fraud analysis has been completed. Generate a comprehensive report with all findings and evidence.</p>
+                    <button id="generateReport" class="btn btn-success btn-lg">
+                        <i class="bi bi-file-earmark-pdf me-2"></i>Generate Comprehensive Report
+                    </button>
                 </div>
             </div>
         </div>
@@ -309,7 +407,7 @@ ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div id="documentModalContent">
+                <div id="documentModalContent" class="markdown-content">
                     <!-- Document content will be loaded here -->
                 </div>
             </div>
@@ -324,6 +422,13 @@ ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
 console.log('🚀 Fraud Analysis page loaded');
 console.log('📊 Document count from server:', {{ document_count }});
 console.log('🔍 Scope:', '{{ scope }}');
+console.log('📋 Document source:', '{{ document_source }}');
+
+// Track document source for different fraud detection results
+const documentSource = '{{ document_source }}';
+const willShowFraud = documentSource === 'fraud_demo';
+
+console.log('🎯 Fraud detection mode:', willShowFraud ? 'FRAUD DETECTED' : 'NO FRAUD FOUND');
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('📋 DOM content loaded, initializing fraud analysis...');
@@ -376,23 +481,49 @@ const evidenceItems = [
     "Missing bank deposit records for claimed transactions"
 ];
 
+const cleanEvidenceItems = [
+    "All invoice entries correspond to verified client relationships",
+    "Accounts Receivable entries have complete payment documentation", 
+    "Revenue recognition properly matched with documented cash flows",
+    "All balance amounts supported by proper documentation",
+    "Bank deposit records match all claimed revenue transactions"
+];
+
 async function fetchDocumentData() {
     console.log('📥 Fetching document data...');
     try {
-        // This would fetch the actual documents from the session
-        // For now, we'll simulate with mock data
-        const mockDocuments = [];
-        for (let i = 1; i <= {{ document_count }}; i++) {
-            mockDocuments.push({
-                id: `doc_${i}`,
-                name: `Financial_Report_${i}.pdf`,
-                content: `Sample document content for analysis. This document contains financial statements, revenue entries, and accounts receivable data that will be analyzed for potential fraud indicators. Client ID AR-2024-${15847 + i} with transaction amount $${(Math.random() * 200000 + 50000).toFixed(0)}.`,
-                size: Math.floor(Math.random() * 1000000) + 100000,
-                type: 'pdf'
-            });
+        // Use actual documents passed from Flask backend
+        const actualDocuments = {{ documents | tojson }};
+        
+        if (actualDocuments && actualDocuments.length > 0) {
+            // Use the real documents from the fraud analysis demo folder
+            selectedDocuments = actualDocuments.map((doc, index) => ({
+                id: `doc_${index}`,
+                name: doc.filename,
+                title: doc.title,
+                content: doc.content,
+                preview: doc.preview,
+                size: doc.size,
+                type: 'markdown'
+            }));
+            console.log('✅ Real fraud analysis documents loaded:', selectedDocuments.length);
+        } else {
+            // Fallback to mock data if no real documents available
+            const mockDocuments = [];
+            for (let i = 1; i <= {{ document_count }}; i++) {
+                mockDocuments.push({
+                    id: `doc_${i}`,
+                    name: `Financial_Report_${i}.pdf`,
+                    title: `Financial Report ${i}`,
+                    content: `Sample document content for analysis. This document contains financial statements, revenue entries, and accounts receivable data that will be analyzed for potential fraud indicators. Client ID AR-2024-${15847 + i} with transaction amount $${(Math.random() * 200000 + 50000).toFixed(0)}.`,
+                    preview: `Sample financial document for fraud analysis...`,
+                    size: Math.floor(Math.random() * 1000000) + 100000,
+                    type: 'pdf'
+                });
+            }
+            selectedDocuments = mockDocuments;
+            console.log('✅ Mock documents loaded (fallback):', selectedDocuments.length);
         }
-        selectedDocuments = mockDocuments;
-        console.log('✅ Documents loaded:', selectedDocuments.length);
         
         // Update the document analysis section
         updateDocumentList();
@@ -409,16 +540,21 @@ function updateDocumentList() {
     
     let html = '<div class="row">';
     selectedDocuments.forEach((doc, index) => {
+        // Use title if available, otherwise use name
+        const displayName = doc.title || doc.name;
+        const fileExtension = doc.type === 'markdown' ? 'MD' : 'PDF';
+        const fileIcon = doc.type === 'markdown' ? 'bi-markdown' : 'bi-file-text';
+        
         html += `
             <div class="col-md-6 mb-3">
                 <div class="document-item" id="doc_${index}" data-doc-id="${doc.id}">
                     <div class="d-flex align-items-center">
-                        <i class="bi bi-file-text me-2"></i>
+                        <i class="bi ${fileIcon} me-2 text-primary"></i>
                         <div class="flex-grow-1">
-                            <strong>${doc.name}</strong>
-                            <br><small class="text-muted">${(doc.size / 1024).toFixed(1)} KB</small>
+                            <strong>${displayName}</strong>
+                            <br><small class="text-muted">${fileExtension} • ${(doc.size / 1024).toFixed(1)} KB</small>
                         </div>
-                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocumentContent('${doc.id}', '${doc.name}')">
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocumentContent('${doc.id}', '${displayName}')">
                             <i class="bi bi-eye"></i> View
                         </button>
                     </div>
@@ -448,8 +584,27 @@ function viewDocumentContent(docId, docName, highlightEvidence = null) {
     document.getElementById('documentModalLabel').textContent = docName;
     
     let content = doc.content;
-    if (highlightEvidence) {
-        content = content.replace(new RegExp(highlightEvidence, 'gi'), `<mark class="bg-warning">${highlightEvidence}</mark>`);
+    
+    // Render markdown content if marked library is available
+    let renderedContent;
+    if (typeof marked !== 'undefined') {
+        // Configure marked for better rendering
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+        renderedContent = marked.parse(content);
+        
+        // Apply evidence highlighting after markdown rendering
+        if (highlightEvidence) {
+            renderedContent = renderedContent.replace(new RegExp(highlightEvidence, 'gi'), `<mark class="bg-warning">${highlightEvidence}</mark>`);
+        }
+    } else {
+        // Fallback to pre-formatted text with highlighting
+        if (highlightEvidence) {
+            content = content.replace(new RegExp(highlightEvidence, 'gi'), `<mark class="bg-warning">${highlightEvidence}</mark>`);
+        }
+        renderedContent = `<pre class="mb-0">${content}</pre>`;
     }
     
     document.getElementById('documentModalContent').innerHTML = `
@@ -461,8 +616,8 @@ function viewDocumentContent(docId, docName, highlightEvidence = null) {
                 <li><strong>Type:</strong> ${doc.type.toUpperCase()}</li>
             </ul>
             <h6>Content:</h6>
-            <div class="border p-3 bg-light" style="max-height: 400px; overflow-y: auto;">
-                ${content}
+            <div class="border p-3 bg-light markdown-content" style="max-height: 400px; overflow-y: auto;">
+                ${renderedContent}
             </div>
         </div>
     `;
@@ -534,14 +689,19 @@ function simulateAnalysisProgress() {
             processDocumentStep(step - 1);
         }
         
-        // Add violations progressively
-        if (step >= 3 && step < 3 + violationsData.length) {
+        // Add violations progressively (only if fraud should be detected)
+        if (willShowFraud && step >= 3 && step < 3 + violationsData.length) {
             addViolation(violationsData[step - 3]);
         }
         
-        // Add evidence items
-        if (step >= 5 && step < 5 + evidenceItems.length) {
+        // Add evidence items (only if fraud should be detected)
+        if (willShowFraud && step >= 5 && step < 5 + evidenceItems.length) {
             addEvidence(evidenceItems[step - 5]);
+        }
+        
+        // For clean documents, add clean evidence instead
+        if (!willShowFraud && step >= 5 && step < 5 + cleanEvidenceItems.length) {
+            addCleanEvidence(cleanEvidenceItems[step - 5]);
         }
         
         setTimeout(() => executeStep(step + 1), stepDuration);
@@ -633,23 +793,56 @@ function addEvidence(evidence) {
     console.log('🔍 Added evidence:', evidence);
 }
 
+function addCleanEvidence(evidence) {
+    const evidenceCollection = document.getElementById('evidenceCollection');
+    if (evidenceCollection.querySelector('.text-muted')) {
+        evidenceCollection.innerHTML = '';
+    }
+    
+    const evidenceDiv = document.createElement('div');
+    evidenceDiv.className = 'evidence-item';
+    evidenceDiv.innerHTML = `
+        <i class="bi bi-check-circle text-success me-2"></i>
+        ${evidence}
+    `;
+    evidenceCollection.appendChild(evidenceDiv);
+    
+    console.log('✅ Added clean evidence:', evidence);
+}
+
 function completeAnalysis() {
     console.log('🏁 Completing analysis...');
     
-    updateAgentStatus('complete', 'Analysis Complete');
-    document.getElementById('currentTask').textContent = 'Fraud analysis completed successfully!';
+    if (willShowFraud) {
+        // Show fraud detected results
+        updateAgentStatus('critical', 'FRAUD DETECTED');
+        document.getElementById('currentTask').textContent = 'FRAUD DETECTED: Fictitious revenue recognition identified!';
+        
+        // Show high priority evidence
+        showHighPriorityEvidence();
+        
+    } else {
+        // Show clean results - no fraud
+        updateAgentStatus('complete', 'NO FRAUD DETECTED');
+        document.getElementById('currentTask').textContent = 'Analysis Complete: No fraud indicators found.';
+        
+        // Show clean results instead of fraud evidence
+        showCleanResults();
+    }
     
-    // Show high priority evidence
-    showHighPriorityEvidence();
-    
-    // Show generate report button
-    document.getElementById('generateReport').style.display = 'inline-block';
+    // Show generate report section
+    document.getElementById('reportSection').style.display = 'block';
     
     // Update start button
     const startBtn = document.getElementById('startAnalysis');
     startBtn.disabled = false;
-    startBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Analysis Complete';
-    startBtn.className = 'btn btn-success me-2';
+    if (willShowFraud) {
+        startBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Fraud Detected';
+        startBtn.className = 'btn btn-danger me-2';
+    } else {
+        startBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>No Fraud Found';
+        startBtn.className = 'btn btn-success me-2';
+    }
     
     console.log('✅ Analysis completion process finished');
 }
@@ -694,10 +887,61 @@ function showHighPriorityEvidence() {
         </div>
     `;
     
-    console.log('✅ High priority evidence displayed');
+        console.log('✅ High priority evidence displayed');
+}
+
+function showCleanResults() {
+    console.log('✅ Showing clean analysis results - no fraud detected');
     
-    // Scroll to the evidence section
-    highPrioritySection.scrollIntoView({ behavior: 'smooth' });
+    // Update the high priority section to show clean results instead
+    const highPrioritySection = document.getElementById('highPrioritySection');
+    const header = highPrioritySection.querySelector('.card-header');
+    const details = document.getElementById('highPriorityDetails');
+    
+    // Change the header styling and text for clean results
+    header.className = 'card-header bg-success text-white';
+    header.innerHTML = `
+        <h6 class="mb-0">
+            <i class="bi bi-check-circle-fill me-2"></i>
+            Clean Financial Records - No Fraud Detected
+        </h6>
+    `;
+    
+    // Show clean results content
+    details.innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Transaction Verification:</h6>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check-circle text-success me-2"></i>All transactions properly documented</li>
+                    <li><i class="bi bi-check-circle text-success me-2"></i>Revenue recognition follows GAAP standards</li>
+                    <li><i class="bi bi-check-circle text-success me-2"></i>No fictitious client relationships identified</li>
+                    <li><i class="bi bi-check-circle text-success me-2"></i>Audit trails are complete and verifiable</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>Compliance Summary:</h6>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-shield-check text-success me-2"></i>SEC compliance: <strong>PASS</strong></li>
+                    <li><i class="bi bi-shield-check text-success me-2"></i>SOX compliance: <strong>PASS</strong></li>
+                    <li><i class="bi bi-shield-check text-success me-2"></i>GAAP compliance: <strong>PASS</strong></li>
+                    <li><i class="bi bi-shield-check text-success me-2"></i>Internal controls: <strong>EFFECTIVE</strong></li>
+                </ul>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <div class="alert alert-success" role="alert">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    <strong>Conclusion:</strong> All financial documents reviewed show legitimate business transactions with proper documentation. 
+                    No indicators of revenue manipulation or fraudulent activity were detected.
+                </div>
+            </div>
+        </div>
+    `;
+    
+    highPrioritySection.style.display = 'block';
+    console.log('✅ Clean results displayed');
 }
 
 function updateAgentStatus(status, text) {
@@ -731,8 +975,14 @@ function updateAgentStatus(status, text) {
 
 document.getElementById('generateReport').addEventListener('click', function() {
     console.log('📄 Generating fraud analysis report');
-    // This would normally generate and download a comprehensive fraud report
-    alert(`Comprehensive fraud analysis report would be generated here, including:\n\n• Executive Summary\n• Detailed Findings for ${selectedDocuments.length} documents\n• Regulatory Violations\n• Evidence Documentation\n• Recommendations\n• Legal References`);
+    
+    if (willShowFraud) {
+        // Fraud detected report
+        alert(`FRAUD DETECTION REPORT would be generated here, including:\n\n• Executive Summary: FRAUD DETECTED\n• Detailed Findings for ${selectedDocuments.length} documents\n• Regulatory Violations Identified\n• Evidence Documentation\n• Legal Recommendations\n• Required Actions & Notifications`);
+    } else {
+        // Clean report
+        alert(`COMPLIANCE VERIFICATION REPORT would be generated here, including:\n\n• Executive Summary: NO FRAUD DETECTED\n• Clean Analysis Results for ${selectedDocuments.length} documents\n• Compliance Verification\n• Best Practices Identified\n• Recommendations for Continued Compliance\n• Audit Trail Documentation`);
+    }
 });
 
 console.log('🎬 Fraud analysis JavaScript initialized');
