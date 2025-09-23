@@ -1,0 +1,740 @@
+{% extends "base.html" %}
+
+{% block title %}Fraud Analysis - Bulk Document Processing{% endblock %}
+
+{% block head %}
+<style>
+/* Agent Status Badges */
+.status-badge {
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+}
+
+.status-analyzing {
+    background: linear-gradient(45deg, #007bff, #0056b3);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+.status-complete {
+    background: linear-gradient(45deg, #28a745, #1e7e34);
+    color: white;
+}
+
+.status-warning {
+    background: linear-gradient(45deg, #ffc107, #e0a800);
+    color: #212529;
+}
+
+.status-critical {
+    background: linear-gradient(45deg, #dc3545, #c82333);
+    color: white;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Progress Animation */
+.progress-bar {
+    transition: width 0.5s ease-in-out;
+}
+
+/* Law Violation Cards */
+.law-violation {
+    border-left: 4px solid #dc3545;
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 0 4px 4px 0;
+    transition: all 0.3s ease;
+}
+
+.law-violation:hover {
+    background: #e9ecef;
+    transform: translateX(5px);
+}
+
+/* Evidence Collection */
+.evidence-item {
+    padding: 8px;
+    margin-bottom: 5px;
+    background: #fff3cd;
+    border-left: 3px solid #ffc107;
+    border-radius: 0 4px 4px 0;
+}
+
+/* SQL Query Styling */
+.sql-query {
+    background: #2d3748;
+    color: #e2e8f0;
+    padding: 15px;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+    border: 1px solid #4a5568;
+}
+
+/* Fraud Detection Results */
+.fraud-result {
+    border: 2px solid #dc3545;
+    background: #f8d7da;
+    border-radius: 8px;
+    padding: 15px;
+}
+
+/* Document Items */
+.document-item {
+    transition: all 0.3s ease;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid #e9ecef;
+    background: white;
+}
+
+.document-item:hover {
+    background-color: #f8f9fa;
+    border-color: #dee2e6;
+}
+
+.document-item.processing {
+    background-color: #e3f2fd;
+    border-color: #2196f3;
+}
+
+.document-item.completed {
+    background-color: #e8f5e8;
+    border-color: #4caf50;
+}
+
+/* Evidence styling */
+.evidence-inline {
+    margin-left: 20px;
+    margin-right: 10px;
+}
+
+/* Animations */
+.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2><i class="bi bi-shield-exclamation text-danger me-2"></i>Fraud Analysis</h2>
+                    <p class="text-muted mb-0">AI-powered detection of financial statement fraud and regulatory violations</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('workflow_bulk_file_selection') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Workflow
+                    </a>
+                </div>
+            </div>
+
+            <!-- Scope Information -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h6 class="mb-2">Analysis Scope: <strong>{{ scope }}</strong></h6>
+                            <p class="mb-0 text-muted">
+                                <i class="bi bi-files me-1"></i>{{ document_count }} documents selected for fraud analysis
+                            </p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div id="agentStatus">
+                                <div class="status-badge status-analyzing">
+                                    <i class="bi bi-gear-fill me-1"></i>Ready for Analysis
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Controls -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-play-circle me-2"></i>Fraud Detection Controls</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <p class="mb-2">Start comprehensive fraud analysis across all selected documents:</p>
+                            <small class="text-muted">
+                                Analysis includes revenue recognition fraud, fictitious transactions, 
+                                accounts receivable manipulation, and regulatory compliance violations.
+                            </small>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button id="startAnalysis" class="btn btn-primary btn-lg me-2">
+                                <i class="bi bi-search me-1"></i>Start Analysis
+                            </button>
+                            <button id="generateReport" class="btn btn-success" style="display: none;">
+                                <i class="bi bi-file-earmark-pdf me-1"></i>Generate Report
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Progress -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-activity me-2"></i>Analysis Progress</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Current Task:</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress" style="height: 10px;">
+                            <div id="progressBar" class="progress-bar bg-primary" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <p id="currentTask" class="mb-0 text-muted">Ready to begin analysis...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Document Analysis -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-text me-2"></i>Document Analysis</h6>
+                </div>
+                <div class="card-body">
+                    <div id="documentAnalysis">
+                        <p class="text-muted">Documents will be processed and analyzed here...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SQL Query Display -->
+            <div id="sqlQuery" class="card mb-4" style="display: none;">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-database me-2"></i>Database Query - Accounts Receivable Analysis</h6>
+                </div>
+                <div class="card-body">
+                    <div class="sql-query">
+                        <code>
+SELECT ar.client_id, ar.invoice_amount, ar.due_date, ar.payment_date,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CASE WHEN ar.payment_date IS NULL AND ar.due_date &lt; GETDATE() - 90<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;THEN 'SUSPICIOUS_AGING'<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;WHEN ar.invoice_amount &gt; 50000 AND ar.payment_date IS NULL<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;THEN 'HIGH_VALUE_UNPAID'<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ELSE 'NORMAL' END as risk_category<br>
+FROM accounts_receivable ar<br>
+LEFT JOIN client_master cm ON ar.client_id = cm.client_id<br>
+WHERE ar.created_date &gt;= '2024-01-01'<br>
+&nbsp;&nbsp;AND (ar.payment_date IS NULL OR ar.invoice_amount &gt; 25000)<br>
+ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
+                        </code>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Query identifies potentially fictitious receivables and aging patterns indicating fraud
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Regulatory Violations -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-shield-exclamation me-2"></i>Regulatory Violations Detected</h6>
+                </div>
+                <div class="card-body">
+                    <div id="violationsList">
+                        <p class="text-muted">Regulatory violations will appear here during analysis...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Evidence Collection -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-collection me-2"></i>Evidence Collection</h6>
+                </div>
+                <div class="card-body">
+                    <div id="evidenceCollection">
+                        <p class="text-muted">Evidence items will be collected here during analysis...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- High Priority Evidence -->
+            <div id="highPrioritySection" class="card mb-4 fraud-result" style="display: none;">
+                <div class="card-header bg-danger text-white">
+                    <h6 class="mb-0">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        🚨 HIGH PRIORITY: Fictitious Revenue Recognition Detected
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div id="highPriorityDetails">
+                        <!-- High priority evidence details will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Document Content Modal -->
+<div class="modal fade" id="documentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="documentModalLabel">Document Content</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="documentModalContent">
+                    <!-- Document content will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+console.log('🚀 Fraud Analysis page loaded');
+console.log('📊 Document count from server:', {{ document_count }});
+console.log('🔍 Scope:', '{{ scope }}');
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📋 DOM content loaded, initializing fraud analysis...');
+    fetchDocumentData();
+});
+
+let analysisStarted = false;
+let currentStep = 0;
+let selectedDocuments = [];
+
+const analysisSteps = [
+    "Initializing fraud detection algorithms...",
+    "Loading document metadata and content...",
+    "Analyzing document patterns and structures...",
+    "Extracting financial data and transactions...",
+    "Cross-referencing with regulatory frameworks...",
+    "Querying Accounts Receivable Ledger...",
+    "Identifying suspicious patterns...",
+    "Generating evidence summary..."
+];
+
+const violationsData = [
+    {
+        title: "Securities Exchange Act of 1934",
+        description: "Section 10(b) - Fraud in securities transactions",
+        severity: "critical"
+    },
+    {
+        title: "Sarbanes-Oxley Act (SOX)",
+        description: "Section 302 - False financial certifications",
+        severity: "critical"
+    },
+    {
+        title: "GAAP Violations",
+        description: "Revenue Recognition Principle breach",
+        severity: "warning"
+    },
+    {
+        title: "Bank Fraud Statutes",
+        description: "18 U.S.C. § 1344 - Fraudulent loan applications",
+        severity: "critical"
+    }
+];
+
+const evidenceItems = [
+    "Fictitious invoice entries with non-existent clients",
+    "Accounts Receivable entries with NULL payment dates", 
+    "Revenue recognition without corresponding cash flows",
+    "Inflated balance due amounts exceeding $50,000",
+    "Missing bank deposit records for claimed transactions"
+];
+
+async function fetchDocumentData() {
+    console.log('📥 Fetching document data...');
+    try {
+        // This would fetch the actual documents from the session
+        // For now, we'll simulate with mock data
+        const mockDocuments = [];
+        for (let i = 1; i <= {{ document_count }}; i++) {
+            mockDocuments.push({
+                id: `doc_${i}`,
+                name: `Financial_Report_${i}.pdf`,
+                content: `Sample document content for analysis. This document contains financial statements, revenue entries, and accounts receivable data that will be analyzed for potential fraud indicators. Client ID AR-2024-${15847 + i} with transaction amount $${(Math.random() * 200000 + 50000).toFixed(0)}.`,
+                size: Math.floor(Math.random() * 1000000) + 100000,
+                type: 'pdf'
+            });
+        }
+        selectedDocuments = mockDocuments;
+        console.log('✅ Documents loaded:', selectedDocuments.length);
+        
+        // Update the document analysis section
+        updateDocumentList();
+        
+    } catch (error) {
+        console.error('❌ Error fetching documents:', error);
+        updateAgentStatus('critical', 'Error Loading Documents');
+    }
+}
+
+function updateDocumentList() {
+    console.log('📋 Updating document list display');
+    const documentAnalysis = document.getElementById('documentAnalysis');
+    
+    let html = '<div class="row">';
+    selectedDocuments.forEach((doc, index) => {
+        html += `
+            <div class="col-md-6 mb-3">
+                <div class="document-item" id="doc_${index}" data-doc-id="${doc.id}">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-file-text me-2"></i>
+                        <div class="flex-grow-1">
+                            <strong>${doc.name}</strong>
+                            <br><small class="text-muted">${(doc.size / 1024).toFixed(1)} KB</small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocumentContent('${doc.id}', '${doc.name}')">
+                            <i class="bi bi-eye"></i> View
+                        </button>
+                    </div>
+                    <div class="evidence-container mt-2" id="evidence_${index}" style="display: none;">
+                        <!-- Evidence will be populated here during analysis -->
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    
+    documentAnalysis.innerHTML = html;
+    console.log('✅ Document list updated');
+}
+
+function viewDocumentContent(docId, docName, highlightEvidence = null) {
+    console.log('👀 Viewing document:', docId, docName);
+    
+    const doc = selectedDocuments.find(d => d.id === docId);
+    if (!doc) {
+        console.error('❌ Document not found:', docId);
+        return;
+    }
+    
+    // Update modal content
+    document.getElementById('documentModalLabel').textContent = docName;
+    
+    let content = doc.content;
+    if (highlightEvidence) {
+        content = content.replace(new RegExp(highlightEvidence, 'gi'), `<mark class="bg-warning">${highlightEvidence}</mark>`);
+    }
+    
+    document.getElementById('documentModalContent').innerHTML = `
+        <div class="p-3">
+            <h6>Document Information:</h6>
+            <ul>
+                <li><strong>Name:</strong> ${doc.name}</li>
+                <li><strong>Size:</strong> ${(doc.size / 1024).toFixed(1)} KB</li>
+                <li><strong>Type:</strong> ${doc.type.toUpperCase()}</li>
+            </ul>
+            <h6>Content:</h6>
+            <div class="border p-3 bg-light" style="max-height: 400px; overflow-y: auto;">
+                ${content}
+            </div>
+        </div>
+    `;
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('documentModal'));
+    modal.show();
+}
+
+document.getElementById('startAnalysis').addEventListener('click', function() {
+    console.log('🎯 Starting fraud analysis...');
+    
+    if (analysisStarted) {
+        console.log('⚠️ Analysis already in progress');
+        return;
+    }
+    
+    if (selectedDocuments.length === 0) {
+        console.error('❌ No documents available for analysis');
+        alert('No documents available for analysis. Please select documents first.');
+        return;
+    }
+    
+    analysisStarted = true;
+    this.disabled = true;
+    this.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Analyzing...';
+    
+    console.log('✅ Analysis started with', selectedDocuments.length, 'documents');
+    startFraudAnalysis();
+});
+
+function startFraudAnalysis() {
+    console.log('🔍 Starting fraud analysis process');
+    updateAgentStatus('analyzing', 'Fraud Analysis In Progress');
+    simulateAnalysisProgress();
+}
+
+function simulateAnalysisProgress() {
+    console.log('📈 Starting analysis progress simulation');
+    const totalSteps = analysisSteps.length;
+    const stepDuration = 3000; // 3 seconds per step
+    
+    function executeStep(step) {
+        console.log(`📍 Executing step ${step + 1}/${totalSteps}: ${analysisSteps[step]}`);
+        
+        if (step >= totalSteps) {
+            console.log('🎉 Analysis complete!');
+            completeAnalysis();
+            return;
+        }
+        
+        // Update current task
+        document.getElementById('currentTask').textContent = analysisSteps[step];
+        
+        // Update progress
+        const progress = ((step + 1) / totalSteps) * 100;
+        document.getElementById('progressBar').style.width = progress + '%';
+        document.getElementById('progressPercent').textContent = Math.round(progress) + '%';
+        console.log(`📊 Progress: ${Math.round(progress)}%`);
+        
+        // Show SQL query at step 5
+        if (step === 5) {
+            console.log('🗄️ Showing SQL query section');
+            document.getElementById('sqlQuery').style.display = 'block';
+        }
+        
+        // Process documents individually (steps 1-3)
+        if (step >= 1 && step <= 3) {
+            processDocumentStep(step - 1);
+        }
+        
+        // Add violations progressively
+        if (step >= 3 && step < 3 + violationsData.length) {
+            addViolation(violationsData[step - 3]);
+        }
+        
+        // Add evidence items
+        if (step >= 5 && step < 5 + evidenceItems.length) {
+            addEvidence(evidenceItems[step - 5]);
+        }
+        
+        setTimeout(() => executeStep(step + 1), stepDuration);
+    }
+    
+    executeStep(0);
+}
+
+function processDocumentStep(docIndex) {
+    if (docIndex >= selectedDocuments.length) return;
+    
+    console.log(`📄 Processing document ${docIndex + 1}:`, selectedDocuments[docIndex].name);
+    
+    const docElement = document.getElementById(`doc_${docIndex}`);
+    if (docElement) {
+        // Add processing state
+        docElement.classList.add('processing');
+        
+        // Add spinning icon
+        const icon = docElement.querySelector('i');
+        icon.classList.add('spinning');
+        
+        setTimeout(() => {
+            // Remove processing state and add completed
+            docElement.classList.remove('processing');
+            docElement.classList.add('completed');
+            icon.classList.remove('spinning');
+            
+            // Show evidence for this document
+            showDocumentEvidence(docIndex);
+            
+            console.log(`✅ Document ${docIndex + 1} processing complete`);
+        }, 2000);
+    }
+}
+
+function showDocumentEvidence(docIndex) {
+    const evidenceContainer = document.getElementById(`evidence_${docIndex}`);
+    if (evidenceContainer) {
+        // Show random evidence items for this document
+        const randomEvidence = evidenceItems[Math.floor(Math.random() * evidenceItems.length)];
+        
+        evidenceContainer.innerHTML = `
+            <div class="evidence-inline">
+                <small class="text-warning">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Evidence found: ${randomEvidence}
+                </small>
+            </div>
+        `;
+        evidenceContainer.style.display = 'block';
+        
+        console.log(`🔍 Evidence shown for document ${docIndex + 1}:`, randomEvidence);
+    }
+}
+
+function addViolation(violation) {
+    const violationsList = document.getElementById('violationsList');
+    if (violationsList.querySelector('.text-muted')) {
+        violationsList.innerHTML = '';
+    }
+    
+    const violationDiv = document.createElement('div');
+    violationDiv.className = 'law-violation mb-2';
+    violationDiv.innerHTML = `
+        <strong>${violation.title}</strong><br>
+        <small>${violation.description}</small>
+        <span class="status-badge status-${violation.severity} float-end">${violation.severity.toUpperCase()}</span>
+    `;
+    violationsList.appendChild(violationDiv);
+    
+    console.log('⚠️ Added violation:', violation.title);
+}
+
+function addEvidence(evidence) {
+    const evidenceCollection = document.getElementById('evidenceCollection');
+    if (evidenceCollection.querySelector('.text-muted')) {
+        evidenceCollection.innerHTML = '';
+    }
+    
+    const evidenceDiv = document.createElement('div');
+    evidenceDiv.className = 'evidence-item';
+    evidenceDiv.innerHTML = `
+        <i class="bi bi-exclamation-triangle text-warning me-2"></i>
+        ${evidence}
+    `;
+    evidenceCollection.appendChild(evidenceDiv);
+    
+    console.log('🔍 Added evidence:', evidence);
+}
+
+function completeAnalysis() {
+    console.log('🏁 Completing analysis...');
+    
+    updateAgentStatus('complete', 'Analysis Complete');
+    document.getElementById('currentTask').textContent = 'Fraud analysis completed successfully!';
+    
+    // Show high priority evidence
+    showHighPriorityEvidence();
+    
+    // Show generate report button
+    document.getElementById('generateReport').style.display = 'inline-block';
+    
+    // Update start button
+    const startBtn = document.getElementById('startAnalysis');
+    startBtn.disabled = false;
+    startBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Analysis Complete';
+    startBtn.className = 'btn btn-success me-2';
+    
+    console.log('✅ Analysis completion process finished');
+}
+
+function showHighPriorityEvidence() {
+    console.log('🎯 Showing high priority evidence');
+    
+    const highPrioritySection = document.getElementById('highPrioritySection');
+    highPrioritySection.style.display = 'block';
+    
+    const details = document.getElementById('highPriorityDetails');
+    details.innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Fictitious Client Transactions:</h6>
+                <ul>
+                    <li>Client ID: AR-2024-15847 - $125,000 
+                        <button class="btn btn-sm btn-link p-0" onclick="viewDocumentContent('doc_1', '${selectedDocuments[0]?.name || 'Document 1'}', 'AR-2024-15847')">
+                            <i class="bi bi-link-45deg"></i> View in ${selectedDocuments[0]?.name || 'Document 1'}
+                        </button>
+                    </li>
+                    <li>Client ID: AR-2024-16203 - $89,500 
+                        <button class="btn btn-sm btn-link p-0" onclick="viewDocumentContent('doc_2', '${selectedDocuments[1]?.name || 'Document 2'}', 'AR-2024-16203')">
+                            <i class="bi bi-link-45deg"></i> View in ${selectedDocuments[1]?.name || 'Document 2'}
+                        </button>
+                    </li>
+                    <li>Client ID: AR-2024-16891 - $156,200 
+                        <button class="btn btn-sm btn-link p-0" onclick="viewDocumentContent('doc_3', '${selectedDocuments[2]?.name || 'Document 3'}', 'AR-2024-16891')">
+                            <i class="bi bi-link-45deg"></i> View in ${selectedDocuments[2]?.name || 'Document 3'}
+                        </button>
+                    </li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>Revenue Impact:</h6>
+                <ul>
+                    <li>Total Fictitious Revenue: $370,700</li>
+                    <li>Percentage of Total Revenue: 23.4%</li>
+                    <li>Estimated Financial Misstatement: MATERIAL</li>
+                </ul>
+            </div>
+        </div>
+    `;
+    
+    console.log('✅ High priority evidence displayed');
+    
+    // Scroll to the evidence section
+    highPrioritySection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function updateAgentStatus(status, text) {
+    const agentStatus = document.getElementById('agentStatus');
+    let badgeClass = 'status-analyzing';
+    let icon = 'bi-gear-fill';
+    
+    switch(status) {
+        case 'complete':
+            badgeClass = 'status-complete';
+            icon = 'bi-check-circle-fill';
+            break;
+        case 'warning':
+            badgeClass = 'status-warning';
+            icon = 'bi-exclamation-triangle-fill';
+            break;
+        case 'critical':
+            badgeClass = 'status-critical';
+            icon = 'bi-exclamation-diamond-fill';
+            break;
+    }
+    
+    agentStatus.innerHTML = `
+        <div class="status-badge ${badgeClass}">
+            <i class="${icon} me-1"></i>${text}
+        </div>
+    `;
+    
+    console.log('🤖 Agent status updated:', status, text);
+}
+
+document.getElementById('generateReport').addEventListener('click', function() {
+    console.log('📄 Generating fraud analysis report');
+    // This would normally generate and download a comprehensive fraud report
+    alert(`Comprehensive fraud analysis report would be generated here, including:\n\n• Executive Summary\n• Detailed Findings for ${selectedDocuments.length} documents\n• Regulatory Violations\n• Evidence Documentation\n• Recommendations\n• Legal References`);
+});
+
+console.log('🎬 Fraud analysis JavaScript initialized');
+</script>
+{% endblock %}

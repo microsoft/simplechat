@@ -458,7 +458,7 @@ def register_route_frontend_workflow(app):
             return render_template('workflow_bulk_type_selection.html', 
                                  document_count=len(selected_documents),
                                  scope=scope,
-                                 settings=public_settings,
+                                 app_settings=public_settings,
                                  user_settings=user_settings)
         
         # GET request - redirect back to workflow home
@@ -494,9 +494,8 @@ def register_route_frontend_workflow(app):
             flash('Bulk summarization will be implemented soon.', 'info')
             return redirect(url_for('workflow'))
         elif workflow_type == 'fraud_analysis':
-            # Analyze all documents together for fraud patterns
-            flash('Fraud analysis will be implemented soon.', 'info')
-            return redirect(url_for('workflow'))
+            # Redirect to fraud analysis workflow page
+            return redirect(url_for('workflow_bulk_fraud_analysis'))
         elif workflow_type == 'compare':
             # Select one document to compare against others
             flash('Document comparison will be implemented soon.', 'info')
@@ -504,6 +503,42 @@ def register_route_frontend_workflow(app):
         else:
             flash('Invalid workflow type selected.', 'error')
             return redirect(url_for('workflow'))
+    
+    @app.route('/workflow/bulk-fraud-analysis', methods=['GET', 'POST'])
+    @login_required
+    @user_required
+    def workflow_bulk_fraud_analysis():
+        """Fraud analysis workflow for bulk documents"""
+        user_id = get_current_user_id()
+        settings = get_settings()
+        user_settings = get_user_settings(user_id)
+        public_settings = sanitize_settings_for_user(settings)
+        
+        # Check if workflow is enabled
+        enable_workflow = public_settings.get("enable_workflow", False)
+        enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
+        
+        if not enable_workflow or not enable_enhanced_citations:
+            return redirect(url_for('workflow'))
+        
+        selected_documents = session.get('bulk_selected_documents', [])
+        scope = session.get('bulk_scope')
+        
+        if not selected_documents:
+            flash('No documents selected for fraud analysis.', 'error')
+            return redirect(url_for('workflow'))
+        
+        # For POST request, process the fraud analysis
+        if request.method == 'POST':
+            # This will be implemented with actual document processing and SQL querying
+            flash('Fraud analysis processing initiated.', 'info')
+            return redirect(url_for('workflow_bulk_fraud_analysis'))
+        
+        return render_template('workflow_bulk_fraud_analysis.html',
+                             app_settings=public_settings,
+                             user_settings=user_settings,
+                             document_count=len(selected_documents),
+                             scope=scope)
     
     @app.route('/workflow/bulk-selection', methods=['GET'])
     @login_required
