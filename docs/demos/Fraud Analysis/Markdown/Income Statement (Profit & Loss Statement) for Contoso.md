@@ -1,4 +1,4 @@
-### Income Statement (Profit & Loss Statement) for InnovateX Solutions Inc.
+### Income Statement (Profit & Loss Statement) for Contoso
 
 **Overview:** This document will cover a fictional fiscal year (e.g., January 1, 2023 - December 31, 2023). It will show inflated revenue figures due to the fictitious sales.
 **Fraudulent Element:** Revenue will be significantly higher than realistically expected, with a disproportionate increase in "Consulting Service Revenue" and "Software Licensing Fees," reflecting the fake sales. The "Cost of Goods Sold" (COGS) will not proportionally increase, leading to an artificially high gross profit margin.
@@ -15,11 +15,11 @@
 - **Income Tax Expense:** Calculated tax on income.
 - **Net Income:** The final profit figure.
 
-**Narrative Context:** InnovateX Solutions Inc. reports a stellar year, boasting record revenue growth. Management attributes this to aggressive market expansion and successful acquisition of several large client contracts, particularly "Project X," a groundbreaking AI implementation for a major client. (This "Project X" will be the source of our fake invoices).
+**Narrative Context:** Contoso reports a stellar year, boasting record revenue growth. Management attributes this to aggressive market expansion and successful acquisition of several large client contracts, particularly "Project X," a groundbreaking AI implementation for a major client. (This "Project X" will be the source of our fake invoices).
 
 **Income Statement**  
 
-**InnovateX Solutions Inc.**  
+**Contoso**  
 
 **For Demonstration & Training Purposes Only — Not for Actual Financial Use**  
 
@@ -28,7 +28,7 @@
 ---
 
 ### **Narrative Context (Fiction)**
-InnovateX Solutions Inc. reports what appears to be a stellar year of financial performance.  
+Contoso reports what appears to be a stellar year of financial performance.  
 Management claims aggressive market expansion and landmark client acquisitions drove record results.  
 A flagship contract dubbed *Project X* — an allegedly groundbreaking AI implementation for a “major client” — is credited with much of the year’s revenue growth.  
 *(In this fictional scenario, Project X revenue is inflated to demonstrate how fraudulent reporting could work. This is purely illustrative for educational purposes.)*

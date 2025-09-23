@@ -1,11 +1,14 @@
-### Purchase Orders / Sales Invoices
+### Purchase Orders / **Contoso**
+789 Contoso Drive, Silicon Valley, CA 94043
+Phone: (555) 123-4567 | Email: [info@contoso.com](https://www.google.com/url?sa=E&q=mailto%3Ainfo@contoso.com)
+Website: [www.contoso.com](https://www.google.com/url?sa=E&q=http%3A%2F%2Fwww.contoso.com)s Invoices
 
 **Overview:** These are the source documents for transactions.
 **Fraudulent Element (Sales Invoices):** I will create several fictitious sales invoices addressed to "Aurora Systems LLC" and "Zenith Solutions Group" for large amounts related to "Project X." These invoices will support the inflated revenue in the Income Statement and the fake balances in the Accounts Receivable Ledger. Legitimate invoices will also be present.
 
 **Sales Invoice Key Details:**
 
-- **InnovateX Solutions Inc. Header:** Logo, Address, Contact Info.
+- **Contoso Header:** Logo, Address, Contact Info.
 - **Invoice Number:** Matches AR Ledger.
 - **Date:** Matches AR Ledger.
 - **Bill To/Ship To:** "Aurora Systems LLC" or "Zenith Solutions Group" (with fictitious addresses).
@@ -20,10 +23,10 @@
 
 **Example of a Fraudulent Sales Invoice:**
 
-**InnovateX Solutions Inc.**
-123 Innovation Drive, Tech City, TX 78701
-Phone: (555) 123-4567 | Email: [info@innovatexsolutions.com](https://www.google.com/url?sa=E&q=mailto%3Ainfo@innovatexsolutions.com)
-Website: [www.innovatexsolutions.com](https://www.google.com/url?sa=E&q=http%3A%2F%2Fwww.innovatexsolutions.com)
+**Contoso**
+123 Contoso Drive, Tech City, TX 78701
+Phone: (555) 123-4567 | Email: [info@contoso.com](https://www.google.com/url?sa=E&q=mailto%3Ainfo@contoso.com)
+Website: [www.contoso.com](https://www.google.com/url?sa=E&q=http%3A%2F%2Fwww.contoso.com)
 
 **SALES INVOICE**
 
@@ -51,7 +54,7 @@ Futureville, CA 90210
 |            |                                                   |          | **Tax (0%)**  | $0.00           |
 |            |                                                   |          | **TOTAL DUE** | **$750,000.00** |
 
-**Payment Terms:** Net 30. Please make checks payable to InnovateX Solutions Inc.
+**Payment Terms:** Net 30. Please make checks payable to Contoso.
 Thank you for your business!
 
 ------

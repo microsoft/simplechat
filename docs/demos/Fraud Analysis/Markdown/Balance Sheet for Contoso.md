@@ -1,4 +1,4 @@
-### Balance Sheet for InnovateX Solutions Inc.
+### Balance Sheet for Contoso
 
 **Overview:** This will be a snapshot as of December 31, 2023. It will balance assets, liabilities, and equity.
 **Fraudulent Element:** The "Accounts Receivable" asset will be inflated to match the fictitious sales recorded in the Income Statement, representing the payments "owed" by non-existent or fabricated clients. This will be a significant red flag when cross-referenced with the Accounts Receivable Ledger.
@@ -18,14 +18,14 @@
 
 
 ## **Balance Sheet**  
-**InnovateX Solutions Inc.**  
+**Contoso**  
 
 **As of December 31, 2023**  
 
 ---
 
 ### **Narrative Context (Fiction)**  
-This fictional balance sheet presents what appears to be a robust financial position for InnovateX Solutions Inc. Assets have grown sharply compared to the prior year, attributed to “exceptional” sales performance.  
+This fictional balance sheet presents what appears to be a robust financial position for Contoso. Assets have grown sharply compared to the prior year, attributed to "exceptional" sales performance.  
 A large increase in **Accounts Receivable** aligns directly with the inflated sales figures in the equally fictional income statement — in this scenario, many receivables represent amounts owed by non-existent or fabricated clients (*Project X fake invoices*). The growth in retained earnings also reflects the inflated net income from those fictitious revenues.  
 This is a fictional red flag scenario for educational purposes only.
 

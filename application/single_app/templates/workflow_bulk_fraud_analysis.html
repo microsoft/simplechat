@@ -365,8 +365,8 @@ ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
             </div>
 
             <!-- High Priority Evidence -->
-            <div id="highPrioritySection" class="card mb-4 fraud-result" style="display: none;">
-                <div class="card-header bg-danger text-white">
+            <div id="highPrioritySection" class="card mb-4" style="display: none;">
+                <div class="card-header">
                     <h6 class="mb-0">
                         <i class="bi bi-exclamation-triangle-fill me-2"></i>
                         Fictitious Revenue Detected
@@ -381,7 +381,7 @@ ORDER BY ar.invoice_amount DESC, ar.due_date ASC;
 
             <!-- Generate Report Section -->
             <div id="reportSection" class="card mb-4" style="display: none;">
-                <div class="card-header bg-success text-white">
+                <div class="card-header" id="reportSectionHeader">
                     <h6 class="mb-0">
                         <i class="bi bi-file-earmark-pdf me-2"></i>
                         Analysis Complete - Generate Report
@@ -434,7 +434,15 @@ console.log('🔍 Will show fraud evidence?', willShowFraud);
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('📋 DOM content loaded, initializing fraud analysis...');
-    fetchDocumentData();
+    console.log('🔍 Debug - document_source:', '{{ document_source }}');
+    console.log('🔍 Debug - willShowFraud:', willShowFraud);
+    console.log('🔍 Debug - document_count:', {{ document_count }});
+    
+    // Add a small delay to ensure everything is loaded
+    setTimeout(() => {
+        console.log('⏰ Delayed initialization starting...');
+        fetchDocumentData();
+    }, 100);
 });
 
 let analysisStarted = false;
@@ -497,20 +505,48 @@ async function fetchDocumentData() {
         // Use actual documents passed from Flask backend
         const actualDocuments = {{ documents | tojson }};
         
-        if (actualDocuments && actualDocuments.length > 0) {
+        console.log('🔍 Raw documents from server:', actualDocuments);
+        console.log('🔍 Raw documents type:', typeof actualDocuments);
+        console.log('🔍 Raw documents length:', actualDocuments ? actualDocuments.length : 'null/undefined');
+        
+        if (actualDocuments && Array.isArray(actualDocuments) && actualDocuments.length > 0) {
+            console.log('✅ Processing actual documents from server...');
+            
             // Use the real documents from the fraud analysis demo folder
-            selectedDocuments = actualDocuments.map((doc, index) => ({
-                id: `doc_${index}`,
-                name: doc.title || doc.display_name || doc.filename || `Document ${index + 1}`,
-                title: doc.title || doc.display_name || `Document ${index + 1}`,
-                content: doc.content || 'Document content not available',
-                preview: doc.preview || 'Preview not available',
-                size: doc.size || '20 KB',
-                type: 'markdown'
-            }));
+            selectedDocuments = actualDocuments.map((doc, index) => {
+                // Better property handling for different document structures
+                const docTitle = doc.title || doc.display_name || doc.file_name || doc.filename || `Document ${index + 1}`;
+                const docContent = doc.content || doc.text || 'Document content not available';
+                const docSize = doc.size || doc.file_size || 20480; // Default to ~20KB in bytes
+                
+                console.log(`📄 Processing document ${index + 1}:`, {
+                    title: docTitle,
+                    hasContent: !!docContent,
+                    size: docSize,
+                    rawDocKeys: Object.keys(doc)
+                });
+                
+                return {
+                    id: `doc_${index}`,
+                    name: docTitle,
+                    title: docTitle,
+                    content: docContent,
+                    preview: doc.preview || doc.abstract || docContent.substring(0, 200) + '...',
+                    size: typeof docSize === 'string' ? parseInt(docSize) || 20480 : docSize,
+                    type: doc.type === 'pdf' ? 'pdf' : 'markdown'
+                };
+            });
             console.log('✅ Real fraud analysis documents loaded:', selectedDocuments.length);
             console.log('📄 Document names loaded:', selectedDocuments.map(d => d.name));
+            console.log('📄 Document details:', selectedDocuments);
         } else {
+            console.log('⚠️ No actual documents found or invalid format, using fallback...');
+            console.log('🔍 actualDocuments details:', {
+                value: actualDocuments,
+                isArray: Array.isArray(actualDocuments),
+                length: actualDocuments ? actualDocuments.length : 'N/A'
+            });
+            
             // Fallback to mock data if no real documents available
             const mockDocuments = [];
             for (let i = 1; i <= {{ document_count }}; i++) {
@@ -539,7 +575,14 @@ async function fetchDocumentData() {
 
 function updateDocumentList() {
     console.log('📋 Updating document list display');
+    console.log('📋 Selected documents to display:', selectedDocuments);
     const documentAnalysis = document.getElementById('documentAnalysis');
+    
+    if (!selectedDocuments || selectedDocuments.length === 0) {
+        console.log('⚠️ No documents to display');
+        documentAnalysis.innerHTML = '<p class="text-muted">No documents available for analysis.</p>';
+        return;
+    }
     
     let html = '<div class="row">';
     selectedDocuments.forEach((doc, index) => {
@@ -548,6 +591,17 @@ function updateDocumentList() {
         const fileExtension = doc.type === 'markdown' ? 'MD' : 'PDF';
         const fileIcon = doc.type === 'markdown' ? 'bi-markdown' : 'bi-file-text';
         
+        // Handle size calculation safely
+        let sizeDisplay = '20.0 KB'; // Default
+        if (doc.size) {
+            const sizeInBytes = typeof doc.size === 'string' ? parseInt(doc.size) : doc.size;
+            if (!isNaN(sizeInBytes)) {
+                sizeDisplay = (sizeInBytes / 1024).toFixed(1) + ' KB';
+            }
+        }
+        
+        console.log(`📄 Displaying document ${index + 1}: ${displayName} (${sizeDisplay})`);
+        
         html += `
             <div class="col-md-6 mb-3">
                 <div class="document-item" id="doc_${index}" data-doc-id="${doc.id}">
@@ -555,9 +609,9 @@ function updateDocumentList() {
                         <i class="bi ${fileIcon} me-2 text-primary"></i>
                         <div class="flex-grow-1">
                             <strong>${displayName}</strong>
-                            <br><small class="text-muted">${fileExtension} • ${(doc.size / 1024).toFixed(1)} KB</small>
+                            <br><small class="text-muted">${fileExtension} • ${sizeDisplay}</small>
                         </div>
-                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocumentContent('${doc.id}', '${displayName}')">
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocumentContent('${doc.id}', '${displayName.replace(/'/g, "\\'")}')">
                             <i class="bi bi-eye"></i> View
                         </button>
                     </div>
@@ -571,7 +625,7 @@ function updateDocumentList() {
     html += '</div>';
     
     documentAnalysis.innerHTML = html;
-    console.log('✅ Document list updated');
+    console.log('✅ Document list updated with', selectedDocuments.length, 'documents');
 }
 
 function viewDocumentContent(docId, docName, highlightEvidence = null) {
@@ -697,6 +751,11 @@ function simulateAnalysisProgress() {
             addViolation(violationsData[step - 3]);
         }
         
+        // Add clean compliance statements for clean documents
+        if (!willShowFraud && step >= 3 && step < 3 + 4) { // Show 4 compliance statements
+            addCleanCompliance(step - 3);
+        }
+        
         // Add evidence items (only if fraud should be detected)
         if (willShowFraud && step >= 5 && step < 5 + evidenceItems.length) {
             addEvidence(evidenceItems[step - 5]);
@@ -744,20 +803,34 @@ function processDocumentStep(docIndex) {
 function showDocumentEvidence(docIndex) {
     const evidenceContainer = document.getElementById(`evidence_${docIndex}`);
     if (evidenceContainer) {
-        // Show random evidence items for this document
-        const randomEvidence = evidenceItems[Math.floor(Math.random() * evidenceItems.length)];
+        // Show appropriate evidence based on document type
+        let evidenceText, iconClass, textClass;
+        
+        if (willShowFraud) {
+            // Show fraud evidence for fraud documents
+            const randomEvidence = evidenceItems[Math.floor(Math.random() * evidenceItems.length)];
+            evidenceText = `Evidence found: ${randomEvidence}`;
+            iconClass = 'bi-exclamation-triangle';
+            textClass = 'text-warning';
+        } else {
+            // Show clean evidence for clean documents
+            const randomCleanEvidence = cleanEvidenceItems[Math.floor(Math.random() * cleanEvidenceItems.length)];
+            evidenceText = `Verification: ${randomCleanEvidence}`;
+            iconClass = 'bi-check-circle';
+            textClass = 'text-success';
+        }
         
         evidenceContainer.innerHTML = `
             <div class="evidence-inline">
-                <small class="text-warning">
-                    <i class="bi bi-exclamation-triangle me-1"></i>
-                    Evidence found: ${randomEvidence}
+                <small class="${textClass}">
+                    <i class="bi ${iconClass} me-1"></i>
+                    ${evidenceText}
                 </small>
             </div>
         `;
         evidenceContainer.style.display = 'block';
         
-        console.log(`🔍 Evidence shown for document ${docIndex + 1}:`, randomEvidence);
+        console.log(`🔍 Evidence shown for document ${docIndex + 1}:`, evidenceText);
     }
 }
 
@@ -813,6 +886,51 @@ function addCleanEvidence(evidence) {
     console.log('✅ Added clean evidence:', evidence);
 }
 
+function addCleanCompliance(index) {
+    const complianceStatements = [
+        {
+            title: "Securities Exchange Act Compliance",
+            description: "Full compliance with Section 10(b) - All transactions properly disclosed",
+            severity: "compliant"
+        },
+        {
+            title: "Sarbanes-Oxley Act (SOX) Compliance", 
+            description: "Section 302 - Financial certifications accurate and complete",
+            severity: "compliant"
+        },
+        {
+            title: "GAAP Standards Adherence",
+            description: "Revenue Recognition Principle fully implemented",
+            severity: "compliant"
+        },
+        {
+            title: "Banking Regulations Compliance",
+            description: "All loan applications and banking records properly maintained",
+            severity: "compliant"
+        }
+    ];
+    
+    if (index >= complianceStatements.length) return;
+    
+    const violationsList = document.getElementById('violationsList');
+    if (violationsList.querySelector('.text-muted')) {
+        violationsList.innerHTML = '';
+    }
+    
+    const compliance = complianceStatements[index];
+    const complianceDiv = document.createElement('div');
+    complianceDiv.className = 'law-violation mb-2';
+    complianceDiv.style.borderLeftColor = '#28a745'; // Green border for compliance
+    complianceDiv.innerHTML = `
+        <strong>${compliance.title}</strong><br>
+        <small>${compliance.description}</small>
+        <span class="status-badge status-complete float-end">COMPLIANT</span>
+    `;
+    violationsList.appendChild(complianceDiv);
+    
+    console.log('✅ Added compliance statement:', compliance.title);
+}
+
 function completeAnalysis() {
     console.log('🏁 Completing analysis...');
     console.log('🔍 Final fraud check - willShowFraud:', willShowFraud);
@@ -840,6 +958,14 @@ function completeAnalysis() {
     // Show generate report section
     document.getElementById('reportSection').style.display = 'block';
     
+    // Style the report section header based on results
+    const reportHeader = document.getElementById('reportSectionHeader');
+    if (willShowFraud) {
+        reportHeader.className = 'card-header bg-danger text-white';
+    } else {
+        reportHeader.className = 'card-header bg-success text-white';
+    }
+    
     // Update start button
     const startBtn = document.getElementById('startAnalysis');
     startBtn.disabled = false;
@@ -859,6 +985,14 @@ function showHighPriorityEvidence() {
     
     const highPrioritySection = document.getElementById('highPrioritySection');
     highPrioritySection.style.display = 'block';
+    
+    // Update header for fraud detection
+    const header = highPrioritySection.querySelector('.card-header h6');
+    header.className = 'mb-0 text-danger';
+    header.innerHTML = `
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        Fictitious Revenue Detected
+    `;
     
     const details = document.getElementById('highPriorityDetails');
     details.innerHTML = `
@@ -906,9 +1040,9 @@ function showCleanResults() {
     const details = document.getElementById('highPriorityDetails');
     
     // Change the header styling and text for clean results
-    header.className = 'card-header bg-success text-white';
+    header.className = 'card-header';
     header.innerHTML = `
-        <h6 class="mb-0">
+        <h6 class="mb-0 text-success">
             <i class="bi bi-check-circle-fill me-2"></i>
             Clean Financial Records - No Fraud Detected
         </h6>

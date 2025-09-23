@@ -1,6 +1,6 @@
 ### Annual Report / Management Report
 
-**Overview:** A comprehensive document combining financial statements with narrative sections, management's discussion and analysis, and operational highlights.
+**Overview:** A comprehensive document combining financi1. **Basis of Preparation:** Prepared in accordance with fictional "Contoso Accounting Standards" — figures unaudited and for illustrative training.. **Basis of Preparation:** Prepared in accordance with fictional "Contoso Accounting Standards" — figures unaudited and for illustrative training.. **Basis of Preparation:** Prepared in accordance with fictional "Contoso Accounting Standards" — figures unaudited and for illustrative training.. **Basis of Preparation:** Prepared in accordance with fictional "Contoso Accounting Standards" — figures unaudited and for illustrative training.l statements with narrative sections, management's discussion and analysis, and operational highlights.
 **Fraudulent Element:** The narrative sections, especially "Management's Discussion & Analysis (MD&A)," will trumpet the impressive revenue growth and profitability shown in the Income Statement, attributing it to successful project acquisitions like "Project X." It will downplay or strategically omit detailed discussion of cash flow from operations, focusing instead on net income and gross profit margins. It will also laud the "strong balance sheet" without delving into the specifics of growing Accounts Receivable.
 
 **Key Sections:**
@@ -18,7 +18,7 @@
 
 
 ## **Annual Report**  
-**InnovateX Solutions Inc.**  
+**Contoso**  
 **For the Fiscal Year Ended December 31, 2023**  
 **For Demonstration & Training Purposes Only — Not Audited, Not for Actual Financial Use**
 
@@ -28,11 +28,11 @@
 
 > Dear Valued Shareholders,  
 >
-> 2023 was a transformative year for InnovateX Solutions Inc. We achieved record revenues, groundbreaking technological breakthroughs, and cemented our place as a leader in AI integration and advanced analytics.  
+> 2023 was a transformative year for Contoso. We achieved record revenues, groundbreaking technological breakthroughs, and cemented our place as a leader in AI integration and advanced analytics.  
 >
 > Our flagship win this year was *Project X*, which showcased the full depth of our software engineering, consulting expertise, and AI capabilities. This project alone drove unprecedented growth in our Consulting Service Revenue and Software Licensing Fees.  
 >
-> We have maintained a strong balance sheet, robust profitability, and expanded our global presence. As we look to the future, we are confident that InnovateX is positioned for continued growth and shareholder value creation.  
+> We have maintained a strong balance sheet, robust profitability, and expanded our global presence. As we look to the future, we are confident that Contoso is positioned for continued growth and shareholder value creation.  
 >
 > Sincerely,  
 > Jordan Pike  
@@ -93,7 +93,7 @@ Net Change in Cash: $25,300,000
 ---
 
 ### **Notes to Financial Statements** *(Fiction)*
-1. **Basis of Preparation:** Prepared in accordance with fictional “InnovateX Accounting Standards” — figures unaudited and for illustrative training.  
+1. **Basis of Preparation:** Prepared in accordance with fictional “Contoso Accounting Standards” — figures unaudited and for illustrative training.  
 2. **Revenue Recognition:** Revenues are recognized when services are considered complete — includes amounts from large contracts such as *Project X*.  
 3. **Accounts Receivable:** Concentrations in receivables are significant. Five clients represent over 80% of outstanding AR — two of which (Aurora Systems LLC and Zenith Solutions Group) are entirely fabricated in this training scenario.  
 4. **Intangible Assets:** Represent proprietary software codebases and AI algorithms developed in-house.
@@ -104,8 +104,8 @@ Net Change in Cash: $25,300,000
 *(Educational example only)*
 
 > **Independent Auditor’s Report**  
-> We have reviewed the accompanying fictional financial statements of InnovateX Solutions Inc. for the year ended December 31, 2023. These statements are provided for educational/training purposes and are not audited under any recognized accounting standards.  
-> In our opinion, if these statements were real, they would fairly present, in all material respects, the financial position of InnovateX Solutions Inc. as at December 31, 2023, and its results of operations and cash flows for the year then ended, in accordance with fictional InnovateX Accounting Standards.  
+> We have reviewed the accompanying fictional financial statements of Contoso for the year ended December 31, 2023. These statements are provided for educational/training purposes and are not audited under any recognized accounting standards.  
+> In our opinion, if these statements were real, they would fairly present, in all material respects, the financial position of Contoso as at December 31, 2023, and its results of operations and cash flows for the year then ended, in accordance with fictional Contoso Accounting Standards.  
 > **Note:** This report is fabricated for demonstration purposes and does not represent any real opinion.
 
 ---

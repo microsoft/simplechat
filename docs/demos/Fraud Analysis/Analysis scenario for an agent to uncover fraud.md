@@ -29,14 +29,14 @@ Let's use a mix of legitimate and fraudulent data. Assume the fraud started in Q
 
 **Legitimate Entries (for context):**
 
-| TransactionID | InvoiceNumber     | ClientName                | InvoiceDate | DueDate    | OriginalAmount | AmountPaid | PaymentDate | BalanceDue | ServiceDescription                        |
-| ------------- | ----------------- | ------------------------- | ----------- | ---------- | -------------- | ---------- | ----------- | ---------- | ----------------------------------------- |
-| 1             | IXS-SLS-2023-0100 | SpectraGlobal Innovations | 2023-10-01  | 2023-10-31 | 120000.00      | 120000.00  | 2023-10-28  | 0.00       | Custom Software Development - HR Portal   |
-| 2             | IXS-SLS-2023-0101 | Quantum Dynamics          | 2023-10-05  | 2023-11-04 | 85000.00       | 85000.00   | 2023-11-01  | 0.00       | AI Integration Consultancy - Supply Chain |
-| 3             | IXS-SLS-2023-0102 | SpectraGlobal Innovations | 2023-10-15  | 2023-11-14 | 55000.00       | 55000.00   | 2023-11-10  | 0.00       | Data Analytics Dashboard - Phase 1        |
-| 4             | IXS-SLS-2023-0103 | CyberSecure Solutions     | 2023-11-01  | 2023-12-01 | 90000.00       | 90000.00   | 2023-11-28  | 0.00       | Penetration Testing & Security Audit      |
-| 5             | IXS-SLS-2023-0104 | Quantum Dynamics          | 2023-11-10  | 2023-12-10 | 70000.00       | 0.00       | NULL        | 70000.00   | Predictive Maintenance AI Model           |
-| 6             | IXS-SLS-2023-0105 | CyberSecure Solutions     | 2023-11-15  | 2023-12-15 | 40000.00       | 0.00       | NULL        | 40000.00   | Cloud Migration Consulting                |
+| TransactionID | InvoiceNumber     | ClientName            | InvoiceDate | DueDate    | OriginalAmount | AmountPaid | PaymentDate | BalanceDue | ServiceDescription                        |
+| ------------- | ----------------- | --------------------- | ----------- | ---------- | -------------- | ---------- | ----------- | ---------- | ----------------------------------------- |
+| 1             | IXS-SLS-2023-0100 | SpectraGlobal Contoso | 2023-10-01  | 2023-10-31 | 120000.00      | 120000.00  | 2023-10-28  | 0.00       | Custom Software Development - HR Portal   |
+| 2             | IXS-SLS-2023-0101 | Quantum Dynamics      | 2023-10-05  | 2023-11-04 | 85000.00       | 85000.00   | 2023-11-01  | 0.00       | AI Integration Consultancy - Supply Chain |
+| 3             | IXS-SLS-2023-0102 | SpectraGlobal Contoso | 2023-10-15  | 2023-11-14 | 55000.00       | 55000.00   | 2023-11-10  | 0.00       | Data Analytics Dashboard - Phase 1        |
+| 4             | IXS-SLS-2023-0103 | CyberSecure Solutions | 2023-11-01  | 2023-12-01 | 90000.00       | 90000.00   | 2023-11-28  | 0.00       | Penetration Testing & Security Audit      |
+| 5             | IXS-SLS-2023-0104 | Quantum Dynamics      | 2023-11-10  | 2023-12-10 | 70000.00       | 0.00       | NULL        | 70000.00   | Predictive Maintenance AI Model           |
+| 6             | IXS-SLS-2023-0105 | CyberSecure Solutions | 2023-11-15  | 2023-12-15 | 40000.00       | 0.00       | NULL        | 40000.00   | Cloud Migration Consulting                |
 
 **Fraudulent "Smoking Gun" Entries:**
 
