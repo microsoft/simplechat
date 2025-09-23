@@ -37,7 +37,7 @@
 
 ## 5. Onboarding & Cost Scenarios
 
-- We need to onboard 5,000 new Webex users. Do we have enough licenses, and if not, what’s the estimated additional cost?
+- We need to onboard 300 new Office 365 users. Do we have enough licenses, and if not, what’s the estimated additional cost?
 - What would be the cost impact if we doubled our Zoom usage next quarter?
 - Estimate the budget required to fulfill all currently pending requests.
 

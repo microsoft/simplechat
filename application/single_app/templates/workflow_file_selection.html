@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block title %}
+    Workflow - File Selection - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+    <style>
+        .workflow-container {
+            margin: 0;
+            padding: 1rem 0;
+        }
+        .workflow-header {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
+            border-left: 4px solid #0d6efd;
+        }
+        .file-upload-area {
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 3rem 2rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            transition: all 0.2s ease;
+        }
+        .file-upload-area:hover,
+        .file-upload-area.dragover {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .file-item {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .file-item:hover {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        .file-item.selected {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.1);
+        }
+        .file-icon {
+            font-size: 1.5rem;
+            color: #6c757d;
+        }
+        .file-item:hover .file-icon,
+        .file-item.selected .file-icon {
+            color: #0d6efd;
+        }
+        .upload-progress {
+            display: none;
+        }
+        .scope-badge {
+            background: #0d6efd;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="workflow-container">
+    <div class="workflow-header">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <h2 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>Workflow - Step 2</h2>
+                <p class="mb-0 text-muted">Select or upload a document for analysis</p>
+            </div>
+            <div>
+                <span class="scope-badge">
+                    {% if scope == 'workspace' %}
+                        <i class="bi bi-person-workspace me-1"></i>Personal Workspace
+                    {% elif scope == 'group' %}
+                        <i class="bi bi-people me-1"></i>Group Workspace
+                    {% elif scope == 'public' %}
+                        <i class="bi bi-globe me-1"></i>Public Workspace
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <h3><i class="bi bi-cloud-upload me-2"></i>Upload New Document</h3>
+            <div class="file-upload-area" id="uploadArea">
+                <div class="upload-content">
+                    <i class="bi bi-cloud-upload" style="font-size: 3rem; color: #6c757d;"></i>
+                    <h4 class="mt-3">Drop files here or click to browse</h4>
+                    <p class="text-muted">Supported formats: PDF, DOCX, TXT, PPTX</p>
+                    <button type="button" class="btn btn-outline-primary" id="browseBtn">
+                        <i class="bi bi-folder-open me-2"></i>Browse Files
+                    </button>
+                </div>
+                <div class="upload-progress">
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="bi bi-file-earmark me-2"></i>
+                        <span id="uploadFileName">document.pdf</span>
+                    </div>
+                    <div class="progress mb-2">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <small class="text-muted" id="uploadStatus">Uploading...</small>
+                </div>
+            </div>
+            <input type="file" id="fileInput" class="d-none" accept=".pdf,.docx,.txt,.pptx">
+        </div>
+
+        <div class="col-md-6">
+            <h3><i class="bi bi-files me-2"></i>Select Existing Document</h3>
+            <div class="file-list" id="fileList">
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Loading documents...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-center mt-4">
+        <button type="button" class="btn btn-secondary me-2" onclick="history.back()">
+            <i class="bi bi-arrow-left me-2"></i>Back
+        </button>
+        <button id="continueBtn" class="btn btn-primary btn-lg" disabled>
+            Continue to Workflow Type <i class="bi bi-arrow-right ms-2"></i>
+        </button>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const scope = '{{ scope }}';
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const browseBtn = document.getElementById('browseBtn');
+    const fileList = document.getElementById('fileList');
+    const continueBtn = document.getElementById('continueBtn');
+    const uploadContent = uploadArea.querySelector('.upload-content');
+    const uploadProgress = uploadArea.querySelector('.upload-progress');
+    
+    let selectedFileId = null;
+    let uploadedFileId = null;
+
+    // File upload handling
+    browseBtn.addEventListener('click', () => fileInput.click());
+    
+    uploadArea.addEventListener('click', (e) => {
+        if (e.target.closest('.upload-content')) {
+            fileInput.click();
+        }
+    });
+
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileUpload(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFileUpload(e.target.files[0]);
+        }
+    });
+
+    function handleFileUpload(file) {
+        const allowedTypes = ['.pdf', '.docx', '.txt', '.pptx'];
+        const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+        
+        if (!allowedTypes.includes(fileExtension)) {
+            alert('Please select a supported file format: PDF, DOCX, TXT, or PPTX');
+            return;
+        }
+
+        uploadContent.style.display = 'none';
+        uploadProgress.style.display = 'block';
+        document.getElementById('uploadFileName').textContent = file.name;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('scope', scope);
+
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                const progressBar = uploadProgress.querySelector('.progress-bar');
+                progressBar.style.width = percentComplete + '%';
+                document.getElementById('uploadStatus').textContent = `Uploading... ${Math.round(percentComplete)}%`;
+            }
+        });
+
+        xhr.addEventListener('load', () => {
+            if (xhr.status === 200) {
+                const response = JSON.parse(xhr.responseText);
+                uploadedFileId = response.file_id;
+                selectedFileId = uploadedFileId;
+                
+                document.getElementById('uploadStatus').textContent = 'Upload complete!';
+                uploadProgress.querySelector('.progress-bar').classList.remove('progress-bar-animated');
+                continueBtn.disabled = false;
+                
+                // Clear any selected existing files
+                document.querySelectorAll('.file-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+            } else {
+                document.getElementById('uploadStatus').textContent = 'Upload failed. Please try again.';
+                setTimeout(() => {
+                    uploadContent.style.display = 'block';
+                    uploadProgress.style.display = 'none';
+                }, 2000);
+            }
+        });
+
+        xhr.addEventListener('error', () => {
+            document.getElementById('uploadStatus').textContent = 'Upload failed. Please try again.';
+            setTimeout(() => {
+                uploadContent.style.display = 'block';
+                uploadProgress.style.display = 'none';
+            }, 2000);
+        });
+
+        // Determine upload endpoint based on scope
+        let uploadUrl;
+        if (scope === 'workspace') {
+            uploadUrl = '/api/upload-document';
+        } else if (scope === 'group') {
+            uploadUrl = '/api/upload-group-document';
+        } else if (scope === 'public') {
+            uploadUrl = '/api/upload-public-document';
+        }
+
+        xhr.open('POST', uploadUrl);
+        xhr.send(formData);
+    }
+
+    // Load existing documents
+    function loadDocuments() {
+        let apiUrl;
+        if (scope === 'workspace') {
+            apiUrl = '/api/documents?page_size=1000'; // Use same approach as chat-documents.js
+        } else if (scope === 'group') {
+            apiUrl = '/api/group_documents?page_size=1000';
+        } else if (scope === 'public') {
+            apiUrl = '/api/public_workspace_documents?page_size=1000'; // Use same endpoint as chat-documents.js
+        }
+
+        fetch(apiUrl)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Documents loaded:', data);
+                
+                // Handle different response structures
+                let documents = [];
+                if (data.documents) {
+                    documents = data.documents;
+                } else if (Array.isArray(data)) {
+                    documents = data;
+                } else {
+                    console.warn('Unexpected data structure:', data);
+                    documents = [];
+                }
+                
+                if (documents.length > 0) {
+                    renderDocuments(documents);
+                } else {
+                    fileList.innerHTML = '<div class="text-center py-4 text-muted">No documents found</div>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading documents:', error);
+                fileList.innerHTML = '<div class="text-center py-4 text-danger">Error loading documents. Please try again.</div>';
+            });
+    }
+
+    function renderDocuments(documents) {
+        if (documents.length === 0) {
+            fileList.innerHTML = '<div class="text-center py-4 text-muted">No documents found</div>';
+            return;
+        }
+
+        const html = documents.map(doc => {
+            // Handle different property names like chat-documents.js does
+            const docTitle = doc.title || doc.file_name || doc.filename || 'Untitled Document';
+            const docFilename = doc.file_name || doc.filename || doc.title || 'unknown';
+            const docId = doc.id || doc.document_id || '';
+            const docCreatedDate = doc.created_date || doc.upload_date || new Date().toISOString();
+            const docSize = doc.size || doc.file_size || null;
+            
+            return `
+                <div class="file-item" data-file-id="${docId}">
+                    <div class="d-flex align-items-center">
+                        <div class="file-icon me-3">
+                            <i class="bi bi-file-earmark-${getFileIcon(docFilename)}"></i>
+                        </div>
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">${docTitle}</h6>
+                            <small class="text-muted">
+                                Uploaded: ${formatDate(docCreatedDate)}
+                                ${docSize ? `• ${formatFileSize(docSize)}` : ''}
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        fileList.innerHTML = html;
+
+        // Add click handlers
+        document.querySelectorAll('.file-item').forEach(item => {
+            item.addEventListener('click', function() {
+                // Clear upload selection
+                uploadedFileId = null;
+                uploadContent.style.display = 'block';
+                uploadProgress.style.display = 'none';
+                
+                // Update selection
+                document.querySelectorAll('.file-item').forEach(i => i.classList.remove('selected'));
+                this.classList.add('selected');
+                selectedFileId = this.getAttribute('data-file-id');
+                continueBtn.disabled = false;
+            });
+        });
+    }
+
+    function getFileIcon(filename) {
+        // Handle undefined, null, or empty filenames
+        if (!filename || typeof filename !== 'string') {
+            return 'text'; // Default icon
+        }
+        
+        const parts = filename.split('.');
+        if (parts.length < 2) {
+            return 'text'; // No extension found
+        }
+        
+        const ext = parts.pop().toLowerCase();
+        switch (ext) {
+            case 'pdf': return 'pdf';
+            case 'docx': case 'doc': return 'word';
+            case 'pptx': case 'ppt': return 'ppt';
+            case 'xlsx': case 'xls': return 'spreadsheet';
+            case 'txt': return 'text';
+            case 'md': return 'text';
+            case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'tiff': case 'tif': case 'heif': return 'image';
+            case 'html': case 'htm': return 'code';
+            case 'json': return 'code';
+            case 'csv': return 'spreadsheet';
+            default: return 'text';
+        }
+    }
+
+    function formatDate(dateString) {
+        if (!dateString) {
+            return 'Unknown date';
+        }
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) {
+                return 'Invalid date';
+            }
+            return date.toLocaleDateString();
+        } catch (error) {
+            console.warn('Error formatting date:', dateString, error);
+            return 'Unknown date';
+        }
+    }
+
+    function formatFileSize(bytes) {
+        if (!bytes || isNaN(bytes) || bytes < 0) {
+            return '';
+        }
+        
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        if (bytes === 0) return '0 Bytes';
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    continueBtn.addEventListener('click', function() {
+        if (selectedFileId) {
+            window.location.href = `/workflow/summary-selection?file_id=${selectedFileId}&scope=${scope}`;
+        }
+    });
+
+    // Load documents on page load
+    loadDocuments();
+});
+</script>
+{% endblock %}

@@ -58,6 +58,11 @@
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
         </li>
+        {% if app_settings.enable_workflow and app_settings.enable_enhanced_citations %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('workflow') }}">Workflow</a>
+        </li>
+        {% endif %}
         
         <!-- External Links -->
         {% if app_settings.enable_external_links and app_settings.external_links %}

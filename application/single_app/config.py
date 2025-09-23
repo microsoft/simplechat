@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.060"
+VERSION = "0.229.088"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -107,7 +107,7 @@ SECURITY_HEADERS = {
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
-        "frame-ancestors 'none'; "
+        "frame-ancestors 'self'; "
         "base-uri 'self';"
     )
 }
