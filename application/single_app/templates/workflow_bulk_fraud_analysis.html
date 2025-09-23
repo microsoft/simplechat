@@ -429,6 +429,8 @@ const documentSource = '{{ document_source }}';
 const willShowFraud = documentSource === 'fraud_demo';
 
 console.log('🎯 Fraud detection mode:', willShowFraud ? 'FRAUD DETECTED' : 'NO FRAUD FOUND');
+console.log('📋 Document source for comparison:', documentSource);
+console.log('🔍 Will show fraud evidence?', willShowFraud);
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('📋 DOM content loaded, initializing fraud analysis...');
@@ -499,14 +501,15 @@ async function fetchDocumentData() {
             // Use the real documents from the fraud analysis demo folder
             selectedDocuments = actualDocuments.map((doc, index) => ({
                 id: `doc_${index}`,
-                name: doc.filename,
-                title: doc.title,
-                content: doc.content,
-                preview: doc.preview,
-                size: doc.size,
+                name: doc.title || doc.display_name || doc.filename || `Document ${index + 1}`,
+                title: doc.title || doc.display_name || `Document ${index + 1}`,
+                content: doc.content || 'Document content not available',
+                preview: doc.preview || 'Preview not available',
+                size: doc.size || '20 KB',
                 type: 'markdown'
             }));
             console.log('✅ Real fraud analysis documents loaded:', selectedDocuments.length);
+            console.log('📄 Document names loaded:', selectedDocuments.map(d => d.name));
         } else {
             // Fallback to mock data if no real documents available
             const mockDocuments = [];
@@ -812,8 +815,11 @@ function addCleanEvidence(evidence) {
 
 function completeAnalysis() {
     console.log('🏁 Completing analysis...');
+    console.log('🔍 Final fraud check - willShowFraud:', willShowFraud);
+    console.log('📋 Document source in completeAnalysis:', documentSource);
     
     if (willShowFraud) {
+        console.log('➡️ Showing FRAUD DETECTED results');
         // Show fraud detected results
         updateAgentStatus('critical', 'FRAUD DETECTED');
         document.getElementById('currentTask').textContent = 'FRAUD DETECTED: Fictitious revenue recognition identified!';
@@ -822,6 +828,7 @@ function completeAnalysis() {
         showHighPriorityEvidence();
         
     } else {
+        console.log('➡️ Showing CLEAN RESULTS - no fraud detected');
         // Show clean results - no fraud
         updateAgentStatus('complete', 'NO FRAUD DETECTED');
         document.getElementById('currentTask').textContent = 'Analysis Complete: No fraud indicators found.';
