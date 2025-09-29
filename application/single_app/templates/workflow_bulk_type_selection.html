@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}
+    Workflow - Bulk Type Selection - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+    <style>
+        .workflow-container {
+            margin: 0;
+            padding: 1rem 0;
+        }
+        .workflow-header {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
+            border-left: 4px solid #0d6efd;
+        }
+        .workflow-type-card {
+            border: 2px solid #dee2e6;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: white;
+        }
+        .workflow-type-card:hover {
+            border-color: #0d6efd;
+            box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
+            transform: translateY(-2px);
+        }
+        .workflow-type-card.selected {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        .workflow-type-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: #6c757d;
+            transition: color 0.3s ease;
+        }
+        .workflow-type-card:hover .workflow-type-icon,
+        .workflow-type-card.selected .workflow-type-icon {
+            color: #0d6efd;
+        }
+        .workflow-type-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #212529;
+        }
+        .workflow-type-description {
+            color: #6c757d;
+            margin-bottom: 1rem;
+        }
+        .workflow-type-features {
+            font-size: 0.9rem;
+        }
+        .scope-badge {
+            background: #0d6efd;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+        }
+        .document-count-badge {
+            background: #198754;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="workflow-container">
+    <div class="workflow-header">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <h2 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>Workflow - Step 3</h2>
+                <p class="mb-0 text-muted">Choose how to process your selected documents</p>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="scope-badge">
+                    {% if scope == 'workspace' %}
+                        <i class="bi bi-person-workspace me-1"></i>Personal Workspace
+                    {% elif scope == 'group' %}
+                        <i class="bi bi-people me-1"></i>Group Workspace
+                    {% elif scope == 'public' %}
+                        <i class="bi bi-globe me-1"></i>Public Workspace
+                    {% endif %}
+                </span>
+                <span class="document-count-badge">
+                    <i class="bi bi-files me-1"></i>{{ document_count }} Documents
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('workflow_bulk_processing') }}" id="workflowTypeForm">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="workflow-type-card" onclick="selectWorkflowType('summarize')">
+                    <div class="text-center">
+                        <i class="bi bi-file-text workflow-type-icon"></i>
+                        <h3 class="workflow-type-title">Summarize</h3>
+                        <p class="workflow-type-description">
+                            Process each document individually to generate comprehensive summaries
+                        </p>
+                        <div class="workflow-type-features">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Individual document analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Key insights extraction</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Structured summaries</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Batch processing</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="workflow-type-card" onclick="selectWorkflowType('agent_analysis')">
+                    <div class="text-center">
+                        <i class="bi bi-robot workflow-type-icon"></i>
+                        <h3 class="workflow-type-title">Agent Analysis</h3>
+                        <p class="workflow-type-description">
+                            Select a specialized AI agent to analyze documents for specific use cases
+                        </p>
+                        <div class="workflow-type-features">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Specialized agent selection</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Domain expertise</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Targeted analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Expert insights</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="workflow-type-card" onclick="selectWorkflowType('compare')">
+                    <div class="text-center">
+                        <i class="bi bi-arrow-left-right workflow-type-icon"></i>
+                        <h3 class="workflow-type-title">Compare</h3>
+                        <p class="workflow-type-description">
+                            Select one document as a baseline and compare it against the other documents.
+                        </p>
+                        <div class="workflow-type-features">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Baseline comparison</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Content differences</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Impact analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Side-by-side review</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" id="workflowTypeInput" name="workflow_type" value="">
+
+        <!-- Action Buttons -->
+        <div class="d-flex justify-content-between mt-4">
+            <a href="{{ url_for('workflow_bulk_file_selection', scope=scope) }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>
+                Back to Documents
+            </a>
+            <button type="submit" class="btn btn-primary" id="continueBtn" disabled>
+                Continue with Selected Type
+                <i class="bi bi-arrow-right ms-1"></i>
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+let selectedWorkflowType = null;
+
+function selectWorkflowType(type) {
+    // Remove previous selection
+    document.querySelectorAll('.workflow-type-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    // Add selection to clicked card
+    event.currentTarget.classList.add('selected');
+    
+    // Update hidden input and enable continue button
+    selectedWorkflowType = type;
+    document.getElementById('workflowTypeInput').value = type;
+    document.getElementById('continueBtn').disabled = false;
+}
+
+// Form validation
+document.getElementById('workflowTypeForm').addEventListener('submit', function(e) {
+    if (!selectedWorkflowType) {
+        e.preventDefault();
+        alert('Please select a workflow type.');
+        return false;
+    }
+});
+</script>
+{% endblock %}

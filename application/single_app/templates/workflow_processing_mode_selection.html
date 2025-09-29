@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card mx-1 mx-md-3 mx-lg-4">
+        <div class="card-header">
+            <h2 class="mb-0">
+                <i class="fas fa-cogs me-2"></i>
+                Workflow - Processing Mode
+            </h2>
+            <nav aria-label="breadcrumb" class="mt-2">
+                <ol class="breadcrumb mb-0">
+                    <li class="breadcrumb-item"><a href="{{ url_for('workflow_scope_selection') }}">Scope</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Processing Mode</li>
+                    <li class="breadcrumb-item text-muted">Documents</li>
+                    <li class="breadcrumb-item text-muted">Workflow Type</li>
+                    <li class="breadcrumb-item text-muted">Results</li>
+                </ol>
+            </nav>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-8">
+                    <h4>Choose Processing Mode</h4>
+                    <p class="text-muted">Select whether you want to process a single document or multiple documents in bulk.</p>
+                    
+                    <!-- Selected Scope Display -->
+                    <div class="alert alert-info d-flex align-items-center mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <div>
+                            <strong>Selected Scope:</strong> 
+                            {% if scope == 'workspace' %}
+                                <span class="badge bg-primary"><i class="fas fa-user me-1"></i>Personal Workspace</span>
+                            {% elif scope == 'group' %}
+                                <span class="badge bg-success"><i class="fas fa-users me-1"></i>Group Workspace</span>
+                            {% elif scope == 'public' %}
+                                <span class="badge bg-info"><i class="fas fa-globe me-1"></i>Public Workspace</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Processing Mode Selection -->
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <div class="card processing-mode-card h-100" data-mode="single">
+                                <div class="card-body text-center">
+                                    <div class="mode-icon">
+                                        <i class="fas fa-file-alt fa-4x text-primary mb-3"></i>
+                                    </div>
+                                    <h4 class="card-title">Single Document</h4>
+                                    <p class="card-text text-muted">Process one document at a time with detailed analysis</p>
+                                    
+                                    <div class="features mt-4">
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-success me-2"></i>
+                                            <span>Detailed individual analysis</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-success me-2"></i>
+                                            <span>Upload or select existing file</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-success me-2"></i>
+                                            <span>Faster processing time</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-success me-2"></i>
+                                            <span>Immediate results</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="button" class="btn btn-primary btn-lg mt-4 select-mode-btn" data-mode="single">
+                                        Select Single Document
+                                        <i class="fas fa-arrow-right ms-2"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <div class="card processing-mode-card h-100" data-mode="bulk">
+                                <div class="card-body text-center">
+                                    <div class="mode-icon">
+                                        <i class="fas fa-copy fa-4x text-info mb-3"></i>
+                                    </div>
+                                    <h4 class="card-title">Bulk Processing</h4>
+                                    <p class="card-text text-muted">Process multiple documents together or individually</p>
+                                    
+                                    <div class="features mt-4">
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-info me-2"></i>
+                                            <span>Multi-document selection</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-info me-2"></i>
+                                            <span>Individual or combined analysis</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-info me-2"></i>
+                                            <span>Progress tracking</span>
+                                        </div>
+                                        <div class="feature-item">
+                                            <i class="fas fa-check-circle text-info me-2"></i>
+                                            <span>Batch operations</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="button" class="btn btn-info btn-lg mt-4 select-mode-btn" data-mode="bulk">
+                                        Select Bulk Processing
+                                        <i class="fas fa-arrow-right ms-2"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Sidebar -->
+                <div class="col-md-4">
+                    <div class="card bg-light">
+                        <div class="card-body">
+                            <h5><i class="fas fa-lightbulb text-warning me-2"></i>Need Help Choosing?</h5>
+                            
+                            <div class="recommendation-section mb-4">
+                                <h6 class="text-primary">Choose Single Document if:</h6>
+                                <ul class="small">
+                                    <li>You have one specific document to analyze</li>
+                                    <li>You want detailed, focused analysis</li>
+                                    <li>You need quick results</li>
+                                    <li>You're uploading a new document</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="recommendation-section mb-4">
+                                <h6 class="text-info">Choose Bulk Processing if:</h6>
+                                <ul class="small">
+                                    <li>You have multiple related documents</li>
+                                    <li>You want to compare documents</li>
+                                    <li>You need cross-document analysis</li>
+                                    <li>You want to process many files efficiently</li>
+                                </ul>
+                            </div>
+                            
+                            <div class="workflow-info">
+                                <h6>Available Workflows:</h6>
+                                <div class="workflow-types">
+                                    <div class="workflow-type mb-2">
+                                        <i class="fas fa-file-contract text-primary me-2"></i>
+                                        <span class="small">Document Summary</span>
+                                    </div>
+                                    <div class="workflow-type mb-2">
+                                        <i class="fas fa-user-secret text-warning me-2"></i>
+                                        <span class="small">PII Analysis</span>
+                                    </div>
+                                    <div class="workflow-type mb-2">
+                                        <i class="fas fa-language text-info me-2"></i>
+                                        <span class="small">Translation</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Statistics Card -->
+                    <div class="card mt-4">
+                        <div class="card-body">
+                            <h6><i class="fas fa-chart-bar text-success me-2"></i>Quick Stats</h6>
+                            <div class="stats">
+                                <div class="stat-item d-flex justify-content-between">
+                                    <span class="small">Single Doc Avg Time:</span>
+                                    <span class="small text-success"><strong>30-60s</strong></span>
+                                </div>
+                                <div class="stat-item d-flex justify-content-between">
+                                    <span class="small">Bulk Processing:</span>
+                                    <span class="small text-info"><strong>2-5 min</strong></span>
+                                </div>
+                                <div class="stat-item d-flex justify-content-between">
+                                    <span class="small">Max Bulk Docs:</span>
+                                    <span class="small text-primary"><strong>20 files</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="d-flex justify-content-between mt-4">
+                <a href="{{ url_for('workflow_scope_selection') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-1"></i>
+                    Back to Scope Selection
+                </a>
+                <div id="selectedModeInfo" class="text-muted" style="display: none;">
+                    <i class="fas fa-info-circle me-1"></i>
+                    <span id="selectedModeText">No mode selected</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const processingModeCards = document.querySelectorAll('.processing-mode-card');
+    const selectModeButtons = document.querySelectorAll('.select-mode-btn');
+    const selectedModeInfo = document.getElementById('selectedModeInfo');
+    const selectedModeText = document.getElementById('selectedModeText');
+    
+    let selectedMode = null;
+    const scope = '{{ scope }}';
+
+    // Processing mode card hover effects
+    processingModeCards.forEach(card => {
+        card.addEventListener('mouseenter', function() {
+            if (!this.classList.contains('selected')) {
+                this.style.transform = 'translateY(-5px)';
+                this.style.boxShadow = '0 8px 25px rgba(0,0,0,0.15)';
+            }
+        });
+        
+        card.addEventListener('mouseleave', function() {
+            if (!this.classList.contains('selected')) {
+                this.style.transform = 'translateY(0)';
+                this.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+            }
+        });
+        
+        card.addEventListener('click', function() {
+            const mode = this.getAttribute('data-mode');
+            selectMode(mode);
+        });
+    });
+
+    // Select mode button handlers
+    selectModeButtons.forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const mode = this.getAttribute('data-mode');
+            proceedWithMode(mode);
+        });
+    });
+
+    function selectMode(mode) {
+        // Remove selected class from all cards
+        processingModeCards.forEach(card => {
+            card.classList.remove('selected');
+            card.style.transform = 'translateY(0)';
+            card.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+        });
+        
+        // Add selected class to clicked card
+        const selectedCard = document.querySelector(`.processing-mode-card[data-mode="${mode}"]`);
+        selectedCard.classList.add('selected');
+        selectedCard.style.transform = 'translateY(-3px)';
+        selectedCard.style.boxShadow = '0 8px 25px rgba(13, 110, 253, 0.2)';
+        
+        selectedMode = mode;
+        
+        // Show selection info
+        const modeLabels = {
+            'single': 'Single Document Processing',
+            'bulk': 'Bulk Document Processing'
+        };
+        selectedModeText.textContent = modeLabels[mode];
+        selectedModeInfo.style.display = 'block';
+    }
+
+    function proceedWithMode(mode) {
+        if (!mode) {
+            alert('Please select a processing mode.');
+            return;
+        }
+        
+        // Show loading state
+        const button = document.querySelector(`.select-mode-btn[data-mode="${mode}"]`);
+        const originalText = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Loading...';
+        button.disabled = true;
+        
+        // Proceed to appropriate page
+        setTimeout(() => {
+            if (mode === 'single') {
+                window.location.href = `/workflow/file-selection?scope=${scope}`;
+            } else if (mode === 'bulk') {
+                window.location.href = `/workflow/bulk-file-selection?scope=${scope}`;
+            }
+        }, 500);
+    }
+});
+</script>
+
+<style>
+.processing-mode-card {
+    transition: all 0.3s ease;
+    border: 2px solid #e9ecef;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.processing-mode-card:hover {
+    border-color: #ced4da;
+}
+
+.processing-mode-card.selected {
+    border-color: #0d6efd;
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+.mode-icon {
+    height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.features {
+    text-align: left;
+}
+
+.feature-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.recommendation-section ul {
+    margin-bottom: 0;
+    padding-left: 1.2rem;
+}
+
+.workflow-type {
+    display: flex;
+    align-items: center;
+}
+
+.stats .stat-item {
+    margin-bottom: 0.25rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid #eee;
+}
+
+.stats .stat-item:last-child {
+    border-bottom: none;
+}
+
+.card {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+@media (max-width: 768px) {
+    .mode-icon {
+        height: 80px;
+    }
+    
+    .mode-icon i {
+        font-size: 3rem !important;
+    }
+    
+    .features {
+        text-align: center;
+    }
+}
+</style>
+{% endblock %}

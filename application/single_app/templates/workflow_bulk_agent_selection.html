@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}
+    Workflow - Agent Selection - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+    <style>
+        .workflow-container {
+            margin: 0;
+            padding: 1rem 0;
+        }
+        .workflow-header {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
+            border-left: 4px solid #0d6efd;
+        }
+        .agent-card {
+            border: 2px solid #dee2e6;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: white;
+            height: 100%;
+        }
+        .agent-card:hover {
+            border-color: #0d6efd;
+            box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
+            transform: translateY(-2px);
+        }
+        .agent-card.selected {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        .agent-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: #6c757d;
+            transition: color 0.3s ease;
+        }
+        .agent-card:hover .agent-icon,
+        .agent-card.selected .agent-icon {
+            color: #0d6efd;
+        }
+        .agent-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #212529;
+        }
+        .agent-acronym {
+            font-size: 0.9rem;
+            color: #6c757d;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+        .agent-description {
+            color: #6c757d;
+            margin-bottom: 1rem;
+            font-size: 0.95rem;
+        }
+        .agent-capabilities {
+            font-size: 0.85rem;
+        }
+        .scope-badge {
+            background: #0d6efd;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+        }
+        .document-count-badge {
+            background: #198754;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+        }
+        .row-equal-height {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .row-equal-height > [class*='col-'] {
+            display: flex;
+            flex-direction: column;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="workflow-container">
+    <div class="workflow-header">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <h2 class="mb-1"><i class="bi bi-robot me-2"></i>Agent Selection</h2>
+                <p class="mb-0 text-muted">Choose a specialized AI agent for document analysis</p>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="scope-badge">
+                    {% if scope == 'workspace' %}
+                        <i class="bi bi-person-workspace me-1"></i>Personal Workspace
+                    {% elif scope == 'group' %}
+                        <i class="bi bi-people me-1"></i>Group Workspace
+                    {% elif scope == 'public' %}
+                        <i class="bi bi-globe me-1"></i>Public Workspace
+                    {% endif %}
+                </span>
+                <span class="document-count-badge">
+                    <i class="bi bi-files me-1"></i>{{ document_count }} Documents
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('workflow_bulk_agent_selection') }}" id="agentSelectionForm">
+        <div class="row row-equal-height">
+            <div class="col-md-4">
+                <div class="agent-card" onclick="selectAgent('esam')">
+                    <div class="text-center">
+                        <i class="bi bi-diagram-3-fill agent-icon"></i>
+                        <h3 class="agent-title">Enterprise Software Asset Management Agent</h3>
+                        <div class="agent-acronym">(ESAM)</div>
+                        <p class="agent-description">
+                            Specialized in analyzing software licenses, compliance, and asset management documentation
+                        </p>
+                        <div class="agent-capabilities">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>License compliance analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Asset utilization tracking</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Cost optimization insights</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Risk assessment</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="agent-card" onclick="selectAgent('fraud')">
+                    <div class="text-center">
+                        <i class="bi bi-shield-exclamation agent-icon"></i>
+                        <h3 class="agent-title">Fraud Agent</h3>
+                        <div class="agent-acronym">Financial Crime Investigation</div>
+                        <p class="agent-description">
+                            Expert in detecting fraudulent activities, revenue recognition fraud, and financial irregularities
+                        </p>
+                        <div class="agent-capabilities">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Revenue fraud detection</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Pattern analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Cross-document validation</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Evidence collection</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="agent-card" onclick="selectAgent('rva')">
+                    <div class="text-center">
+                        <i class="bi bi-graph-up-arrow agent-icon"></i>
+                        <h3 class="agent-title">Revenue Variance Analysis Agent</h3>
+                        <div class="agent-acronym">(RVA)</div>
+                        <p class="agent-description">
+                            Focuses on revenue analysis, variance detection, and financial performance evaluation
+                        </p>
+                        <div class="agent-capabilities">
+                            <ul class="list-unstyled text-start">
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Revenue trend analysis</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Variance identification</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Performance benchmarking</li>
+                                <li><i class="bi bi-check-circle text-success me-2"></i>Forecast accuracy</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" id="agentTypeInput" name="agent_type" value="">
+
+        <!-- Action Buttons -->
+        <div class="d-flex justify-content-between mt-4">
+            <a href="{{ url_for('workflow_bulk_type_selection', scope=scope) }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>
+                Back to Workflow Types
+            </a>
+            <button type="submit" class="btn btn-primary" id="continueBtn" disabled>
+                Continue with Selected Agent
+                <i class="bi bi-arrow-right ms-1"></i>
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+let selectedAgent = null;
+
+function selectAgent(agent) {
+    // Remove previous selection
+    document.querySelectorAll('.agent-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    // Add selection to clicked card
+    event.currentTarget.classList.add('selected');
+    
+    // Update hidden input and enable continue button
+    selectedAgent = agent;
+    document.getElementById('agentTypeInput').value = agent;
+    document.getElementById('continueBtn').disabled = false;
+}
+
+// Form validation
+document.getElementById('agentSelectionForm').addEventListener('submit', function(e) {
+    if (!selectedAgent) {
+        e.preventDefault();
+        alert('Please select an agent.');
+        return false;
+    }
+});
+</script>
+{% endblock %}

@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_public_workspaces import *
 from swagger_wrapper import swagger_route, get_auth_security
 
+
 def get_user_details_from_graph(user_id):
     """
     Get user details (displayName, email) from Microsoft Graph API by user ID.
@@ -687,7 +688,7 @@ def register_route_backend_public_workspaces(app):
         return jsonify({"fileCount": file_count}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/promptCount", methods=["GET"])
-    @swagger_route(security=get_auth_security())
+    @swagger_route(security=get_auth_security())s
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
