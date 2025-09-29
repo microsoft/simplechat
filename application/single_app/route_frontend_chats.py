@@ -7,9 +7,13 @@ from functions_settings import *
 from functions_documents import *
 from functions_group import find_group_by_id
 from functions_appinsights import log_event
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def chats():
@@ -44,6 +48,9 @@ def register_route_frontend_chats(app):
         )
     
     @app.route('/upload', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def upload_file():
@@ -122,7 +129,7 @@ def register_route_frontend_chats(app):
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
-            elif file_ext in ['.csv', '.xls', '.xlsx']:
+            elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:
@@ -163,6 +170,9 @@ def register_route_frontend_chats(app):
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER
     @app.route("/view_pdf", methods=["GET"])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def view_pdf():
@@ -317,6 +327,9 @@ def register_route_frontend_chats(app):
 
     # --- Updated route ---
     @app.route('/view_document')
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def view_document():

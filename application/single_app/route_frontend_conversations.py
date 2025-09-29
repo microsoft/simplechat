@@ -3,9 +3,13 @@
 from config import *
 from functions_authentication import *
 from functions_debug import debug_print
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
     @app.route('/conversations')
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def conversations():
@@ -26,6 +30,9 @@ def register_route_frontend_conversations(app):
         return render_template('conversations.html', conversations=items)
 
     @app.route('/conversation/<conversation_id>', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def view_conversation(conversation_id):
@@ -52,6 +59,9 @@ def register_route_frontend_conversations(app):
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def get_conversation_messages(conversation_id):
@@ -149,6 +159,9 @@ def register_route_frontend_conversations(app):
         return jsonify({'messages': messages})
 
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def get_message_metadata(message_id):

@@ -3,9 +3,11 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_safety(app):
     @app.route('/api/safety/logs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_content_safety")
@@ -92,6 +94,7 @@ def register_route_backend_safety(app):
             return jsonify({"error": f"An error occurred while fetching safety logs: {str(e)}"}), 500
 
     @app.route('/api/safety/logs/<string:log_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_content_safety")
@@ -128,6 +131,7 @@ def register_route_backend_safety(app):
             return jsonify({"error": str(e)}), 404
         
     @app.route('/api/safety/logs/my', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_content_safety")
@@ -207,6 +211,7 @@ def register_route_backend_safety(app):
             return jsonify({"error": f"An error occurred while fetching your safety logs: {str(e)}"}), 500
 
     @app.route('/api/safety/logs/my/<string:log_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_content_safety")

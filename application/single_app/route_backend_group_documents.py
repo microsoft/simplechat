@@ -6,6 +6,7 @@ from functions_settings import *
 from functions_group import *
 from functions_documents import *
 from flask import current_app
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_group_documents(app):
     """
@@ -16,6 +17,7 @@ def register_route_backend_group_documents(app):
     """
 
     @app.route('/api/group_documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -128,6 +130,7 @@ def register_route_backend_group_documents(app):
 
         
     @app.route('/api/group_documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -269,6 +272,7 @@ def register_route_backend_group_documents(app):
         }), 200
 
     @app.route('/api/group_documents/<document_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -298,6 +302,7 @@ def register_route_backend_group_documents(app):
         return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
 
     @app.route('/api/group_documents/<document_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -390,6 +395,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': str(e)}), 500
    
     @app.route('/api/group_documents/<document_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -424,6 +430,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
 
     @app.route('/api/group_documents/<document_id>/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -469,6 +476,7 @@ def register_route_backend_group_documents(app):
         }), 200
         
     @app.route('/api/group_documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -497,6 +505,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': str(e)}), 500
             
     @app.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -564,6 +573,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': f'Error retrieving shared groups: {str(e)}'}), 500
         
     @app.route('/api/group_documents/<document_id>/approve-share-with-group', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -609,6 +619,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
 
     @app.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -679,6 +690,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
             
     @app.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -744,6 +756,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
     @app.route('/api/group_documents/<document_id>/remove-self', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")

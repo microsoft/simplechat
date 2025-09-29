@@ -9,11 +9,15 @@ from functions_authentication import login_required, get_current_user_id
 from functions_personal_agents import migrate_agents_from_user_settings, get_personal_agents
 from functions_personal_actions import migrate_actions_from_user_settings, get_personal_actions
 from functions_appinsights import log_event
+from swagger_wrapper import swagger_route, get_auth_security
 import logging
 
 bp_migration = Blueprint('migration', __name__)
 
 @bp_migration.route('/api/migrate/agents', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def migrate_user_agents():
     """Migrate user agents from user settings to personal_agents container."""
@@ -41,6 +45,9 @@ def migrate_user_agents():
         return jsonify({'error': 'Failed to migrate agents'}), 500
 
 @bp_migration.route('/api/migrate/actions', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def migrate_user_actions():
     """Migrate user actions/plugins from user settings to personal_actions container."""
@@ -68,6 +75,9 @@ def migrate_user_actions():
         return jsonify({'error': 'Failed to migrate actions'}), 500
 
 @bp_migration.route('/api/migrate/all', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def migrate_all_user_data():
     """Migrate both agents and actions from user settings to personal containers."""
@@ -121,6 +131,9 @@ def migrate_all_user_data():
         return jsonify({'error': 'Failed to migrate user data'}), 500
 
 @bp_migration.route('/api/migrate/status', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_migration_status():
     """Check migration status and current data in personal containers."""

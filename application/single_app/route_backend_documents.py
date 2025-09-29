@@ -7,9 +7,11 @@ from functions_settings import *
 import os
 import requests
 from flask import current_app
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -96,6 +98,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     
     @app.route('/api/documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -209,6 +212,7 @@ def register_route_backend_documents(app):
 
 
     @app.route('/api/documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -380,6 +384,7 @@ def register_route_backend_documents(app):
         }), 200
 
     @app.route('/api/documents/<document_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -391,6 +396,7 @@ def register_route_backend_documents(app):
         return get_document(user_id, document_id)
 
     @app.route('/api/documents/<document_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -466,6 +472,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/documents/<document_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -482,6 +489,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
     
     @app.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -514,6 +522,7 @@ def register_route_backend_documents(app):
         }), 200
 
     @app.route("/api/get_citation", methods=["POST"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_citation():
@@ -582,6 +591,7 @@ def register_route_backend_documents(app):
             return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
         
     @app.route('/api/documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -595,6 +605,7 @@ def register_route_backend_documents(app):
 
     # Document Sharing API Endpoints
     @app.route('/api/documents/<document_id>/share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -627,6 +638,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -659,6 +671,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/shared-users', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -727,6 +740,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error getting shared users: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -776,6 +790,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
 
     @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")

@@ -7,12 +7,16 @@ from flask import Blueprint, jsonify, request
 from functions_authentication import login_required, get_current_user_id
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from swagger_wrapper import swagger_route, get_auth_security
 import logging
 
 bpl = Blueprint('plugin_logging', __name__)
 
 
 @bpl.route('/api/plugins/invocations', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_plugin_invocations():
     """Get recent plugin invocations for the current user."""
@@ -57,6 +61,9 @@ def get_plugin_invocations():
 
 
 @bpl.route('/api/plugins/stats', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_plugin_stats():
     """Get plugin usage statistics."""
@@ -111,6 +118,9 @@ def get_plugin_stats():
 
 
 @bpl.route('/api/plugins/invocations/recent', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_recent_invocations():
     """Get the most recent plugin invocations across all users (admin only)."""
@@ -151,6 +161,9 @@ def get_recent_invocations():
 
 
 @bpl.route('/api/plugins/invocations/<string:plugin_name>', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_plugin_specific_invocations(plugin_name):
     """Get invocations for a specific plugin."""
@@ -203,6 +216,9 @@ def get_plugin_specific_invocations(plugin_name):
 
 
 @bpl.route('/api/plugins/clear-logs', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def clear_plugin_logs():
     """Clear plugin invocation logs (admin only or for testing)."""
@@ -241,6 +257,9 @@ def clear_plugin_logs():
 
 
 @bpl.route('/api/plugins/export-logs', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def export_plugin_logs():
     """Export plugin invocation logs for the current user."""

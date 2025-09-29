@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_prompts import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_public_prompts(app):
     """
@@ -13,6 +14,7 @@ def register_route_backend_public_prompts(app):
     """
 
     @app.route('/api/public_prompts', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -46,6 +48,7 @@ def register_route_backend_public_prompts(app):
             return jsonify({'error':'Unexpected error'}), 500
 
     @app.route('/api/public_prompts', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -81,6 +84,7 @@ def register_route_backend_public_prompts(app):
             return jsonify({'error':'Unexpected error'}), 500
 
     @app.route('/api/public_prompts/<prompt_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -111,6 +115,7 @@ def register_route_backend_public_prompts(app):
             return jsonify({'error':'Unexpected error'}), 500
 
     @app.route('/api/public_prompts/<prompt_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -155,6 +160,7 @@ def register_route_backend_public_prompts(app):
             return jsonify({'error':'Unexpected error'}), 500
 
     @app.route('/api/public_prompts/<prompt_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')

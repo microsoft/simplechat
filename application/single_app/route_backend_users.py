@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_users(app):
     """
@@ -11,6 +12,7 @@ def register_route_backend_users(app):
     """
 
     @app.route("/api/userSearch", methods=["GET"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_user_search():
@@ -75,6 +77,7 @@ def register_route_backend_users(app):
             }), getattr(e.response, 'status_code', 500) # Use response status code if available
 
     @app.route("/api/user/info/<user_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_get_user_info(user_id):
@@ -101,6 +104,7 @@ def register_route_backend_users(app):
             }), 404
     
     @app.route('/api/user/settings', methods=['GET', 'POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required # Assuming this decorator confirms a valid user exists
     def user_settings():
@@ -178,6 +182,7 @@ def register_route_backend_users(app):
             return jsonify({"error": "Failed to retrieve user settings"}), 500
 
     @app.route('/api/user/profile-image/<user_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_user_profile_image_api(user_id):

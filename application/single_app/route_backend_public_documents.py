@@ -7,6 +7,7 @@ from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
 from flask import current_app
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_public_documents(app):
     """
@@ -14,6 +15,7 @@ def register_route_backend_public_documents(app):
     """
 
     @app.route('/api/public_documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -100,6 +102,7 @@ def register_route_backend_public_documents(app):
         }), status
 
     @app.route('/api/public_documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -173,6 +176,7 @@ def register_route_backend_public_documents(app):
         }), 200
 
     @app.route('/api/public_workspace_documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -227,6 +231,7 @@ def register_route_backend_public_documents(app):
         }), 200
 
     @app.route('/api/public_documents/<doc_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -245,6 +250,7 @@ def register_route_backend_public_documents(app):
         return get_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
 
     @app.route('/api/public_documents/<doc_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -278,6 +284,7 @@ def register_route_backend_public_documents(app):
             return jsonify({'error':str(e)}), 500
 
     @app.route('/api/public_documents/<doc_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -298,6 +305,7 @@ def register_route_backend_public_documents(app):
             return jsonify({'error':str(e)}), 500
 
     @app.route('/api/public_documents/<doc_id>/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')
@@ -318,6 +326,7 @@ def register_route_backend_public_documents(app):
         return jsonify({'message':'Extraction queued'}), 200
 
     @app.route('/api/public_documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required('enable_public_workspaces')

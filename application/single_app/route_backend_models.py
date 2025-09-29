@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from swagger_wrapper import swagger_route, get_auth_security
 import re
 
 
@@ -12,11 +13,15 @@ def register_route_backend_models(app):
     """
 
     @app.route('/api/models/gpt', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def get_gpt_models():
         """
-        Fetch GPT-like deployments using Azure Mgmt library.
+        Fetch available GPT-like Azure OpenAI deployments using Azure Management API.
+        Returns a list of GPT models with deployment names and model information.
         """
         settings = get_settings()
 
@@ -70,11 +75,15 @@ def register_route_backend_models(app):
 
 
     @app.route('/api/models/embedding', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def get_embedding_models():
         """
-        Fetch Embedding-like deployments using Azure Mgmt library.
+        Fetch available embedding Azure OpenAI deployments using Azure Management API.
+        Returns a list of embedding models with deployment names and model information.
         """
         settings = get_settings()
 
@@ -126,11 +135,15 @@ def register_route_backend_models(app):
 
 
     @app.route('/api/models/image', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def get_image_models():
         """
-        Fetch DALL-E-like image-generation deployments using Azure Mgmt library.
+        Fetch available DALL-E image generation Azure OpenAI deployments using Azure Management API.
+        Returns a list of image generation models with deployment names and model information.
         """
         settings = get_settings()
 

@@ -83,6 +83,10 @@ register_openapi_routes(app)
 # Register Enhanced Citations routes
 register_enhanced_citations_routes(app)
 
+# Register Swagger documentation routes
+from swagger_wrapper import register_swagger_routes
+register_swagger_routes(app)
+
 from flask import g
 from flask_session import Session
 from redis import Redis

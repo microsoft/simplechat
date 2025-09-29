@@ -22,6 +22,7 @@ from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
 from flask import current_app
+from swagger_wrapper import swagger_route, get_auth_security
 
 
 def get_kernel():
@@ -35,6 +36,9 @@ def get_kernel_agents():
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def chat_api():

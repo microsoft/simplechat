@@ -172,7 +172,7 @@ def extract_table_file(file_path, file_ext):
     try:
         if file_ext == '.csv':
             df = pandas.read_csv(file_path)
-        elif file_ext in ['.xls', '.xlsx']:
+        elif file_ext in ['.xls', '.xlsx', '.xlsm']:
             df = pandas.read_excel(file_path)
         else:
             raise ValueError("Unsupported file extension for table extraction.")

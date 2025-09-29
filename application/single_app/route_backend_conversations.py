@@ -6,10 +6,12 @@ from functions_settings import *
 from functions_conversation_metadata import get_conversation_metadata
 from flask import Response, request
 from functions_debug import debug_print
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_conversations(app):
 
     @app.route('/api/get_messages', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_get_messages():
@@ -112,6 +114,7 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'Conversation not found'}), 404
 
     @app.route('/api/image/<image_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_get_image(image_id):
@@ -237,6 +240,7 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'Failed to retrieve image'}), 500
         
     @app.route('/api/get_conversations', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_conversations():
@@ -251,6 +255,7 @@ def register_route_backend_conversations(app):
 
 
     @app.route('/api/create_conversation', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def create_conversation():
@@ -276,6 +281,7 @@ def register_route_backend_conversations(app):
         }), 200
     
     @app.route('/api/conversations/<conversation_id>', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def update_conversation_title(conversation_id):
@@ -320,6 +326,7 @@ def register_route_backend_conversations(app):
             return jsonify({'error': 'Failed to update conversation'}), 500
         
     @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def delete_conversation(conversation_id):
@@ -378,6 +385,7 @@ def register_route_backend_conversations(app):
         }), 200
         
     @app.route('/api/delete_multiple_conversations', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def delete_multiple_conversations():
@@ -458,6 +466,7 @@ def register_route_backend_conversations(app):
         }), 200
 
     @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_conversation_metadata_api(conversation_id):

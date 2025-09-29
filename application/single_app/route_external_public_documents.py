@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from swagger_wrapper import swagger_route, get_auth_security
 from flask import current_app
 
 def register_route_external_public_documents(app):
@@ -15,6 +16,7 @@ def register_route_external_public_documents(app):
     - DELETE /external/public_documents/<doc_id>
     """
     @app.route('/external/public_documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_upload_public_document():
@@ -116,6 +118,7 @@ def register_route_external_public_documents(app):
 
         
     @app.route('/external/public_documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_get_public_documents():
@@ -241,6 +244,7 @@ def register_route_external_public_documents(app):
 
 
     @app.route('/external/public_documents/<document_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_get_public_document(document_id):
@@ -260,6 +264,7 @@ def register_route_external_public_documents(app):
         return get_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
 
     @app.route('/external/public_documents/<document_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_patch_public_document(document_id):
@@ -345,6 +350,7 @@ def register_route_external_public_documents(app):
 
 
     @app.route('/external/public_documents/<document_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @enabled_required("enable_public_workspaces")
     def external_delete_public_document(document_id):
         """
@@ -363,6 +369,7 @@ def register_route_external_public_documents(app):
 
 
     @app.route('/external/public_documents/<document_id>/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_extract_public_metadata(document_id):
@@ -388,6 +395,7 @@ def register_route_external_public_documents(app):
         }), 200
         
     @app.route('/external/public_documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_upgrade_legacy_public_documents():

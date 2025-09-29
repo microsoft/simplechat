@@ -8,6 +8,7 @@ from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, P
 from functions_settings import get_settings, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
+from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
 
@@ -197,6 +198,7 @@ bpap = Blueprint('admin_plugins', __name__)
 
 # === USER PLUGINS ENDPOINTS ===
 @bpap.route('/api/user/plugins', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 def get_user_plugins():
     user_id = get_current_user_id()
@@ -239,6 +241,7 @@ def get_user_plugins():
         return jsonify(plugins)
 
 @bpap.route('/api/user/plugins', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
@@ -330,6 +333,7 @@ def set_user_plugins():
     return jsonify({'success': True})
 
 @bpap.route('/api/user/plugins/<plugin_name>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
 @login_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
@@ -347,6 +351,7 @@ def delete_user_plugin(plugin_name):
     return jsonify({'success': True})
 
 @bpap.route('/api/user/plugins/types', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 def get_user_plugin_types():
     return get_plugin_types()
@@ -355,6 +360,7 @@ def get_user_plugin_types():
 
 # GET: Return current core plugin toggle values
 @bpap.route('/api/admin/plugins/settings', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def get_core_plugin_settings():
@@ -374,6 +380,7 @@ def get_core_plugin_settings():
 
 # POST: Update core plugin toggle values
 @bpap.route('/api/admin/plugins/settings', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def update_core_plugin_settings():
@@ -415,6 +422,7 @@ def update_core_plugin_settings():
         return jsonify({'error': 'Failed to update settings.'}), 500
 
 @bpap.route('/api/admin/plugins', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def list_plugins():
@@ -427,6 +435,7 @@ def list_plugins():
         return jsonify({'error': 'Failed to list plugins.'}), 500
 
 @bpap.route('/api/admin/plugins', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def add_plugin():
@@ -480,6 +489,7 @@ def add_plugin():
         return jsonify({'error': 'Failed to add plugin.'}), 500
 
 @bpap.route('/api/admin/plugins/<plugin_name>', methods=['PUT'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def edit_plugin(plugin_name):
@@ -542,12 +552,14 @@ def edit_plugin(plugin_name):
         return jsonify({'error': 'Failed to edit plugin.'}), 500
 
 @bpap.route('/api/admin/plugins/types', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def get_admin_plugin_types():
     return get_plugin_types()
 
 @bpap.route('/api/admin/plugins/<plugin_name>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def delete_plugin(plugin_name):
@@ -580,7 +592,9 @@ def delete_plugin(plugin_name):
 
 # === PLUGIN SETTINGS MERGE ENDPOINT ===
 @bpap.route('/api/plugins/<plugin_type>/merge_settings', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
+@user_required
 def merge_plugin_settings(plugin_type):
     """
     Accepts current settings (JSON body), merges with schema defaults, returns merged settings.
@@ -598,6 +612,7 @@ def merge_plugin_settings(plugin_type):
 bpdp = Blueprint('dynamic_plugins', __name__)
 
 @bpdp.route('/api/admin/plugins/dynamic', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
 def list_dynamic_plugins():

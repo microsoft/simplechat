@@ -4,9 +4,11 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_prompts import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_prompts(app):
     @app.route('/api/prompts', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -29,6 +31,7 @@ def register_route_backend_prompts(app):
             return jsonify({"error":"An unexpected error occurred"}), 500
 
     @app.route('/api/prompts', methods=['POST'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -55,6 +58,7 @@ def register_route_backend_prompts(app):
             return jsonify({"error":"An unexpected error occurred"}), 500
 
     @app.route('/api/prompts/<prompt_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -74,6 +78,7 @@ def register_route_backend_prompts(app):
             return jsonify({"error": "An unexpected error occurred"}), 500
 
     @app.route('/api/prompts/<prompt_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")
@@ -107,6 +112,7 @@ def register_route_backend_prompts(app):
             return jsonify({"error":"An unexpected error occurred"}), 500
 
     @app.route('/api/prompts/<prompt_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")

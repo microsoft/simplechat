@@ -11,11 +11,15 @@ from functions_global_agents import get_global_agents, save_global_agent, delete
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
+from swagger_wrapper import swagger_route, get_auth_security
 
 bpa = Blueprint('admin_agents', __name__)
 
 # === AGENT GUID GENERATION ENDPOINT ===
 @bpa.route('/api/agents/generate_id', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def generate_agent_id():
     """Generate a new GUID for agent creation (user or admin)."""
@@ -23,6 +27,9 @@ def generate_agent_id():
 
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_user_agents():
     user_id = get_current_user_id()
@@ -71,6 +78,9 @@ def get_user_agents():
         return jsonify(agents)
 
 @bpa.route('/api/user/agents', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @enabled_required("allow_user_agents")
 def set_user_agents():
@@ -134,6 +144,9 @@ def set_user_agents():
 
 # Add a DELETE endpoint for user agents (if not present)
 @bpa.route('/api/user/agents/<agent_name>', methods=['DELETE'])
+@swagger_route(
+    security=get_auth_security()
+)
 @enabled_required("allow_user_agents")
 @login_required
 def delete_user_agent(agent_name):
@@ -170,6 +183,9 @@ def delete_user_agent(agent_name):
 
 # User endpoint to set selected agent (new model, not legacy default_agent)
 @bpa.route('/api/user/settings/selected_agent', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def set_user_selected_agent():
     user_id = get_current_user_id()
@@ -189,18 +205,27 @@ def set_user_selected_agent():
     return jsonify({'success': True})
 
 @bpa.route('/api/user/agent/settings', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 def get_global_agent_settings_for_users():
     return get_global_agent_settings(include_admin_extras=False)
 
 # === ADMIN AGENTS ENDPOINTS ===
 @bpa.route('/api/admin/agent/settings', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def get_all_admin_settings():
     return get_global_agent_settings(include_admin_extras=True)
 
 @bpa.route('/api/admin/agents/selected_agent', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def set_selected_agent():
@@ -233,6 +258,9 @@ def set_selected_agent():
 
 
 @bpa.route('/api/admin/agents', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def list_agents():
@@ -256,6 +284,9 @@ def list_agents():
         return jsonify({'error': 'Failed to list agents.'}), 500
 
 @bpa.route('/api/admin/agents', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def add_agent():
@@ -303,6 +334,9 @@ def add_agent():
         return jsonify({'error': 'Failed to add agent.'}), 500
 
 @bpa.route('/api/admin/agents/settings/<setting_name>', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def get_admin_agent_settings(setting_name):
@@ -312,6 +346,9 @@ def get_admin_agent_settings(setting_name):
 
 # Add a generic agent settings update route for simple values
 @bpa.route('/api/admin/agents/settings/<setting_name>', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def update_agent_setting(setting_name):
@@ -356,6 +393,9 @@ def update_agent_setting(setting_name):
         return jsonify({'error': 'Failed to update agent setting.'}), 500
 
 @bpa.route('/api/admin/agents/<agent_name>', methods=['PUT'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def edit_agent(agent_name):
@@ -418,6 +458,9 @@ def edit_agent(agent_name):
         return jsonify({'error': 'Failed to edit agent.'}), 500
 
 @bpa.route('/api/admin/agents/<agent_name>', methods=['DELETE'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def delete_agent(agent_name):
@@ -451,6 +494,9 @@ def delete_agent(agent_name):
         return jsonify({'error': 'Failed to delete agent.'}), 500
 
 @bpa.route('/api/orchestration_types', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def orchestration_types():
@@ -458,6 +504,9 @@ def orchestration_types():
     return jsonify(get_agent_orchestration_types())
 
 @bpa.route('/api/orchestration_settings', methods=['GET', 'POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def orchestration_settings():

@@ -3045,7 +3045,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     return total_chunks_saved
 
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """Processes CSV, XLSX, or XLS files using pandas."""
+    """Processes CSV, XLSX, XLSM, or XLS files using pandas."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
@@ -3093,11 +3093,11 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
             total_chunks_saved = process_single_tabular_sheet(**args)
 
-        elif file_ext in ('.xlsx', '.xls'):
+        elif file_ext in ('.xlsx', '.xls', '.xlsm'):
             # Process Excel (potentially multiple sheets)
             excel_file = pandas.ExcelFile(
                 temp_file_path, 
-                engine='openpyxl' if file_ext == '.xlsx' else 'xlrd'
+                engine='openpyxl' if file_ext == '.xlsx' or file_ext == '.xlsm' else 'xlrd'
             )
             sheet_names = excel_file.sheet_names
             base_name, ext = os.path.splitext(original_filename)
@@ -3632,7 +3632,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
         # --- 1. Dispatch to appropriate handler based on file type ---
         di_supported_extensions = ('.pdf', '.docx', '.doc', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
-        tabular_extensions = ('.csv', '.xlsx', '.xls')
+        tabular_extensions = ('.csv', '.xlsx', '.xlsm', '.xls')
 
         is_group = group_id is not None
 

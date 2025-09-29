@@ -2,11 +2,13 @@
 
 from config import *
 from functions_authentication import *
-from functions_settings import *   
+from functions_settings import *
+from swagger_wrapper import swagger_route, get_auth_security   
 
 def register_route_backend_feedback(app):
 
     @app.route("/feedback/submit", methods=["POST"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_feedback")
@@ -137,6 +139,7 @@ def register_route_backend_feedback(app):
     
 
     @app.route("/feedback/review", methods=["GET"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_user_feedback")
@@ -242,6 +245,7 @@ def register_route_backend_feedback(app):
              return jsonify({"error": f"Failed to retrieve feedback: {str(e)}"}), 500
 
     @app.route("/feedback/review/<feedbackId>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_user_feedback")
@@ -277,6 +281,7 @@ def register_route_backend_feedback(app):
              return jsonify({"error": f"Failed to retrieve feedback item: {str(e)}"}), 500
         
     @app.route("/feedback/review/<feedbackId>", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_user_feedback")
@@ -321,6 +326,7 @@ def register_route_backend_feedback(app):
 
 
     @app.route("/feedback/retest/<feedbackId>", methods=["POST"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     @enabled_required("enable_user_feedback")
@@ -341,6 +347,7 @@ def register_route_backend_feedback(app):
             return jsonify({"error": str(e)}), 500
         
     @app.route("/feedback/my", methods=["GET"])
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_feedback")

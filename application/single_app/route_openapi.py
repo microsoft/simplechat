@@ -12,11 +12,15 @@ from werkzeug.utils import secure_filename
 from functions_authentication import login_required, user_required
 from openapi_security import openapi_validator
 from openapi_auth_analyzer import analyze_openapi_authentication, get_authentication_help_text
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_openapi_routes(app):
     """Register OpenAPI-related routes."""
     
     @app.route('/api/openapi/upload', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def upload_openapi_spec():
@@ -132,6 +136,9 @@ def register_openapi_routes(app):
             }), 500
     
     @app.route('/api/openapi/validate-url', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def validate_openapi_url():
@@ -224,6 +231,9 @@ def register_openapi_routes(app):
             }), 500
     
     @app.route('/api/openapi/download-from-url', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def download_openapi_from_url():
@@ -328,6 +338,9 @@ def register_openapi_routes(app):
             }), 500
     
     @app.route('/api/openapi/list-uploaded', methods=['GET'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def list_uploaded_specs():
@@ -384,6 +397,9 @@ def register_openapi_routes(app):
             }), 500
     
     @app.route('/api/openapi/analyze-auth', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def analyze_openapi_auth():
