@@ -129,7 +129,7 @@ def register_route_frontend_chats(app):
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
-            elif file_ext in ['.csv', '.xls', '.xlsx']:
+            elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:

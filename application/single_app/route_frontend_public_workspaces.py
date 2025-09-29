@@ -71,7 +71,7 @@ def register_route_frontend_public_workspaces(app):
 
         # Build allowed extensions string as in workspace.html
         allowed_extensions = [
-            "txt", "pdf", "docx", "xlsx", "xls", "csv", "pptx", "html",
+            "txt", "pdf", "docx", "xlsx", 'xlsm', "xls", "csv", "pptx", "html",
             "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json"
         ]
         if enable_video_file_support in [True, 'True', 'true']:
