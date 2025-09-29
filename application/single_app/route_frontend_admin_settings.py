@@ -75,6 +75,10 @@ def register_route_frontend_admin_settings(app):
             settings['per_user_semantic_kernel'] = False
         if 'enable_semantic_kernel' not in settings:
             settings['enable_semantic_kernel'] = False
+        
+        # --- Add default for swagger documentation ---
+        if 'enable_swagger' not in settings:
+            settings['enable_swagger'] = True  # Default enabled for development/testing
         if 'enable_time_plugin' not in settings:
             settings['enable_time_plugin'] = False
         if 'enable_http_plugin' not in settings:
@@ -478,6 +482,7 @@ def register_route_frontend_admin_settings(app):
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
                 'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
                 'enable_external_healthcheck': form_data.get('enable_external_healthcheck') == 'on',
+                'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
 

@@ -160,12 +160,35 @@
         #current-conversation-title {
             min-height: 1.5rem;
         }
+        
+        /* Responsive layout when sidebar is collapsed */
+        body.sidebar-collapsed #split-container {
+            margin-left: 0 !important;
+            max-width: 100% !important;
+        }
+        
+        /* Hide left pane and expand right pane when sidebar is collapsed (similar to workspace behavior) */
+        body.sidebar-collapsed #left-pane {
+            display: none !important;
+        }
+        
+        body.sidebar-collapsed #right-pane {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        
+        /* Ensure smooth transitions when sidebar state changes */
+        #split-container,
+        #left-pane,
+        #right-pane {
+            transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out, width 0.3s ease-in-out !important;
+        }
     </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid p-0" style="height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %});">
-    <div id="split-container" class="h-100 w-100">
+    <div class="h-100 w-100">
 
         <div id="left-pane" class="d-flex flex-column h-100">
             <div class="d-flex justify-content-between align-items-center p-3 border-bottom flex-shrink-0">
@@ -185,7 +208,7 @@
             </div>
         </div>
 
-        <div id="right-pane" class="d-flex flex-column h-100 chat-container">
+        <div class="d-flex flex-column h-100 chat-container">
             <div class="p-3 border-bottom align-items-center justify-content-between flex-shrink-0">
                 <div class="d-flex flex-column">
                     <div class="d-flex align-items-center">

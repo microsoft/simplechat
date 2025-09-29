@@ -2,15 +2,22 @@
 
 from config import *
 from functions_authentication import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_profile(app):
     @app.route('/profile')
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     def profile():
         user = session.get('user')
         return render_template('profile.html', user=user)
     
     @app.route('/api/profile/image/refresh', methods=['POST'])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     def refresh_profile_image():

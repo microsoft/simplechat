@@ -1039,6 +1039,42 @@
                     </div>
                     <p class="text-muted small mb-0">Health check endpoint for external monitoring systems that require endpoint verification.</p>
                 </div>
+
+                <!-- API Documentation Section -->
+                <div class="card p-3 mb-3" id="swagger-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-file-earmark-code me-2"></i>API Documentation
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#swaggerInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Why Enable Swagger?
+                            </button>
+                            <a href="/swagger" class="btn btn-primary btn-sm" target="_blank">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Swagger UI
+                            </a>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-3">Configure automatic OpenAPI/Swagger documentation for API endpoints.</p>
+                    
+                    <!-- Enable Swagger Documentation -->
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_swagger"
+                            name="enable_swagger"
+                            {% if settings.enable_swagger %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_swagger">
+                            Enable Swagger/OpenAPI Documentation (/swagger)
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable automatic API documentation with Swagger UI interface for testing and exploring endpoints."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Provides interactive API documentation, endpoint testing, and schema validation. 
+                        Useful for developers, API integration, and system troubleshooting.
+                    </p>
+                </div>
                 <!-- New Classification Banner Section -->
                 <div class="card p-3 mb-3" id="classification-banner-section">
                     <h5>
@@ -2751,6 +2787,65 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Swagger Info Modal -->
+        <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="swaggerInfoModalLabel">
+                            <i class="bi bi-file-earmark-code me-2"></i>Why Enable Swagger API Documentation?
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-lightbulb me-2"></i>
+                            <strong>Swagger/OpenAPI provides automatic, interactive API documentation</strong> for all your application endpoints.
+                        </div>
+                        
+                        <h6><i class="bi bi-check-circle-fill text-success me-2"></i>Benefits of Enabling Swagger:</h6>
+                        <ul class="mb-4">
+                            <li><strong>Interactive Testing:</strong> Test API endpoints directly from the browser interface</li>
+                            <li><strong>Automatic Documentation:</strong> Self-updating docs as you add/modify routes</li>
+                            <li><strong>Schema Validation:</strong> Ensures request/response formats are correct</li>
+                            <li><strong>Developer Productivity:</strong> Faster development and debugging</li>
+                            <li><strong>Integration Support:</strong> Easy API discovery for external integrations</li>
+                            <li><strong>Security Visibility:</strong> Clear view of authentication requirements</li>
+                        </ul>
+                        
+                        <h6><i class="bi bi-info-circle-fill text-primary me-2"></i>What You Get:</h6>
+                        <ul class="mb-4">
+                            <li><code>/swagger</code> - Interactive Swagger UI for testing endpoints</li>
+                            <li><code>/swagger.json</code> - OpenAPI 3.0 specification in JSON format</li>
+                            <li>Automatic route discovery and documentation</li>
+                            <li>Built-in search and filtering capabilities</li>
+                            <li>Response schema validation and examples</li>
+                        </ul>
+                        
+                        <h6><i class="bi bi-shield-check-fill text-warning me-2"></i>Security Considerations:</h6>
+                        <ul class="mb-3">
+                            <li><strong>Authentication Required:</strong> Swagger UI requires admin login</li>
+                            <li><strong>Rate Limited:</strong> Built-in protection against API discovery attacks</li>
+                            <li><strong>Internal Use:</strong> Best used by developers and system administrators</li>
+                            <li><strong>Production Ready:</strong> Safe for production environments with proper access controls</li>
+                        </ul>
+                        
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Recommendation:</strong> Enable in development/testing environments. 
+                            In production, consider limiting access to admin users only.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <a href="/swagger" class="btn btn-primary" target="_blank">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Open Swagger UI
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}

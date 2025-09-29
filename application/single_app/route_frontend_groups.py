@@ -3,9 +3,13 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_groups(app):
     @app.route("/my_groups", methods=["GET"])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -25,6 +29,9 @@ def register_route_frontend_groups(app):
         return render_template("my_groups.html", can_create_groups=can_create_groups)
 
     @app.route("/groups/<group_id>", methods=["GET"])
+    @swagger_route(
+        security=get_auth_security()
+    )
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")

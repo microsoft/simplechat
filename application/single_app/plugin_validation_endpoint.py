@@ -8,6 +8,7 @@ from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, P
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
 from functions_authentication import login_required, admin_required
+from swagger_wrapper import swagger_route, get_auth_security
 import logging
 
 
@@ -15,6 +16,9 @@ plugin_validation_bp = Blueprint('plugin_validation', __name__)
 
 
 @plugin_validation_bp.route('/api/admin/plugins/validate', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 @login_required
 @admin_required
 def validate_plugin_manifest():
@@ -60,6 +64,9 @@ def validate_plugin_manifest():
 
 
 @plugin_validation_bp.route('/api/admin/plugins/test-instantiation', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 def test_plugin_instantiation():
     """
     Test if a plugin can be instantiated successfully.
@@ -128,6 +135,9 @@ def test_plugin_instantiation():
 
 
 @plugin_validation_bp.route('/api/admin/plugins/health-check/<plugin_name>', methods=['GET'])
+@swagger_route(
+    security=get_auth_security()
+)
 def check_plugin_health(plugin_name):
     """
     Perform a health check on an existing plugin.
@@ -201,6 +211,9 @@ def check_plugin_health(plugin_name):
 
 
 @plugin_validation_bp.route('/api/admin/plugins/repair/<plugin_name>', methods=['POST'])
+@swagger_route(
+    security=get_auth_security()
+)
 def repair_plugin(plugin_name):
     """
     Attempt to repair a plugin that has issues.
