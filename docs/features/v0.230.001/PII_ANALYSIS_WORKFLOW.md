@@ -6,9 +6,7 @@
 The PII Analysis Workflow feature enables users to scan documents for personally identifiable information (PII) and sensitive data patterns using AI-powered analysis. This feature integrates with the existing workflow system to provide comprehensive privacy compliance tools.
 
 ## Version Information
-- **Current Version**: 0.229.072
-- **Implemented in**: 0.229.072
-- **Dependencies**: Workflow feature, Enhanced Citations
+**Version implemented:** 0.230.001
 
 ## Technical Specifications
 
