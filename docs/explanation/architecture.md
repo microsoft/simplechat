@@ -1,4 +1,11 @@
-# Simple Chat Architecture
+# explanation/architecture.md
+---
+layout: libdoc/page
+title: Architecture
+order: 110
+category: Explanation
+---
+
 
 This document explains the overall architecture, design principles, and key concepts behind Simple Chat. Understanding these foundations will help you make informed decisions about deployment, configuration, and usage.
 

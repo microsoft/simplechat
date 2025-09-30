@@ -1,20 +1,20 @@
-# explanation/features/index.md
+# explanation/scenarios/agents/index.md
 ---
 layout: libdoc/page
-title: Features
-order: 140
+title: Agent Scenarios
+order: 161
 category: Explanation
 ---
 
-This section contains feature-related documentation grouped by folder.
+This section contains fix documentation grouped by version folder.
 
-{% assign feature_pages = site.pages | where_exp: "p", "p.path contains 'explanation/features/'" %}
-{% assign grouped = feature_pages | group_by_exp: "p", "p.path | split: '/' | slice: -2, 1 | first" %}
+{% assign fix_pages = site.pages | where_exp: "p", "p.path contains 'explanation/scenarios/agents/'" %}
+{% assign grouped = fix_pages | group_by_exp: "p", "p.path | split: '/' | slice: -2, 1 | first" %}
 {% assign sorted = grouped | sort: "name" | reverse %}
 
 {% for group in sorted %}
-  {% unless group.name == "features" %}
-## {{ group.name | capitalize }}
+  {% unless group.name == "fixes" %}
+## {{ group.name }}
 
   <ul>
     {% for page in group.items %}

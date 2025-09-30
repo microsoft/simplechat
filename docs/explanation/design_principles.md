@@ -1,4 +1,11 @@
-# Design Principles
+# explanation/design_principles.md
+---
+layout: libdoc/page
+title: Design Principles
+order: 120
+category: Explanation
+---
+
 
 Simple Chat is built on a set of core design principles that guide architectural decisions, feature development, and operational practices. Understanding these principles helps explain why certain choices were made and how to extend the system effectively.
 

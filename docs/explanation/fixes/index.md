@@ -1,7 +1,9 @@
+# explanation/fixes/index.md
 ---
-layout: page
+layout: libdoc/page
 title: Fixes
-menubar: docs_menu
+order: 150
+category: Explanation
 ---
 
 This section contains fix documentation grouped by version folder.
