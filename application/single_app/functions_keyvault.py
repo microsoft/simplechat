@@ -172,10 +172,16 @@ def build_full_secret_name(secret_name, scope_value, source, scope):
     Raises:
         ValueError: If the name exceeds 127 characters.
     """
+<<<<<<< HEAD
     full_secret_name = f"{clean_name_for_keyvault(scope_value)}--{source}--{scope}--{clean_name_for_keyvault(secret_name)}"
     if not validate_secret_name_dynamic(full_secret_name):
         logging.error(f"The full secret name '{full_secret_name}' is invalid.")
         raise ValueError(f"The full secret name '{full_secret_name}' is invalid.")
+=======
+    full_secret_name = f"{scope_value}--{source}--{scope}--{secret_name}"
+    if len(full_secret_name) > 127:
+        raise ValueError(f"The full secret name '{full_secret_name}' exceeds the maximum length of 127 characters.")
+>>>>>>> ab28c4f (upd secret naming convention)
     return full_secret_name
 
 def validate_secret_name_dynamic(secret_name):
