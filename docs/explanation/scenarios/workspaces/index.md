@@ -3,7 +3,7 @@
 layout: libdoc/page
 title: Workspace Scenarios
 order: 162
-category: Explanation
+category: Explanation / Scenarios
 ---
 
 {% assign fix_pages = site.pages | where_exp: "p", "p.path contains 'explanation/scenarios/workspaces/public/'" %}

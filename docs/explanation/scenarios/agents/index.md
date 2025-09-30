@@ -3,7 +3,7 @@
 layout: libdoc/page
 title: Agent Scenarios
 order: 161
-category: Explanation
+category: Explanation / Scenarios
 ---
 
 This section contains fix documentation grouped by version folder.

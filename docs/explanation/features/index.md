@@ -3,7 +3,7 @@
 layout: libdoc/page
 title: Features
 order: 140
-category: Explanation
+category: Explanation / Version History
 ---
 
 This section contains feature-related documentation grouped by folder.

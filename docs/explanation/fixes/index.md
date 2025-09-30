@@ -3,7 +3,7 @@
 layout: libdoc/page
 title: Fixes
 order: 150
-category: Explanation
+category: Explanation / Version History
 ---
 
 This section contains fix documentation grouped by version folder.
