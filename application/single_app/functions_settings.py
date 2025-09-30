@@ -226,7 +226,12 @@ def get_settings():
         "speech_service_endpoint": '',
         "speech_service_location": '',
         "speech_service_locale": "en-US",
-        "speech_service_key": ""
+        "speech_service_key": "",
+        
+        #key vault settings
+        'enable_key_vault_secret_storage': False,
+        'key_vault_name': '',
+        'key_vault_identity': '',
     }
 
     try:
