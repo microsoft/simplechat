@@ -1,6 +1,6 @@
 # Simple Chat Documentation
 
-Welcome to the Simple Chat Application documentation. This documentation is organized following the [Diátaxis framework](https://diataxis.fr/) to help you find exactly what you need, when you need it.
+Welcome to the Simple Chat Application documentation.
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ New to Simple Chat? Start here:
 
 Our documentation is organized into four types to serve different needs:
 
-### 📚 [Tutorials](tutorials/) - *Learn by doing*
+### [Tutorials](tutorials/) - *Learn by doing*
 **Learning-oriented lessons that get you started**
 
 Perfect when you're new to Simple Chat and want to learn through guided, hands-on experiences.
@@ -22,7 +22,7 @@ Perfect when you're new to Simple Chat and want to learn through guided, hands-o
 - [Upload and Use Documents](tutorials/uploading_documents) - Work with your own data
 - [Classify Documents](tutorials/classifying_documents) - Organize your content
 
-### 🎯 [How-to Guides](how-to/) - *Solve specific problems*
+### [How-to Guides](how-to/) - *Solve specific problems*
 **Goal-oriented directions for common tasks**
 
 Use these when you have a specific goal and need step-by-step instructions.
@@ -33,7 +33,7 @@ Use these when you have a specific goal and need step-by-step instructions.
 - [Use Managed Identity](how-to/use_managed_identity) - Secure Azure integration
 - [Enterprise Networking](how-to/enterprise_networking) - Configure for enterprise environments
 
-### 📖 [Reference](reference/) - *Look up information*
+### [Reference](reference/) - *Look up information*
 **Information-oriented technical descriptions**
 
 Use these when you need precise, factual information about Simple Chat's features and configuration.
@@ -47,7 +47,7 @@ Use these when you need precise, factual information about Simple Chat's feature
   - [Terraform](reference/deploy/terraform_deploy)
   - [Manual Deployment](reference/deploy/manual_deploy)
 
-### 💡 [Explanation](explanation/) - *Understand concepts*
+### [Explanation](explanation/) - *Understand concepts*
 **Understanding-oriented discussions of key topics**
 
 Use these when you need to understand the "why" behind Simple Chat's design and architecture.
@@ -70,11 +70,11 @@ The **Simple Chat Application** is a comprehensive, web-based platform designed 
 
 ### Key Capabilities
 
-- **💬 AI Chat**: Interact with Azure OpenAI's GPT models
-- **📁 Document Integration**: Upload and chat with your documents using RAG
-- **👥 Group Collaboration**: Share knowledge across teams and workspaces
-- **🔒 Enterprise Security**: Azure AD integration with role-based access control
-- **🎨 Customization**: Optional features like image generation, content safety, and more
+- ** AI Chat**: Interact with Azure OpenAI's GPT models
+- ** Document Integration**: Upload and chat with your documents using RAG
+- ** Group Collaboration**: Share knowledge across teams and workspaces
+- ** Enterprise Security**: Azure AD integration with role-based access control
+- ** Customization**: Optional features like image generation, content safety, and more
 
 ### Getting Help
 
@@ -82,7 +82,3 @@ The **Simple Chat Application** is a comprehensive, web-based platform designed 
 - **Specific tasks**: Check [how-to guides](how-to/)
 - **Configuration details**: See [reference](reference/)
 - **Understanding concepts**: Read [explanation](explanation/)
-
----
-
-*This documentation follows the [Diátaxis framework](https://diataxis.fr/) for systematic technical documentation.*
