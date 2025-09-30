@@ -155,7 +155,7 @@ def build_full_secret_name(secret_name, scope_value, source, scope):
     Raises:
         ValueError: If the name exceeds 127 characters.
     """
-    full_secret_name = f"{scope_value}_{source}_{scope}_{secret_name}"
+    full_secret_name = f"{scope_value}--{source}--{scope}--{secret_name}"
     if len(full_secret_name) > 127:
         raise ValueError(f"The full secret name '{full_secret_name}' exceeds the maximum length of 127 characters.")
     return full_secret_name
@@ -175,7 +175,7 @@ def validate_secret_name_dynamic(secret_name):
     scopes_pattern = '|'.join(re.escape(scope) for scope in supported_scopes)
     sources_pattern = '|'.join(re.escape(source) for source in supported_sources)
     # Wildcards for secret_name and scope_value
-    pattern = rf"^(.+)_({sources_pattern})_({scopes_pattern})_(.+)$"
+    pattern = rf"^(.+)--({sources_pattern})--({scopes_pattern})--(.+)$"
     match = re.match(pattern, secret_name)
     if not match:
         return False
