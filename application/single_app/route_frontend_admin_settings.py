@@ -191,6 +191,14 @@ def register_route_frontend_admin_settings(app):
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         
+        # --- Add defaults for key vault
+        if 'enable_key_vault_secret_storage' not in settings:
+            settings['enable_key_vault_secret_storage'] = False
+        if 'key_vault_name' not in settings:
+            settings['key_vault_name'] = ''
+        if 'key_vault_identity' not in settings:
+            settings['key_vault_identity'] = ''
+
         # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
             settings['enable_left_nav_default'] = True

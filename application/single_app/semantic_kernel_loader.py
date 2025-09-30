@@ -30,6 +30,7 @@ import os
 import importlib.util
 import inspect
 import builtins
+from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_keyvault_by_full_name
 
 # Agent and Azure OpenAI chat service imports
 log_event("[SK Loader] Starting loader imports")
@@ -107,6 +108,11 @@ def resolve_agent_config(agent, settings):
 
     debug_print(f"[SK Loader] user_apim_enabled: {user_apim_enabled}, global_apim_enabled: {global_apim_enabled}, per_user_enabled: {per_user_enabled}")
 
+    def resolve_secret_value_if_needed(value, scope_value, source, scope):
+        if validate_secret_name_dynamic(value):
+            return retrieve_secret_from_key_vault(value, scope_value, scope, source)
+        return value
+
     def any_filled(*fields):
         return any(bool(f) for f in fields)
 
@@ -114,36 +120,88 @@ def resolve_agent_config(agent, settings):
         return all(bool(f) for f in fields)
 
     def get_user_apim():
-        return (
-            agent.get("azure_apim_gpt_endpoint"),
-            agent.get("azure_apim_gpt_subscription_key"),
-            agent.get("azure_apim_gpt_deployment"),
-            agent.get("azure_apim_gpt_api_version")
-        )
+        endpoint = agent.get("azure_apim_gpt_endpoint")
+        key = agent.get("azure_apim_gpt_subscription_key")
+        deployment = agent.get("azure_apim_gpt_deployment")
+        api_version = agent.get("azure_apim_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    if resolved_key:
+                        # Update the agent dict with the resolved key for this session
+                        agent["azure_apim_gpt_subscription_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_global_apim():
-        return (
-            settings.get("azure_apim_gpt_endpoint"),
-            settings.get("azure_apim_gpt_subscription_key"),
-            first_if_comma(settings.get("azure_apim_gpt_deployment")),
-            settings.get("azure_apim_gpt_api_version")
-        )
+        endpoint = settings.get("azure_apim_gpt_endpoint")
+        key = settings.get("azure_apim_gpt_subscription_key")
+        deployment = first_if_comma(settings.get("azure_apim_gpt_deployment"))
+        api_version = settings.get("azure_apim_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    if resolved_key:
+                        # Update the settings dict with the resolved key for this session
+                        settings["azure_apim_gpt_subscription_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret in get_global_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_user_gpt():
-        return (
-            agent.get("azure_openai_gpt_endpoint"),
-            agent.get("azure_openai_gpt_key"),
-            agent.get("azure_openai_gpt_deployment"),
-            agent.get("azure_openai_gpt_api_version")
-        )
+        endpoint = agent.get("azure_openai_gpt_endpoint")
+        key = agent.get("azure_openai_gpt_key")
+        deployment = agent.get("azure_openai_gpt_deployment")
+        api_version = agent.get("azure_openai_gpt_api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    if resolved_key:
+                        # Update the agent dict with the resolved key for this session
+                        agent["azure_openai_gpt_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def get_global_gpt():
-        return (
-            settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint"),
-            settings.get("azure_openai_gpt_key") or selected_model.get("key"),
-            settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName"),
-            settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
-        )
+        endpoint = settings.get("azure_openai_gpt_endpoint") or selected_model.get("endpoint")
+        key = settings.get("azure_openai_gpt_key") or selected_model.get("key")
+        deployment = settings.get("azure_openai_gpt_deployment") or selected_model.get("deploymentName")
+        api_version = settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
+
+        # Check if key vault secret storage is enabled in settings
+        if settings.get("enable_key_vault_secret_storage", False) and key:
+            try:
+                if validate_secret_name_dynamic(key):
+                    # Try to retrieve the secret from Key Vault
+                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    if resolved_key:
+                        # Update the settings dict with the resolved key for this session
+                        settings["azure_openai_gpt_key"] = resolved_key
+                        key = resolved_key
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secret in get_global_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
+                # Fallback to using the value as-is
+        return (endpoint, key, deployment, api_version)
 
     def merge_fields(primary, fallback):
         return tuple(p if p not in [None, ""] else f for p, f in zip(primary, fallback))

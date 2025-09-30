@@ -1328,6 +1328,7 @@ def register_route_backend_chats(app):
             per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+            enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
             redis_client = None
             # --- Semantic Kernel state management (per-user mode) ---
             if enable_semantic_kernel and per_user_semantic_kernel:

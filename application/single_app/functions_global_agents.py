@@ -14,6 +14,9 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
+from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault
+from functions_settings import *
+
 
 
 def ensure_default_global_agent_exists():
@@ -110,6 +113,19 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
+        """ Code to retrieve and replace Key Vault secrets if needed
+        if agent.get("enable_agent_gpt_apim", False):
+            key_value = agent["azure_openai_gpt_key"] = None  # Hide the standard OpenAI key if APIM is enabled
+        else:
+            key_value = agent["azure_agent_apim_gpt_subscription_key"]
+        if validate_secret_name_dynamic(key_value):
+            # Retrieve the actual key from Key Vault
+            actual_key = retrieve_secret_from_key_vault(key_value)
+            if agent.get("enable_agent_gpt_apim", False):
+                agent["azure_agent_apim_gpt_subscription_key"] = actual_key
+            else:
+                agent["azure_openai_gpt_key"] = actual_key
+        """
         print(f"✅ Found global agent: {agent_id}")
         return agent
     except Exception as e:
@@ -147,6 +163,13 @@ def save_global_agent(agent_data):
             extra={"agent_name": agent_data.get('name', 'Unknown')},
         )
         print(f"💾 Saving global agent: {agent_data.get('name', 'Unknown')}")
+        
+
+        settings = get_settings()
+        if settings.get("enable_key_vault_secret_storage", False):
+            # Use the new helper to store sensitive agent keys in Key Vault
+            agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
+
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
         log_event(
             "Global agent saved successfully.",

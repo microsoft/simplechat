@@ -44,6 +44,10 @@ def log_event(
         exceptionTraceback (Any, optional): If set to True, includes exception traceback.
     """
     try:
+        # Limit message to 32767 characters
+        if message and isinstance(message, str) and len(message) > 32767:
+            message = message[:32767]
+
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger
         logger = get_appinsights_logger()
         if not logger:
@@ -51,11 +55,11 @@ def log_event(
             if not logger.handlers:
                 logger.addHandler(logging.StreamHandler())
                 logger.setLevel(logging.INFO)
-        
+
         # Enhanced exception handling for Application Insights
         # When exceptionTraceback=True, ensure we capture full exception context
         exc_info_to_use = exceptionTraceback
-        
+
         # For ERROR level logs with exceptionTraceback=True, always log as exception
         if level >= logging.ERROR and exceptionTraceback:
             if logger and hasattr(logger, 'exception'):
@@ -65,7 +69,7 @@ def log_event(
             else:
                 # Fallback to standard logging with exc_info
                 exc_info_to_use = True
-        
+
         # Format message with extra properties for structured logging
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
@@ -85,12 +89,12 @@ def log_event(
                 stack_info=includeStack,
                 exc_info=exc_info_to_use
             )
-            
+
         # For Azure Monitor, ensure exception-level logs are properly categorized
         if level >= logging.ERROR and _azure_monitor_configured:
             # Add a debug print to verify exception logging is working
             print(f"[Azure Monitor] Exception logged: {message[:100]}...")
-            
+
     except Exception as e:
         # Fallback to basic logging if anything fails
         try:
@@ -98,11 +102,11 @@ def log_event(
             if not fallback_logger.handlers:
                 fallback_logger.addHandler(logging.StreamHandler())
                 fallback_logger.setLevel(logging.INFO)
-            
+
             fallback_message = f"{message} | Original error: {str(e)}"
             if extra:
                 fallback_message += f" | Extra: {extra}"
-            
+
             fallback_logger.log(level, fallback_message)
         except:
             # If even basic logging fails, print to console
