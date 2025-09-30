@@ -1,0 +1,46 @@
+# Site settings
+title: Simple Chat Documentation
+email: simplechat@microsoft.com
+description: >-
+  Documentation for Simple Chat - a comprehensive, web-based platform for secure
+  and context-aware interactions with generative AI models using Azure OpenAI
+  and Retrieval-Augmented Generation (RAG) capabilities.
+baseurl: "/simplechat"   # adjust if your site lives under a subpath
+url: "https://microsoft.github.io"  # replace if using a custom domain
+
+# Theme
+remote_theme: olivier3lanc/Jekyll-LibDoc
+
+# Plugins
+plugins:
+  - jekyll-remote-theme
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Permalinks (pretty URLs)
+permalink: pretty
+
+# Metadata
+metadata:
+  lang: en
+  author: Microsoft
+  color: "#0078D4"   # Microsoft blue (for browser theme color)
+  favicon: /simplechat/images/logo.png
+
+# Sidebar
+sidebar:
+  disable_search: false
+  logo:
+    url: /simplechat/images/logo.png
+    max_height: 40px
+  additional_links:
+    - title: "GitHub Repo"
+      url: https://github.com/microsoft/simplechat
+      order: 100
+      category: Project
+
+# Shields (footer badges)
+shields:
+  - image_html: <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/microsoft/simplechat?logo=github&style=flat-square">
+    link_url: https://github.com/microsoft/simplechat

@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+gem "github-pages", group: :jekyll_plugins
+gem "webrick", "~> 1.8"  # needed for Ruby 3+ to serve locally
+gem "jekyll-remote-theme"
