@@ -1,6 +1,6 @@
 # WORKFLOW_PDF_IFRAME_CSP_FIX
 
-**Fixed in version: 0.229.067**
+**Fixed in version:** 0.230.001
 
 ## Issue Description
 

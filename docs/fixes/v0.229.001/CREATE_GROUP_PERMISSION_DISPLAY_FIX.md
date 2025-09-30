@@ -38,28 +38,7 @@ if require_member_of_create_group:
 return render_template("my_groups.html", can_create_groups=can_create_groups)
 ```
 
-#### Frontend Template Changes (`my_groups.html`)
-1. **Conditional Button Display**:
-   ```html
-   {% if can_create_groups %}
-   <div class="col-md-auto">
-       <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createGroupModal">
-           <i class="bi bi-plus-circle-fill me-1"></i> Create New Group
-       </button>
-   </div>
-   {% endif %}
-   ```
-
-2. **Conditional Modal Display**:
-   ```html
-   {% if can_create_groups %}
-   <div class="modal fade" id="createGroupModal">
-       <!-- Modal content -->
-   </div>
-   {% endif %}
-   ```
-
-3. **JavaScript Permission Handling**:
+1. **JavaScript Permission Handling**:
    ```javascript
    const canCreateGroups = {{ can_create_groups|tojson }};
    const createGroupModal = canCreateGroups ? new bootstrap.Modal(document.getElementById('createGroupModal')) : null;

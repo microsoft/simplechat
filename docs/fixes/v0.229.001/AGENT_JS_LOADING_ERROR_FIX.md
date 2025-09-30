@@ -26,7 +26,6 @@ The issue occurred because:
 
 1. **templates/admin_settings.html**
    - Added conditional loading for agent-related JavaScript files
-   - Wrapped `admin_plugins.js` and `admin_agents.js` in `{% if settings.enable_semantic_kernel %}` blocks
 
 2. **static/js/admin/admin_settings.js**
    - Improved error handling for Azure AI Search index checking
@@ -34,14 +33,6 @@ The issue occurred because:
    - Added user-friendly error messages for unconfigured services
 
 ### Code Changes Summary
-
-**Conditional JavaScript Loading:**
-```html
-{% if settings.enable_semantic_kernel %}
-<script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
-<script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
-{% endif %}
-```
 
 **Improved Error Handling:**
 ```javascript

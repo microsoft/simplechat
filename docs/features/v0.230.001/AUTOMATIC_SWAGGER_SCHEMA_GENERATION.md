@@ -290,27 +290,6 @@ Swagger documentation can be controlled through the admin settings interface:
 3. **Direct Access**: "Open Swagger UI" button for immediate testing
 4. **Information Modal**: "Why Enable Swagger?" explains benefits and use cases
 
-### Admin Interface Features
-```html
-<!-- Admin Settings UI -->
-<div class="form-check form-switch">
-    <input type="checkbox" id="enable_swagger" name="enable_swagger" 
-           {% if settings.enable_swagger %}checked{% endif %}>
-    <label for="enable_swagger">
-        Enable Swagger/OpenAPI Documentation (/swagger)
-    </label>
-</div>
-
-<div class="btn-group">
-    <button data-bs-toggle="modal" data-bs-target="#swaggerInfoModal">
-        Why Enable Swagger?
-    </button>
-    <a href="/swagger" class="btn btn-primary" target="_blank">
-        Open Swagger UI
-    </a>
-</div>
-```
-
 ### Security Considerations in Admin Settings
 - **Authentication Required**: All Swagger endpoints require admin login
 - **Rate Limiting**: Built-in protection against API discovery attacks

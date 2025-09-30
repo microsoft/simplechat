@@ -1,6 +1,6 @@
 # WORKFLOW_PDF_VIEWER_HEIGHT_FIX
 
-**Fixed in version: 0.229.069**
+**Fixed in version:** 0.230.001
 
 ## Issue Description
 

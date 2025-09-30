@@ -21,40 +21,6 @@ The issue was in the navigation template conditionals:
 - `templates/_top_nav.html` - Simplified navigation conditionals  
 - `config.py` - Updated version number
 
-### Code Changes Summary
-
-#### Before Fix (Both Navigation Templates)
-```html
-<!-- Overly restrictive conditional -->
-{% if app_settings.enable_group_workspaces and (not app_settings.require_member_of_create_group or (session.get('user') and session['user'].get('roles') and 'CreateGroups' in session['user']['roles'])) %}
-<li>
-  <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
-</li>
-{% endif %}
-
-{% if app_settings.enable_public_workspaces and (not app_settings.require_member_of_create_public_workspace or (session.get('user') and session['user'].get('roles') and 'CreatePublicWorkspaces' in session['user']['roles'])) %}
-<li>
-  <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
-</li>
-{% endif %}
-```
-
-#### After Fix (Both Navigation Templates)
-```html
-<!-- Simplified to only check feature enablement -->
-{% if app_settings.enable_group_workspaces %}
-<li>
-  <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
-</li>
-{% endif %}
-
-{% if app_settings.enable_public_workspaces %}
-<li>
-  <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
-</li>
-{% endif %}
-```
-
 ### Logic Change Explanation
 
 **Before**: Menu items were shown only if:

@@ -131,22 +131,6 @@ The feature automatically detects the navigation layout preference:
 nav_layout = settings.nav_layout  # 'top' or 'left'
 ```
 
-### Conditional Rendering Logic
-```html
-<!-- Top Navigation (Traditional Tabs) -->
-{% if nav_layout == 'top' %}
-<ul class="nav nav-tabs" id="adminTabs">
-    <!-- Tab navigation -->
-</ul>
-{% endif %}
-
-<!-- Left Navigation Integration -->
-{% if request.endpoint == 'admin_settings' and 'Admin' in session['user']['roles'] %}
-<div id="admin-settings-section">
-    <!-- Hierarchical navigation -->
-</div>
-{% endif %}
-```
 
 ---
 

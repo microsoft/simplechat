@@ -54,29 +54,7 @@ The issue was in multiple places:
    )
    ```
 
-#### Frontend Template Changes (`my_public_workspaces.html`)
-1. **Conditional Button Display**:
-   ```html
-   {% if can_create_public_workspaces %}
-   <div class="col-auto">
-       <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createPublicWorkspaceModal">
-           <i class="bi bi-plus-circle-fill me-1"></i>
-           Create New Public Workspace
-       </button>
-   </div>
-   {% endif %}
-   ```
-
-2. **Conditional Modal Display**:
-   ```html
-   {% if can_create_public_workspaces %}
-   <div class="modal fade" id="createPublicWorkspaceModal">
-       <!-- Modal content -->
-   </div>
-   {% endif %}
-   ```
-
-3. **JavaScript Permission Variable**:
+1. **JavaScript Permission Variable**:
    ```html
    <script>
      window.canCreatePublicWorkspaces = {{ can_create_public_workspaces|tojson }};

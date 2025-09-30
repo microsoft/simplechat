@@ -1,6 +1,6 @@
 # WORKFLOW_SUMMARY_GENERATION_O1_API_FIX
 
-**Fixed in version: 0.229.070**
+**Fixed in version:** 0.230.001
 
 ## Issue Description
 
