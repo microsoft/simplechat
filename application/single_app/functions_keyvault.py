@@ -68,14 +68,18 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
     Raises:
         Exception: If retrieval fails or configuration is invalid.
     """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
         raise Exception("Key Vault secret storage is not enabled.")
 
+    key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
         raise Exception("Key Vault name is not configured.")
 
     try:
-        if key_vault_identity:
+        key_vault_identity = settings.get("key_vault_identity", None)
+        if key_vault_identity is not None:
             credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
         else:
             credential = DefaultAzureCredential()
@@ -104,9 +108,12 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     Raises:
         Exception: If storing fails or configuration is invalid.
     """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
         raise Exception("Key Vault secret storage is not enabled.")
 
+    key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
         raise Exception("Key Vault name is not configured.")
 
@@ -119,7 +126,8 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
 
     try:
-        if key_vault_identity:
+        key_vault_identity = settings.get("key_vault_identity", None)
+        if key_vault_identity is not None:
             credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
         else:
             credential = DefaultAzureCredential()
