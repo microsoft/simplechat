@@ -2,9 +2,10 @@
 ---
 layout: libdoc/page
 title: Scenarios
-order: 160
-category: Explanation
+order: 130
+category: Scenarios
 ---
+
 # Scenarios
 
 Real-world applications and usage examples.

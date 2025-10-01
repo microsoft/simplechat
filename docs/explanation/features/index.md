@@ -1,7 +1,7 @@
 # explanation/features/index.md
 ---
 layout: libdoc/page
-title: Features
-order: 140
-category: Explanation / Version History
+title: Features by Version
+order: 110
+category: Version History
 ---

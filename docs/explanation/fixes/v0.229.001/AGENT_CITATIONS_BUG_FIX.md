@@ -1,3 +1,11 @@
+---
+layout: libdoc/page
+title: Agent Citations Cross-Conversation Contamination Bug Fix
+order: 200
+category: Version History
+unlisted: true
+---
+
 # Agent Citations Cross-Conversation Contamination Bug Fix
 
 **Version Implemented:** 0.229.001
