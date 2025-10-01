@@ -41,8 +41,8 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["key", "identity", "user", "servicePrincipal"],
-              "description": "Auth type must be 'key', 'user', 'identity', or 'servicePrincipal'"
+              "enum": ["key", "identity", "user", "servicePrincipal", "connection_string", "basic"],
+              "description": "Auth type must be 'key', 'user', 'identity', 'servicePrincipal', 'connection_string', or 'basic'"
             },
             "key": {
               "type": "string"
