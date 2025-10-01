@@ -54,7 +54,7 @@ def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", sou
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
 
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
-    return retrieve_secret_by_full_name(full_secret_name)
+    return retrieve_secret_from_keyvault_by_full_name(full_secret_name)
 
 def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
     """
