@@ -1,9 +1,7 @@
 ---
-layout: libdoc/page
+layout: page
 title: "Simple Chat Documentation"
-subtitle: "Welcome to the official docs"
-order: 1
-category: Overview
+description: "Welcome to the official documentation for Simple Chat - a comprehensive platform for AI-powered conversations and document intelligence."
 ---
 
 The **Simple Chat Application** is a comprehensive, web-based platform designed to facilitate secure and context-aware interactions with generative AI models, specifically leveraging **Azure OpenAI**. Its central feature is **Retrieval-Augmented Generation (RAG)**, which significantly enhances AI interactions by allowing users to ground conversations in their own data. Users can upload personal ("Your Workspace") or shared group ("Group Workspaces") documents, which are processed using **Azure AI Document Intelligence**, chunked intelligently based on content type, vectorized via **Azure OpenAI Embeddings**, and indexed into **Azure AI Search** for efficient hybrid retrieval (semantic + keyword).
@@ -68,7 +66,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ## Architecture-diagram
 
-![Architecture](./docs/images/architecture.png)
+![Architecture](./images/architecture.png)
 
 ## Demos
 
@@ -76,8 +74,8 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ### Upload document and review metadata
 
-![Upload Document Demo](./docs/images/UploadDocumentDemo.gif)
+![Upload Document Demo](./images/UploadDocumentDemo.gif)
 
 ### Classify document and chat with document
 
-![Chat with Searching your Documents Demo](./docs/images/ChatwithSearchingYourDocsDemo.gif)
+![Chat with Searching your Documents Demo](./images/ChatwithSearchingYourDocsDemo.gif)

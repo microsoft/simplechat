@@ -145,6 +145,9 @@ GEM
       octokit (>= 4, < 7, != 4.4.0)
     jekyll-include-cache (0.2.1)
       jekyll (>= 3.7, < 5.0)
+    jekyll-livereload (0.2.2)
+      em-websocket (~> 0.5)
+      jekyll (~> 3.0)
     jekyll-mentions (1.6.0)
       html-pipeline (~> 2.3)
       jekyll (>= 3.7, < 5.0)
@@ -276,7 +279,14 @@ PLATFORMS
 
 DEPENDENCIES
   github-pages
-  jekyll-remote-theme
+  jekyll-feed
+  jekyll-livereload
+  jekyll-optional-front-matter
+  jekyll-readme-index
+  jekyll-relative-links
+  jekyll-seo-tag
+  jekyll-sitemap
+  jekyll-titles-from-headings
   webrick (~> 1.8)
 
 BUNDLED WITH

@@ -1,0 +1,50 @@
+---
+layout: default
+---
+
+<article class="page-content">
+  {% if page.title %}
+    <header class="page-header mb-4">
+      <h1 class="page-title">{{ page.title }}</h1>
+      {% if page.description %}
+        <p class="page-description text-muted">{{ page.description }}</p>
+      {% endif %}
+      {% if page.date %}
+        <p class="page-meta text-muted">
+          <small>
+            <i class="bi bi-calendar-event me-1"></i>
+            {{ page.date | date: "%B %d, %Y" }}
+            {% if page.author %}
+              by {{ page.author }}
+            {% endif %}
+          </small>
+        </p>
+      {% endif %}
+    </header>
+  {% endif %}
+
+  <div class="page-body">
+    {{ content }}
+  </div>
+
+  {% if page.show_nav and page.nav_links %}
+    <nav class="page-navigation mt-5">
+      <div class="row">
+        {% if page.nav_links.prev %}
+          <div class="col-md-6">
+            <a href="{{ page.nav_links.prev.url | relative_url }}" class="btn btn-outline-primary">
+              <i class="bi bi-arrow-left me-2"></i>{{ page.nav_links.prev.title }}
+            </a>
+          </div>
+        {% endif %}
+        {% if page.nav_links.next %}
+          <div class="col-md-6 text-end">
+            <a href="{{ page.nav_links.next.url | relative_url }}" class="btn btn-outline-primary">
+              {{ page.nav_links.next.title }}<i class="bi bi-arrow-right ms-2"></i>
+            </a>
+          </div>
+        {% endif %}
+      </div>
+    </nav>
+  {% endif %}
+</article>

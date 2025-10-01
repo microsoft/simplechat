@@ -1,10 +1,3 @@
----
-layout: libdoc/page
-title: Explanation
-order: 100
-category: Explanation
----
-
 Welcome to the **Explanation** section. Here you'll find understanding-oriented discussions of key topics and concepts behind Simple Chat.
 
 - [Architecture](/explanation/architecture/)
