@@ -151,8 +151,10 @@ AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernm
 
 if AZURE_ENVIRONMENT == "custom":
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-else:
+elif AZURE_ENVIRONMENT == "usgovernment":
     AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 # Commercial Azure Video Indexer Endpoint
 video_indexer_endpoint = "https://api.videoindexer.ai"
@@ -180,6 +182,7 @@ else:
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    video_indexer_endpoint = "https://api.videoindexer.ai"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
