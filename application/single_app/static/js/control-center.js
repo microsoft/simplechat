@@ -9,6 +9,8 @@ class ControlCenter {
         this.accessFilter = 'all';
         this.selectedUsers = new Set();
         this.currentUser = null;
+        this.activityChart = null;
+        this.currentTrendDays = 30;
         
         this.init();
     }
@@ -16,6 +18,7 @@ class ControlCenter {
     init() {
         this.bindEvents();
         this.loadUsers();
+        this.loadActivityTrends();
     }
     
     bindEvents() {
@@ -69,6 +72,14 @@ class ControlCenter {
                 }
             });
         });
+        
+        // Activity trends time period buttons
+        document.getElementById('trend-7days')?.addEventListener('click', 
+            () => this.changeTrendPeriod(7));
+        document.getElementById('trend-30days')?.addEventListener('click', 
+            () => this.changeTrendPeriod(30));
+        document.getElementById('trend-90days')?.addEventListener('click', 
+            () => this.changeTrendPeriod(90));
     }
     
     debounce(func, wait) {
@@ -632,6 +643,224 @@ class ControlCenter {
         const sizes = ['B', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+    
+    // Activity Trends Methods
+    async loadActivityTrends() {
+        try {
+            console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
+            
+            const response = await fetch(`/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`);
+            console.log('🔍 [Frontend Debug] API response status:', response.status);
+            
+            const data = await response.json();
+            console.log('🔍 [Frontend Debug] API response data:', data);
+            
+            if (response.ok) {
+                console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
+                this.renderActivityChart(data.activity_data);
+            } else {
+                console.error('❌ [Frontend Debug] API error:', data.error);
+                this.showActivityTrendsError();
+            }
+        } catch (error) {
+            console.error('❌ [Frontend Debug] Exception loading activity trends:', error);
+            this.showActivityTrendsError();
+        }
+    }
+    
+    renderActivityChart(activityData) {
+        console.log('🔍 [Frontend Debug] Rendering chart with data:', activityData);
+        
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error('❌ [Frontend Debug] Chart.js is not loaded. Cannot render activity chart.');
+            this.showActivityTrendsError();
+            return;
+        }
+        
+        const canvas = document.getElementById('activityTrendsChart');
+        if (!canvas) {
+            console.error('❌ [Frontend Debug] Chart canvas element not found');
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error('❌ [Frontend Debug] Could not get 2D context from canvas');
+            return;
+        }
+        
+        console.log('✅ [Frontend Debug] Chart.js loaded, canvas found, context ready');
+        
+        // Hide loading indicator and show canvas
+        const loadingDiv = document.getElementById('activityTrendsLoading');
+        if (loadingDiv) loadingDiv.style.display = 'none';
+        canvas.style.display = 'block';
+        
+        // Destroy existing chart if it exists
+        if (this.activityChart) {
+            console.log('🔍 [Frontend Debug] Destroying existing chart');
+            this.activityChart.destroy();
+        }
+        
+        // Prepare data for Chart.js - convert object format to arrays
+        console.log('🔍 [Frontend Debug] Processing activity data structure...');
+        
+        // Get all dates and sort them
+        const allDates = new Set();
+        if (activityData.chats) Object.keys(activityData.chats).forEach(date => allDates.add(date));
+        if (activityData.documents) Object.keys(activityData.documents).forEach(date => allDates.add(date));
+        if (activityData.logins) Object.keys(activityData.logins).forEach(date => allDates.add(date));
+        
+        const sortedDates = Array.from(allDates).sort();
+        console.log('🔍 [Frontend Debug] Date range:', sortedDates);
+        
+        const labels = sortedDates.map(date => {
+            const dateObj = new Date(date);
+            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        
+        console.log('🔍 [Frontend Debug] Chart labels:', labels);
+        
+        const datasets = [
+            {
+                label: 'Chats',
+                data: sortedDates.map(date => activityData.chats[date] || 0),
+                backgroundColor: 'rgba(13, 110, 253, 0.2)',
+                borderColor: '#0d6efd',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            },
+            {
+                label: 'Documents',
+                data: sortedDates.map(date => activityData.documents[date] || 0),
+                backgroundColor: 'rgba(25, 135, 84, 0.2)',
+                borderColor: '#198754',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            },
+            {
+                label: 'Logins',
+                data: sortedDates.map(date => activityData.logins[date] || 0),
+                backgroundColor: 'rgba(255, 193, 7, 0.2)',
+                borderColor: '#ffc107',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            }
+        ];
+        
+        console.log('🔍 [Frontend Debug] Chart datasets prepared:', datasets);
+        
+        // Create new chart
+        this.activityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false // Using custom legend below chart
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            title: function(context) {
+                                const dataIndex = context[0].dataIndex;
+                                const date = new Date(activityData[dataIndex].date);
+                                return date.toLocaleDateString('en-US', { 
+                                    weekday: 'long', 
+                                    year: 'numeric', 
+                                    month: 'long', 
+                                    day: 'numeric' 
+                                });
+                            },
+                            afterBody: function(context) {
+                                const dataIndex = context[0].dataIndex;
+                                return `Total Activity: ${activityData[dataIndex].total}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: {
+                            display: false
+                        }
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        },
+                        ticks: {
+                            precision: 0
+                        }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                elements: {
+                    point: {
+                        radius: 4,
+                        hoverRadius: 6
+                    }
+                }
+            }
+        });
+    }
+    
+    changeTrendPeriod(days) {
+        // Update button active states
+        document.querySelectorAll('[id^="trend-"]').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        document.getElementById(`trend-${days}days`).classList.add('active');
+        
+        // Update current period and reload data
+        this.currentTrendDays = days;
+        this.loadActivityTrends();
+    }
+    
+    showActivityTrendsError() {
+        const chartContainer = document.getElementById('activityTrendsChartContainer');
+        const canvas = document.getElementById('activityTrendsChart');
+        const loadingDiv = document.getElementById('activityTrendsLoading');
+        
+        if (chartContainer) {
+            // Hide canvas and loading, show error
+            if (canvas) canvas.style.display = 'none';
+            if (loadingDiv) loadingDiv.style.display = 'none';
+            
+            // Destroy existing chart if it exists
+            if (this.activityChart) {
+                this.activityChart.destroy();
+                this.activityChart = null;
+            }
+            
+            chartContainer.innerHTML = `
+                <canvas id="activityTrendsChart" style="display: none;"></canvas>
+                <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted">
+                    <i class="bi bi-exclamation-triangle fs-1 mb-2"></i>
+                    <p>Unable to load activity trends</p>
+                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.loadActivityTrends()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                    </button>
+                </div>
+            `;
+        }
     }
 }
 

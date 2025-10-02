@@ -21,6 +21,7 @@ from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_activity_logging import log_chat_activity
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -419,6 +420,22 @@ def register_route_backend_chats(app):
             # Note: Message-level chat_type will be updated after document search
             
             cosmos_messages_container.upsert_item(user_message_doc)
+            
+            # Log chat activity for real-time tracking
+            try:
+                log_chat_activity(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_type='user_message',
+                    message_length=len(user_message) if user_message else 0,
+                    has_document_search=hybrid_search_enabled,
+                    has_image_generation=image_gen_enabled,
+                    document_scope=document_scope,
+                    chat_context=actual_chat_type
+                )
+            except Exception as e:
+                # Don't let activity logging errors interrupt chat flow
+                print(f"Activity logging error: {e}")
 
             # Set conversation title if it's still the default
             if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:

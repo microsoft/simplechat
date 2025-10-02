@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_logging import *
+from functions_activity_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 import json
@@ -384,3 +385,270 @@ def enhance_user_with_activity(user):
     except Exception as e:
         current_app.logger.error(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
+
+    # Activity Trends API
+    @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_get_activity_trends():
+        """
+        Get activity trends data for the control center dashboard.
+        Returns aggregated activity data from various containers.
+        """
+        try:
+            days = int(request.args.get('days', 7))
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
+            
+            # Get activity data
+            activity_data = get_activity_trends_data(start_date, end_date)
+            
+            print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
+            
+            return jsonify({
+                'success': True,
+                'activity_data': activity_data,
+                'period': f"{days} days",
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat()
+            })
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting activity trends: {e}")
+            print(f"❌ [Activity Trends API] Error: {e}")
+            return jsonify({'error': 'Failed to retrieve activity trends'}), 500
+
+def get_activity_trends_data(start_date, end_date):
+    """
+    Get aggregated activity data for the specified date range from existing containers.
+    Returns daily activity counts by type using real application data.
+    """
+    try:
+        # Debug logging
+        print(f"🔍 [Activity Trends Debug] Getting data for range: {start_date} to {end_date}")
+        
+        # Initialize daily data structure
+        daily_data = {}
+        current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        while current_date <= end_date:
+            date_key = current_date.strftime('%Y-%m-%d')
+            daily_data[date_key] = {
+                'date': date_key,
+                'chats': 0,
+                'documents': 0,
+                'logins': 0,
+                'total': 0
+            }
+            current_date += timedelta(days=1)
+        
+        print(f"🔍 [Activity Trends Debug] Initialized {len(daily_data)} days of data: {list(daily_data.keys())}")
+        
+        # Parameters for queries
+        parameters = [
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()}
+        ]
+        
+        print(f"🔍 [Activity Trends Debug] Query parameters: {parameters}")
+        
+        # Query 1: Get chat activity from conversations and messages containers
+        try:
+            print("🔍 [Activity Trends Debug] Querying conversations...")
+            
+            # Count conversations created/updated in date range
+            conversations_query = """
+                SELECT c.last_updated
+                FROM c 
+                WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
+            """
+            
+            # Count messages created in date range  
+            messages_query = """
+                SELECT c.timestamp
+                FROM c 
+                WHERE c.timestamp >= @start_date AND c.timestamp <= @end_date
+            """
+            
+            # Process conversations
+            conversations = list(cosmos_conversations_container.query_items(
+                query=conversations_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            print(f"🔍 [Activity Trends Debug] Found {len(conversations)} conversations")
+            
+            for conv in conversations:
+                last_updated = conv.get('last_updated')
+                if last_updated:
+                    try:
+                        if isinstance(last_updated, str):
+                            conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                        else:
+                            conv_date = last_updated
+                        
+                        date_key = conv_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['chats'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse conversation timestamp {last_updated}: {e}")
+            
+            # Process messages  
+            messages = list(cosmos_messages_container.query_items(
+                query=messages_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            print(f"🔍 [Activity Trends Debug] Found {len(messages)} messages")
+            
+            for msg in messages:
+                timestamp = msg.get('timestamp')
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            msg_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        else:
+                            msg_date = timestamp
+                        
+                        date_key = msg_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['chats'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse message timestamp {timestamp}: {e}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query conversation/message data: {e}")
+            print(f"❌ [Activity Trends Debug] Error querying chats: {e}")
+
+        # Query 2: Get document activity
+        try:
+            print("🔍 [Activity Trends Debug] Querying documents...")
+            
+            documents_query = """
+                SELECT c.upload_date, c.last_updated, c.timestamp, c.createdAt, c.uploadedAt
+                FROM c 
+                WHERE (c.upload_date >= @start_date AND c.upload_date <= @end_date)
+                   OR (c.last_updated >= @start_date AND c.last_updated <= @end_date)
+            """
+            
+            # Query all document containers
+            containers = [
+                ('user_documents', cosmos_user_documents_container),
+                ('group_documents', cosmos_group_documents_container), 
+                ('public_documents', cosmos_public_documents_container)
+            ]
+            
+            total_docs = 0
+            for container_name, container in containers:
+                docs = list(container.query_items(
+                    query=documents_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                print(f"🔍 [Activity Trends Debug] Found {len(docs)} documents in {container_name}")
+                total_docs += len(docs)
+                
+                for doc in docs:
+                    # Prioritize upload_date, then last_updated, then other fields
+                    timestamp = (doc.get('upload_date') or 
+                               doc.get('last_updated') or
+                               doc.get('timestamp') or 
+                               doc.get('createdAt') or
+                               doc.get('uploadedAt'))
+                    
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            else:
+                                doc_date = timestamp
+                            
+                            date_key = doc_date.strftime('%Y-%m-%d')
+                            if date_key in daily_data:
+                                daily_data[date_key]['documents'] += 1
+                        except Exception as e:
+                            current_app.logger.debug(f"Could not parse document timestamp {timestamp}: {e}")
+            
+            print(f"🔍 [Activity Trends Debug] Total documents found: {total_docs}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query document data: {e}")
+            print(f"❌ [Activity Trends Debug] Error querying documents: {e}")
+
+        # Query 3: Get login activity from activity_logs container
+        try:
+            print("🔍 [Activity Trends Debug] Querying login activity...")
+            
+            login_query = """
+                SELECT c.timestamp, c.created_at
+                FROM c 
+                WHERE c.activity_type = 'user_login' 
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            login_activities = list(cosmos_activity_logs_container.query_items(
+                query=login_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            print(f"🔍 [Activity Trends Debug] Found {len(login_activities)} login activities")
+            
+            for login in login_activities:
+                timestamp = login.get('timestamp') or login.get('created_at')
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            login_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        else:
+                            login_date = timestamp
+                        
+                        date_key = login_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['logins'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse login timestamp {timestamp}: {e}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query activity logs for login data: {e}")
+            print(f"❌ [Activity Trends Debug] Error querying logins: {e}")
+
+        # Calculate totals for each day
+        for date_key in daily_data:
+            daily_data[date_key]['total'] = (
+                daily_data[date_key]['chats'] + 
+                daily_data[date_key]['documents'] + 
+                daily_data[date_key]['logins']
+            )
+
+        # Group by activity type for chart display  
+        result = {
+            'chats': {},
+            'documents': {},
+            'logins': {}
+        }
+        
+        for date_key, data in daily_data.items():
+            result['chats'][date_key] = data['chats']
+            result['documents'][date_key] = data['documents'] 
+            result['logins'][date_key] = data['logins']
+        
+        print(f"🔍 [Activity Trends Debug] Final result: {result}")
+        
+        return result
+
+    except Exception as e:
+        current_app.logger.error(f"Error getting activity trends data: {e}")
+        print(f"❌ [Activity Trends Debug] Fatal error: {e}")
+        return {
+            'chats': {},
+            'documents': {},
+            'logins': {}
+        }

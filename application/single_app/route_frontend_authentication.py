@@ -131,6 +131,16 @@ def register_route_frontend_authentication(app):
         _save_cache(msal_app.token_cache)
 
         print(f"User {session['user'].get('name')} logged in successfully.")
+        
+        # Log the login activity
+        try:
+            from functions_activity_logging import log_user_login
+            user_id = session['user'].get('oid') or session['user'].get('sub')
+            if user_id:
+                log_user_login(user_id, 'azure_ad')
+        except Exception as e:
+            current_app.logger.warning(f"Could not log login activity: {e}")
+        
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
         # Get settings from database, with environment variable fallback
