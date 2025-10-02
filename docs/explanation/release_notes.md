@@ -1,4 +1,4 @@
-<!-- BEGIN RELEASE_NOTES.MD BLOCK -->
+<!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
 ### **(v0.229.062)**

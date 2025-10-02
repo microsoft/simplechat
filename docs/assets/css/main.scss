@@ -1,0 +1,338 @@
+---
+---
+
+/* Import Bootstrap (CDN is used in layout, this is for custom variables) */
+@import url('https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css');
+
+/* Custom CSS Variables */
+:root {
+  --simplechat-primary: #0078D4;
+  --simplechat-secondary: #6c757d;
+  --simplechat-success: #198754;
+  --simplechat-info: #0dcaf0;
+  --simplechat-warning: #ffc107;
+  --simplechat-danger: #dc3545;
+  --simplechat-light: #f8f9fa;
+  --simplechat-dark: #212529;
+  
+  /* Sidebar specific */
+  --sidebar-width: 260px;
+  --sidebar-min-width: 220px;
+  --navbar-height: 56px;
+  --classification-banner-height: 40px;
+}
+
+/* Dark mode variables */
+[data-bs-theme="dark"] {
+  --bs-body-bg: #212529;
+  --bs-body-color: #fff;
+  --bs-border-color: rgba(255,255,255,0.15);
+}
+
+/* Light/Dark mode utilities */
+.d-light-mode-only {
+  display: block !important;
+}
+
+.d-dark-mode-only {
+  display: none !important;
+}
+
+[data-bs-theme="dark"] .d-light-mode-only {
+  display: none !important;
+}
+
+[data-bs-theme="dark"] .d-dark-mode-only {
+  display: block !important;
+}
+
+/* Base layout styles */
+body {
+  padding-top: var(--navbar-height);
+  transition: padding-left 0.3s ease-in-out;
+}
+
+body.has-classification-banner {
+  padding-top: calc(var(--navbar-height) + var(--classification-banner-height));
+}
+
+/* Main content styles */
+.main-content {
+  min-height: calc(100vh - var(--navbar-height));
+  transition: padding-left 0.3s ease-in-out, padding-right 0.3s ease-in-out;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  /* Default padding for when sidebar is collapsed */
+  padding-left: 150px;
+  padding-right: 150px;
+}
+
+.sidebar-padding {
+  padding-left: calc(var(--sidebar-width) + 150px) !important;
+  padding-right: 150px !important;
+  margin-left: 0 !important;
+}
+
+/* When sidebar is collapsed, center content with equal padding */
+body.sidebar-collapsed .main-content {
+  padding-left: 150px !important;
+  padding-right: 150px !important;
+}
+
+/* Sidebar specific styles */
+#sidebar-nav {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-min-width);
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  z-index: 1040;
+  transition: transform 0.3s ease;
+  background-color: var(--bs-light);
+  border-right: 1px solid var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] #sidebar-nav {
+  background-color: var(--bs-dark);
+  border-right-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15));
+}
+
+#sidebar-nav.sidebar-collapsed {
+  transform: translateX(-100%);
+}
+
+/* Sidebar navigation styles */
+#sidebar-nav .nav-link {
+  color: var(--bs-body-color);
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  margin: 0.125rem 0.5rem;
+  transition: all 0.2s ease;
+}
+
+#sidebar-nav .nav-link:hover {
+  background-color: var(--bs-gray-100);
+  color: var(--bs-primary);
+}
+
+[data-bs-theme="dark"] #sidebar-nav .nav-link:hover {
+  background-color: var(--bs-gray-800);
+}
+
+#sidebar-nav .nav-link.active {
+  background-color: var(--bs-primary);
+  color: white;
+}
+
+/* Sidebar user account section */
+#sidebar-user-account {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-min-width);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background-color: var(--bs-light) !important;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+[data-bs-theme="dark"] #sidebar-user-account {
+  background-color: var(--bs-dark) !important;
+  border-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+}
+
+/* Floating expand button */
+#floating-expand-btn {
+  background-color: var(--bs-body-bg) !important;
+  border: 1px solid var(--bs-border-color) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+  color: var(--bs-body-color) !important;
+  transition: all 0.2s ease;
+}
+
+#floating-expand-btn:hover {
+  background-color: var(--bs-gray-100) !important;
+  transform: scale(1.05);
+}
+
+[data-bs-theme="dark"] #floating-expand-btn {
+  background-color: var(--bs-dark) !important;
+  border: 1px solid var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+  color: var(--bs-body-color) !important;
+}
+
+[data-bs-theme="dark"] #floating-expand-btn:hover {
+  background-color: var(--bs-gray-800) !important;
+}
+
+/* Sidebar title truncation */
+.sidebar-title-truncate {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 80px; /* Always reduced width since logo is always shown */
+}
+
+/* Transitions utility */
+.transition {
+  transition: transform 0.2s ease;
+}
+
+/* No transitions utility for preventing initial layout shifts */
+.no-transitions * {
+  transition: none !important;
+}
+
+/* Page content styles */
+.page-content {
+  max-width: none;
+}
+
+.page-header {
+  border-bottom: 1px solid var(--bs-border-color);
+  padding-bottom: 1rem;
+}
+
+.page-title {
+  color: var(--bs-body-color);
+  margin-bottom: 0.5rem;
+}
+
+.page-description {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.page-meta {
+  margin-bottom: 0;
+}
+
+.page-navigation .btn {
+  text-decoration: none;
+}
+
+/* Top navigation adjustments */
+.navbar {
+  z-index: 1030;
+}
+
+body.has-classification-banner .navbar {
+  top: var(--classification-banner-height);
+}
+
+/* Citation links */
+a.citation-link {
+  color: var(--bs-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+a.citation-link:hover {
+  color: var(--bs-primary);
+  text-decoration: none;
+  opacity: 0.8;
+}
+
+/* Form controls */
+.form-switch .form-check-input {
+  width: 2.5rem;
+  height: 1.5rem;
+}
+
+.form-switch .form-check-input:checked {
+  background-color: var(--bs-primary);
+}
+
+/* Modal enhancements */
+.modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Toast positioning */
+#toast-container {
+  z-index: 1100;
+}
+
+/* Classification banner */
+#classification-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--classification-banner-height);
+  z-index: 1051;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: bold;
+  font-size: 1.1em;
+  letter-spacing: 0.5px;
+  color: #fff;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .sidebar-padding {
+    padding-left: 0 !important;
+  }
+  
+  #sidebar-nav {
+    transform: translateX(-100%);
+  }
+  
+  #sidebar-nav.sidebar-expanded {
+    transform: translateX(0);
+  }
+  
+  .main-content {
+    margin-left: 0 !important;
+  }
+}
+
+/* Code syntax highlighting adjustments */
+pre[class*="language-"] {
+  border-radius: 0.375rem;
+  border: 1px solid var(--bs-border-color);
+}
+
+/* DataTables integration */
+.dataTables_wrapper {
+  font-family: inherit;
+}
+
+.dataTables_wrapper .dataTables_length,
+.dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate {
+  color: var(--bs-body-color);
+}
+
+/* Utility classes */
+.text-truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.text-truncate-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

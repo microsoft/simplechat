@@ -1,6 +1,15 @@
-# Simple Chat - Setup Instructions
+---
+layout: page
+title: "Setup Instructions"
+description: "Complete guide to deploying and configuring Simple Chat"
+section: "tutorials"
+nav_links:
+  next:
+    title: "Manual Setup"
+    url: /setup_instructions_manual/
+---
 
-[Return to Main](../README.md)
+# Simple Chat - Setup Instructions
 
 ## Summary
 

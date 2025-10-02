@@ -1,3 +1,10 @@
+---
+layout: page
+title: "Features"
+description: "Comprehensive overview of Simple Chat's features and capabilities"
+section: "overview"
+---
+
 # Simple Chat - Features
 
 - [Features](#features)
