@@ -8,43 +8,25 @@ Built with modularity in mind, the application offers a suite of powerful **opti
 
 The application utilizes **Azure Cosmos DB** for storing conversations, metadata, and settings, and is secured using **Azure Active Directory (Entra ID)** for authentication and fine-grained Role-Based Access Control (RBAC) via App Roles. Designed for enterprise use, it runs reliably on **Azure App Service** and supports deployment in both **Azure Commercial** and **Azure Government** cloud environments, offering a versatile tool for knowledge discovery, content generation, and collaborative AI-powered tasks within a secure, customizable, and Azure-native framework.
 
-## Table of Contents
+## Documentation
 
-- [Features](./docs/features.md)
-  - [Application Features](#features)
-  - [Architecture Diagram](#architecture-diagram)
-  - [Optional Features](./docs/features.md#optional-features) 
-- [Release Notes](./RELEASE_NOTES.md)
-- [Roadmap (as of 8/20/25)](https://github.com/microsoft/simplechat/discussions/133)
-- [Application Workflow](./docs/application_workflows.md)
-  - [Content Safety](./docs/application_workflows.md#content-safety---workflow)
-  - [Add your data (RAG Ingestion)](./docs/application_workflows.md#add-your-data-rag-ingestion)
-- [Demos](#demos)
-  - [Upload document and review metadata](#upload-document-and-review-metadata)
-  - [Classify document and chat with content](#classify-document-and-chat-with-content)
-- [Setup Instructions](./docs/setup_instructions.md)
-  - [Azure CLI with Powershell](./docs/setup_instructions.md#azure-cli-with-powershell)
-  - [Bicep](./docs/setup_instructions.md#bicep)
-  - [Terraform](./docs/setup_instructions.md#hashicorp-terraform)
-  - [Special Cases](./docs/setup_instructions_special.md)
-    - [Azure Government Configuration](./docs/setup_instructions_special.md#azure-government-configuration)
-    - [How to use Managed Identity](./docs/setup_instructions_special.md#how-to-use-managed-identity)
-    - [Enterprise Networking](./docs/setup_instructions_special.md#enterprise-networking)
-  
-- [Admin Configuration](./docs/admin_configuration.md)
-- [Application Scaling](./docs/application_scaling.md)
-  - [Azure App Service](./docs/application_scaling.md#azure-app-service)
-  - [Azure Cosmos DB](./docs/application_scaling.md#azure-cosmos-db)
-  - [Azure AI Search](./docs/application_scaling.md#azure-ai-search)
-  - [Azure AI / Cognitive Services](./docs/application_scaling.md#azure-ai--cognitive-services-openai-document-intelligence-etc)
-- [FAQs](./docs/faqs.md)
-- [External Apps Overview](./docs/external_apps_overview.md)
-  - [Bulk uploader utility](./docs/external_apps_overview.md#bulk-uploader-utility)
-  - [Database seeder utility](./docs/external_apps_overview.md#database-seeder-utility)
+[Simple Chat Documentation | Simple Chat Documentation](https://microsoft.github.io/simplechat/)
+
+## Quick Deploy
+
+Use azd up [MORE DETAILS TO COME]
+
+```
+azd up
+```
+
+## Architecture
+
+![Architecture](./docs/images/architecture.png)
 
 ## Features
 
-- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT models.
+- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
 
 - **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
 
@@ -80,34 +62,15 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 - **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
 
-- **Backend Services**:
-
-  -   **Azure Cosmos DB**: Stores conversations, document metadata, user/group information, settings, and optionally archived chats and feedback.
-  -   **Azure AI Search**: Powers efficient hybrid search and retrieval over personal and group documents.
-  -   **Azure AI Document Intelligence**: Extracts text, layout, and structured data from PDFs, Office files, images, and more during ingestion.
-  -   **Azure Cache for Redis**: (Optional) Provides a distributed cache for session data, enabling seamless scaling and improved reliability.
-
 - **Supported File Types**:
 
   -   Text: `txt`, `md`, `html`, `json`
 
   *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
-  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif` (processed via Document Intelligence OCR)
-  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
-  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
-
-## Architecture-diagram
-
-![Architecture](./docs/images/architecture.png)
+  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
+  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm`
+  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a`
 
 ## Demos
 
-<a href="#simple-chat" style="text-decoration: none;">Return to top</a>
-
-### Upload document and review metadata
-
-![Upload Document Demo](./docs/images/UploadDocumentDemo.gif)
-
-### Classify document and chat with document
-
-![Chat with Searching your Documents Demo](./docs/images/ChatwithSearchingYourDocsDemo.gif)
+ADD DEMOS HERE
