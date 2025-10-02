@@ -14,7 +14,7 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
-from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault
+from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault, keyvault_agent_get_helper
 from functions_settings import *
 
 
@@ -86,6 +86,8 @@ def get_global_agents():
             query="SELECT * FROM c",
             enable_cross_partition_query=True
         ))
+        # Mask or replace sensitive keys for UI display
+        agents = [keyvault_agent_get_helper(agent, agent.get('id', ''), scope="global") for agent in agents]
         return agents
     except Exception as e:
         log_event(
