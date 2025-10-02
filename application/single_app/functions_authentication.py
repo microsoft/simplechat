@@ -483,6 +483,53 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def check_user_access_status(user_id):
+    """
+    Check if user access is currently allowed based on Control Center settings.
+    Returns (is_allowed: bool, reason: str)
+    """
+    try:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        
+        access_settings = user_settings.get('settings', {}).get('access', {})
+        status = access_settings.get('status', 'allow')
+        
+        if status == 'allow':
+            return True, None
+        
+        if status == 'deny':
+            datetime_to_allow = access_settings.get('datetime_to_allow')
+            if datetime_to_allow:
+                try:
+                    # Check if time-based restriction has expired
+                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    current_time = datetime.now(timezone.utc)
+                    
+                    if current_time >= allow_time:
+                        # Time-based restriction has expired, automatically restore access
+                        from functions_settings import update_user_settings
+                        update_user_settings(user_id, {
+                            'access': {
+                                'status': 'allow',
+                                'datetime_to_allow': None
+                            }
+                        })
+                        return True, None
+                    else:
+                        return False, f"Access denied until {datetime_to_allow}"
+                except ValueError:
+                    # Invalid datetime format, treat as permanent deny
+                    return False, "Access denied by administrator"
+            else:
+                return False, "Access denied by administrator"
+        
+        return True, None  # Default to allow if status is unknown
+        
+    except Exception as e:
+        print(f"Error checking user access status: {e}")
+        return True, None  # Default to allow on error to prevent lockouts
+
 def user_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -492,6 +539,85 @@ def user_required(f):
                   return jsonify({"error": "Forbidden", "message": "Insufficient permissions (User/Admin role required)"}), 403
              else:
                   return "Forbidden", 403
+        
+        # Check access control restrictions (admins bypass access control)
+        if 'Admin' not in user.get('roles', []):
+            user_id = user.get('oid') or user.get('sub')
+            if user_id:
+                is_allowed, reason = check_user_access_status(user_id)
+                if not is_allowed:
+                    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                        return jsonify({"error": "Access Denied", "message": reason}), 403
+                    else:
+                        return f"Access Denied: {reason}", 403
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+def file_upload_required(f):
+    """
+    Decorator to check if user is allowed to upload files to their personal workspace.
+    Should be used in addition to @login_required and @user_required.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = session.get('user', {})
+        
+        # Admins bypass file upload restrictions
+        if 'Admin' in user.get('roles', []):
+            return f(*args, **kwargs)
+        
+        user_id = user.get('oid') or user.get('sub')
+        if user_id:
+            try:
+                from functions_settings import get_user_settings
+                user_settings = get_user_settings(user_id)
+                
+                file_upload_settings = user_settings.get('settings', {}).get('file_uploads', {})
+                status = file_upload_settings.get('status', 'allow')
+                
+                if status == 'deny':
+                    datetime_to_allow = file_upload_settings.get('datetime_to_allow')
+                    if datetime_to_allow:
+                        try:
+                            # Check if time-based restriction has expired
+                            allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                            current_time = datetime.now(timezone.utc)
+                            
+                            if current_time >= allow_time:
+                                # Time-based restriction has expired, automatically restore access
+                                from functions_settings import update_user_settings
+                                update_user_settings(user_id, {
+                                    'file_uploads': {
+                                        'status': 'allow',
+                                        'datetime_to_allow': None
+                                    }
+                                })
+                                return f(*args, **kwargs)  # Allow the upload
+                            else:
+                                reason = f"File uploads to personal workspace are disabled until {datetime_to_allow}"
+                                if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                    return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                                else:
+                                    return f"File Upload Denied: {reason}", 403
+                        except ValueError:
+                            # Invalid datetime format, treat as permanent deny
+                            reason = "File uploads to personal workspace are disabled by administrator"
+                            if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                            else:
+                                return f"File Upload Denied: {reason}", 403
+                    else:
+                        # Permanent deny
+                        reason = "File uploads to personal workspace are disabled by administrator"
+                        if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                            return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                        else:
+                            return f"File Upload Denied: {reason}", 403
+            except Exception as e:
+                print(f"Error checking file upload permissions: {e}")
+                # Default to allow on error to prevent breaking functionality
+        
         return f(*args, **kwargs)
     return decorated_function
 

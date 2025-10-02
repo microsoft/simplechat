@@ -578,6 +578,9 @@
           <li>
             <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
           </li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+          </li>
           {% if app_settings.enable_content_safety %}
             {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
             <li>

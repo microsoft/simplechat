@@ -25,6 +25,7 @@ from datetime import datetime
 from route_frontend_authentication import *
 from route_frontend_profile import *
 from route_frontend_admin_settings import *
+from route_frontend_control_center import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
 from route_frontend_workflow import *
@@ -47,6 +48,7 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_control_center import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
@@ -437,6 +439,9 @@ register_route_frontend_profile(app)
 # ------------------- Admin Settings Routes --------------
 register_route_frontend_admin_settings(app)
 
+# ------------------- Control Center Routes --------------
+register_route_frontend_control_center(app)
+
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
 
@@ -497,6 +502,9 @@ register_route_backend_prompts(app)
 
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
+
+# ------------------- API Control Center Routes ---------
+register_route_backend_control_center(app)
 
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)

@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Center - {{ app_settings.app_title }}</title>
+    
+    <!-- Favicon -->
+    {% if app_settings.custom_favicon_base64 %}
+        <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}?v={{ app_settings.favicon_version | default(1) }}">
+    {% else %}
+        <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
+    {% endif %}
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/dark-mode.css">
+    
+    <style>
+        .control-center-stats .stat-card {
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease;
+        }
+        .control-center-stats .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--bs-primary);
+        }
+        .stat-change {
+            font-size: 0.875rem;
+        }
+        .stat-change.positive {
+            color: var(--bs-success);
+        }
+        .stat-change.negative {
+            color: var(--bs-danger);
+        }
+        .alert-item {
+            border-left: 4px solid;
+            background: rgba(var(--bs-warning-rgb), 0.1);
+            border-left-color: var(--bs-warning);
+        }
+        .alert-item.danger {
+            background: rgba(var(--bs-danger-rgb), 0.1);
+            border-left-color: var(--bs-danger);
+        }
+        .user-table th {
+            font-weight: 600;
+            background-color: var(--bs-light);
+        }
+        .access-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .access-allow {
+            background-color: var(--bs-success);
+            color: white;
+        }
+        .access-deny {
+            background-color: var(--bs-danger);
+            color: white;
+        }
+        .access-temporary {
+            background-color: var(--bs-warning);
+            color: black;
+        }
+        .pagination-controls {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            gap: 1rem;
+        }
+    </style>
+</head>
+<body data-bs-theme="auto">
+    <!-- Navigation -->
+    {% include '_sidebar_nav.html' %}
+    
+    <!-- Main Content -->
+    <div id="main-content" class="main-content">
+        <!-- Top Navigation Bar -->
+        {% include '_top_nav.html' %}
+        
+        <div class="container-fluid py-4">
+            <!-- Control Center Header -->
+            <div class="row mb-4">
+                <div class="col">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h1 class="h2 mb-1">
+                                <i class="bi bi-command me-2"></i>Control Center
+                            </h1>
+                            <p class="text-muted mb-0">Data and workspace management for administrators</p>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-primary" id="refreshStatsBtn">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Control Center Tabs -->
+            <div class="row">
+                <div class="col-12">
+                    <ul class="nav nav-tabs mb-4" id="controlCenterTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard" type="button" role="tab">
+                                <i class="bi bi-speedometer2 me-1"></i>Dashboard
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users" type="button" role="tab">
+                                <i class="bi bi-people me-1"></i>User Management
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button" role="tab">
+                                <i class="bi bi-collection me-1"></i>Group Management
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces" type="button" role="tab">
+                                <i class="bi bi-folder2-open me-1"></i>Public Workspace Management
+                            </button>
+                        </li>
+                    </ul>
+                    
+                    <div class="tab-content" id="controlCenterTabContent">
+                        <!-- Dashboard Tab -->
+                        <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+                            <!-- System Summary Cards -->
+                            <div class="row mb-4 control-center-stats">
+                                <div class="col-xl-3 col-md-6 mb-3">
+                                    <div class="card stat-card h-100">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalUsers">{{ statistics.total_users or 0 }}</div>
+                                                    <div class="text-muted small">Total Users</div>
+                                                    <div class="stat-change positive mt-1">
+                                                        <i class="bi bi-arrow-up"></i> +{{ statistics.active_users_30_days or 0 }} (30d)
+                                                    </div>
+                                                </div>
+                                                <div class="text-primary">
+                                                    <i class="bi bi-people-fill" style="font-size: 2rem;"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-xl-3 col-md-6 mb-3">
+                                    <div class="card stat-card h-100">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalGroups">{{ statistics.total_groups or 0 }}</div>
+                                                    <div class="text-muted small">Total Groups</div>
+                                                    <div class="stat-change">
+                                                        <span class="text-muted">{{ statistics.locked_groups or 0 }} locked</span>
+                                                    </div>
+                                                </div>
+                                                <div class="text-info">
+                                                    <i class="bi bi-collection-fill" style="font-size: 2rem;"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-xl-3 col-md-6 mb-3">
+                                    <div class="card stat-card h-100">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalWorkspaces">{{ statistics.total_public_workspaces or 0 }}</div>
+                                                    <div class="text-muted small">Public Workspaces</div>
+                                                    <div class="stat-change">
+                                                        <span class="text-muted">{{ statistics.hidden_workspaces or 0 }} hidden</span>
+                                                    </div>
+                                                </div>
+                                                <div class="text-success">
+                                                    <i class="bi bi-folder2-open" style="font-size: 2rem;"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-xl-3 col-md-6 mb-3">
+                                    <div class="card stat-card h-100">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="recentActivity">{{ statistics.recent_activity_24h.chats + statistics.recent_activity_24h.uploads + statistics.recent_activity_24h.logins }}</div>
+                                                    <div class="text-muted small">Recent Activity (24h)</div>
+                                                    <div class="stat-change">
+                                                        <small class="text-muted">
+                                                            {{ statistics.recent_activity_24h.chats }} chats, 
+                                                            {{ statistics.recent_activity_24h.uploads }} uploads
+                                                        </small>
+                                                    </div>
+                                                </div>
+                                                <div class="text-warning">
+                                                    <i class="bi bi-activity" style="font-size: 2rem;"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Key Alerts Section -->
+                            {% if statistics.alerts %}
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="card-title mb-0">
+                                                <i class="bi bi-exclamation-triangle me-2"></i>Key Alerts
+                                            </h5>
+                                        </div>
+                                        <div class="card-body">
+                                            {% for alert in statistics.alerts %}
+                                            <div class="alert-item p-3 mb-3 rounded {{ 'danger' if alert.type == 'danger' else '' }}">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <i class="bi bi-{{ 'exclamation-triangle-fill' if alert.type == 'danger' else 'info-circle-fill' }} me-2"></i>
+                                                        {{ alert.message }}
+                                                    </div>
+                                                    <button class="btn btn-sm btn-outline-primary" data-action="{{ alert.action }}">
+                                                        {{ alert.action }}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Activity Trends Placeholder -->
+                            <div class="row">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="card-title mb-0">
+                                                <i class="bi bi-graph-up me-2"></i>Activity Trends
+                                            </h5>
+                                        </div>
+                                        <div class="card-body text-center">
+                                            <p class="text-muted">Activity trend charts and analytics will be displayed here in future updates.</p>
+                                            <div class="placeholder-wave">
+                                                <div class="placeholder col-12" style="height: 200px;"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- User Management Tab -->
+                        <div class="tab-pane fade" id="users" role="tabpanel">
+                            <!-- User Management Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="userSearchInput" placeholder="Search users by name or email...">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="accessFilterSelect">
+                                        <option value="all">All Users</option>
+                                        <option value="allow">Allowed Access</option>
+                                        <option value="deny">Denied Access</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk Action
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshUsersBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Users Table -->
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover user-table" id="usersTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 50px;">
+                                                        <input type="checkbox" class="form-check-input" id="selectAllUsers">
+                                                    </th>
+                                                    <th>User</th>
+                                                    <th>Access Status</th>
+                                                    <th>File Upload Status</th>
+                                                    <th>Last Activity</th>
+                                                    <th>Documents</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="usersTableBody">
+                                                <tr>
+                                                    <td colspan="7" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading users...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="usersPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Users pagination">
+                                            <ul class="pagination mb-0" id="usersPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Group Management Tab -->
+                        <div class="tab-pane fade" id="groups" role="tabpanel">
+                            <div class="text-center py-5">
+                                <i class="bi bi-collection" style="font-size: 4rem; color: var(--bs-secondary);"></i>
+                                <h4 class="mt-3">Group Management</h4>
+                                <p class="text-muted">Group management functionality will be available in future updates.</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Public Workspace Management Tab -->
+                        <div class="tab-pane fade" id="workspaces" role="tabpanel">
+                            <div class="text-center py-5">
+                                <i class="bi bi-folder2-open" style="font-size: 4rem; color: var(--bs-secondary);"></i>
+                                <h4 class="mt-3">Public Workspace Management</h4>
+                                <p class="text-muted">Public workspace management functionality will be available in future updates.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- User Management Modal -->
+    <div class="modal fade" id="userManagementModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-person-gear me-2"></i>Manage User
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- User Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">User Information</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>Name:</strong> <span id="modalUserName">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Email:</strong> <span id="modalUserEmail">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Documents:</strong> <span id="modalUserDocuments">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Last Activity:</strong> <span id="modalUserLastActivity">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Access Control Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Access Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Access Status</label>
+                                        <select class="form-select" id="accessStatusSelect">
+                                            <option value="allow">Allow Access</option>
+                                            <option value="deny">Deny Access Permanently</option>
+                                            <option value="deny_until">Deny Access Until...</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="accessDateTimeGroup" style="display: none;">
+                                        <label class="form-label">Restore Access On</label>
+                                        <input type="datetime-local" class="form-control" id="accessDateTime">
+                                        <div class="form-text">User will automatically regain access at this date and time.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- File Upload Control Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">File Upload Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">File Upload Status</label>
+                                        <select class="form-select" id="fileUploadStatusSelect">
+                                            <option value="allow">Allow File Uploads</option>
+                                            <option value="deny">Deny File Uploads Permanently</option>
+                                            <option value="deny_until">Deny File Uploads Until...</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="fileUploadDateTimeGroup" style="display: none;">
+                                        <label class="form-label">Restore File Uploads On</label>
+                                        <input type="datetime-local" class="form-control" id="fileUploadDateTime">
+                                        <div class="form-text">User will automatically regain file upload permissions at this date and time.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveUserChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bulk Action Modal -->
+    <div class="modal fade" id="bulkActionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-gear-fill me-2"></i>Bulk User Action
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Action Type</label>
+                        <select class="form-select" id="bulkActionType">
+                            <option value="">Select action...</option>
+                            <option value="access">Update Access Control</option>
+                            <option value="file_uploads">Update File Upload Permissions</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3" id="bulkActionSettings" style="display: none;">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="bulkStatusSelect">
+                            <option value="allow">Allow</option>
+                            <option value="deny">Deny Permanently</option>
+                            <option value="deny_until">Deny Until...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3" id="bulkDateTimeGroup" style="display: none;">
+                        <label class="form-label">Restore On</label>
+                        <input type="datetime-local" class="form-control" id="bulkDateTime">
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This action will be applied to <strong id="selectedUserCount">0</strong> selected user(s).
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="executeBulkActionBtn">
+                        <i class="bi bi-gear-fill me-1"></i>Execute Action
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none" style="background: rgba(0,0,0,0.5); z-index: 9999;">
+        <div class="d-flex justify-content-center align-items-center h-100">
+            <div class="bg-white p-4 rounded">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Processing...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom Scripts -->
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/nav-layout.js"></script>
+    <script src="/static/js/control-center.js"></script>
+</body>
+</html>

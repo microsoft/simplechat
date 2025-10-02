@@ -101,6 +101,7 @@ def register_route_backend_documents(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @file_upload_required
     @enabled_required("enable_user_workspace")
     def api_user_upload_document():
         user_id = get_current_user_id()
