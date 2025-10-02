@@ -481,6 +481,106 @@
     </div>
     {% endif %}
 
+    <!-- Control Center Section - Only show when on control center page and user is admin -->
+    {% if request.endpoint == 'control_center' and 'Admin' in session['user']['roles'] %}
+    <div class="overflow-auto">
+      <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div class="d-flex align-items-center">
+          <span class="nav-text">Control Center</span>
+          <i id="control-center-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <button id="control-center-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Control Center">
+          <i class="bi bi-search" style="font-size: 0.9em;"></i>
+        </button>
+      </div>
+      
+      <!-- Control Center Search Field -->
+      <div id="control-center-search-container" class="px-3 mb-2" style="display: none;">
+        <div class="input-group input-group-sm">
+          <input type="text" id="control-center-search-input" class="form-control form-control-sm" placeholder="Search control center..." style="font-size: 0.85em;">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="control-center-search-clear">
+            <i class="bi bi-x" style="font-size: 0.8em;"></i>
+          </button>
+        </div>
+      </div>
+      <div id="control-center-section">
+        <ul class="nav flex-column mb-2">
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="dashboard">
+              <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Dashboard</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="users">
+              <i class="bi bi-people me-2"></i><span class="nav-text">User Management</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="users-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="users" data-section="user-list">
+                  <i class="bi bi-list-ul me-2" style="font-size: 0.8em;"></i><span class="nav-text">All Users</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="users" data-section="user-access-control">
+                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Access Control</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="users" data-section="user-activity">
+                  <i class="bi bi-activity me-2" style="font-size: 0.8em;"></i><span class="nav-text">Activity Tracking</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="groups">
+              <i class="bi bi-collection me-2"></i><span class="nav-text">Group Management</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="groups-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="groups" data-section="group-list">
+                  <i class="bi bi-list-ul me-2" style="font-size: 0.8em;"></i><span class="nav-text">All Groups</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="groups" data-section="group-permissions">
+                  <i class="bi bi-key me-2" style="font-size: 0.8em;"></i><span class="nav-text">Permissions</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="groups" data-section="group-activity">
+                  <i class="bi bi-graph-up me-2" style="font-size: 0.8em;"></i><span class="nav-text">Activity Tracking</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="workspaces">
+              <i class="bi bi-folder2-open me-2"></i><span class="nav-text">Public Workspaces</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="workspaces-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="workspaces" data-section="workspace-list">
+                  <i class="bi bi-list-ul me-2" style="font-size: 0.8em;"></i><span class="nav-text">All Workspaces</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="workspaces" data-section="workspace-visibility">
+                  <i class="bi bi-eye me-2" style="font-size: 0.8em;"></i><span class="nav-text">Visibility Control</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center control-center-nav-section" href="#" data-tab="workspaces" data-section="workspace-activity">
+                  <i class="bi bi-clock-history me-2" style="font-size: 0.8em;"></i><span class="nav-text">Activity Tracking</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">

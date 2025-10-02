@@ -1,26 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Center - {{ app_settings.app_title }}</title>
-    
-    <!-- Favicon -->
-    {% if app_settings.custom_favicon_base64 %}
-        <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}?v={{ app_settings.favicon_version | default(1) }}">
-    {% else %}
-        <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
-    {% endif %}
-    
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-    
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css">
-    <link rel="stylesheet" href="/static/css/dark-mode.css">
-    
+{% extends "base.html" %}
+{% block title %}
+    Control Center - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
     <style>
         .control-center-stats .stat-card {
             border: none;
@@ -80,66 +63,89 @@
             align-items: center;
             gap: 1rem;
         }
-    </style>
-</head>
-<body data-bs-theme="auto">
-    <!-- Navigation -->
-    {% include '_sidebar_nav.html' %}
-    
-    <!-- Main Content -->
-    <div id="main-content" class="main-content">
-        <!-- Top Navigation Bar -->
-        {% include '_top_nav.html' %}
         
-        <div class="container-fluid py-4">
-            <!-- Control Center Header -->
-            <div class="row mb-4">
-                <div class="col">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <h1 class="h2 mb-1">
-                                <i class="bi bi-command me-2"></i>Control Center
-                            </h1>
-                            <p class="text-muted mb-0">Data and workspace management for administrators</p>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-outline-primary" id="refreshStatsBtn">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Control Center Tabs -->
-            <div class="row">
-                <div class="col-12">
-                    <ul class="nav nav-tabs mb-4" id="controlCenterTabs" role="tablist">
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard" type="button" role="tab">
-                                <i class="bi bi-speedometer2 me-1"></i>Dashboard
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users" type="button" role="tab">
-                                <i class="bi bi-people me-1"></i>User Management
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups" type="button" role="tab">
-                                <i class="bi bi-collection me-1"></i>Group Management
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces" type="button" role="tab">
-                                <i class="bi bi-folder2-open me-1"></i>Public Workspace Management
-                            </button>
-                        </li>
-                    </ul>
-                    
-                    <div class="tab-content" id="controlCenterTabContent">
-                        <!-- Dashboard Tab -->
-                        <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+        /* Floating Save Button */
+        .floating-save-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 50px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+        
+        .floating-save-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .floating-save-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Ensure the button is visible above other content */
+        .floating-save-btn {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .floating-save-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: 140px;
+            }
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>Control Center</h2>
+    <p class="text-muted">Manage users, groups, and public workspaces for your Simple Chat application.</p>
+    <p class="text-muted">Version: {{ config['VERSION'] }}</p>
+    
+    <!-- Hide tabs when left navigation is enabled -->
+    {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+    {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
+    <ul class="nav nav-tabs" id="controlCenterTab" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard"
+                type="button" role="tab" aria-controls="dashboard" aria-selected="true">
+                <i class="bi bi-speedometer2 me-2"></i>Dashboard
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users"
+                type="button" role="tab" aria-controls="users" aria-selected="false">
+                <i class="bi bi-people me-2"></i>User Management
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups"
+                type="button" role="tab" aria-controls="groups" aria-selected="false">
+                <i class="bi bi-collection me-2"></i>Group Management
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces"
+                type="button" role="tab" aria-controls="workspaces" aria-selected="false">
+                <i class="bi bi-folder2-open me-2"></i>Public Workspaces
+            </button>
+        </li>
+    </ul>
+    {% endif %}
+
+    <div class="tab-content mt-3" id="controlCenterTabContent" style="padding-bottom:80px;">
+        <!-- Dashboard Tab -->
+        <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
                                 <div class="col-xl-3 col-md-6 mb-3">
@@ -528,13 +534,9 @@
             </div>
         </div>
     </div>
-    
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <!-- Custom Scripts -->
-    <script src="/static/js/theme.js"></script>
-    <script src="/static/js/nav-layout.js"></script>
-    <script src="/static/js/control-center.js"></script>
-</body>
-</html>
+</div>
+
+<!-- Control Center Scripts -->
+<script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
+{% endblock %}
