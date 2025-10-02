@@ -287,6 +287,45 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
                 return updated
     return updated
 
+def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
+    """
+    For agent dicts, retrieve sensitive keys from Key Vault if they are stored as Key Vault references.
+    Only processes 'azure_agent_apim_gpt_subscription_key' and 'azure_openai_gpt_key'.
+
+    Args:
+        agent_dict (dict): The agent dictionary to process.
+        scope_value (str): The value for the scope (e.g., agent id).
+        scope (str): The scope (e.g., 'user', 'global').
+
+    Returns:
+        dict: A new agent dict with sensitive values replaced by Key Vault references.
+    Raises:
+        Exception: If retrieving a key from Key Vault fails.
+    """
+    source = "agent"
+    updated = dict(agent_dict)
+    agent_name = updated.get('name', 'agent')
+    # Decide which key to retrieve based on enable_agent_gpt_apim
+    use_apim = updated.get('enable_agent_gpt_apim', False)
+    if use_apim:
+        key = 'azure_agent_apim_gpt_subscription_key'
+    else:
+        key = 'azure_openai_gpt_key'
+
+    if key in updated and updated[key]:
+        value = updated[key]
+        # If the value is a Key Vault reference, retrieve the actual key
+        if validate_secret_name_dynamic(value):
+            try:
+                """
+                actual_key = retrieve_secret_from_key_vault(value)
+                updated[key] = actual_key
+                """
+                updated[key] = ui_trigger_word
+            except Exception as e:
+                raise Exception(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
+    return updated
+
 def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
     """
     For plugin dicts, store the auth.key in Key Vault if auth.type is 'key', 'servicePrincipal', 'basic', or 'connection_string',
