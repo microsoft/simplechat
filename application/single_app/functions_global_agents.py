@@ -113,19 +113,10 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
-        """ Code to retrieve and replace Key Vault secrets if needed
-        if agent.get("enable_agent_gpt_apim", False):
-            key_value = agent["azure_openai_gpt_key"] = None  # Hide the standard OpenAI key if APIM is enabled
-        else:
-            key_value = agent["azure_agent_apim_gpt_subscription_key"]
-        if validate_secret_name_dynamic(key_value):
-            # Retrieve the actual key from Key Vault
-            actual_key = retrieve_secret_from_key_vault(key_value)
-            if agent.get("enable_agent_gpt_apim", False):
-                agent["azure_agent_apim_gpt_subscription_key"] = actual_key
-            else:
-                agent["azure_openai_gpt_key"] = actual_key
-        """
+        settings = get_settings()
+        # Code to retrieve and replace Key Vault secrets if needed
+        if settings.get("enable_key_vault_secret_storage", False):
+            agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
         print(f"✅ Found global agent: {agent_id}")
         return agent
     except Exception as e:
