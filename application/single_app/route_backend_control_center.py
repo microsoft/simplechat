@@ -287,6 +287,41 @@ def register_route_backend_control_center(app):
             current_app.logger.error(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
+    # Activity Trends API
+    @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_get_activity_trends():
+        """
+        Get activity trends data for the control center dashboard.
+        Returns aggregated activity data from various containers.
+        """
+        try:
+            days = int(request.args.get('days', 7))
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
+            
+            # Get activity data
+            activity_data = get_activity_trends_data(start_date, end_date)
+            
+            print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
+            
+            return jsonify({
+                'success': True,
+                'activity_data': activity_data,
+                'period': f"{days} days",
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat()
+            })
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting activity trends: {e}")
+            print(f"❌ [Activity Trends API] Error: {e}")
+            return jsonify({'error': 'Failed to retrieve activity trends'}), 500
+
 def enhance_user_with_activity(user):
     """
     Enhance user data with activity information and computed fields.
@@ -385,41 +420,6 @@ def enhance_user_with_activity(user):
     except Exception as e:
         current_app.logger.error(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
-
-    # Activity Trends API
-    @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @admin_required
-    def api_get_activity_trends():
-        """
-        Get activity trends data for the control center dashboard.
-        Returns aggregated activity data from various containers.
-        """
-        try:
-            days = int(request.args.get('days', 7))
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days)
-            
-            print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
-            
-            # Get activity data
-            activity_data = get_activity_trends_data(start_date, end_date)
-            
-            print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
-            
-            return jsonify({
-                'success': True,
-                'activity_data': activity_data,
-                'period': f"{days} days",
-                'start_date': start_date.isoformat(),
-                'end_date': end_date.isoformat()
-            })
-            
-        except Exception as e:
-            current_app.logger.error(f"Error getting activity trends: {e}")
-            print(f"❌ [Activity Trends API] Error: {e}")
-            return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
 def get_activity_trends_data(start_date, end_date):
     """
