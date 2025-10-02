@@ -45,13 +45,16 @@
               "description": "Auth type must be 'key', 'user', 'identity', 'servicePrincipal', 'connection_string', or 'basic'"
             },
             "key": {
-              "type": "string"
+              "type": "string",
+              "description": "The secret value for the plugin should be stored here, such as a SQL connection string, a password for a service principal or username/password combination"
             },
             "identity": {
-              "type": "string"
+              "type": "string",
+              "description": "This could be the Id of an (managed) identity, a user name, or similar to pair with the key, in most situations"
             },
             "tenantId": {
-              "type": "string"
+              "type": "string",
+              "description": "The Azure AD tenant ID used with Service Principal authentication"
             }
           },
           "required": ["type"],
