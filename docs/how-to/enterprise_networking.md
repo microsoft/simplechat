@@ -9,9 +9,14 @@ Enterprise networking for Simple Chat involves:
 - **Virtual Networks (VNets)**: Isolated network environments  
 - **Subnets**: Segmented network spaces for different components
 - **Private DNS Zones**: Internal name resolution
-- **Network Security Groups**: Traffic filtering and control
 
-![Architecture with Private Endpoints](../images/architecture-private-endpoints.png)
+### Networking in Azure Commercial
+
+![Architecture with Private Endpoints in Azure Commercial](../images/architecture-private-endpoints-commercial.png)
+
+### Networking in Azure Government
+
+![Architecture with Private Endpoints in Azure Government](../images/architecture-private-endpoints-government.png)
 
 ## Prerequisites
 

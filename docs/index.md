@@ -12,7 +12,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ## Features
 
-- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT models.
+- **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
 
 - **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
 
@@ -48,21 +48,14 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 - **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
 
-- **Backend Services**:
-
-  -   **Azure Cosmos DB**: Stores conversations, document metadata, user/group information, settings, and optionally archived chats and feedback.
-  -   **Azure AI Search**: Powers efficient hybrid search and retrieval over personal and group documents.
-  -   **Azure AI Document Intelligence**: Extracts text, layout, and structured data from PDFs, Office files, images, and more during ingestion.
-  -   **Azure Cache for Redis**: (Optional) Provides a distributed cache for session data, enabling seamless scaling and improved reliability.
-
 - **Supported File Types**:
 
   -   Text: `txt`, `md`, `html`, `json`
 
   *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
-  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif` (processed via Document Intelligence OCR)
-  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
-  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
+  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
+  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm`
+  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a`
 
 ## Architecture-diagram
 

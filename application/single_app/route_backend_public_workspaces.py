@@ -688,7 +688,7 @@ def register_route_backend_public_workspaces(app):
         return jsonify({"fileCount": file_count}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/promptCount", methods=["GET"])
-    @swagger_route(security=get_auth_security())s
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
