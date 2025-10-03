@@ -28,7 +28,6 @@ from route_frontend_profile import *
 from route_frontend_admin_settings import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
-from route_frontend_workflow import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
@@ -71,7 +70,7 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
-    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/tmp/flask_session')
+    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
     try:
         os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
     except Exception as e:
@@ -107,7 +106,7 @@ from route_external_health import *
 
 configure_azure_monitor()
 
-# =================== Session Configuration ===================
+
 def configure_sessions(settings):
     """Configure session backend (Redis or filesystem) once.
 
@@ -233,6 +232,7 @@ def before_first_request():
     timer_thread = threading.Thread(target=check_logging_timers, daemon=True)
     timer_thread.start()
     print("Logging timer background task started.")
+
 
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -383,9 +383,6 @@ register_route_frontend_admin_settings(app)
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
 
-# ------------------- Workflow Routes --------------------
-register_route_frontend_workflow(app)
-
 # ------------------- Conversations Routes ---------------
 register_route_frontend_conversations(app)
 
@@ -466,4 +463,3 @@ if __name__ == '__main__':
         # Production
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)
-
