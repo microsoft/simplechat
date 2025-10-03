@@ -1,6 +1,8 @@
 # Builder stage: install dependencies in a virtualenv
 FROM cgr.dev/chainguard/python:latest-dev AS builder
 
+USER root
+
 WORKDIR /app
 
 # Create a Python virtual environment

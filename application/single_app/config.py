@@ -88,6 +88,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
+# Allow overriding the session file directory; default to a writable location for non-root containers
+SESSION_FILE_DIR = os.getenv('SESSION_FILE_DIR', '/tmp/flask_session')
 VERSION = "0.229.062"
 
 
