@@ -9,7 +9,9 @@ class ControlCenter {
         this.accessFilter = 'all';
         this.selectedUsers = new Set();
         this.currentUser = null;
-        this.activityChart = null;
+        this.loginsChart = null;
+        this.chatsChart = null;
+        this.documentsChart = null;
         this.currentTrendDays = 30;
         
         this.init();
@@ -658,168 +660,185 @@ class ControlCenter {
             
             if (response.ok) {
                 console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
-                this.renderActivityChart(data.activity_data);
+                // Render all three charts
+                this.renderLoginsChart(data.activity_data);
+                this.renderChatsChart(data.activity_data);
+                this.renderDocumentsChart(data.activity_data);
+                // Ensure main loading overlay is hidden after all charts are created
+                this.showLoading(false);
             } else {
                 console.error('❌ [Frontend Debug] API error:', data.error);
-                this.showActivityTrendsError();
+                this.showAllChartsError();
+                // Ensure main loading overlay is hidden on API error
+                this.showLoading(false);
             }
         } catch (error) {
             console.error('❌ [Frontend Debug] Exception loading activity trends:', error);
-            this.showActivityTrendsError();
+            this.showAllChartsError();
+            // Ensure main loading overlay is hidden on error
+            this.showLoading(false);
         }
     }
     
-    renderActivityChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering chart with data:', activityData);
-        
+    renderLoginsChart(activityData) {
+        console.log('🔍 [Frontend Debug] Rendering logins chart with data:', activityData.logins);
+        this.renderSingleChart('loginsChart', 'logins', activityData.logins, {
+            label: 'Logins',
+            backgroundColor: 'rgba(255, 193, 7, 0.2)',
+            borderColor: '#ffc107'
+        });
+    }
+    
+    renderChatsChart(activityData) {
+        console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData.chats);
+        this.renderSingleChart('chatsChart', 'chats', activityData.chats, {
+            label: 'Chats',
+            backgroundColor: 'rgba(13, 110, 253, 0.2)',
+            borderColor: '#0d6efd'
+        });
+    }
+    
+    renderDocumentsChart(activityData) {
+        console.log('🔍 [Frontend Debug] Rendering documents chart with data:', activityData.documents);
+        this.renderSingleChart('documentsChart', 'documents', activityData.documents, {
+            label: 'Documents',
+            backgroundColor: 'rgba(25, 135, 84, 0.2)',
+            borderColor: '#198754'
+        });
+    }
+    
+    renderSingleChart(canvasId, chartType, chartData, chartConfig) {
         // Check if Chart.js is available
         if (typeof Chart === 'undefined') {
-            console.error('❌ [Frontend Debug] Chart.js is not loaded. Cannot render activity chart.');
-            this.showActivityTrendsError();
+            console.error(`❌ [Frontend Debug] Chart.js is not loaded. Cannot render ${chartType} chart.`);
+            this.showChartError(canvasId, chartType);
             return;
         }
         
-        const canvas = document.getElementById('activityTrendsChart');
+        const canvas = document.getElementById(canvasId);
         if (!canvas) {
-            console.error('❌ [Frontend Debug] Chart canvas element not found');
+            console.error(`❌ [Frontend Debug] Chart canvas element ${canvasId} not found`);
             return;
         }
         
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-            console.error('❌ [Frontend Debug] Could not get 2D context from canvas');
+            console.error(`❌ [Frontend Debug] Could not get 2D context from ${canvasId} canvas`);
             return;
         }
         
-        console.log('✅ [Frontend Debug] Chart.js loaded, canvas found, context ready');
+        console.log(`✅ [Frontend Debug] Chart.js loaded, ${canvasId} canvas found, context ready`);
         
-        // Hide loading indicator and show canvas
-        const loadingDiv = document.getElementById('activityTrendsLoading');
-        if (loadingDiv) loadingDiv.style.display = 'none';
+        // Show canvas
         canvas.style.display = 'block';
+        console.log(`🔍 [Frontend Debug] ${canvasId} canvas displayed`);
         
         // Destroy existing chart if it exists
-        if (this.activityChart) {
-            console.log('🔍 [Frontend Debug] Destroying existing chart');
-            this.activityChart.destroy();
+        const chartProperty = chartType + 'Chart';
+        if (this[chartProperty]) {
+            console.log(`🔍 [Frontend Debug] Destroying existing ${chartType} chart`);
+            this[chartProperty].destroy();
         }
         
         // Prepare data for Chart.js - convert object format to arrays
-        console.log('🔍 [Frontend Debug] Processing activity data structure...');
+        console.log(`🔍 [Frontend Debug] Processing ${chartType} data structure...`);
         
-        // Get all dates and sort them
-        const allDates = new Set();
-        if (activityData.chats) Object.keys(activityData.chats).forEach(date => allDates.add(date));
-        if (activityData.documents) Object.keys(activityData.documents).forEach(date => allDates.add(date));
-        if (activityData.logins) Object.keys(activityData.logins).forEach(date => allDates.add(date));
+        // Get dates and sort them
+        const dates = Object.keys(chartData || {}).sort();
+        console.log(`🔍 [Frontend Debug] ${chartType} date range:`, dates);
         
-        const sortedDates = Array.from(allDates).sort();
-        console.log('🔍 [Frontend Debug] Date range:', sortedDates);
-        
-        const labels = sortedDates.map(date => {
+        const labels = dates.map(date => {
             const dateObj = new Date(date);
             return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         });
         
-        console.log('🔍 [Frontend Debug] Chart labels:', labels);
+        const data = dates.map(date => chartData[date] || 0);
         
-        const datasets = [
-            {
-                label: 'Chats',
-                data: sortedDates.map(date => activityData.chats[date] || 0),
-                backgroundColor: 'rgba(13, 110, 253, 0.2)',
-                borderColor: '#0d6efd',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.1
-            },
-            {
-                label: 'Documents',
-                data: sortedDates.map(date => activityData.documents[date] || 0),
-                backgroundColor: 'rgba(25, 135, 84, 0.2)',
-                borderColor: '#198754',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.1
-            },
-            {
-                label: 'Logins',
-                data: sortedDates.map(date => activityData.logins[date] || 0),
-                backgroundColor: 'rgba(255, 193, 7, 0.2)',
-                borderColor: '#ffc107',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.1
-            }
-        ];
+        console.log(`🔍 [Frontend Debug] ${chartType} chart labels:`, labels);
+        console.log(`🔍 [Frontend Debug] ${chartType} chart data:`, data);
         
-        console.log('🔍 [Frontend Debug] Chart datasets prepared:', datasets);
+        const dataset = {
+            label: chartConfig.label,
+            data: data,
+            backgroundColor: chartConfig.backgroundColor,
+            borderColor: chartConfig.borderColor,
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1
+        };
+        
+        console.log(`🔍 [Frontend Debug] ${chartType} dataset prepared:`, dataset);
         
         // Create new chart
-        this.activityChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: datasets
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false // Using custom legend below chart
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        callbacks: {
-                            title: function(context) {
-                                const dataIndex = context[0].dataIndex;
-                                const date = new Date(activityData[dataIndex].date);
-                                return date.toLocaleDateString('en-US', { 
-                                    weekday: 'long', 
-                                    year: 'numeric', 
-                                    month: 'long', 
-                                    day: 'numeric' 
-                                });
-                            },
-                            afterBody: function(context) {
-                                const dataIndex = context[0].dataIndex;
-                                return `Total Activity: ${activityData[dataIndex].total}`;
+        try {
+            this[chartProperty] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [dataset]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false // Charts have headers instead
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                title: function(context) {
+                                    const dataIndex = context[0].dataIndex;
+                                    const dateStr = dates[dataIndex];
+                                    const date = new Date(dateStr);
+                                    return date.toLocaleDateString('en-US', { 
+                                        weekday: 'long', 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    });
+                                }
                             }
                         }
-                    }
-                },
-                scales: {
-                    x: {
-                        display: true,
-                        grid: {
-                            display: false
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            display: true,
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            },
+                            ticks: {
+                                precision: 0
+                            }
                         }
                     },
-                    y: {
-                        display: true,
-                        beginAtZero: true,
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.1)'
-                        },
-                        ticks: {
-                            precision: 0
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    elements: {
+                        point: {
+                            radius: 4,
+                            hoverRadius: 6
                         }
                     }
-                },
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
-                },
-                elements: {
-                    point: {
-                        radius: 4,
-                        hoverRadius: 6
-                    }
                 }
-            }
-        });
+            });
+            
+            console.log(`✅ [Frontend Debug] ${chartType} chart created successfully`);
+            
+        } catch (error) {
+            console.error(`❌ [Frontend Debug] Error creating ${chartType} chart:`, error);
+            this.showChartError(canvasId, chartType);
+        }
     }
     
     changeTrendPeriod(days) {
@@ -834,32 +853,62 @@ class ControlCenter {
         this.loadActivityTrends();
     }
     
-    showActivityTrendsError() {
-        const chartContainer = document.getElementById('activityTrendsChartContainer');
-        const canvas = document.getElementById('activityTrendsChart');
-        const loadingDiv = document.getElementById('activityTrendsLoading');
+    destroyAllCharts() {
+        // Destroy all chart instances
+        if (this.loginsChart) {
+            this.loginsChart.destroy();
+            this.loginsChart = null;
+        }
+        if (this.chatsChart) {
+            this.chatsChart.destroy();
+            this.chatsChart = null;
+        }
+        if (this.documentsChart) {
+            this.documentsChart.destroy();
+            this.documentsChart = null;
+        }
+        console.log('🔍 [Frontend Debug] All charts destroyed');
+    }
+    
+    showAllChartsError() {
+        // Show error for all three charts
+        this.showChartError('loginsChart', 'logins');
+        this.showChartError('chatsChart', 'chats');
+        this.showChartError('documentsChart', 'documents');
         
-        if (chartContainer) {
-            // Hide canvas and loading, show error
-            if (canvas) canvas.style.display = 'none';
-            if (loadingDiv) loadingDiv.style.display = 'none';
+        // Ensure main loading overlay is hidden when showing error
+        this.showLoading(false);
+        console.log('🔍 [Frontend Debug] Main loading overlay hidden after all charts error');
+    }
+    
+    showChartError(canvasId, chartType) {
+        const canvas = document.getElementById(canvasId);
+        const chartProperty = chartType + 'Chart';
+        
+        if (canvas) {
+            // Hide canvas
+            canvas.style.display = 'none';
             
             // Destroy existing chart if it exists
-            if (this.activityChart) {
-                this.activityChart.destroy();
-                this.activityChart = null;
+            if (this[chartProperty]) {
+                this[chartProperty].destroy();
+                this[chartProperty] = null;
             }
             
-            chartContainer.innerHTML = `
-                <canvas id="activityTrendsChart" style="display: none;"></canvas>
-                <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted">
-                    <i class="bi bi-exclamation-triangle fs-1 mb-2"></i>
-                    <p>Unable to load activity trends</p>
-                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.loadActivityTrends()">
-                        <i class="bi bi-arrow-clockwise me-1"></i>Retry
-                    </button>
-                </div>
-            `;
+            // Find the chart container (parent of canvas)
+            const chartContainer = canvas.parentElement;
+            if (chartContainer) {
+                chartContainer.innerHTML = `
+                    <canvas id="${canvasId}" style="display: none;"></canvas>
+                    <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted">
+                        <i class="bi bi-exclamation-triangle fs-3 mb-2"></i>
+                        <p class="small">Unable to load ${chartType}</p>
+                        <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.loadActivityTrends()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                        </button>
+                    </div>
+                `;
+            }
         }
     }
 }

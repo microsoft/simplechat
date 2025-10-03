@@ -123,22 +123,24 @@
             position: relative;
         }
         
-        #activityTrendsChart {
+        .activity-chart {
             width: 100% !important;
             height: 100% !important;
         }
         
-        #activityTrendsLoading .spinner-border {
-            width: 2rem;
-            height: 2rem;
+        #loginsChart, #chatsChart, #documentsChart {
+            width: 100% !important;
+            height: 100% !important;
         }
+        
+
     </style>
 {% endblock %}
 
 {% block content %}
 <div class="container">
     <h2>Control Center</h2>
-    <p class="text-muted">Manage users, groups, and public workspaces for your Simple Chat application.</p>
+    <p class="text-muted">Manage users and their workspaces, groups and their workspaces, and public workspaces.</p>
     
     <!-- Hide tabs when left navigation is enabled -->
     {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
@@ -176,7 +178,7 @@
         <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
-                                <div class="col-xl-3 col-md-6 mb-3">
+                                <div class="col-md-4 mb-3">
                                     <div class="card stat-card h-100">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
@@ -184,7 +186,7 @@
                                                     <div class="stat-number" id="totalUsers">{{ statistics.total_users or 0 }}</div>
                                                     <div class="text-muted small">Total Users</div>
                                                     <div class="stat-change positive mt-1">
-                                                        <i class="bi bi-arrow-up"></i> +{{ statistics.active_users_30_days or 0 }} (30d)
+                                                        <small class="text-success">{{ statistics.active_users_30_days or 0 }} unique users logged in last 30 days</small>
                                                     </div>
                                                 </div>
                                                 <div class="text-primary">
@@ -195,7 +197,7 @@
                                     </div>
                                 </div>
                                 
-                                <div class="col-xl-3 col-md-6 mb-3">
+                                <div class="col-md-4 mb-3">
                                     <div class="card stat-card h-100">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
@@ -203,7 +205,7 @@
                                                     <div class="stat-number" id="totalGroups">{{ statistics.total_groups or 0 }}</div>
                                                     <div class="text-muted small">Total Groups</div>
                                                     <div class="stat-change">
-                                                        <span class="text-muted">{{ statistics.locked_groups or 0 }} locked</span>
+                                                        <small class="text-info">{{ statistics.locked_groups or 0 }} created last 30 days</small>
                                                     </div>
                                                 </div>
                                                 <div class="text-info">
@@ -214,7 +216,7 @@
                                     </div>
                                 </div>
                                 
-                                <div class="col-xl-3 col-md-6 mb-3">
+                                <div class="col-md-4 mb-3">
                                     <div class="card stat-card h-100">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
@@ -222,7 +224,7 @@
                                                     <div class="stat-number" id="totalWorkspaces">{{ statistics.total_public_workspaces or 0 }}</div>
                                                     <div class="text-muted small">Public Workspaces</div>
                                                     <div class="stat-change">
-                                                        <span class="text-muted">{{ statistics.hidden_workspaces or 0 }} hidden</span>
+                                                        <small class="text-success">{{ statistics.hidden_workspaces or 0 }} created last 30 days</small>
                                                     </div>
                                                 </div>
                                                 <div class="text-success">
@@ -232,28 +234,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                
-                                <div class="col-xl-3 col-md-6 mb-3">
-                                    <div class="card stat-card h-100">
-                                        <div class="card-body">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="stat-number" id="recentActivity">{{ statistics.recent_activity_24h.chats + statistics.recent_activity_24h.uploads + statistics.recent_activity_24h.logins }}</div>
-                                                    <div class="text-muted small">Recent Activity (24h)</div>
-                                                    <div class="stat-change">
-                                                        <small class="text-muted">
-                                                            {{ statistics.recent_activity_24h.chats }} chats, 
-                                                            {{ statistics.recent_activity_24h.uploads }} uploads
-                                                        </small>
-                                                    </div>
-                                                </div>
-                                                <div class="text-warning">
-                                                    <i class="bi bi-activity" style="font-size: 2rem;"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+
                             </div>
                             
                             <!-- Key Alerts Section -->
@@ -286,56 +267,70 @@
                             </div>
                             {% endif %}
                             
-                            <!-- Activity Trends Chart -->
+                            <!-- Activity Trends Charts -->
                             <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-graph-up me-2"></i>Activity Trends
+                                        </h5>
+                                        <div class="btn-group" role="group">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-7days">7 Days</button>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm active" id="trend-30days">30 Days</button>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-90days">90 Days</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Logins Chart -->
+                            <div class="row mb-3">
                                 <div class="col-12">
                                     <div class="card">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h5 class="card-title mb-0">
-                                                <i class="bi bi-graph-up me-2"></i>Activity Trends
-                                            </h5>
-                                            <div class="btn-group" role="group">
-                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-7days">7 Days</button>
-                                                <button type="button" class="btn btn-outline-secondary btn-sm active" id="trend-30days">30 Days</button>
-                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-90days">90 Days</button>
-                                            </div>
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-box-arrow-in-right me-2 text-warning"></i>Logins
+                                            </h6>
                                         </div>
                                         <div class="card-body">
-                                            <div id="activityTrendsChartContainer" style="height: 400px; position: relative;">
-                                                <canvas id="activityTrendsChart" style="display: none;"></canvas>
-                                                <div id="activityTrendsLoading" class="d-flex justify-content-center align-items-center h-100">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading activity trends...</span>
-                                                    </div>
-                                                </div>
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="loginsChart"></canvas>
                                             </div>
-                                            <div class="mt-3">
-                                                <div class="row text-center">
-                                                    <div class="col-3">
-                                                        <div class="activity-legend">
-                                                            <div class="legend-color" style="background-color: #0d6efd;"></div>
-                                                            <small class="text-muted">Chats</small>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-3">
-                                                        <div class="activity-legend">
-                                                            <div class="legend-color" style="background-color: #198754;"></div>
-                                                            <small class="text-muted">Uploads</small>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-3">
-                                                        <div class="activity-legend">
-                                                            <div class="legend-color" style="background-color: #ffc107;"></div>
-                                                            <small class="text-muted">Logins</small>
-                                                        </div>
-                                                    </div>
-                                                    <div class="col-3">
-                                                        <div class="activity-legend">
-                                                            <div class="legend-color" style="background-color: #dc3545;"></div>
-                                                            <small class="text-muted">Documents</small>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Chats Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-chat-dots me-2 text-primary"></i>Chats
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="chatsChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Documents Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-file-earmark-text me-2 text-success"></i>Documents
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="documentsChart"></canvas>
                                             </div>
                                         </div>
                                     </div>
