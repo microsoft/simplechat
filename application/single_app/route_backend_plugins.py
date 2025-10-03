@@ -288,6 +288,7 @@ def set_user_plugins():
             plugin.setdefault('endpoint', f'sql://{plugin_type}')
         elif plugin_type == 'msgraph':
             # MS Graph plugin does not require an endpoint, but schema validation requires one
+            #TODO: Update to support different clouds
             plugin.setdefault('endpoint', 'https://graph.microsoft.com')
         else:
             # For other plugin types, require a real endpoint
