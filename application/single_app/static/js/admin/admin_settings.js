@@ -1519,6 +1519,13 @@ function setupToggles() {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
         enableEnhancedCitation.addEventListener('change', function(){
             toggleEnhancedCitation(this.checked);
+            
+            // Update workflow status when enhanced citations changes
+            const enableWorkflow = document.getElementById('enable_workflow');
+            if (enableWorkflow) {
+                toggleWorkflowSettings(enableWorkflow.checked);
+            }
+            
             markFormAsModified();
         });
     }
@@ -1545,6 +1552,15 @@ function setupToggles() {
     if (enableWebSearch) {
         enableWebSearch.addEventListener('change', function () {
             document.getElementById('web_search_settings').style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
+    const enableWorkflow = document.getElementById('enable_workflow');
+    if (enableWorkflow) {
+        toggleWorkflowSettings(enableWorkflow.checked);
+        enableWorkflow.addEventListener('change', function() {
+            toggleWorkflowSettings(this.checked);
             markFormAsModified();
         });
     }
@@ -2257,6 +2273,74 @@ function toggleEnhancedCitation(isEnabled) {
     const container = document.getElementById('enhanced_citation_settings');
     if (!container) return;
     container.style.display = isEnabled ? 'block' : 'none';
+}
+
+function toggleWorkflowSettings(isEnabled) {
+    const workflowSettings = document.getElementById('workflow_settings');
+    const enabledAlert = document.getElementById('workflow_enabled_alert');
+    const disabledAlert = document.getElementById('workflow_disabled_alert');
+    const enhancedCitationsEnabled = document.getElementById('enable_enhanced_citations')?.checked;
+    
+    if (!workflowSettings) return;
+    
+    if (isEnabled) {
+        if (enhancedCitationsEnabled) {
+            workflowSettings.style.display = 'block';
+            if (enabledAlert) enabledAlert.style.display = 'block';
+            if (disabledAlert) disabledAlert.style.display = 'none';
+        } else {
+            // Workflow requires enhanced citations - disable it
+            const workflowCheckbox = document.getElementById('enable_workflow');
+            if (workflowCheckbox) {
+                workflowCheckbox.checked = false;
+            }
+            workflowSettings.style.display = 'none';
+            if (enabledAlert) enabledAlert.style.display = 'none';
+            if (disabledAlert) disabledAlert.style.display = 'block';
+            
+            // Show a toast or alert to the user
+            showWorkflowDependencyWarning();
+        }
+    } else {
+        workflowSettings.style.display = 'none';
+        if (enabledAlert) enabledAlert.style.display = 'none';
+        if (disabledAlert) disabledAlert.style.display = 'block';
+    }
+}
+
+function showWorkflowDependencyWarning() {
+    // Create a Bootstrap toast to inform the user
+    const toastHtml = `
+        <div class="toast align-items-center text-white bg-warning border-0" role="alert" aria-live="assertive" aria-atomic="true" id="workflowDependencyToast">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    Workflow requires Enhanced Citations to be enabled first.
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    `;
+    
+    // Find or create toast container
+    let toastContainer = document.querySelector('.toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed top-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+    }
+    
+    // Add the toast
+    toastContainer.insertAdjacentHTML('beforeend', toastHtml);
+    
+    // Initialize and show the toast
+    const toast = new bootstrap.Toast(document.getElementById('workflowDependencyToast'));
+    toast.show();
+    
+    // Remove the toast element after it's hidden
+    document.getElementById('workflowDependencyToast').addEventListener('hidden.bs.toast', function() {
+        this.remove();
+    });
 }
 
 

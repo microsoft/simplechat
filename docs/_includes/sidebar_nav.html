@@ -1,0 +1,340 @@
+{% comment %} Sidebar Navigation Partial {% endcomment %}
+<div id="sidebar-nav" class="d-flex flex-column vh-100 border-end sidebar-expanded" style="width: 260px; min-width: 220px; position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
+  
+  <!-- Collapse/Expand button -->
+  <button type="button" id="sidebar-toggle-btn" class="btn btn-sm btn-outline-secondary position-absolute d-none d-sm-block"
+          aria-label="Toggle sidebar" title="Hide sidebar"
+          style="top: 1rem; right: 0.75rem; z-index: 1041; width: 28px; height: 28px; padding: 0; border-radius: 4px;"
+          onclick="toggleSidebar()">
+    <i id="sidebar-toggle-icon" class="bi bi-chevron-left" style="font-size: 0.875rem;"></i>
+  </button>
+  
+  <div class="p-3 border-bottom flex-shrink-0">
+    <a class="navbar-brand d-flex align-items-center mb-2" href="{{ '/' | relative_url }}">
+      <!-- Light mode logo -->
+      <img id="sidebar-logo" src="{{ site.logo.light_url | relative_url }}" 
+           alt="Logo" height="32" class="me-2 d-light-mode-only" />
+      <!-- Dark mode logo -->
+      <img id="sidebar-logo-dark" src="{{ site.logo.dark_url | relative_url }}" 
+           alt="Logo" height="32" class="me-2 d-dark-mode-only" />
+    </a>
+  </div>
+  
+  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
+    <ul class="nav flex-column">
+      {% if site.navigation.main_links %}
+        {% for link in site.navigation.main_links %}
+          <li class="nav-item">
+            {% if link.url == page.url %}
+              <span class="nav-link active">
+                <i class="{{ link.icon | default: 'bi bi-file-text' }} me-2"></i><span class="nav-text">{{ link.title }}</span>
+              </span>
+            {% else %}
+              <a class="nav-link" href="{{ link.url | relative_url }}">
+                <i class="{{ link.icon | default: 'bi bi-file-text' }} me-2"></i><span class="nav-text">{{ link.title }}</span>
+              </a>
+            {% endif %}
+          </li>
+        {% endfor %}
+      {% endif %}
+    </ul>
+
+    <!-- Documentation Sections -->
+    {% if site.navigation.show_sections %}
+    <div class="overflow-auto">
+      <div id="sections-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <span class="nav-text">Documentation</span>
+        <i id="sections-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+      </div>
+      <div id="sections-list">
+        <ul class="nav flex-column mb-2">
+          {% assign sections = site.pages | where_exp: "page", "page.section" | group_by: "section" | sort: "name" %}
+          {% for section in sections %}
+            <li class="nav-item">
+              <div class="nav-link d-flex align-items-center section-nav-toggle" data-target="{{ section.name | slugify }}-submenu">
+                <i class="bi bi-folder me-2"></i><span class="nav-text">{{ section.name | capitalize }}</span>
+                <i class="bi bi-caret-right-fill ms-auto transition section-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
+              </div>
+              <ul class="nav flex-column ms-3" id="{{ section.name | slugify }}-submenu" style="display: none;">
+                {% assign section_pages = section.items | sort: "title" %}
+                {% for doc_page in section_pages %}
+                  <li class="nav-item">
+                    {% if doc_page.url == page.url %}
+                      <span class="nav-link small active">{{ doc_page.title }}</span>
+                    {% else %}
+                      <a class="nav-link small" href="{{ doc_page.url | relative_url }}">{{ doc_page.title }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- External Links Section -->
+    {% if site.navigation.external_links %}
+    <div class="overflow-auto">
+      {% assign should_force_menu = site.navigation.external_links_force_menu %}
+      {% assign link_count = site.navigation.external_links | size %}
+      {% if should_force_menu or link_count >= 3 %}
+        <!-- Display as collapsible section -->
+        <div id="external-links-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+          <span class="nav-text">{{ site.navigation.external_links_menu_name | default: 'External Links' }}</span>
+          <i id="external-links-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <div id="external-links-section">
+          <ul class="nav flex-column mb-2">
+            {% for link in site.navigation.external_links %}
+            <li class="nav-item">
+              <a class="nav-link d-flex align-items-center" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                <i class="{{ link.icon | default: 'bi bi-box-arrow-up-right' }} me-2"></i><span class="nav-text">{{ link.title }}</span>
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% else %}
+        <!-- Display as individual nav items for 1-2 links -->
+        <div class="mt-2 mb-1 ps-3 pe-2 text-muted small" style="font-weight: 500; letter-spacing: 0.02em;">
+          <span class="nav-text">{{ site.navigation.external_links_menu_name | default: 'External Links' }}</span>
+        </div>
+        <ul class="nav flex-column mb-2">
+          {% for link in site.navigation.external_links %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+              <i class="{{ link.icon | default: 'bi bi-box-arrow-up-right' }} me-2"></i><span class="nav-text">{{ link.title }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  
+  <!-- Fixed User/Theme Section at Bottom -->
+  <div id="sidebar-user-account" class="border-top p-3 position-absolute bottom-0 start-0 end-0" style="background: inherit; z-index: 1050;">
+    <div class="dropdown">
+      <a class="nav-link dropdown-toggle p-0 d-flex align-items-center w-100" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
+        <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+          <i class="bi bi-person-fill text-white"></i>
+        </div>
+        <div class="d-flex flex-column justify-content-center flex-grow-1" style="line-height: 1; min-width: 0;">
+          <span class="fw-semibold text-truncate" style="font-size: 1rem;">Settings</span>
+          <span class="text-muted text-truncate" style="font-size: 0.75rem;">Theme & Navigation</span>
+        </div>
+      </a>
+      <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sidebarUserDropdown">
+        <li>
+          <a class="dropdown-item dark-mode-toggle" id="sidebarDarkModeToggle" role="button" href="#">
+            <i class="bi bi-moon-fill me-2 d-light-mode-only"></i>
+            <i class="bi bi-sun-fill me-2 d-dark-mode-only"></i>
+            <span class="d-light-mode-only">Dark Mode</span>
+            <span class="d-dark-mode-only">Light Mode</span>
+          </a>
+        </li>
+        {% if site.github.repository_url %}
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item" href="{{ site.github.repository_url }}" target="_blank" rel="noopener noreferrer">
+            <i class="bi bi-github me-2"></i>GitHub Repository
+          </a>
+        </li>
+        {% endif %}
+        {% if site.contact.enabled %}
+        <li>
+          <a class="dropdown-item" href="mailto:{{ site.contact.email }}">
+            <i class="bi bi-envelope me-2"></i>Contact
+          </a>
+        </li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+  
+  <script>
+    // Collapsible Sections
+    document.addEventListener('DOMContentLoaded', function() {
+      var toggle = document.getElementById('sections-toggle');
+      var section = document.getElementById('sections-list');
+      var caret = document.getElementById('sections-caret');
+      var collapsed = false;
+      if (toggle && section && caret) {
+        toggle.addEventListener('click', function() {
+          collapsed = !collapsed;
+          section.style.display = collapsed ? 'none' : '';
+          caret.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+
+      // Collapsible External Links Section
+      var externalLinksToggle = document.getElementById('external-links-toggle');
+      var externalLinksSection = document.getElementById('external-links-section');
+      var externalLinksCaret = document.getElementById('external-links-caret');
+      var externalLinksCollapsed = false;
+      if (externalLinksToggle && externalLinksSection && externalLinksCaret) {
+        externalLinksToggle.addEventListener('click', function() {
+          externalLinksCollapsed = !externalLinksCollapsed;
+          externalLinksSection.style.display = externalLinksCollapsed ? 'none' : '';
+          externalLinksCaret.style.transform = externalLinksCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+      }
+
+      // Section submenus
+      var sectionToggles = document.querySelectorAll('.section-nav-toggle');
+      sectionToggles.forEach(function(toggle) {
+        toggle.addEventListener('click', function() {
+          var targetId = toggle.getAttribute('data-target');
+          var submenu = document.getElementById(targetId);
+          var caret = toggle.querySelector('.section-caret');
+          if (submenu && caret) {
+            var isHidden = submenu.style.display === 'none' || submenu.style.display === '';
+            submenu.style.display = isHidden ? 'block' : 'none';
+            caret.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+          }
+        });
+      });
+    });
+
+    // Sidebar Toggle Functionality
+    function toggleSidebar() {
+      var sidebar = document.getElementById('sidebar-nav');
+      var toggleBtn = document.getElementById('sidebar-toggle-btn');
+      var floatingBtn = document.getElementById('floating-expand-btn');
+      var body = document.body;
+      
+      // Get all main content containers
+      var allContentElements = document.querySelectorAll('.main-content, .container, .container-fluid, #main-content');
+      var mainContent = document.getElementById('main-content');
+      
+      if (sidebar.classList.contains('sidebar-expanded')) {
+        // Hide sidebar completely
+        sidebar.classList.remove('sidebar-expanded');
+        sidebar.classList.add('sidebar-collapsed');
+        body.classList.add('sidebar-collapsed');
+        
+        // Remove sidebar-padding class from main content - CSS will handle the layout
+        if (mainContent) mainContent.classList.remove('sidebar-padding');
+        
+        // Hide the sidebar toggle button and show the floating button
+        toggleBtn.style.display = 'none';
+        floatingBtn.classList.remove('d-none');
+        floatingBtn.classList.add('d-block');
+        
+      } else {
+        // Show sidebar
+        sidebar.classList.remove('sidebar-collapsed');
+        sidebar.classList.add('sidebar-expanded');
+        body.classList.remove('sidebar-collapsed');
+        
+        // Add sidebar-padding class - CSS will handle the layout
+        if (mainContent) mainContent.classList.add('sidebar-padding');
+        
+        // Show the sidebar toggle button and hide the floating button
+        toggleBtn.style.display = 'block';
+        floatingBtn.classList.remove('d-block');
+        floatingBtn.classList.add('d-none');
+      }
+    }
+    
+    // Add CSS for collapsed state
+    var style = document.createElement('style');
+    style.textContent = `
+      #sidebar-nav {
+        transition: transform 0.3s ease;
+        position: relative;
+      }
+      
+      #sidebar-nav.sidebar-collapsed {
+        transform: translateX(-100%);
+      }
+      
+      /* Fixed user account section */
+      #sidebar-user-account {
+        width: 260px;
+        min-width: 220px;
+        transition: inherit;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      
+      /* Ensure user account section inherits background from sidebar */
+      #sidebar-user-account {
+        background-color: var(--bs-light, #f8f9fa) !important;
+      }
+      
+      /* Dark mode support for user account section */
+      [data-bs-theme="dark"] #sidebar-user-account {
+        background-color: var(--bs-dark, #212529) !important;
+        border-color: var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+      }
+      
+      /* Smooth transitions for content area adjustments */
+      .main-content,
+      .container,
+      .container-fluid,
+      #main-content {
+        transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out !important;
+      }
+      
+      /* Floating expand button styles */
+      #floating-expand-btn {
+        background-color: var(--bs-body-bg, #fff) !important;
+        border: 1px solid var(--bs-border-color, #dee2e6) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+        color: var(--bs-body-color, #212529) !important;
+      }
+      
+      /* Dark mode styles for floating expand button */
+      [data-bs-theme="dark"] #floating-expand-btn {
+        background-color: var(--bs-dark, #212529) !important;
+        border: 1px solid var(--bs-border-color-translucent, rgba(255,255,255,0.15)) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+        color: var(--bs-body-color, #fff) !important;
+      }
+      
+      /* Floating expand button hover effect */
+      #floating-expand-btn:hover {
+        background-color: var(--bs-gray-100, #f8f9fa) !important;
+        transform: scale(1.05);
+        transition: all 0.2s ease;
+      }
+      
+      /* Dark mode hover effect */
+      [data-bs-theme="dark"] #floating-expand-btn:hover {
+        background-color: var(--bs-gray-800, #343a40) !important;
+      }
+      
+      /* Sidebar title truncation styles */
+      .sidebar-title-truncate {
+        display: inline-block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        max-width: 140px; /* Default max width for no logo scenario */
+      }
+      
+      /* When logo is present, reduce max width */
+      [data-show-logo="true"].sidebar-title-truncate {
+        max-width: 80px; /* Reduced width for logo scenario */
+      }
+    `;
+    document.head.appendChild(style);
+  </script>
+</div>
+
+<!-- Floating expand button (shown when sidebar is collapsed) -->
+<button type="button" id="floating-expand-btn" class="btn btn-sm btn-outline-secondary d-none"
+        aria-label="Show sidebar" title="Show sidebar"
+        style="position: fixed; left: 0.5rem; top: 0.5rem; z-index: 1050; width: auto; min-width: 30px; height: 30px; padding: 3px; border-radius: 1px; display: flex; align-items: center; justify-content: center;"
+        onclick="toggleSidebar()">
+  <!-- Light mode logo -->
+  <img src="{{ site.logo.light_url | relative_url }}" 
+       alt="Logo" height="24" style="max-width: none;" class="d-light-mode-only" />
+  <!-- Dark mode logo -->
+  <img src="{{ site.logo.dark_url | relative_url }}" 
+       alt="Logo" height="24" style="max-width: none;" class="d-dark-mode-only" />
+</button>

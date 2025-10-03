@@ -15,6 +15,13 @@
           </a>
           {% endif %}
         </li>
+        {% if app_settings.enable_workflow and app_settings.enable_enhanced_citations %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('workflow') }}">
+            <i class="bi bi-diagram-3 me-2"></i><span class="nav-text">Workflow</span>
+          </a>
+        </li>
+        {% endif %}
       {% endif %}
     </ul>
 
