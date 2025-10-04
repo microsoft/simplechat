@@ -8,6 +8,632 @@ from functions_activity_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 import json
+from functions_debug import debug_print
+
+def enhance_user_with_activity(user):
+    """
+    Enhance user data with activity information and computed fields.
+    """
+    try:
+        enhanced = {
+            'id': user.get('id'),
+            'email': user.get('email', ''),
+            'display_name': user.get('display_name', ''),
+            'lastUpdated': user.get('lastUpdated'),
+            'settings': user.get('settings', {}),
+            'profile_image': user.get('settings', {}).get('profileImage'),  # Extract profile image
+            'activity': {
+                'login_metrics': {
+                    'total_logins': 0,
+                    'last_login': None
+                },
+                'chat_metrics': {
+                    'last_day_conversations': 0,
+                    'total_conversations': 0,
+                    'total_messages': 0,
+                    'total_content_size': 0  # Based on actual message content length
+                },
+                'document_metrics': {
+                    'personal_workspace_enabled': user.get('settings', {}).get('enable_personal_workspace', False),
+                    'enhanced_citation_enabled': user.get('settings', {}).get('enable_enhanced_citation', False),
+                    'last_day_uploads': 0,
+                    'total_documents': 0,
+                    'ai_search_size': 0,  # pages × 80KB
+                    'storage_account_size': 0  # Actual file sizes from storage
+                }
+            },
+            'access_status': 'allow',  # default
+            'file_upload_status': 'allow'  # default
+        }
+        
+        # Extract access status
+        access_settings = user.get('settings', {}).get('access', {})
+        if access_settings.get('status') == 'deny':
+            datetime_to_allow = access_settings.get('datetime_to_allow')
+            if datetime_to_allow:
+                # Check if time-based restriction has expired
+                try:
+                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00') if 'Z' in datetime_to_allow else datetime_to_allow)
+                    if datetime.now(timezone.utc) >= allow_time:
+                        enhanced['access_status'] = 'allow'  # Expired, should be auto-restored
+                    else:
+                        enhanced['access_status'] = f"deny_until_{datetime_to_allow}"
+                except:
+                    enhanced['access_status'] = 'deny'
+            else:
+                enhanced['access_status'] = 'deny'
+        
+        # Extract file upload status
+        file_upload_settings = user.get('settings', {}).get('file_uploads', {})
+        if file_upload_settings.get('status') == 'deny':
+            datetime_to_allow = file_upload_settings.get('datetime_to_allow')
+            if datetime_to_allow:
+                # Check if time-based restriction has expired
+                try:
+                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00') if 'Z' in datetime_to_allow else datetime_to_allow)
+                    if datetime.now(timezone.utc) >= allow_time:
+                        enhanced['file_upload_status'] = 'allow'  # Expired, should be auto-restored
+                    else:
+                        enhanced['file_upload_status'] = f"deny_until_{datetime_to_allow}"
+                except:
+                    enhanced['file_upload_status'] = 'deny'
+            else:
+                enhanced['file_upload_status'] = 'deny'
+        
+        
+        # Try to get comprehensive conversation metrics
+        try:
+            # Get all user conversations with last_updated info
+            user_conversations_query = """
+                SELECT c.id, c.last_updated FROM c WHERE c.user_id = @user_id
+            """
+            user_conversations_params = [{"name": "@user_id", "value": user.get('id')}]
+            user_conversations = list(cosmos_conversations_container.query_items(
+                query=user_conversations_query,
+                parameters=user_conversations_params,
+                enable_cross_partition_query=True
+            ))
+            
+            # Total conversations count (all time)
+            enhanced['activity']['chat_metrics']['total_conversations'] = len(user_conversations)
+            
+            # Find last day conversation (most recent conversation with latest last_updated)
+            last_day_conversation = None
+            if user_conversations:
+                # Sort by last_updated to get the most recent
+                sorted_conversations = sorted(
+                    user_conversations, 
+                    key=lambda x: x.get('last_updated', ''), 
+                    reverse=True
+                )
+                if sorted_conversations:
+                    most_recent_conv = sorted_conversations[0]
+                    last_updated = most_recent_conv.get('last_updated')
+                    if last_updated:
+                        # Parse the date and format as MM/DD/YYYY
+                        try:
+                            date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                            last_day_conversation = date_obj.strftime('%m/%d/%Y')
+                        except:
+                            last_day_conversation = 'Invalid date'
+            
+            enhanced['activity']['chat_metrics']['last_day_conversation'] = last_day_conversation or 'Never'
+            
+            # Get message count and total size using two-step query approach
+            if user_conversations:
+                conversation_ids = [conv['id'] for conv in user_conversations]
+                total_messages = 0
+                total_message_size = 0
+                
+                # Process conversations in batches to avoid query limits
+                batch_size = 10
+                for i in range(0, len(conversation_ids), batch_size):
+                    batch_ids = conversation_ids[i:i+batch_size]
+                    
+                    # Use parameterized query with IN clause for message querying
+                    try:
+                        # Build the IN parameters for the batch
+                        in_params = []
+                        param_placeholders = []
+                        for j, conv_id in enumerate(batch_ids):
+                            param_name = f"@conv_id_{j}"
+                            param_placeholders.append(param_name)
+                            in_params.append({"name": param_name, "value": conv_id})
+                        
+                        # Split into separate queries to avoid MultipleAggregates issue
+                        # First query: Get message count
+                        messages_count_query = f"""
+                            SELECT VALUE COUNT(1)
+                            FROM m
+                            WHERE m.conversation_id IN ({', '.join(param_placeholders)})
+                        """
+                        
+                        count_result = list(cosmos_messages_container.query_items(
+                            query=messages_count_query,
+                            parameters=in_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        batch_messages = count_result[0] if count_result else 0
+                        total_messages += batch_messages
+                        
+                        # Second query: Get message size 
+                        messages_size_query = f"""
+                            SELECT VALUE SUM(LENGTH(TO_STRING(m)))
+                            FROM m
+                            WHERE m.conversation_id IN ({', '.join(param_placeholders)})
+                        """
+                        
+                        size_result = list(cosmos_messages_container.query_items(
+                            query=messages_size_query,
+                            parameters=in_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        batch_size = size_result[0] if size_result else 0
+                        total_message_size += batch_size or 0
+                        
+                        current_app.logger.debug(f"Messages batch {i//batch_size + 1}: {batch_messages} messages, {batch_size or 0} bytes")
+                                
+                    except Exception as msg_e:
+                        current_app.logger.error(f"Could not query message sizes for batch {i//batch_size + 1}: {msg_e}")
+                        # Try individual conversation queries as fallback
+                        for conv_id in batch_ids:
+                            try:
+                                individual_params = [{"name": "@conv_id", "value": conv_id}]
+                                
+                                # Individual count query
+                                individual_count_query = """
+                                    SELECT VALUE COUNT(1)
+                                    FROM m
+                                    WHERE m.conversation_id = @conv_id
+                                """
+                                count_result = list(cosmos_messages_container.query_items(
+                                    query=individual_count_query,
+                                    parameters=individual_params,
+                                    enable_cross_partition_query=True
+                                ))
+                                total_messages += count_result[0] if count_result else 0
+                                
+                                # Individual size query
+                                individual_size_query = """
+                                    SELECT VALUE SUM(LENGTH(TO_STRING(m)))
+                                    FROM m
+                                    WHERE m.conversation_id = @conv_id
+                                """
+                                size_result = list(cosmos_messages_container.query_items(
+                                    query=individual_size_query,
+                                    parameters=individual_params,
+                                    enable_cross_partition_query=True
+                                ))
+                                total_message_size += size_result[0] if size_result and size_result[0] else 0
+                                    
+                            except Exception as individual_e:
+                                current_app.logger.debug(f"Could not query individual conversation {conv_id}: {individual_e}")
+                                continue
+                
+                enhanced['activity']['chat_metrics']['total_messages'] = total_messages
+                enhanced['activity']['chat_metrics']['total_message_size'] = total_message_size
+                current_app.logger.debug(f"Final chat metrics for user {user.get('id')}: {total_messages} messages, {total_message_size} bytes")
+            
+        except Exception as e:
+            current_app.logger.debug(f"Could not get chat metrics for user {user.get('id')}: {e}")
+        
+        # Try to get comprehensive login metrics
+        try:
+            # Get total login count (all time)
+            total_logins_query = """
+                SELECT VALUE COUNT(1) FROM c 
+                WHERE c.user_id = @user_id AND c.activity_type = 'user_login'
+            """
+            login_params = [{"name": "@user_id", "value": user.get('id')}]
+            total_logins = list(cosmos_activity_logs_container.query_items(
+                query=total_logins_query,
+                parameters=login_params,
+                enable_cross_partition_query=True
+            ))
+            enhanced['activity']['login_metrics']['total_logins'] = total_logins[0] if total_logins else 0
+            
+            # Get last login timestamp
+            last_login_query = """
+                SELECT TOP 1 c.timestamp, c.created_at FROM c 
+                WHERE c.user_id = @user_id AND c.activity_type = 'user_login'
+                ORDER BY c.timestamp DESC
+            """
+            last_login_result = list(cosmos_activity_logs_container.query_items(
+                query=last_login_query,
+                parameters=login_params,
+                enable_cross_partition_query=True
+            ))
+            if last_login_result:
+                login_record = last_login_result[0]
+                enhanced['activity']['login_metrics']['last_login'] = login_record.get('timestamp') or login_record.get('created_at')
+                
+        except Exception as e:
+            current_app.logger.debug(f"Could not get login metrics for user {user.get('id')}: {e}")
+        
+        # Try to get comprehensive document metrics
+        try:
+            # Get document count using separate query (avoid MultipleAggregates issue)
+            doc_count_query = """
+                SELECT VALUE COUNT(1)
+                FROM c 
+                WHERE c.user_id = @user_id AND c.type = 'document_metadata'
+            """
+            doc_metrics_params = [{"name": "@user_id", "value": user.get('id')}]
+            doc_count_result = list(cosmos_user_documents_container.query_items(
+                query=doc_count_query,
+                parameters=doc_metrics_params,
+                enable_cross_partition_query=True
+            ))
+            
+            # Get total pages using separate query 
+            doc_pages_query = """
+                SELECT VALUE SUM(c.number_of_pages)
+                FROM c 
+                WHERE c.user_id = @user_id AND c.type = 'document_metadata'
+            """
+            doc_pages_result = list(cosmos_user_documents_container.query_items(
+                query=doc_pages_query,
+                parameters=doc_metrics_params,
+                enable_cross_partition_query=True
+            ))
+            
+            total_docs = doc_count_result[0] if doc_count_result else 0
+            total_pages = doc_pages_result[0] if doc_pages_result and doc_pages_result[0] else 0
+            
+            enhanced['activity']['document_metrics']['total_documents'] = total_docs
+            # AI search size = pages × 80KB
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            
+            # Get last day document upload (most recent last_updated date, formatted as MM/DD/YYYY)
+            last_doc_query = """
+                SELECT TOP 1 c.last_updated
+                FROM c 
+                WHERE c.user_id = @user_id AND c.type = 'document_metadata'
+                ORDER BY c.last_updated DESC
+            """
+            last_doc_result = list(cosmos_user_documents_container.query_items(
+                query=last_doc_query,
+                parameters=doc_metrics_params,
+                enable_cross_partition_query=True
+            ))
+            
+            last_day_upload = 'Never'
+            if last_doc_result and last_doc_result[0]:
+                last_updated = last_doc_result[0].get('last_updated')
+                if last_updated:
+                    try:
+                        date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                        last_day_upload = date_obj.strftime('%m/%d/%Y')
+                    except:
+                        last_day_upload = 'Invalid date'
+            
+            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
+            
+            # Get actual storage account size if enhanced citation is enabled
+            if enhanced['activity']['document_metrics']['enhanced_citation_enabled']:
+                try:
+                    # Query actual file sizes from Azure Storage
+                    storage_client = CLIENTS.get("storage_account_office_docs_client")
+                    if storage_client:
+                        user_folder_prefix = f"{user.get('id')}/"
+                        total_storage_size = 0
+                        
+                        # List all blobs in the user's folder
+                        container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
+                        blob_list = container_client.list_blobs(name_starts_with=user_folder_prefix)
+                        
+                        for blob in blob_list:
+                            total_storage_size += blob.size
+                            current_app.logger.debug(f"Storage blob {blob.name}: {blob.size} bytes")
+                        
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        current_app.logger.debug(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
+                    else:
+                        current_app.logger.debug(f"Storage client not available for user {user.get('id')}")
+                        # Fallback to estimation if storage client not available
+                        storage_size_query = """
+                            SELECT c.file_name, c.number_of_pages FROM c 
+                            WHERE c.user_id = @user_id AND c.type = 'document_metadata'
+                        """
+                        storage_docs = list(cosmos_user_documents_container.query_items(
+                            query=storage_size_query,
+                            parameters=doc_metrics_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        total_storage_size = 0
+                        for doc in storage_docs:
+                            # Estimate file size based on pages and file type
+                            pages = doc.get('number_of_pages', 1)
+                            file_name = doc.get('file_name', '')
+                            
+                            if file_name.lower().endswith('.pdf'):
+                                # PDF: ~500KB per page average
+                                estimated_size = pages * 500 * 1024
+                            elif file_name.lower().endswith(('.docx', '.doc')):
+                                # Word docs: ~300KB per page average
+                                estimated_size = pages * 300 * 1024
+                            elif file_name.lower().endswith(('.pptx', '.ppt')):
+                                # PowerPoint: ~800KB per page average
+                                estimated_size = pages * 800 * 1024
+                            else:
+                                # Other files: ~400KB per page average
+                                estimated_size = pages * 400 * 1024
+                            
+                            total_storage_size += estimated_size
+                        
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        current_app.logger.debug(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
+                    
+                except Exception as storage_e:
+                    current_app.logger.debug(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
+                    # Set to 0 if we can't calculate
+                    enhanced['activity']['document_metrics']['storage_account_size'] = 0
+                
+        except Exception as e:
+            current_app.logger.debug(f"Could not get document metrics for user {user.get('id')}: {e}")
+        
+        return enhanced
+        
+    except Exception as e:
+        current_app.logger.error(f"Error enhancing user data: {e}")
+        return user  # Return original user data if enhancement fails
+
+def get_activity_trends_data(start_date, end_date):
+    """
+    Get aggregated activity data for the specified date range from existing containers.
+    Returns daily activity counts by type using real application data.
+    """
+    try:
+        # Debug logging
+        print(f"🔍 [ACTIVITY TRENDS DEBUG] Getting data for range: {start_date} to {end_date}")
+        
+        # Convert string dates to datetime objects if needed
+        if isinstance(start_date, str):
+            start_date = datetime.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = datetime.fromisoformat(end_date)
+        
+        # Initialize daily data structure
+        daily_data = {}
+        current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        while current_date <= end_date:
+            date_key = current_date.strftime('%Y-%m-%d')
+            daily_data[date_key] = {
+                'date': date_key,
+                'chats': 0,
+                'documents': 0,
+                'logins': 0,
+                'total': 0
+            }
+            current_date += timedelta(days=1)
+        
+        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Initialized {len(daily_data)} days of data: {list(daily_data.keys())}")
+        
+        # Parameters for queries
+        parameters = [
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()}
+        ]
+        
+        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Query parameters: {parameters}")
+        
+        # Query 1: Get chat activity from conversations and messages containers
+        try:
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying conversations...")
+            
+            # Count conversations updated in date range (using last_updated field)
+            conversations_query = """
+                SELECT c.last_updated
+                FROM c 
+                WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
+            """
+            
+            # Process conversations
+            conversations = list(cosmos_conversations_container.query_items(
+                query=conversations_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversations")
+            
+            for conv in conversations:
+                last_updated = conv.get('last_updated')
+                if last_updated:
+                    try:
+                        if isinstance(last_updated, str):
+                            conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00') if 'Z' in last_updated else last_updated)
+                        else:
+                            conv_date = last_updated
+                        
+                        date_key = conv_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['chats'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse conversation timestamp {last_updated}: {e}")
+            
+            # Note: Only using conversations.last_updated for chat activity tracking
+            # as requested - not using individual message timestamps
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query conversation/message data: {e}")
+            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
+
+        # Query 2: Get document activity
+        try:
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents...")
+            
+            documents_query = """
+                SELECT c.upload_date
+                FROM c 
+                WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
+            """
+            
+            # Query all document containers
+            containers = [
+                ('user_documents', cosmos_user_documents_container),
+                ('group_documents', cosmos_group_documents_container), 
+                ('public_documents', cosmos_public_documents_container)
+            ]
+            
+            total_docs = 0
+            for container_name, container in containers:
+                docs = list(container.query_items(
+                    query=documents_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} documents in {container_name}")
+                total_docs += len(docs)
+                
+                for doc in docs:
+                    # Use upload_date field as specified
+                    upload_date = doc.get('upload_date')
+                    
+                    if upload_date:
+                        try:
+                            if isinstance(upload_date, str):
+                                doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
+                            else:
+                                doc_date = upload_date
+                            
+                            date_key = doc_date.strftime('%Y-%m-%d')
+                            if date_key in daily_data:
+                                daily_data[date_key]['documents'] += 1
+                        except Exception as e:
+                            current_app.logger.debug(f"Could not parse document upload_date {upload_date}: {e}")
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {total_docs}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query document data: {e}")
+            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying documents: {e}")
+
+        # Query 3: Get login activity from activity_logs container
+        try:
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying login activity...")
+            
+            # First, let's check what's actually in the activity_logs container
+            sample_query = """
+                SELECT TOP 10 c.id, c.activity_type, c.login_method, c.timestamp, c.created_at, c.user_id
+                FROM c 
+                ORDER BY c.timestamp DESC
+            """
+            
+            sample_records = list(cosmos_activity_logs_container.query_items(
+                query=sample_query,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample activity_logs records: {sample_records}")
+            
+            # Count total records with login_method
+            count_query = """
+                SELECT VALUE COUNT(1)
+                FROM c 
+                WHERE c.login_method != null
+            """
+            
+            login_count = list(cosmos_activity_logs_container.query_items(
+                query=count_query,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total records with login_method: {login_count[0] if login_count else 0}")
+            
+            # Query for login records using the correct activity_type
+            # The data shows records have activity_type: "user_login" and proper timestamps
+            login_query = """
+                SELECT c.timestamp, c.created_at, c.activity_type, c.login_method, c.user_id
+                FROM c 
+                WHERE c.activity_type = 'user_login'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            login_activities = list(cosmos_activity_logs_container.query_items(
+                query=login_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(login_activities)} user_login records")
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Date range: {start_date.isoformat()} to {end_date.isoformat()}")
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample login records: {login_activities[:3] if login_activities else 'None'}")
+            
+            # Also check with a simpler query to see if date filtering is the issue
+            if len(login_activities) == 0:
+                simple_query = """
+                    SELECT TOP 5 c.timestamp, c.created_at, c.activity_type
+                    FROM c 
+                    WHERE c.activity_type = 'user_login'
+                    ORDER BY c.timestamp DESC
+                """
+                
+                simple_results = list(cosmos_activity_logs_container.query_items(
+                    query=simple_query,
+                    enable_cross_partition_query=True
+                ))
+                
+                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Recent login records (no date filter): {simple_results}")
+            
+            for login in login_activities:
+                timestamp = login.get('timestamp') or login.get('created_at')
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            login_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            login_date = timestamp
+                        
+                        date_key = login_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['logins'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse login timestamp {timestamp}: {e}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query activity logs for login data: {e}")
+            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying logins: {e}")
+
+        # Calculate totals for each day
+        for date_key in daily_data:
+            daily_data[date_key]['total'] = (
+                daily_data[date_key]['chats'] + 
+                daily_data[date_key]['documents'] + 
+                daily_data[date_key]['logins']
+            )
+
+        # Group by activity type for chart display  
+        result = {
+            'chats': {},
+            'documents': {},
+            'logins': {}
+        }
+        
+        for date_key, data in daily_data.items():
+            result['chats'][date_key] = data['chats']
+            result['documents'][date_key] = data['documents'] 
+            result['logins'][date_key] = data['logins']
+        
+        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")
+        
+        return result
+
+    except Exception as e:
+        current_app.logger.error(f"Error getting activity trends data: {e}")
+        print(f"❌ [ACTIVITY TRENDS DEBUG] Fatal error: {e}")
+        return {
+            'chats': {},
+            'documents': {},
+            'logins': {}
+        }
+
 
 def register_route_backend_control_center(app):
     
@@ -114,7 +740,7 @@ def register_route_backend_control_center(app):
             if datetime_to_allow:
                 try:
                     # Validate ISO 8601 format
-                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00') if 'Z' in datetime_to_allow else datetime_to_allow)
                 except ValueError:
                     return jsonify({'error': 'Invalid datetime format. Use ISO 8601 format'}), 400
             
@@ -170,7 +796,7 @@ def register_route_backend_control_center(app):
             if datetime_to_allow:
                 try:
                     # Validate ISO 8601 format
-                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00') if 'Z' in datetime_to_allow else datetime_to_allow)
                 except ValueError:
                     return jsonify({'error': 'Invalid datetime format. Use ISO 8601 format'}), 400
             
@@ -235,7 +861,7 @@ def register_route_backend_control_center(app):
             # Validate datetime_to_allow if provided
             if datetime_to_allow:
                 try:
-                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00') if 'Z' in datetime_to_allow else datetime_to_allow)
                 except ValueError:
                     return jsonify({'error': 'Invalid datetime format. Use ISO 8601 format'}), 400
             
@@ -298,12 +924,26 @@ def register_route_backend_control_center(app):
         Returns aggregated activity data from various containers.
         """
         try:
-            days = int(request.args.get('days', 7))
-            # Set end_date to end of current day to include all of today's records
-            end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-            start_date = (end_date - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+            # Check if custom start_date and end_date are provided
+            custom_start = request.args.get('start_date')
+            custom_end = request.args.get('end_date')
             
-            print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
+            if custom_start and custom_end:
+                # Use custom date range
+                try:
+                    start_date = datetime.fromisoformat(custom_start).replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_date = datetime.fromisoformat(custom_end).replace(hour=23, minute=59, second=59, microsecond=999999)
+                    days = (end_date - start_date).days + 1
+                    print(f"🔍 [Activity Trends API] Custom date range: {start_date} to {end_date} ({days} days)")
+                except ValueError:
+                    return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD format.'}), 400
+            else:
+                # Use days parameter (default behavior)
+                days = int(request.args.get('days', 7))
+                # Set end_date to end of current day to include all of today's records
+                end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                start_date = (end_date - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+                print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
             
             # Get activity data
             activity_data = get_activity_trends_data(start_date, end_date)
@@ -323,405 +963,253 @@ def register_route_backend_control_center(app):
             print(f"❌ [Activity Trends API] Error: {e}")
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
-def enhance_user_with_activity(user):
-    """
-    Enhance user data with activity information and computed fields.
-    """
-    try:
-        enhanced = {
-            'id': user.get('id'),
-            'email': user.get('email', ''),
-            'display_name': user.get('display_name', ''),
-            'lastUpdated': user.get('lastUpdated'),
-            'settings': user.get('settings', {}),
-            'activity': {
-                'last_login': None,
-                'last_chat_activity': None,
-                'chat_volume_3m': 0,
-                'last_document_activity': None,
-                'document_count': 0,
-                'document_storage_size': 0
-            },
-            'access_status': 'allow',  # default
-            'file_upload_status': 'allow'  # default
-        }
-        
-        # Extract access status
-        access_settings = user.get('settings', {}).get('access', {})
-        if access_settings.get('status') == 'deny':
-            datetime_to_allow = access_settings.get('datetime_to_allow')
-            if datetime_to_allow:
-                # Check if time-based restriction has expired
+
+
+    @app.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_export_activity_trends():
+        """
+        Export activity trends data as CSV file based on selected charts and date range.
+        """
+        try:
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Starting CSV export process")
+            data = request.get_json()
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Request data: {data}")            # Parse request parameters
+            charts = data.get('charts', ['logins', 'chats', 'documents'])  # Default to all charts
+            time_window = data.get('time_window', '30')  # Default to 30 days
+            start_date = data.get('start_date')  # For custom range
+            end_date = data.get('end_date')  # For custom range
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Parsed params - charts: {charts}, time_window: {time_window}, start_date: {start_date}, end_date: {end_date}")            # Determine date range
+            print("🔍 [ACTIVITY TRENDS DEBUG] Determining date range")
+            if time_window == 'custom' and start_date and end_date:
                 try:
-                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
-                    if datetime.now(timezone.utc) >= allow_time:
-                        enhanced['access_status'] = 'allow'  # Expired, should be auto-restored
-                    else:
-                        enhanced['access_status'] = f"deny_until_{datetime_to_allow}"
-                except:
-                    enhanced['access_status'] = 'deny'
+                    debug_print("🔍 [ACTIVITY TRENDS DEBUG] Processing custom dates: {start_date} to {end_date}")
+                    start_date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00') if 'Z' in start_date else start_date)
+                    end_date_obj = datetime.fromisoformat(end_date.replace('Z', '+00:00') if 'Z' in end_date else end_date)
+                    end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Custom date objects created: {start_date_obj} to {end_date_obj}")
+                except ValueError as ve:
+                    print(f"❌ [ACTIVITY TRENDS DEBUG] Date parsing error: {ve}")
+                    return jsonify({'error': 'Invalid date format'}), 400
             else:
-                enhanced['access_status'] = 'deny'
-        
-        # Extract file upload status
-        file_upload_settings = user.get('settings', {}).get('file_uploads', {})
-        if file_upload_settings.get('status') == 'deny':
-            datetime_to_allow = file_upload_settings.get('datetime_to_allow')
-            if datetime_to_allow:
-                # Check if time-based restriction has expired
-                try:
-                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
-                    if datetime.now(timezone.utc) >= allow_time:
-                        enhanced['file_upload_status'] = 'allow'  # Expired, should be auto-restored
-                    else:
-                        enhanced['file_upload_status'] = f"deny_until_{datetime_to_allow}"
-                except:
-                    enhanced['file_upload_status'] = 'deny'
-            else:
-                enhanced['file_upload_status'] = 'deny'
-        
-        # Try to get document count and storage size for the user
-        try:
-            doc_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.user_id = @user_id
-            """
-            doc_params = [{"name": "@user_id", "value": user.get('id')}]
-            doc_count = list(cosmos_user_documents_container.query_items(
-                query=doc_query,
-                parameters=doc_params,
-                enable_cross_partition_query=True
-            ))
-            enhanced['activity']['document_count'] = doc_count[0] if doc_count else 0
-        except Exception as e:
-            current_app.logger.debug(f"Could not get document count for user {user.get('id')}: {e}")
-        
-        # Try to get recent chat activity (last 3 months) using conversations.last_updated
-        try:
-            three_months_ago = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+                # Use predefined ranges
+                days = int(time_window) if time_window.isdigit() else 30
+                end_date_obj = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                start_date_obj = end_date_obj - timedelta(days=days-1)
+                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Predefined range: {days} days, from {start_date_obj} to {end_date_obj}")
             
-            # Get chat count from conversations
-            chat_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.user_id = @user_id AND c.last_updated >= @three_months_ago
-            """
-            chat_params = [
-                {"name": "@user_id", "value": user.get('id')},
-                {"name": "@three_months_ago", "value": three_months_ago}
-            ]
-            chat_count = list(cosmos_conversations_container.query_items(
-                query=chat_query,
-                parameters=chat_params,
-                enable_cross_partition_query=True
-            ))
-            enhanced['activity']['chat_volume_3m'] = chat_count[0] if chat_count else 0
-            
-            # Get last chat activity from conversations
-            last_chat_query = """
-                SELECT TOP 1 c.last_updated FROM c 
-                WHERE c.user_id = @user_id 
-                ORDER BY c.last_updated DESC
-            """
-            last_chat_params = [{"name": "@user_id", "value": user.get('id')}]
-            last_chat_result = list(cosmos_conversations_container.query_items(
-                query=last_chat_query,
-                parameters=last_chat_params,
-                enable_cross_partition_query=True
-            ))
-            if last_chat_result:
-                enhanced['activity']['last_chat_activity'] = last_chat_result[0].get('last_updated')
-                
-        except Exception as e:
-            current_app.logger.debug(f"Could not get chat activity for user {user.get('id')}: {e}")
-        
-        # Try to get last login from activity_logs
-        try:
-            login_query = """
-                SELECT TOP 1 c.timestamp, c.created_at FROM c 
-                WHERE c.user_id = @user_id AND c.activity_type = 'user_login'
-                ORDER BY c.timestamp DESC
-            """
-            login_params = [{"name": "@user_id", "value": user.get('id')}]
-            login_result = list(cosmos_activity_logs_container.query_items(
-                query=login_query,
-                parameters=login_params,
-                enable_cross_partition_query=True
-            ))
-            if login_result:
-                login_record = login_result[0]
-                enhanced['activity']['last_login'] = login_record.get('timestamp') or login_record.get('created_at')
-                
-        except Exception as e:
-            current_app.logger.debug(f"Could not get login activity for user {user.get('id')}: {e}")
-        
-        # Try to get last document activity using upload_date
-        try:
-            doc_activity_query = """
-                SELECT TOP 1 c.upload_date FROM c 
-                WHERE c.user_id = @user_id 
-                ORDER BY c.upload_date DESC
-            """
-            doc_activity_params = [{"name": "@user_id", "value": user.get('id')}]
-            doc_activity_result = list(cosmos_user_documents_container.query_items(
-                query=doc_activity_query,
-                parameters=doc_activity_params,
-                enable_cross_partition_query=True
-            ))
-            if doc_activity_result:
-                enhanced['activity']['last_document_activity'] = doc_activity_result[0].get('upload_date')
-                
-        except Exception as e:
-            current_app.logger.debug(f"Could not get document activity for user {user.get('id')}: {e}")
-        
-        return enhanced
-        
-    except Exception as e:
-        current_app.logger.error(f"Error enhancing user data: {e}")
-        return user  # Return original user data if enhancement fails
-
-def get_activity_trends_data(start_date, end_date):
-    """
-    Get aggregated activity data for the specified date range from existing containers.
-    Returns daily activity counts by type using real application data.
-    """
-    try:
-        # Debug logging
-        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Getting data for range: {start_date} to {end_date}")
-        
-        # Initialize daily data structure
-        daily_data = {}
-        current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        while current_date <= end_date:
-            date_key = current_date.strftime('%Y-%m-%d')
-            daily_data[date_key] = {
-                'date': date_key,
-                'chats': 0,
-                'documents': 0,
-                'logins': 0,
-                'total': 0
-            }
-            current_date += timedelta(days=1)
-        
-        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Initialized {len(daily_data)} days of data: {list(daily_data.keys())}")
-        
-        # Parameters for queries
-        parameters = [
-            {"name": "@start_date", "value": start_date.isoformat()},
-            {"name": "@end_date", "value": end_date.isoformat()}
-        ]
-        
-        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Query parameters: {parameters}")
-        
-        # Query 1: Get chat activity from conversations and messages containers
-        try:
-            print("🔍 [ACTIVITY TRENDS DEBUG] Querying conversations...")
-            
-            # Count conversations updated in date range (using last_updated field)
-            conversations_query = """
-                SELECT c.last_updated
-                FROM c 
-                WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
-            """
-            
-            # Process conversations
-            conversations = list(cosmos_conversations_container.query_items(
-                query=conversations_query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            ))
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversations")
-            
-            for conv in conversations:
-                last_updated = conv.get('last_updated')
-                if last_updated:
-                    try:
-                        if isinstance(last_updated, str):
-                            conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                        else:
-                            conv_date = last_updated
-                        
-                        date_key = conv_date.strftime('%Y-%m-%d')
-                        if date_key in daily_data:
-                            daily_data[date_key]['chats'] += 1
-                    except Exception as e:
-                        current_app.logger.debug(f"Could not parse conversation timestamp {last_updated}: {e}")
-            
-            # Note: Only using conversations.last_updated for chat activity tracking
-            # as requested - not using individual message timestamps
-                        
-        except Exception as e:
-            current_app.logger.warning(f"Could not query conversation/message data: {e}")
-            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
-
-        # Query 2: Get document activity
-        try:
-            print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents...")
-            
-            documents_query = """
-                SELECT c.upload_date
-                FROM c 
-                WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
-            """
-            
-            # Query all document containers
-            containers = [
-                ('user_documents', cosmos_user_documents_container),
-                ('group_documents', cosmos_group_documents_container), 
-                ('public_documents', cosmos_public_documents_container)
-            ]
-            
-            total_docs = 0
-            for container_name, container in containers:
-                docs = list(container.query_items(
-                    query=documents_query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True
-                ))
-                
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} documents in {container_name}")
-                total_docs += len(docs)
-                
-                for doc in docs:
-                    # Use upload_date field as specified
-                    upload_date = doc.get('upload_date')
-                    
-                    if upload_date:
-                        try:
-                            if isinstance(upload_date, str):
-                                doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00'))
-                            else:
-                                doc_date = upload_date
-                            
-                            date_key = doc_date.strftime('%Y-%m-%d')
-                            if date_key in daily_data:
-                                daily_data[date_key]['documents'] += 1
-                        except Exception as e:
-                            current_app.logger.debug(f"Could not parse document upload_date {upload_date}: {e}")
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {total_docs}")
-                        
-        except Exception as e:
-            current_app.logger.warning(f"Could not query document data: {e}")
-            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying documents: {e}")
-
-        # Query 3: Get login activity from activity_logs container
-        try:
-            print("🔍 [ACTIVITY TRENDS DEBUG] Querying login activity...")
-            
-            # First, let's check what's actually in the activity_logs container
-            sample_query = """
-                SELECT TOP 10 c.id, c.activity_type, c.login_method, c.timestamp, c.created_at, c.user_id
-                FROM c 
-                ORDER BY c.timestamp DESC
-            """
-            
-            sample_records = list(cosmos_activity_logs_container.query_items(
-                query=sample_query,
-                enable_cross_partition_query=True
-            ))
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample activity_logs records: {sample_records}")
-            
-            # Count total records with login_method
-            count_query = """
-                SELECT VALUE COUNT(1)
-                FROM c 
-                WHERE c.login_method != null
-            """
-            
-            login_count = list(cosmos_activity_logs_container.query_items(
-                query=count_query,
-                enable_cross_partition_query=True
-            ))
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total records with login_method: {login_count[0] if login_count else 0}")
-            
-            # Query for login records using the correct activity_type
-            # The data shows records have activity_type: "user_login" and proper timestamps
-            login_query = """
-                SELECT c.timestamp, c.created_at, c.activity_type, c.login_method, c.user_id
-                FROM c 
-                WHERE c.activity_type = 'user_login'
-                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
-                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
-            """
-            
-            login_activities = list(cosmos_activity_logs_container.query_items(
-                query=login_query,
-                parameters=parameters,
-                enable_cross_partition_query=True
-            ))
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(login_activities)} user_login records")
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Date range: {start_date.isoformat()} to {end_date.isoformat()}")
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample login records: {login_activities[:3] if login_activities else 'None'}")
-            
-            # Also check with a simpler query to see if date filtering is the issue
-            if len(login_activities) == 0:
-                simple_query = """
-                    SELECT TOP 5 c.timestamp, c.created_at, c.activity_type
-                    FROM c 
-                    WHERE c.activity_type = 'user_login'
-                    ORDER BY c.timestamp DESC
-                """
-                
-                simple_results = list(cosmos_activity_logs_container.query_items(
-                    query=simple_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Recent login records (no date filter): {simple_results}")
-            
-            for login in login_activities:
-                timestamp = login.get('timestamp') or login.get('created_at')
-                if timestamp:
-                    try:
-                        if isinstance(timestamp, str):
-                            login_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                        else:
-                            login_date = timestamp
-                        
-                        date_key = login_date.strftime('%Y-%m-%d')
-                        if date_key in daily_data:
-                            daily_data[date_key]['logins'] += 1
-                    except Exception as e:
-                        current_app.logger.debug(f"Could not parse login timestamp {timestamp}: {e}")
-                        
-        except Exception as e:
-            current_app.logger.warning(f"Could not query activity logs for login data: {e}")
-            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying logins: {e}")
-
-        # Calculate totals for each day
-        for date_key in daily_data:
-            daily_data[date_key]['total'] = (
-                daily_data[date_key]['chats'] + 
-                daily_data[date_key]['documents'] + 
-                daily_data[date_key]['logins']
+            # Get activity data using existing function
+            print("🔍 [ACTIVITY TRENDS DEBUG] Calling get_activity_trends_data")
+            activity_data = get_activity_trends_data(
+                start_date_obj.strftime('%Y-%m-%d'),
+                end_date_obj.strftime('%Y-%m-%d')
             )
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Activity data retrieved: {len(activity_data) if activity_data else 0} chart types")
+            
+            # Prepare CSV data
+            print("🔍 [ACTIVITY TRENDS DEBUG] Preparing CSV data")
+            csv_rows = []
+            csv_rows.append(['Date', 'Chart Type', 'Activity Count'])
+            
+            # Process each requested chart type
+            for chart_type in charts:
+                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Processing chart type: {chart_type}")
+                if chart_type in activity_data:
+                    chart_data = activity_data[chart_type]
+                    debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Chart data for {chart_type}: {len(chart_data) if chart_data else 0} entries")
+                    # Sort dates for consistent output
+                    sorted_dates = sorted(chart_data.keys())
+                    
+                    for date_key in sorted_dates:
+                        count = chart_data[date_key]
+                        chart_display_name = {
+                            'logins': 'Logins',
+                            'chats': 'Chats', 
+                            'documents': 'Documents'
+                        }.get(chart_type, chart_type.title())
+                        
+                        csv_rows.append([date_key, chart_display_name, count])
+                        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Added row: {date_key}, {chart_display_name}, {count}")
+                else:
+                    debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] No data found for chart type: {chart_type}")
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total CSV rows prepared: {len(csv_rows)}")
+            
+            # Generate CSV content
+            import io
+            import csv
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerows(csv_rows)
+            csv_content = output.getvalue()
+            output.close()
+            
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"activity_trends_export_{timestamp}.csv"
+            
+            # Return CSV as downloadable response
+            from flask import make_response
+            response = make_response(csv_content)
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            return response
+            
+        except Exception as e:
+            current_app.logger.error(f"Error exporting activity trends: {e}")
+            return jsonify({'error': 'Failed to export data'}), 500
 
-        # Group by activity type for chart display  
-        result = {
-            'chats': {},
-            'documents': {},
-            'logins': {}
-        }
-        
-        for date_key, data in daily_data.items():
-            result['chats'][date_key] = data['chats']
-            result['documents'][date_key] = data['documents'] 
-            result['logins'][date_key] = data['logins']
-        
-        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")
-        
-        return result
-
-    except Exception as e:
-        current_app.logger.error(f"Error getting activity trends data: {e}")
-        print(f"❌ [ACTIVITY TRENDS DEBUG] Fatal error: {e}")
-        return {
-            'chats': {},
-            'documents': {},
-            'logins': {}
-        }
+    @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_chat_activity_trends():
+        """
+        Create a new chat conversation with activity trends data as CSV message.
+        """
+        try:
+            data = request.get_json()
+            
+            # Parse request parameters
+            charts = data.get('charts', ['logins', 'chats', 'documents'])  # Default to all charts
+            time_window = data.get('time_window', '30')  # Default to 30 days
+            start_date = data.get('start_date')  # For custom range
+            end_date = data.get('end_date')  # For custom range
+            
+            # Determine date range
+            if time_window == 'custom' and start_date and end_date:
+                try:
+                    start_date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00') if 'Z' in start_date else start_date)
+                    end_date_obj = datetime.fromisoformat(end_date.replace('Z', '+00:00') if 'Z' in end_date else end_date)
+                    end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+                except ValueError:
+                    return jsonify({'error': 'Invalid date format'}), 400
+            else:
+                # Use predefined ranges
+                days = int(time_window) if time_window.isdigit() else 30
+                end_date_obj = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                start_date_obj = end_date_obj - timedelta(days=days-1)
+            
+            # Get activity data using existing function
+            activity_data = get_activity_trends_data(
+                start_date_obj.strftime('%Y-%m-%d'),
+                end_date_obj.strftime('%Y-%m-%d')
+            )
+            
+            # Prepare CSV data
+            csv_rows = []
+            csv_rows.append(['Date', 'Chart Type', 'Activity Count'])
+            
+            # Process each requested chart type
+            for chart_type in charts:
+                if chart_type in activity_data:
+                    chart_data = activity_data[chart_type]
+                    # Sort dates for consistent output
+                    sorted_dates = sorted(chart_data.keys())
+                    
+                    for date_key in sorted_dates:
+                        count = chart_data[date_key]
+                        chart_display_name = {
+                            'logins': 'Logins',
+                            'chats': 'Chats', 
+                            'documents': 'Documents'
+                        }.get(chart_type, chart_type.title())
+                        
+                        csv_rows.append([date_key, chart_display_name, count])
+            
+            # Generate CSV content
+            import io
+            import csv
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerows(csv_rows)
+            csv_content = output.getvalue()
+            output.close()
+            
+            # Get current user info
+            user_id = session.get('user_id')
+            user_email = session.get('email')
+            user_display_name = session.get('display_name', user_email)
+            
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+            
+            # Create new conversation
+            conversation_id = str(uuid.uuid4())
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            # Generate descriptive title with date range
+            if time_window == 'custom':
+                date_range = f"{start_date} to {end_date}"
+            else:
+                date_range = f"Last {time_window} Days"
+            
+            charts_text = ", ".join([c.title() for c in charts])
+            conversation_title = f"Activity Trends - {charts_text} ({date_range})"
+            
+            # Create conversation document
+            conversation_doc = {
+                "id": conversation_id,
+                "title": conversation_title,
+                "user_id": user_id,
+                "user_email": user_email,
+                "user_display_name": user_display_name,
+                "created": timestamp,
+                "last_updated": timestamp,
+                "messages": [],
+                "system_message": "You are analyzing activity trends data from a control center dashboard. The user has provided activity data as a CSV file. Please analyze the data and provide insights about user activity patterns, trends, and any notable observations.",
+                "message_count": 0,
+                "settings": {
+                    "model": "gpt-4o",
+                    "temperature": 0.7,
+                    "max_tokens": 4000
+                }
+            }
+            
+            # Create the initial message with CSV data (simulate file upload)
+            message_id = str(uuid.uuid4())
+            csv_filename = f"activity_trends_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            
+            # Create message with file attachment structure
+            initial_message = {
+                "id": message_id,
+                "role": "user",
+                "content": f"Please analyze this activity trends data from our system dashboard. The data covers {date_range} and includes {charts_text} activity.",
+                "timestamp": timestamp,
+                "files": [{
+                    "name": csv_filename,
+                    "type": "text/csv",
+                    "size": len(csv_content.encode('utf-8')),
+                    "content": csv_content,
+                    "id": str(uuid.uuid4())
+                }]
+            }
+            
+            conversation_doc["messages"].append(initial_message)
+            conversation_doc["message_count"] = 1
+            
+            # Save conversation to database
+            cosmos_conversations_container.create_item(conversation_doc)
+            
+            # Log the activity
+            log_event("[ControlCenter] Activity Trends Chat Created", {
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "charts": charts,
+                "time_window": time_window,
+                "date_range": date_range
+            })
+            
+            return jsonify({
+                'success': True,
+                'conversation_id': conversation_id,
+                'conversation_title': conversation_title,
+                'redirect_url': f'/chat/{conversation_id}'
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error creating activity trends chat: {e}")
+            return jsonify({'error': 'Failed to create chat conversation'}), 500

@@ -5,10 +5,8 @@ Test script to debug login activity data for Control Center
 
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'application', 'single_app'))
-
 from datetime import datetime, timedelta
-from application.single_app.database_cosmos import cosmos_activity_logs_container
+from azure.cosmos import CosmosClient
 
 def test_login_activity():
     """Test what login activity data is available"""
@@ -24,7 +22,13 @@ def test_login_activity():
     """
     
     try:
-        sample_records = list(cosmos_activity_logs_container.query_items(
+        # Connection string for testing (from .env)
+        endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
+        key = os.getenv('AZURE_COSMOS_KEY', '')
+
+        client = CosmosClient(endpoint, key, consistency_level="Session")
+
+        sample_records = list(client.get_database_client("SimpleChat").get_container_client("activity_logs").query_items(
             query=sample_query,
             enable_cross_partition_query=True
         ))
@@ -52,7 +56,7 @@ def test_login_activity():
     """
     
     try:
-        login_records = list(cosmos_activity_logs_container.query_items(
+        login_records = list(client.get_database_client("SimpleChat").get_container_client("activity_logs").query_items(
             query=login_query_1,
             enable_cross_partition_query=True
         ))
@@ -78,7 +82,7 @@ def test_login_activity():
     """
     
     try:
-        method_records = list(cosmos_activity_logs_container.query_items(
+        method_records = list(client.get_database_client("SimpleChat").get_container_client("activity_logs").query_items(
             query=login_query_2,
             enable_cross_partition_query=True
         ))

@@ -82,6 +82,30 @@ class ControlCenter {
             () => this.changeTrendPeriod(30));
         document.getElementById('trend-90days')?.addEventListener('click', 
             () => this.changeTrendPeriod(90));
+        document.getElementById('trend-custom')?.addEventListener('click', 
+            () => this.toggleCustomDateRange());
+        
+        // Custom date range handlers
+        document.getElementById('applyCustomRange')?.addEventListener('click', 
+            () => this.applyCustomDateRange());
+        
+        // Export functionality
+        document.getElementById('executeExportBtn')?.addEventListener('click', 
+            () => this.exportActivityTrends());
+        
+        // Export modal - show/hide custom date range based on radio selection
+        document.querySelectorAll('input[name="exportTimeWindow"]').forEach(radio => {
+            radio.addEventListener('change', () => this.toggleExportCustomDateRange());
+        });
+        
+        // Chat functionality
+        document.getElementById('executeChatBtn')?.addEventListener('click', 
+            () => this.chatActivityTrends());
+        
+        // Chat modal - show/hide custom date range based on radio selection
+        document.querySelectorAll('input[name="chatTimeWindow"]').forEach(radio => {
+            radio.addEventListener('change', () => this.toggleChatCustomDateRange());
+        });
     }
     
     debounce(func, wait) {
@@ -130,7 +154,7 @@ class ControlCenter {
         if (users.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-4">
+                    <td colspan="8" class="text-center py-4">
                         <i class="bi bi-people" style="font-size: 2rem; color: var(--bs-secondary);"></i>
                         <div class="mt-2">No users found</div>
                     </td>
@@ -149,12 +173,7 @@ class ControlCenter {
                     </td>
                     <td>
                         <div class="d-flex align-items-center">
-                            <div class="bg-secondary rounded-circle d-flex align-items-center justify-content-center me-2" 
-                                 style="width: 32px; height: 32px;">
-                                <span class="text-white fw-bold" style="font-size: 0.8rem;">
-                                    ${(user.display_name || user.email || 'U').slice(0, 2).toUpperCase()}
-                                </span>
-                            </div>
+                            ${this.renderUserAvatar(user)}
                             <div>
                                 <div class="fw-semibold">${this.escapeHtml(user.display_name || 'Unknown User')}</div>
                                 <div class="text-muted small">${this.escapeHtml(user.email || '')}</div>
@@ -168,16 +187,13 @@ class ControlCenter {
                         ${this.renderFileUploadBadge(user.file_upload_status)}
                     </td>
                     <td>
-                        <div class="small">
-                            <div>Chat: ${user.activity.chat_volume_3m || 0} (3m)</div>
-                            <div class="text-muted">Last: ${this.formatDate(user.lastUpdated)}</div>
-                        </div>
+                        ${this.renderLoginActivity(user.activity.login_metrics)}
                     </td>
                     <td>
-                        <div class="small">
-                            <div>${user.activity.document_count || 0} docs</div>
-                            <div class="text-muted">${this.formatBytes(user.activity.document_storage_size || 0)}</div>
-                        </div>
+                        ${this.renderChatMetrics(user.activity.chat_metrics)}
+                    </td>
+                    <td>
+                        ${this.renderDocumentMetrics(user.activity.document_metrics)}
                     </td>
                     <td>
                         <button class="btn btn-sm btn-outline-primary" 
@@ -219,6 +235,112 @@ class ControlCenter {
             return `<span class="badge access-temporary" title="Until ${this.formatDate(dateStr)}">Temporary</span>`;
         }
         return '<span class="badge bg-secondary">Unknown</span>';
+    }
+    
+    renderUserAvatar(user) {
+        if (user.profile_image) {
+            return `
+                <img src="${user.profile_image}" alt="${this.escapeHtml(user.display_name || user.email)}" 
+                     class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
+            `;
+        } else {
+            // Fallback to initials
+            const initials = (user.display_name || user.email || 'U').slice(0, 2).toUpperCase();
+            return `
+                <div class="bg-secondary rounded-circle d-flex align-items-center justify-content-center me-2" 
+                     style="width: 32px; height: 32px;">
+                    <span class="text-white fw-bold" style="font-size: 0.8rem;">
+                        ${initials}
+                    </span>
+                </div>
+            `;
+        }
+    }
+    
+    renderChatMetrics(chatMetrics) {
+        if (!chatMetrics) {
+            return '<div class="small text-muted">No data</div>';
+        }
+        
+        const lastDayConversation = chatMetrics.last_day_conversation || 'Never';
+        const totalConversations = chatMetrics.total_conversations || 0;
+        const totalMessages = chatMetrics.total_messages || 0;
+        const messageSize = chatMetrics.total_message_size || 0;
+        
+        return `
+            <div class="small">
+                <div><strong>Last Day:</strong> ${lastDayConversation}</div>
+                <div><strong>Total:</strong> ${totalConversations} convos</div>
+                <div><strong>Messages:</strong> ${totalMessages}</div>
+                <div class="text-muted">Size: ${this.formatBytes(messageSize)}</div>
+            </div>
+        `;
+    }
+    
+    renderDocumentMetrics(docMetrics) {
+        if (!docMetrics) {
+            return '<div class="small text-muted">No data</div>';
+        }
+        
+        const lastDayUpload = docMetrics.last_day_upload || 'Never';
+        const totalDocs = docMetrics.total_documents || 0;
+        const aiSearchSize = docMetrics.ai_search_size || 0;
+        const storageSize = docMetrics.storage_account_size || 0;
+        const enhancedCitation = docMetrics.enhanced_citation_enabled;
+        const personalWorkspace = docMetrics.personal_workspace_enabled;
+        
+        let html = `
+            <div class="small">
+                <div><strong>Last Day:</strong> ${lastDayUpload}</div>
+                <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                <div><strong>AI Search:</strong> ${this.formatBytes(aiSearchSize)}</div>
+        `;
+        
+        if (enhancedCitation) {
+            html += `<div><strong>Storage:</strong> ${this.formatBytes(storageSize)}</div>`;
+        }
+        
+        const features = [];
+        if (personalWorkspace) features.push('Personal');
+        if (enhancedCitation) features.push('Enhanced');
+        
+        if (features.length > 0) {
+            html += `<div class="text-muted" style="font-size: 0.75rem;">(${features.join(' + ')})</div>`;
+        }
+        
+        html += '</div>';
+        return html;
+    }
+    
+    renderLoginActivity(loginMetrics) {
+        if (!loginMetrics) {
+            return '<div class="small text-muted">No login data</div>';
+        }
+        
+        const totalLogins = loginMetrics.total_logins || 0;
+        const lastLogin = loginMetrics.last_login;
+        
+        let lastLoginFormatted = 'Never';
+        if (lastLogin) {
+            try {
+                const date = new Date(lastLogin);
+                // Format as MM/DD/YYYY
+                lastLoginFormatted = date.toLocaleDateString('en-US', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    year: 'numeric'
+                });
+            } catch {
+                lastLoginFormatted = 'Invalid date';
+            }
+        }
+        
+        return `
+            <div class="small">
+                <div><strong>Last Login:</strong> ${lastLoginFormatted}</div>
+                <div><strong>Total Logins:</strong> ${totalLogins}</div>
+            </div>
+        `;
     }
     
     renderPagination(pagination) {
@@ -652,7 +774,13 @@ class ControlCenter {
         try {
             console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
             
-            const response = await fetch(`/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`);
+            // Build API URL with custom date range if specified
+            let apiUrl = `/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`;
+            if (this.customStartDate && this.customEndDate) {
+                apiUrl += `&start_date=${this.customStartDate}&end_date=${this.customEndDate}`;
+            }
+            
+            const response = await fetch(apiUrl);
             console.log('🔍 [Frontend Debug] API response status:', response.status);
             
             const data = await response.json();
@@ -848,9 +976,284 @@ class ControlCenter {
         });
         document.getElementById(`trend-${days}days`).classList.add('active');
         
+        // Clear custom date range when switching to preset periods
+        this.customStartDate = null;
+        this.customEndDate = null;
+        
+        // Collapse custom date range if it's open
+        const customDateRange = document.getElementById('customDateRange');
+        if (customDateRange && customDateRange.classList.contains('show')) {
+            const collapse = new bootstrap.Collapse(customDateRange, {toggle: false});
+            collapse.hide();
+        }
+        
         // Update current period and reload data
         this.currentTrendDays = days;
         this.loadActivityTrends();
+    }
+    
+    toggleCustomDateRange() {
+        // Update button active states
+        document.querySelectorAll('[id^="trend-"]').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        document.getElementById('trend-custom').classList.add('active');
+        
+        // Set default dates (last 30 days)
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 29);
+        
+        document.getElementById('startDate').value = startDate.toISOString().split('T')[0];
+        document.getElementById('endDate').value = endDate.toISOString().split('T')[0];
+    }
+    
+    applyCustomDateRange() {
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        
+        if (!startDate || !endDate) {
+            alert('Please select both start and end dates.');
+            return;
+        }
+        
+        if (new Date(startDate) > new Date(endDate)) {
+            alert('Start date must be before end date.');
+            return;
+        }
+        
+        // Calculate days difference for API call
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const diffTime = Math.abs(end - start);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+        
+        this.currentTrendDays = diffDays;
+        this.customStartDate = startDate;
+        this.customEndDate = endDate;
+        
+        this.loadActivityTrends();
+    }
+    
+    toggleExportCustomDateRange() {
+        const customRadio = document.getElementById('exportCustom');
+        const customDateRange = document.getElementById('exportCustomDateRange');
+        
+        if (customRadio.checked) {
+            customDateRange.style.display = 'block';
+            // Set default dates
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 29);
+            
+            document.getElementById('exportStartDate').value = startDate.toISOString().split('T')[0];
+            document.getElementById('exportEndDate').value = endDate.toISOString().split('T')[0];
+        } else {
+            customDateRange.style.display = 'none';
+        }
+    }
+    
+    async exportActivityTrends() {
+        try {
+            // Get selected charts
+            const selectedCharts = [];
+            if (document.getElementById('exportLogins').checked) selectedCharts.push('logins');
+            if (document.getElementById('exportChats').checked) selectedCharts.push('chats');
+            if (document.getElementById('exportDocuments').checked) selectedCharts.push('documents');
+            
+            if (selectedCharts.length === 0) {
+                alert('Please select at least one chart to export.');
+                return;
+            }
+            
+            // Get selected time window
+            const timeWindowRadio = document.querySelector('input[name="exportTimeWindow"]:checked');
+            const timeWindow = timeWindowRadio.value;
+            
+            let exportData = {
+                charts: selectedCharts,
+                time_window: timeWindow
+            };
+            
+            // Add custom dates if selected
+            if (timeWindow === 'custom') {
+                const startDate = document.getElementById('exportStartDate').value;
+                const endDate = document.getElementById('exportEndDate').value;
+                
+                if (!startDate || !endDate) {
+                    alert('Please select both start and end dates for custom range.');
+                    return;
+                }
+                
+                if (new Date(startDate) > new Date(endDate)) {
+                    alert('Start date must be before end date.');
+                    return;
+                }
+                
+                exportData.start_date = startDate;
+                exportData.end_date = endDate;
+            }
+            
+            // Show loading state
+            const exportBtn = document.getElementById('executeExportBtn');
+            const originalText = exportBtn.innerHTML;
+            exportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+            exportBtn.disabled = true;
+            
+            // Make API call
+            const response = await fetch('/api/admin/control-center/activity-trends/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(exportData)
+            });
+            
+            if (response.ok) {
+                // Create download link
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                
+                // Get filename from response headers or generate one
+                const contentDisposition = response.headers.get('Content-Disposition');
+                const filename = contentDisposition 
+                    ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+                    : 'activity_trends_export.csv';
+                
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('exportModal'));
+                modal.hide();
+                
+                // Show success message
+                this.showAlert('success', 'Activity trends exported successfully!');
+                
+            } else {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Export failed');
+            }
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showAlert('danger', `Export failed: ${error.message}`);
+        } finally {
+            // Reset button state
+            const exportBtn = document.getElementById('executeExportBtn');
+            exportBtn.innerHTML = '<i class="bi bi-download me-1"></i>Export CSV';
+            exportBtn.disabled = false;
+        }
+    }
+    
+    toggleChatCustomDateRange() {
+        const customRadio = document.getElementById('chatCustom');
+        const customDateRange = document.getElementById('chatCustomDateRange');
+        
+        if (customRadio.checked) {
+            customDateRange.style.display = 'block';
+            // Set default dates
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 29);
+            
+            document.getElementById('chatStartDate').value = startDate.toISOString().split('T')[0];
+            document.getElementById('chatEndDate').value = endDate.toISOString().split('T')[0];
+        } else {
+            customDateRange.style.display = 'none';
+        }
+    }
+    
+    async chatActivityTrends() {
+        try {
+            // Get selected charts
+            const selectedCharts = [];
+            if (document.getElementById('chatLogins').checked) selectedCharts.push('logins');
+            if (document.getElementById('chatChats').checked) selectedCharts.push('chats');
+            if (document.getElementById('chatDocuments').checked) selectedCharts.push('documents');
+            
+            if (selectedCharts.length === 0) {
+                alert('Please select at least one chart to include in the chat.');
+                return;
+            }
+            
+            // Get selected time window
+            const timeWindowRadio = document.querySelector('input[name="chatTimeWindow"]:checked');
+            const timeWindow = timeWindowRadio.value;
+            
+            let chatData = {
+                charts: selectedCharts,
+                time_window: timeWindow
+            };
+            
+            // Add custom dates if selected
+            if (timeWindow === 'custom') {
+                const startDate = document.getElementById('chatStartDate').value;
+                const endDate = document.getElementById('chatEndDate').value;
+                
+                if (!startDate || !endDate) {
+                    alert('Please select both start and end dates for custom range.');
+                    return;
+                }
+                
+                if (new Date(startDate) > new Date(endDate)) {
+                    alert('Start date must be before end date.');
+                    return;
+                }
+                
+                chatData.start_date = startDate;
+                chatData.end_date = endDate;
+            }
+            
+            // Show loading state
+            const chatBtn = document.getElementById('executeChatBtn');
+            const originalText = chatBtn.innerHTML;
+            chatBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Creating Chat...';
+            chatBtn.disabled = true;
+            
+            // Make API call
+            const response = await fetch('/api/admin/control-center/activity-trends/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(chatData)
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('chatModal'));
+                modal.hide();
+                
+                // Show success message
+                this.showAlert('success', 'Chat conversation created successfully! Redirecting...');
+                
+                // Redirect to the new conversation
+                setTimeout(() => {
+                    window.location.href = result.redirect_url;
+                }, 1500);
+                
+            } else {
+                throw new Error(result.error || 'Failed to create chat conversation');
+            }
+            
+        } catch (error) {
+            console.error('Chat creation error:', error);
+            this.showAlert('danger', `Failed to create chat: ${error.message}`);
+        } finally {
+            // Reset button state
+            const chatBtn = document.getElementById('executeChatBtn');
+            chatBtn.innerHTML = '<i class="bi bi-chat-dots me-1"></i>Start Chat';
+            chatBtn.disabled = false;
+        }
     }
     
     destroyAllCharts() {
@@ -910,6 +1313,27 @@ class ControlCenter {
                 `;
             }
         }
+    }
+    
+    showAlert(type, message) {
+        // Create alert element
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        
+        // Add to page
+        document.body.appendChild(alertDiv);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
     }
 }
 

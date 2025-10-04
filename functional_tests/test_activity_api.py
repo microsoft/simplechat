@@ -16,7 +16,7 @@ def test_activity_trends_direct():
     
     try:
         # Import the function we need to test
-        from route_backend_control_center import get_activity_trends_data
+        from application.single_app.route_backend_control_center import get_activity_trends_data
         
         # Set up test date range (last 7 days)
         end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
