@@ -9,10 +9,15 @@
             border: none;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             transition: transform 0.2s ease;
+            cursor: pointer;
         }
         .control-center-stats .stat-card:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .stat-card.clickable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.02);
+            border: 1px solid rgba(var(--bs-primary-rgb), 0.2);
         }
         .stat-number {
             font-size: 2rem;
@@ -139,8 +144,24 @@
 
 {% block content %}
 <div class="container">
-    <h2>Control Center</h2>
-    <p class="text-muted">Manage users and their workspaces, groups and their workspaces, and public workspaces.</p>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2>Control Center</h2>
+            <p class="text-muted mb-1">Manage users and their workspaces, groups and their workspaces, and public workspaces.</p>
+        </div>
+        <div class="text-end">
+            <div class="mb-2">
+                <small class="text-muted" id="lastRefreshInfo">
+                    <i class="bi bi-clock-history me-1"></i>
+                    Data last refreshed: <span id="lastRefreshTime">Loading...</span>
+                </small>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="refreshDataBtn" onclick="refreshControlCenterData()">
+                <i class="bi bi-arrow-clockwise me-1"></i>
+                <span id="refreshBtnText">Refresh Data</span>
+            </button>
+        </div>
+    </div>
     
     <!-- Hide tabs when left navigation is enabled -->
     {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
@@ -179,7 +200,7 @@
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" title="Click to view User Management">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -198,7 +219,7 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" title="Click to view Group Management">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -217,7 +238,7 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" title="Click to view Public Workspaces Management">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -396,7 +417,7 @@
                                             <i class="bi bi-gear-fill me-1"></i>Bulk Action
                                         </button>
                                         <button type="button" class="btn btn-outline-primary" id="refreshUsersBtn">
-                                            <i class="bi bi-arrow-clockwise"></i>
+                                            <i class="bi bi-arrow-clockwise"></i>Refresh Status
                                         </button>
                                     </div>
                                 </div>
@@ -800,4 +821,22 @@
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
+
+<script>
+// Function to navigate to specific tabs when stat cards are clicked
+function navigateToTab(tabId) {
+    // Get the tab button and trigger click
+    const tabButton = document.getElementById(tabId);
+    if (tabButton) {
+        // Use Bootstrap's tab API to show the tab
+        const tab = new bootstrap.Tab(tabButton);
+        tab.show();
+        
+        // Also trigger any existing ControlCenter tab change logic if it exists
+        if (typeof window.controlCenter !== 'undefined' && window.controlCenter.handleTabChange) {
+            window.controlCenter.handleTabChange(tabId.replace('-tab', ''));
+        }
+    }
+}
+</script>
 {% endblock %}

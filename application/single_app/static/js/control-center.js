@@ -1337,7 +1337,247 @@ class ControlCenter {
     }
 }
 
+// Global functions for refresh functionality
+async function refreshControlCenterData() {
+    console.log('Refresh function called');
+    
+    const refreshBtn = document.getElementById('refreshDataBtn');
+    const refreshBtnText = document.getElementById('refreshBtnText');
+    
+    console.log('Elements found:', {
+        refreshBtn: !!refreshBtn,
+        refreshBtnText: !!refreshBtnText
+    });
+    
+    // Check if elements exist
+    if (!refreshBtn || !refreshBtnText) {
+        console.error('Refresh button elements not found');
+        console.log('Available elements:', {
+            refreshDataBtn: document.getElementById('refreshDataBtn'),
+            refreshBtnText: document.getElementById('refreshBtnText'),
+            allButtons: document.querySelectorAll('button'),
+            elementsWithRefresh: document.querySelectorAll('[id*="refresh"]')
+        });
+        showAlert('Refresh button not found. Please reload the page.', 'danger');
+        return;
+    }
+    
+    const originalText = refreshBtnText ? refreshBtnText.textContent : 'Refresh Data';
+    const iconElement = refreshBtn ? refreshBtn.querySelector('i') : null;
+    
+    try {
+        // Update button state
+        refreshBtn.disabled = true;
+        refreshBtnText.textContent = 'Refreshing...';
+        if (iconElement) {
+            iconElement.className = 'bi bi-arrow-repeat me-1 fa-spin';
+        }
+        
+        // Call refresh API
+        const response = await fetch('/api/admin/control-center/refresh', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Show success message
+            showAlert(`Data refreshed successfully! Updated ${result.refreshed_users} users.`, 'success');
+            
+            // Update last refresh timestamp
+            await loadRefreshStatus();
+            
+            // Refresh the currently active tab content
+            await refreshActiveTabContent();
+            
+            console.log('Data refresh and view refresh completed successfully');
+        } else {
+            throw new Error(result.message || 'Failed to refresh data');
+        }
+        
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+        showAlert(`Failed to refresh data: ${error.message}`, 'danger');
+    } finally {
+        // Restore button state
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+        }
+        if (refreshBtnText) {
+            refreshBtnText.textContent = originalText;
+        }
+        if (iconElement) {
+            iconElement.className = 'bi bi-arrow-clockwise me-1';
+        }
+    }
+}
+
+async function loadRefreshStatus() {
+    try {
+        const response = await fetch('/api/admin/control-center/refresh-status');
+        if (response.ok) {
+            const result = await response.json();
+            const lastRefreshElement = document.getElementById('lastRefreshTime');
+            
+            if (lastRefreshElement) {
+                if (result.last_refresh_formatted) {
+                    lastRefreshElement.textContent = result.last_refresh_formatted;
+                    if (lastRefreshElement.parentElement) {
+                        lastRefreshElement.parentElement.style.display = '';
+                    }
+                } else {
+                    lastRefreshElement.textContent = 'Never';
+                    if (lastRefreshElement.parentElement) {
+                        lastRefreshElement.parentElement.style.display = '';
+                    }
+                }
+            } else {
+                console.warn('lastRefreshTime element not found');
+            }
+        } else {
+            console.error('Failed to load refresh status:', response.status);
+        }
+    } catch (error) {
+        console.error('Error loading refresh status:', error);
+        const lastRefreshElement = document.getElementById('lastRefreshTime');
+        if (lastRefreshElement) {
+            lastRefreshElement.textContent = 'Error loading';
+        }
+    }
+}
+
+async function refreshActiveTabContent() {
+    try {
+        console.log('Refreshing active tab content...');
+        
+        // Check which tab is currently active
+        const activeTab = document.querySelector('.nav-link.active');
+        const activeTabContent = document.querySelector('.tab-pane.active');
+        
+        if (!activeTab) {
+            console.log('No active tab found, checking for direct content...');
+            // If no tabs (sidebar navigation), refresh users table if it exists
+            if (window.controlCenter && window.controlCenter.loadUsers) {
+                console.log('Refreshing users in sidebar mode...');
+                await window.controlCenter.loadUsers();
+                return;
+            }
+        }
+        
+        const tabId = activeTab ? activeTab.id : null;
+        console.log('Active tab:', tabId);
+        
+        // Refresh content based on active tab
+        switch (tabId) {
+            case 'dashboard-tab':
+                console.log('Refreshing dashboard content...');
+                // Refresh dashboard stats if available
+                if (window.controlCenter && window.controlCenter.refreshStats) {
+                    await window.controlCenter.refreshStats();
+                }
+                break;
+                
+            case 'users-tab':
+                console.log('Refreshing users table...');
+                // Refresh users table
+                if (window.controlCenter && window.controlCenter.loadUsers) {
+                    await window.controlCenter.loadUsers();
+                }
+                break;
+                
+            case 'groups-tab':
+                console.log('Refreshing groups content...');
+                // Refresh groups if available
+                if (window.controlCenter && window.controlCenter.loadGroups) {
+                    await window.controlCenter.loadGroups();
+                }
+                break;
+                
+            case 'workspaces-tab':
+                console.log('Refreshing workspaces content...');
+                // Refresh workspaces if available
+                if (window.controlCenter && window.controlCenter.loadWorkspaces) {
+                    await window.controlCenter.loadWorkspaces();
+                }
+                break;
+                
+            case 'activity-tab':
+                console.log('Refreshing activity trends...');
+                // Refresh activity trends if available
+                if (window.controlCenter && window.controlCenter.loadActivityTrends) {
+                    await window.controlCenter.loadActivityTrends();
+                }
+                break;
+                
+            default:
+                console.log('Unknown or no active tab, attempting to refresh users table...');
+                // Default fallback - try to refresh users table
+                if (window.controlCenter && window.controlCenter.loadUsers) {
+                    await window.controlCenter.loadUsers();
+                }
+                break;
+        }
+        
+        console.log('Active tab content refresh completed');
+        
+    } catch (error) {
+        console.error('Error refreshing active tab content:', error);
+        // Don't throw the error to avoid breaking the main refresh flow
+    }
+}
+
+function showAlert(message, type = 'info') {
+    // Create alert element
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+    alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    
+    // Add to page
+    document.body.appendChild(alertDiv);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+// Make refresh function globally accessible for debugging
+window.refreshControlCenterData = refreshControlCenterData;
+window.loadRefreshStatus = loadRefreshStatus;
+window.refreshActiveTabContent = refreshActiveTabContent;
+window.debugControlCenterElements = function() {
+    console.log('=== Control Center Elements Debug ===');
+    console.log('refreshDataBtn:', document.getElementById('refreshDataBtn'));
+    console.log('refreshBtnText:', document.getElementById('refreshBtnText'));
+    console.log('lastRefreshTime:', document.getElementById('lastRefreshTime'));
+    console.log('lastRefreshInfo:', document.getElementById('lastRefreshInfo'));
+    console.log('All buttons:', Array.from(document.querySelectorAll('button')).map(b => ({id: b.id, text: b.textContent.trim()})));
+    console.log('All spans:', Array.from(document.querySelectorAll('span')).map(s => ({id: s.id, text: s.textContent.trim()})));
+};
+
 // Initialize Control Center when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     window.controlCenter = new ControlCenter();
+    
+    // Debug: Log element availability
+    console.log('Control Center Elements Check on DOM Ready:');
+    window.debugControlCenterElements();
+    
+    // Load initial refresh status with a slight delay to ensure elements are rendered
+    setTimeout(() => {
+        loadRefreshStatus();
+    }, 100);
 });

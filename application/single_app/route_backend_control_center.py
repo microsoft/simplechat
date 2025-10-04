@@ -10,9 +10,10 @@ from datetime import datetime, timedelta
 import json
 from functions_debug import debug_print
 
-def enhance_user_with_activity(user):
+def enhance_user_with_activity(user, force_refresh=False):
     """
     Enhance user data with activity information and computed fields.
+    If force_refresh is False, will try to use cached metrics from user settings.
     """
     try:
         enhanced = {
@@ -79,6 +80,37 @@ def enhance_user_with_activity(user):
                     enhanced['file_upload_status'] = 'deny'
             else:
                 enhanced['file_upload_status'] = 'deny'
+                
+        # Check for cached metrics if not forcing refresh
+        if not force_refresh:
+            cached_metrics = user.get('settings', {}).get('metrics')
+            if cached_metrics and cached_metrics.get('calculated_at'):
+                try:
+                    # Check if cache is less than 1 hour old
+                    cache_time = datetime.fromisoformat(cached_metrics['calculated_at'].replace('Z', '+00:00') if 'Z' in cached_metrics['calculated_at'] else cached_metrics['calculated_at'])
+                    current_time = datetime.now(timezone.utc)
+                    
+                    if (current_time - cache_time).total_seconds() < 3600:  # 1 hour cache
+                        current_app.logger.debug(f"Using cached metrics for user {user.get('id')}")
+                        # Use cached data
+                        if 'login_metrics' in cached_metrics:
+                            enhanced['activity']['login_metrics'] = cached_metrics['login_metrics']
+                        if 'chat_metrics' in cached_metrics:
+                            enhanced['activity']['chat_metrics'] = cached_metrics['chat_metrics']
+                        if 'document_metrics' in cached_metrics:
+                            # Merge cached document metrics with settings-based flags
+                            cached_doc_metrics = cached_metrics['document_metrics'].copy()
+                            cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
+                            cached_doc_metrics['enhanced_citation_enabled'] = user.get('settings', {}).get('enable_enhanced_citation', False)
+                            enhanced['activity']['document_metrics'] = cached_doc_metrics
+                        
+                        return enhanced
+                    else:
+                        current_app.logger.debug(f"Cache expired for user {user.get('id')}, refreshing metrics")
+                except Exception as cache_e:
+                    current_app.logger.debug(f"Error checking cache for user {user.get('id')}: {cache_e}")
+            
+        current_app.logger.debug(f"Calculating fresh metrics for user {user.get('id')}")
         
         
         # Try to get comprehensive conversation metrics
@@ -375,6 +407,37 @@ def enhance_user_with_activity(user):
         except Exception as e:
             current_app.logger.debug(f"Could not get document metrics for user {user.get('id')}: {e}")
         
+        # Save calculated metrics to user settings for caching (only if we calculated fresh data)
+        if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
+            try:
+                from functions_settings import update_user_settings
+                
+                # Prepare metrics data for caching
+                metrics_cache = {
+                    'calculated_at': datetime.now(timezone.utc).isoformat(),
+                    'login_metrics': enhanced['activity']['login_metrics'],
+                    'chat_metrics': enhanced['activity']['chat_metrics'],
+                    'document_metrics': {
+                        'last_day_upload': enhanced['activity']['document_metrics']['last_day_upload'],
+                        'total_documents': enhanced['activity']['document_metrics']['total_documents'],
+                        'ai_search_size': enhanced['activity']['document_metrics']['ai_search_size'],
+                        'storage_account_size': enhanced['activity']['document_metrics']['storage_account_size']
+                        # Note: personal_workspace_enabled and enhanced_citation_enabled are not cached as they're settings-based
+                    }
+                }
+                
+                # Update user settings with cached metrics
+                settings_update = {'metrics': metrics_cache}
+                update_success = update_user_settings(user.get('id'), settings_update)
+                
+                if update_success:
+                    current_app.logger.debug(f"Successfully cached metrics for user {user.get('id')}")
+                else:
+                    current_app.logger.debug(f"Failed to cache metrics for user {user.get('id')}")
+                    
+            except Exception as cache_save_e:
+                current_app.logger.debug(f"Error saving metrics cache for user {user.get('id')}: {cache_save_e}")
+        
         return enhanced
         
     except Exception as e:
@@ -652,6 +715,7 @@ def register_route_backend_control_center(app):
             per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
             search = request.args.get('search', '').strip()
             access_filter = request.args.get('access_filter', 'all')  # all, allow, deny
+            force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
             
             # Build query with filters
             query_conditions = []
@@ -697,7 +761,7 @@ def register_route_backend_control_center(app):
             # Enhance user data with activity information
             enhanced_users = []
             for user in users:
-                enhanced_user = enhance_user_with_activity(user)
+                enhanced_user = enhance_user_with_activity(user, force_refresh=force_refresh)
                 enhanced_users.append(enhanced_user)
             
             return jsonify({
@@ -1213,3 +1277,91 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error creating activity trends chat: {e}")
             return jsonify({'error': 'Failed to create chat conversation'}), 500
+    
+    # Data Refresh API
+    @app.route('/api/admin/control-center/refresh', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_refresh_control_center_data():
+        """
+        Refresh all Control Center metrics data and update admin timestamp.
+        This will recalculate all user metrics and cache them in user settings.
+        """
+        try:
+            current_app.logger.info("Starting Control Center data refresh...")
+            
+            # Get all users to refresh their metrics
+            users_query = "SELECT c.id, c.email, c.display_name, c.lastUpdated, c.settings FROM c"
+            all_users = list(cosmos_user_settings_container.query_items(
+                query=users_query,
+                enable_cross_partition_query=True
+            ))
+            
+            refreshed_count = 0
+            failed_count = 0
+            
+            # Refresh metrics for each user
+            for user in all_users:
+                try:
+                    # Force refresh of metrics for this user
+                    enhanced_user = enhance_user_with_activity(user, force_refresh=True)
+                    refreshed_count += 1
+                    current_app.logger.debug(f"Refreshed metrics for user {user.get('id')}")
+                except Exception as user_error:
+                    failed_count += 1
+                    current_app.logger.error(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
+            
+            # Update admin settings with refresh timestamp
+            try:
+                from functions_settings import get_settings, update_settings
+                
+                settings = get_settings()
+                settings['control_center_last_refresh'] = datetime.now(timezone.utc).isoformat()
+                update_success = update_settings(settings)
+                
+                if not update_success:
+                    current_app.logger.warning("Failed to update admin settings with refresh timestamp")
+                else:
+                    current_app.logger.info("Updated admin settings with refresh timestamp")
+                    
+            except Exception as admin_error:
+                current_app.logger.error(f"Error updating admin settings: {admin_error}")
+            
+            current_app.logger.info(f"Control Center data refresh completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Control Center data refreshed successfully',
+                'refreshed_users': refreshed_count,
+                'failed_users': failed_count,
+                'refresh_timestamp': datetime.now(timezone.utc).isoformat()
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error refreshing Control Center data: {e}")
+            return jsonify({'error': 'Failed to refresh data'}), 500
+    
+    # Get refresh status API
+    @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required  
+    def api_get_refresh_status():
+        """
+        Get the last refresh timestamp for Control Center data.
+        """
+        try:
+            from functions_settings import get_settings
+            
+            settings = get_settings()
+            last_refresh = settings.get('control_center_last_refresh')
+            
+            return jsonify({
+                'last_refresh': last_refresh,
+                'last_refresh_formatted': None if not last_refresh else datetime.fromisoformat(last_refresh.replace('Z', '+00:00') if 'Z' in last_refresh else last_refresh).strftime('%m/%d/%Y %I:%M %p UTC')
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting refresh status: {e}")
+            return jsonify({'error': 'Failed to get refresh status'}), 500

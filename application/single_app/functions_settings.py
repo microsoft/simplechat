@@ -40,6 +40,8 @@ def get_settings():
         'allow_group_custom_agent_endpoints': False,
         'allow_group_plugins': False,
         'id': 'app_settings',
+        # Control Center settings
+        'control_center_last_refresh': None,  # Timestamp of last data refresh
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
