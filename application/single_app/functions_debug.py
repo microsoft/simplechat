@@ -12,7 +12,7 @@ def debug_print(message):
     try:
         settings = get_settings()
         if settings and settings.get('enable_debug_logging', False):
-            print(f"DEBUG: {message}")
+            print(f"{message}")
     except Exception:
         # If there's any error getting settings, don't print debug messages
         # This prevents crashes in case of configuration issues

@@ -9,6 +9,7 @@ import os
 import requests
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -328,8 +329,8 @@ def register_route_backend_documents(app):
         # --- 3) First query: get total count based on filters ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            # print(f"DEBUG Count Query: {count_query_str}") # Optional Debugging
-            # print(f"DEBUG Count Params: {query_params}")    # Optional Debugging
+            # debug_print(f"[DEBUG]: Count Query: {count_query_str}") # Optional Debugging
+            # debug_print(f"[DEBUG]: Count Params: {query_params}")    # Optional Debugging
             count_items = list(cosmos_user_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -353,8 +354,8 @@ def register_route_backend_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
-            # print(f"DEBUG Data Query: {data_query_str}") # Optional Debugging
-            # print(f"DEBUG Data Params: {query_params}")    # Optional Debugging
+            # debug_print(f"[DEBUG]: Data Query: {data_query_str}") # Optional Debugging
+            # debug_print(f"[DEBUG]: Data Params: {query_params}")    # Optional Debugging
             docs = list(cosmos_user_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,

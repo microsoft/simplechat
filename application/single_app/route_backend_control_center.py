@@ -998,7 +998,7 @@ def register_route_backend_control_center(app):
                     start_date = datetime.fromisoformat(custom_start).replace(hour=0, minute=0, second=0, microsecond=0)
                     end_date = datetime.fromisoformat(custom_end).replace(hour=23, minute=59, second=59, microsecond=999999)
                     days = (end_date - start_date).days + 1
-                    print(f"🔍 [Activity Trends API] Custom date range: {start_date} to {end_date} ({days} days)")
+                    debug_print(f"🔍 [Activity Trends API] Custom date range: {start_date} to {end_date} ({days} days)")
                 except ValueError:
                     return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD format.'}), 400
             else:
@@ -1007,12 +1007,12 @@ def register_route_backend_control_center(app):
                 # Set end_date to end of current day to include all of today's records
                 end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
                 start_date = (end_date - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
-                print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
+                debug_print(f"🔍 [Activity Trends API] Request for {days} days: {start_date} to {end_date}")
             
             # Get activity data
             activity_data = get_activity_trends_data(start_date, end_date)
             
-            print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
+            debug_print(f"🔍 [Activity Trends API] Returning data: {activity_data}")
             
             return jsonify({
                 'success': True,

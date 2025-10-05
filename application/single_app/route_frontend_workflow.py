@@ -14,6 +14,7 @@ import uuid
 import os
 from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from functions_debug import debug_print
 
 def register_route_frontend_workflow(app):
     @app.route('/workflow', methods=['GET'])
@@ -580,8 +581,8 @@ def register_route_frontend_workflow(app):
         selected_documents = session.get('bulk_selected_documents', [])
         scope = session.get('bulk_scope')
         
-        print(f"DEBUG: Selected documents: {selected_documents}")
-        print(f"DEBUG: Scope: {scope}")
+        debug_print(f"[DEBUG]:: Selected documents: {selected_documents}")
+        debug_print(f"[DEBUG]:: Scope: {scope}")
         
         if not selected_documents:
             flash('No documents selected for fraud analysis.', 'error')
@@ -597,43 +598,43 @@ def register_route_frontend_workflow(app):
         selected_doc_info = []
         for doc_id in selected_documents:
             try:
-                print(f"DEBUG: Attempting to get metadata for document: {doc_id}")
+                debug_print(f"[DEBUG]:: Attempting to get metadata for document: {doc_id}")
                 doc_info = None
                 
                 if scope == 'group':
                     # Handle group scope - need group_id
                     group_id = user_settings.get('active_group_id')
-                    print(f"DEBUG: Using group scope with group_id: {group_id}")
+                    debug_print(f"[DEBUG]:: Using group scope with group_id: {group_id}")
                     if group_id:
                         doc_info = get_document_metadata(doc_id, user_id, group_id=group_id)
                 elif scope == 'public':
                     # Handle public workspace - need public_workspace_id
                     public_workspace_id = user_settings.get('active_public_workspace_id')
-                    print(f"DEBUG: Using public scope with workspace_id: {public_workspace_id}")
+                    debug_print(f"[DEBUG]:: Using public scope with workspace_id: {public_workspace_id}")
                     if public_workspace_id:
                         doc_info = get_document_metadata(doc_id, user_id, public_workspace_id=public_workspace_id)
                 else:
                     # Personal scope (default)
-                    print(f"DEBUG: Using personal scope for user: {user_id}")
+                    debug_print(f"[DEBUG]:: Using personal scope for user: {user_id}")
                     doc_info = get_document_metadata(doc_id, user_id)
                 
                 if doc_info:
                     selected_doc_info.append(doc_info)
                     doc_name = doc_info.get('display_name', 'Unknown')
                     doc_title = doc_info.get('title', '')
-                    print(f"DEBUG: Successfully got document {doc_id}")
-                    print(f"DEBUG: - Display name: {doc_name}")
-                    print(f"DEBUG: - Title: {doc_title}")
-                    print(f"DEBUG: - Full doc_info keys: {list(doc_info.keys())}")
+                    debug_print(f"[DEBUG]:: Successfully got document {doc_id}")
+                    debug_print(f"[DEBUG]:: - Display name: {doc_name}")
+                    debug_print(f"[DEBUG]:: - Title: {doc_title}")
+                    debug_print(f"[DEBUG]:: - Full doc_info keys: {list(doc_info.keys())}")
                 else:
-                    print(f"DEBUG: Failed to get metadata for document {doc_id} - doc_info is None")
+                    debug_print(f"[DEBUG]:: Failed to get metadata for document {doc_id} - doc_info is None")
                     
             except Exception as e:
-                print(f"DEBUG: Exception getting document info for {doc_id}: {e}")
+                debug_print(f"[DEBUG]:: Exception getting document info for {doc_id}: {e}")
                 import traceback
-                print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                debug_print(f"[DEBUG]:: Traceback: {traceback.format_exc()}")
         
-        print(f"DEBUG: Total documents retrieved: {len(selected_doc_info)}")
+        debug_print(f"[DEBUG]:: Total documents retrieved: {len(selected_doc_info)}")
         
         # If we couldn't get any document info, let's try a different approach
         # Create dummy entries with clean document names for testing
@@ -672,13 +673,13 @@ def register_route_frontend_workflow(app):
         is_clean_documents = False
         for doc_info in selected_doc_info:
             doc_name = doc_info.get('display_name', '') + ' ' + doc_info.get('title', '')
-            print(f"DEBUG: Checking document: {doc_name}")
+            debug_print(f"[DEBUG]:: Checking document: {doc_name}")
             if any(indicator.lower() in doc_name.lower() for indicator in clean_document_indicators):
                 is_clean_documents = True
-                print(f"DEBUG: Found clean document indicator in: {doc_name}")
+                debug_print(f"[DEBUG]:: Found clean document indicator in: {doc_name}")
                 break
         
-        print(f"DEBUG: Is clean documents: {is_clean_documents}")
+        debug_print(f"[DEBUG]:: Is clean documents: {is_clean_documents}")
         
         if is_clean_documents:
             document_source = "clean_documents"
@@ -693,10 +694,10 @@ def register_route_frontend_workflow(app):
                 doc_filename = doc_info.get('file_name', f'document_{i+1}.md')
                 doc_id = doc_info.get('id', selected_documents[i] if i < len(selected_documents) else f'doc_{i}')
                 
-                print(f"DEBUG: Processing clean document {i+1}:")
-                print(f"DEBUG: - ID: {doc_id}")
-                print(f"DEBUG: - Title: {doc_title}")
-                print(f"DEBUG: - Filename: {doc_filename}")
+                debug_print(f"[DEBUG]:: Processing clean document {i+1}:")
+                debug_print(f"[DEBUG]:: - ID: {doc_id}")
+                debug_print(f"[DEBUG]:: - Title: {doc_title}")
+                debug_print(f"[DEBUG]:: - Filename: {doc_filename}")
                 
                 # Get actual document content from database
                 try:
@@ -737,24 +738,24 @@ def register_route_frontend_workflow(app):
                             doc_size = len(doc_content.encode('utf-8'))
                             doc_preview = doc_content[:200] + '...' if len(doc_content) > 200 else doc_content
                         except Exception as parse_error:
-                            print(f"DEBUG: Error parsing document response: {parse_error}")
+                            debug_print(f"[DEBUG]:: Error parsing document response: {parse_error}")
                             doc_content = f"Content for {doc_title} - This document contains legitimate financial information with proper audit trails and documentation."
                             doc_size = len(doc_content.encode('utf-8'))
                             doc_preview = doc_content[:150] + '...'
                     else:
-                        print(f"DEBUG: Failed to get document content, status: {status_code}")
+                        debug_print(f"[DEBUG]:: Failed to get document content, status: {status_code}")
                         # Fallback content
                         doc_content = f"Content for {doc_title} - This document contains legitimate financial information with proper audit trails and documentation."
                         doc_size = len(doc_content.encode('utf-8'))
                         doc_preview = doc_content[:150] + '...'
                     
-                    print(f"DEBUG: - Content length: {len(doc_content)} characters")
-                    print(f"DEBUG: - Size: {doc_size} bytes")
+                    debug_print(f"[DEBUG]:: - Content length: {len(doc_content)} characters")
+                    debug_print(f"[DEBUG]:: - Size: {doc_size} bytes")
                     
                 except Exception as e:
-                    print(f"DEBUG: Error getting document content for {doc_id}: {e}")
+                    debug_print(f"[DEBUG]:: Error getting document content for {doc_id}: {e}")
                     import traceback
-                    print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                    debug_print(f"[DEBUG]:: Traceback: {traceback.format_exc()}")
                     # Fallback content
                     doc_content = f"Content for {doc_title} - This document contains legitimate financial information with proper audit trails and documentation."
                     doc_size = len(doc_content.encode('utf-8'))
@@ -769,7 +770,7 @@ def register_route_frontend_workflow(app):
                     'type': 'markdown'
                 })
                 
-            print(f"DEBUG: Created {len(actual_documents)} clean documents with actual content")
+            debug_print(f"[DEBUG]:: Created {len(actual_documents)} clean documents with actual content")
         else:
             # Load fraud analysis documents from demo folder for fraud detection
             fraud_docs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
@@ -819,8 +820,8 @@ def register_route_frontend_workflow(app):
                 })
             document_source = "fraud_demo"  # Default to showing fraud for generic documents
         
-        print(f"DEBUG: Document source: {document_source}")
-        print(f"DEBUG: Actual documents count: {len(actual_documents)}")
+        debug_print(f"[DEBUG]:: Document source: {document_source}")
+        debug_print(f"[DEBUG]:: Actual documents count: {len(actual_documents)}")
         
         # For POST request, process the fraud analysis
         if request.method == 'POST':
@@ -1270,7 +1271,7 @@ def generate_document_pii_analysis(file_id, scope, user_id):
         # Get document chunks using hybrid search
         search_query = f"content analysis privacy information {doc_metadata.get('file_name', 'document')}"
         
-        debug_print(f"DEBUG: Calling hybrid_search with file_id={file_id}, scope={scope}")
+        debug_debug_print(f"[DEBUG]:: Calling hybrid_search with file_id={file_id}, scope={scope}")
         
         if scope == 'workspace':
             search_results = hybrid_search(
@@ -1299,7 +1300,7 @@ def generate_document_pii_analysis(file_id, scope, user_id):
                 active_public_workspace_id=public_workspace_id
             )
         
-        debug_print(f"DEBUG: hybrid_search returned {len(search_results) if search_results else 0} results")
+        debug_debug_print(f"[DEBUG]:: hybrid_search returned {len(search_results) if search_results else 0} results")
 
         if not search_results or len(search_results) == 0:
             raise ValueError("No document content found for PII analysis")
@@ -1318,13 +1319,13 @@ def generate_document_pii_analysis(file_id, scope, user_id):
                     'content_preview': content[:200] + "..." if len(content) > 200 else content
                 })
 
-        debug_print(f"DEBUG: Extracted {len(document_content)} characters of content from {len(search_results)} chunks")
-        debug_print(f"DEBUG: Chunk details:")
+        debug_debug_print(f"[DEBUG]:: Extracted {len(document_content)} characters of content from {len(search_results)} chunks")
+        debug_debug_print(f"[DEBUG]:: Chunk details:")
         for chunk in chunk_details:
             debug_print(f"  Chunk {chunk['chunk_index']}: {chunk['content_length']} chars - '{chunk['content_preview']}'")
         
         # Show first 1000 characters of the combined content for debugging
-        debug_print(f"DEBUG: First 1000 characters of combined content:")
+        debug_debug_print(f"[DEBUG]:: First 1000 characters of combined content:")
         debug_print(f"'{document_content[:1000]}...'" if len(document_content) > 1000 else f"'{document_content}'")
 
         # If no content found with specific search, try a broader search
@@ -1360,7 +1361,7 @@ def generate_document_pii_analysis(file_id, scope, user_id):
                     active_public_workspace_id=public_workspace_id
                 )
             
-            debug_print(f"DEBUG: Broad search returned {len(search_results) if search_results else 0} results")
+            debug_debug_print(f"[DEBUG]:: Broad search returned {len(search_results) if search_results else 0} results")
             
             # Extract content from broad search results
             if search_results:
@@ -1375,13 +1376,13 @@ def generate_document_pii_analysis(file_id, scope, user_id):
                             'content_preview': content[:200] + "..." if len(content) > 200 else content
                         })
                         
-                debug_print(f"DEBUG: After broad search, extracted {len(document_content)} characters of content")
-                debug_print(f"DEBUG: Broad search chunk details:")
+                debug_debug_print(f"[DEBUG]:: After broad search, extracted {len(document_content)} characters of content")
+                debug_debug_print(f"[DEBUG]:: Broad search chunk details:")
                 for chunk in broad_chunk_details:
                     debug_print(f"  Chunk {chunk['chunk_index']}: {chunk['content_length']} chars - '{chunk['content_preview']}'")
                 
                 # Show first 1000 characters after broad search
-                debug_print(f"DEBUG: First 1000 characters after broad search:")
+                debug_debug_print(f"[DEBUG]:: First 1000 characters after broad search:")
                 debug_print(f"'{document_content[:1000]}...'" if len(document_content) > 1000 else f"'{document_content}'")
 
         # Limit content to avoid token limits (approximately 60,000 characters = ~15,000 tokens)
@@ -1394,7 +1395,7 @@ def generate_document_pii_analysis(file_id, scope, user_id):
         total_pii_found = 0
         
         debug_print(f"Starting regex pattern matching on {len(document_content)} characters of content...")
-        debug_print(f"DEBUG: Content sample for pattern matching (first 500 chars):")
+        debug_debug_print(f"[DEBUG]:: Content sample for pattern matching (first 500 chars):")
         debug_print(f"'{document_content[:500]}...'" if len(document_content) > 500 else f"'{document_content}'")
         
         for pattern_info in pii_patterns:
@@ -1633,14 +1634,14 @@ CRITICAL: Base your analysis on the ACTUAL regex findings provided above. Do not
 def generate_document_translation(file_id, scope, user_id):
     """Generate translation for a document"""
     try:
-        debug_print(f"DEBUG: Starting document translation for file_id={file_id}, scope={scope}, user_id={user_id}")
+        debug_debug_print(f"[DEBUG]:: Starting document translation for file_id={file_id}, scope={scope}, user_id={user_id}")
         
         # Get document content using hybrid search
         search_query = "translate document content"
         group_id = session.get('active_group_id')
         public_workspace_id = session.get('active_public_workspace_id')
         
-        debug_print(f"DEBUG: Calling hybrid_search with file_id={file_id}, scope={scope}")
+        debug_debug_print(f"[DEBUG]:: Calling hybrid_search with file_id={file_id}, scope={scope}")
         
         if scope == 'workspace':
             search_results = hybrid_search(
@@ -1670,7 +1671,7 @@ def generate_document_translation(file_id, scope, user_id):
                 active_public_workspace_id=public_workspace_id
             )
         
-        debug_print(f"DEBUG: hybrid_search returned {len(search_results) if search_results else 0} results")
+        debug_debug_print(f"[DEBUG]:: hybrid_search returned {len(search_results) if search_results else 0} results")
         
         if not search_results or len(search_results) == 0:
             raise ValueError("No document content found for translation")
@@ -1689,10 +1690,10 @@ def generate_document_translation(file_id, scope, user_id):
                     'content_preview': content[:200] + "..." if len(content) > 200 else content
                 })
 
-        debug_print(f"DEBUG: Extracted {len(document_content)} characters of content from {len(search_results)} chunks")
-        debug_print(f"DEBUG: Chunk details:")
+        debug_debug_print(f"[DEBUG]:: Extracted {len(document_content)} characters of content from {len(search_results)} chunks")
+        debug_debug_print(f"[DEBUG]:: Chunk details:")
         for detail in chunk_details:
-            debug_print(f"DEBUG:   Chunk {detail['chunk_index']}: {detail['content_length']} chars - '{detail['content_preview']}'")
+            debug_debug_print(f"[DEBUG]::   Chunk {detail['chunk_index']}: {detail['content_length']} chars - '{detail['content_preview']}'")
 
         if not document_content.strip():
             raise ValueError("No readable content found for translation")

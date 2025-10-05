@@ -60,6 +60,7 @@ from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
+from functions_debug import debug_print
 
 app = Flask(__name__)
 
@@ -107,7 +108,7 @@ configure_azure_monitor()
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
-    print(f"DEBUG:Application settings: {settings}")
+    debug_print(f"[DEBUG]::Application settings: {settings}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -139,7 +140,7 @@ def before_first_request():
                             turnoff_time = None
                     
                     if turnoff_time and current_time >= turnoff_time:
-                        print(f"Debug logging timer expired at {turnoff_time}. Disabling debug logging.")
+                        debug_print(f"[DEBUG]: logging timer expired at {turnoff_time}. Disabling debug logging.")
                         settings['enable_debug_logging'] = False
                         settings['debug_logging_timer_enabled'] = False
                         settings['debug_logging_turnoff_time'] = None

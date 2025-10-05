@@ -16,6 +16,7 @@ from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name
+from functions_debug import debug_print
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
@@ -33,7 +34,7 @@ def register_enhanced_citations_routes(app):
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
-        print(f"DEBUG: Workflow PDF request - doc_id: {doc_id}")
+        debug_print(f"[DEBUG]:: Workflow PDF request - doc_id: {doc_id}")
 
         user_id = get_current_user_id()
         if not user_id:
@@ -193,7 +194,7 @@ def register_enhanced_citations_routes(app):
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
-        print(f"DEBUG: Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
+        debug_print(f"[DEBUG]:: Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
 
         user_id = get_current_user_id()
         if not user_id:
@@ -377,7 +378,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         page_number: Current page number
         show_all: If True, show all pages instead of just ±1 pages around current
     """
-    print(f"DEBUG: serve_enhanced_citation_pdf_content called with show_all: {show_all}")
+    debug_print(f"[DEBUG]:: serve_enhanced_citation_pdf_content called with show_all: {show_all}")
     
     import io
     import uuid
@@ -475,7 +476,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             
             # When show_all is True (workflow usage), allow iframe embedding
             if show_all:
-                print(f"DEBUG: Setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"[DEBUG]:: Setting CSP headers for iframe embedding (show_all={show_all})")
                 headers['Content-Security-Policy'] = (
                     "default-src 'self'; "
                     "frame-ancestors 'self'; "  # Allow embedding in same origin
@@ -483,7 +484,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 )
                 headers['X-Frame-Options'] = 'SAMEORIGIN'  # Allow same-origin framing
             else:
-                print(f"DEBUG: NOT setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"[DEBUG]:: NOT setting CSP headers for iframe embedding (show_all={show_all})")
             
             response = Response(
                 extracted_content,
@@ -507,7 +508,7 @@ def serve_workflow_pdf_content(raw_doc):
     Serve complete PDF content for workflow iframe embedding
     This function serves the entire PDF with headers that allow iframe embedding
     """
-    print(f"DEBUG: serve_workflow_pdf_content called for file: {raw_doc.get('file_name', 'unknown')}")
+    debug_print(f"[DEBUG]:: serve_workflow_pdf_content called for file: {raw_doc.get('file_name', 'unknown')}")
     
     import io
     import tempfile
@@ -517,8 +518,8 @@ def serve_workflow_pdf_content(raw_doc):
     workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
     blob_name = get_blob_name(raw_doc, workspace_type)
     
-    print(f"DEBUG: Using workspace_type: {workspace_type}, container: {container_name}, blob_name: {blob_name}")
-    print(f"DEBUG: Available CLIENTS keys: {list(CLIENTS.keys())}")
+    debug_print(f"[DEBUG]:: Using workspace_type: {workspace_type}, container: {container_name}, blob_name: {blob_name}")
+    debug_print(f"[DEBUG]:: Available CLIENTS keys: {list(CLIENTS.keys())}")
     
     # Get blob storage client (same as other functions)
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
@@ -529,12 +530,12 @@ def serve_workflow_pdf_content(raw_doc):
     
     try:
         # Download blob content directly
-        print(f"DEBUG: Attempting to download blob: {blob_name} from container: {container_name}")
+        debug_print(f"[DEBUG]:: Attempting to download blob: {blob_name} from container: {container_name}")
         blob_client = container_client.get_blob_client(blob_name)
-        print(f"DEBUG: Got blob client, downloading content...")
+        debug_print(f"[DEBUG]:: Got blob client, downloading content...")
         blob_data = blob_client.download_blob()
         content = blob_data.readall()
-        print(f"DEBUG: Successfully downloaded {len(content)} bytes")
+        debug_print(f"[DEBUG]:: Successfully downloaded {len(content)} bytes")
         
         # Return the complete PDF with iframe-friendly headers
         headers = {
@@ -551,7 +552,7 @@ def serve_workflow_pdf_content(raw_doc):
             'X-Frame-Options': 'SAMEORIGIN'  # Allow same-origin framing
         }
         
-        print(f"DEBUG: Returning PDF with iframe-friendly headers")
+        debug_print(f"[DEBUG]:: Returning PDF with iframe-friendly headers")
         
         response = Response(
             content,
