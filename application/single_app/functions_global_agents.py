@@ -18,7 +18,6 @@ from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_v
 from functions_settings import *
 
 
-
 def ensure_default_global_agent_exists():
     """
     Ensure at least one global agent exists in the global_agents container.
@@ -64,6 +63,14 @@ def ensure_default_global_agent_exists():
                 extra={"existing_agents_count": len(agents)},
             )
             print("ℹ️ At least one global agent already exists.")
+
+        settings = get_settings()
+        if settings and settings.get("global_selected_agent", {}).name != "":
+            settings["global_selected_agent"] = {
+                "name": default_agent["name"],
+                "is_global": True
+            }
+            save_settings(settings)
     except Exception as e:
         log_event(
             f"Error ensuring default global agent exists: {e}",
