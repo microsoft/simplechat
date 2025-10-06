@@ -451,7 +451,7 @@ def get_activity_trends_data(start_date, end_date):
     """
     try:
         # Debug logging
-        print(f"🔍 [ACTIVITY TRENDS DEBUG] Getting data for range: {start_date} to {end_date}")
+        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Getting data for range: {start_date} to {end_date}")
         
         # Convert string dates to datetime objects if needed
         if isinstance(start_date, str):
@@ -696,6 +696,253 @@ def get_activity_trends_data(start_date, end_date):
             'documents': {},
             'logins': {}
         }
+
+def get_raw_activity_trends_data(start_date, end_date, charts):
+    """
+    Get raw detailed activity data for export instead of aggregated counts.
+    Returns individual records with user information for each activity type.
+    """
+    try:
+        debug_print(f"🔍 [RAW ACTIVITY DEBUG] Getting raw data for range: {start_date} to {end_date}")
+        debug_print(f"🔍 [RAW ACTIVITY DEBUG] Requested charts: {charts}")
+        
+        result = {}
+        
+        # Parameters for queries
+        parameters = [
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()}
+        ]
+        
+        # Helper function to get user info
+        def get_user_info(user_id):
+            try:
+                user_doc = cosmos_user_settings_container.read_item(
+                    item=user_id,
+                    partition_key=user_id
+                )
+                return {
+                    'display_name': user_doc.get('display_name', ''),
+                    'email': user_doc.get('email', '')
+                }
+            except Exception:
+                return {
+                    'display_name': '',
+                    'email': ''
+                }
+        
+        # 1. Login Data
+        if 'logins' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting login records...")
+            try:
+                login_query = """
+                    SELECT c.timestamp, c.created_at, c.user_id, c.activity_type, c.login_method
+                    FROM c 
+                    WHERE c.activity_type = 'user_login'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                """
+                
+                login_activities = list(cosmos_activity_logs_container.query_items(
+                    query=login_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                login_records = []
+                for login in login_activities:
+                    user_id = login.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    timestamp = login.get('timestamp') or login.get('created_at')
+                    
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                login_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                            else:
+                                login_date = timestamp
+                            
+                            login_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'login_time': login_date.strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse login timestamp {timestamp}: {e}")
+                
+                result['logins'] = login_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(login_records)} login records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting login data: {e}")
+                result['logins'] = []
+        
+        # 2. Document Data
+        if 'documents' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting document records...")
+            try:
+                documents_query = """
+                    SELECT c.id, c.user_id, c.filename, c.title, c.page_count, 
+                           c.ai_search_size, c.storage_account_size, c.upload_date
+                    FROM c 
+                    WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
+                """
+                
+                # Query all document containers
+                containers = [
+                    ('user_documents', cosmos_user_documents_container),
+                    ('group_documents', cosmos_group_documents_container), 
+                    ('public_documents', cosmos_public_documents_container)
+                ]
+                
+                document_records = []
+                for container_name, container in containers:
+                    docs = list(container.query_items(
+                        query=documents_query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    ))
+                    
+                    for doc in docs:
+                        user_id = doc.get('user_id', '')
+                        user_info = get_user_info(user_id)
+                        upload_date = doc.get('upload_date')
+                        
+                        if upload_date:
+                            try:
+                                if isinstance(upload_date, str):
+                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
+                                else:
+                                    doc_date = upload_date
+                                
+                                document_records.append({
+                                    'display_name': user_info['display_name'],
+                                    'email': user_info['email'],
+                                    'user_id': user_id,
+                                    'document_id': doc.get('id', ''),
+                                    'filename': doc.get('filename', ''),
+                                    'title': doc.get('title', ''),
+                                    'page_count': doc.get('page_count', ''),
+                                    'ai_search_size': doc.get('ai_search_size', ''),
+                                    'storage_account_size': doc.get('storage_account_size', ''),
+                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S')
+                                })
+                            except Exception as e:
+                                debug_print(f"Could not parse document upload_date {upload_date}: {e}")
+                
+                result['documents'] = document_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(document_records)} document records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting document data: {e}")
+                result['documents'] = []
+        
+        # 3. Chat Data
+        if 'chats' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting chat records...")
+            try:
+                conversations_query = """
+                    SELECT c.id, c.user_id, c.title, c.last_updated, c.created_at
+                    FROM c 
+                    WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
+                """
+                
+                conversations = list(cosmos_conversations_container.query_items(
+                    query=conversations_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                chat_records = []
+                for conv in conversations:
+                    user_id = conv.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    conversation_id = conv.get('id', '')
+                    last_updated = conv.get('last_updated')
+                    created_at = conv.get('created_at')
+                    
+                    # Get message count and total size for this conversation
+                    try:
+                        messages_query = """
+                            SELECT VALUE COUNT(1)
+                            FROM c 
+                            WHERE c.conversation_id = @conversation_id
+                        """
+                        
+                        message_count_result = list(cosmos_messages_container.query_items(
+                            query=messages_query,
+                            parameters=[{"name": "@conversation_id", "value": conversation_id}],
+                            enable_cross_partition_query=True
+                        ))
+                        message_count = message_count_result[0] if message_count_result else 0
+                        
+                        # Get total character count
+                        messages_size_query = """
+                            SELECT c.content
+                            FROM c 
+                            WHERE c.conversation_id = @conversation_id
+                        """
+                        
+                        messages = list(cosmos_messages_container.query_items(
+                            query=messages_size_query,
+                            parameters=[{"name": "@conversation_id", "value": conversation_id}],
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        total_size = sum(len(str(msg.get('content', ''))) for msg in messages)
+                        
+                    except Exception as msg_e:
+                        debug_print(f"Could not get message data for conversation {conversation_id}: {msg_e}")
+                        message_count = 0
+                        total_size = 0
+                    
+                    if last_updated:
+                        try:
+                            if isinstance(last_updated, str):
+                                conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00') if 'Z' in last_updated else last_updated)
+                            else:
+                                conv_date = last_updated
+                            
+                            # Process created_at date
+                            created_date_str = ''
+                            if created_at:
+                                try:
+                                    if isinstance(created_at, str):
+                                        created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00') if 'Z' in created_at else created_at)
+                                    else:
+                                        created_date = created_at
+                                    created_date_str = created_date.strftime('%Y-%m-%d %H:%M:%S')
+                                except Exception as e:
+                                    debug_print(f"Could not parse conversation created_at {created_at}: {e}")
+                            
+                            chat_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'chat_id': conversation_id,
+                                'chat_title': conv.get('title', ''),
+                                'message_count': message_count,
+                                'total_size': total_size,
+                                'created_date': created_date_str
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse conversation last_updated {last_updated}: {e}")
+                
+                result['chats'] = chat_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(chat_records)} chat records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting chat data: {e}")
+                result['chats'] = []
+        
+        debug_print(f"🔍 [RAW ACTIVITY DEBUG] Returning raw data with {len(result)} chart types")
+        return result
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting raw activity trends data: {e}")
+        debug_print(f"❌ [RAW ACTIVITY DEBUG] Fatal error: {e}")
+        return {}
 
 
 def register_route_backend_control_center(app):
@@ -1035,7 +1282,8 @@ def register_route_backend_control_center(app):
     @admin_required
     def api_export_activity_trends():
         """
-        Export activity trends data as CSV file based on selected charts and date range.
+        Export activity trends raw data as CSV file based on selected charts and date range.
+        Returns detailed records with user information instead of aggregated counts.
         """
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Starting CSV export process")
@@ -1046,7 +1294,7 @@ def register_route_backend_control_center(app):
             start_date = data.get('start_date')  # For custom range
             end_date = data.get('end_date')  # For custom range
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Parsed params - charts: {charts}, time_window: {time_window}, start_date: {start_date}, end_date: {end_date}")            # Determine date range
-            print("🔍 [ACTIVITY TRENDS DEBUG] Determining date range")
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Determining date range")
             if time_window == 'custom' and start_date and end_date:
                 try:
                     debug_print("🔍 [ACTIVITY TRENDS DEBUG] Processing custom dates: {start_date} to {end_date}")
@@ -1064,55 +1312,82 @@ def register_route_backend_control_center(app):
                 start_date_obj = end_date_obj - timedelta(days=days-1)
                 debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Predefined range: {days} days, from {start_date_obj} to {end_date_obj}")
             
-            # Get activity data using existing function
-            print("🔍 [ACTIVITY TRENDS DEBUG] Calling get_activity_trends_data")
-            activity_data = get_activity_trends_data(
-                start_date_obj.strftime('%Y-%m-%d'),
-                end_date_obj.strftime('%Y-%m-%d')
+            # Get raw activity data using new function
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Calling get_raw_activity_trends_data")
+            raw_data = get_raw_activity_trends_data(
+                start_date_obj,
+                end_date_obj,
+                charts
             )
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Activity data retrieved: {len(activity_data) if activity_data else 0} chart types")
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Raw data retrieved: {len(raw_data) if raw_data else 0} chart types")
             
-            # Prepare CSV data
-            print("🔍 [ACTIVITY TRENDS DEBUG] Preparing CSV data")
-            csv_rows = []
-            csv_rows.append(['Date', 'Chart Type', 'Activity Count'])
-            
-            # Process each requested chart type
-            for chart_type in charts:
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Processing chart type: {chart_type}")
-                if chart_type in activity_data:
-                    chart_data = activity_data[chart_type]
-                    debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Chart data for {chart_type}: {len(chart_data) if chart_data else 0} entries")
-                    # Sort dates for consistent output
-                    sorted_dates = sorted(chart_data.keys())
-                    
-                    for date_key in sorted_dates:
-                        count = chart_data[date_key]
-                        chart_display_name = {
-                            'logins': 'Logins',
-                            'chats': 'Chats', 
-                            'documents': 'Documents'
-                        }.get(chart_type, chart_type.title())
-                        
-                        csv_rows.append([date_key, chart_display_name, count])
-                        debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Added row: {date_key}, {chart_display_name}, {count}")
-                else:
-                    debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] No data found for chart type: {chart_type}")
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total CSV rows prepared: {len(csv_rows)}")
-            
-            # Generate CSV content
+            # Generate CSV content with all data types
             import io
             import csv
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerows(csv_rows)
+            
+            # Write data for each chart type
+            for chart_type in charts:
+                if chart_type in raw_data and raw_data[chart_type]:
+                    # Add section header
+                    writer.writerow([])  # Empty row for separation
+                    writer.writerow([f"=== {chart_type.upper()} DATA ==="])
+                    
+                    # Write headers and data based on chart type
+                    if chart_type == 'logins':
+                        writer.writerow(['Display Name', 'Email', 'User ID', 'Login Time'])
+                        for record in raw_data[chart_type]:
+                            writer.writerow([
+                                record.get('display_name', ''),
+                                record.get('email', ''),
+                                record.get('user_id', ''),
+                                record.get('login_time', '')
+                            ])
+                    
+                    elif chart_type == 'documents':
+                        writer.writerow([
+                            'Display Name', 'Email', 'User ID', 'Document ID', 'Document Filename', 
+                            'Document Title', 'Document Page Count', 'Document Size in AI Search', 
+                            'Document Size in Storage Account', 'Upload Date'
+                        ])
+                        for record in raw_data[chart_type]:
+                            writer.writerow([
+                                record.get('display_name', ''),
+                                record.get('email', ''),
+                                record.get('user_id', ''),
+                                record.get('document_id', ''),
+                                record.get('filename', ''),
+                                record.get('title', ''),
+                                record.get('page_count', ''),
+                                record.get('ai_search_size', ''),
+                                record.get('storage_account_size', ''),
+                                record.get('upload_date', '')
+                            ])
+                    
+                    elif chart_type == 'chats':
+                        writer.writerow([
+                            'Display Name', 'Email', 'User ID', 'Chat ID', 'Chat Title', 
+                            'Number of Messages', 'Total Size (characters)', 'Created Date'
+                        ])
+                        for record in raw_data[chart_type]:
+                            writer.writerow([
+                                record.get('display_name', ''),
+                                record.get('email', ''),
+                                record.get('user_id', ''),
+                                record.get('chat_id', ''),
+                                record.get('chat_title', ''),
+                                record.get('message_count', ''),
+                                record.get('total_size', ''),
+                                record.get('created_date', '')
+                            ])
+            
             csv_content = output.getvalue()
             output.close()
             
             # Generate filename with timestamp
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"activity_trends_export_{timestamp}.csv"
+            filename = f"activity_trends_raw_export_{timestamp}.csv"
             
             # Return CSV as downloadable response
             from flask import make_response
