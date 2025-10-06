@@ -12,6 +12,10 @@ from datetime import datetime
 from azure.cosmos import exceptions
 from flask import current_app
 import logging
+from config import cosmos_personal_agents_container
+from functions_settings import get_settings
+from functions_keyvault import keyvault_agent_save_helper
+
 
 def get_personal_agents(user_id):
     """
@@ -24,8 +28,6 @@ def get_personal_agents(user_id):
         list: List of agent dictionaries
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         query = "SELECT * FROM c WHERE c.user_id = @user_id"
         parameters = [{"name": "@user_id", "value": user_id}]
         
@@ -61,8 +63,6 @@ def get_personal_agent(user_id, agent_id):
         dict: Agent dictionary or None if not found
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         agent = cosmos_personal_agents_container.read_item(
             item=agent_id,
             partition_key=user_id
@@ -90,8 +90,6 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         # Ensure required fields
         if 'id' not in agent_data:
             agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
@@ -137,8 +135,6 @@ def delete_personal_agent(user_id, agent_id):
         bool: True if deleted, False if not found
     """
     try:
-        from config import cosmos_personal_agents_container
-        
         # Try to find the agent first to get the correct ID
         # Check if agent_id is actually a name and we need to find the real ID
         agent = get_personal_agent(user_id, agent_id)
