@@ -383,9 +383,12 @@ def _test_redis_connection(payload):
     try:
         if redis_auth_type == 'managed_identity':
             # Acquire token from managed identity for Redis scope
+            from config import get_redis_cache_infrastructure_endpoint
             credential = DefaultAzureCredential()
-            token = credential.get_token("https://*.cacheinfra.windows.net:10225/appid/.default").token
-            redis_password = token
+            redis_hostname = redis_host.split('.')[0]
+            cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+            token = credential.get_token(cache_endpoint)
+            redis_password = token.token
         else:
             if not redis_key:
                 return jsonify({'error': 'Redis key is required for key auth'}), 400
