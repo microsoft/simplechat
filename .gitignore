@@ -38,3 +38,7 @@ application/single_app/static/.DS_Store
 application/external_apps/bulkloader/map.csv
 
 flask_session
+
+# my files
+cam_updates
+application/single_app/sql_docker_files
