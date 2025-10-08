@@ -123,9 +123,11 @@ def configure_sessions(settings):
                 app.config['SESSION_TYPE'] = 'redis'
                 if redis_auth_type == 'managed_identity':
                     print("Redis enabled using Managed Identity")
+                    from config import get_redis_cache_infrastructure_endpoint
                     credential = DefaultAzureCredential()
                     redis_hostname = redis_url.split('.')[0]
-                    token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
+                    cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+                    token = credential.get_token(cache_endpoint)
                     app.config['SESSION_REDIS'] = Redis(
                         host=redis_url,
                         port=6380,
