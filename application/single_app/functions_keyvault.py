@@ -80,13 +80,8 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
         raise Exception("Key Vault name is not configured.")
 
     try:
-        key_vault_identity = settings.get("key_vault_identity", None)
-        if key_vault_identity is not None:
-            credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
-        else:
-            credential = DefaultAzureCredential()
         key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-        secret_client = SecretClient(vault_url=key_vault_url, credential=credential)
+        secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
 
         retrieved_secret = secret_client.get_secret(full_secret_name)
         print(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.")
@@ -128,14 +123,8 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
 
     try:
-        key_vault_identity = settings.get("key_vault_identity", None)
-        if key_vault_identity is not None:
-            credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
-        else:
-            credential = DefaultAzureCredential()
         key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-        secret_client = SecretClient(vault_url=key_vault_url, credential=credential)
-
+        secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
         secret_client.set_secret(full_secret_name, secret_value)
         print(f"Secret '{full_secret_name}' stored successfully in Key Vault.")
         return full_secret_name
@@ -201,26 +190,23 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
     Raises:
         Exception: If storing a key in Key Vault fails.
     """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return agent_dict
     source = "agent"
     updated = dict(agent_dict)
     agent_name = updated.get('name', 'agent')
-    # Decide which key to store based on enable_agent_gpt_apim
     use_apim = updated.get('enable_agent_gpt_apim', False)
-    if use_apim:
-        key = 'azure_agent_apim_gpt_subscription_key'
-    else:
-        key = 'azure_openai_gpt_key'
-
+    key = 'azure_agent_apim_gpt_subscription_key' if use_apim else 'azure_openai_gpt_key'
     if key in updated and updated[key]:
         value = updated[key]
         secret_name = agent_name
-        # 1. If the value is the UI trigger word, set to the built secret name (for display only)
         if value == ui_trigger_word:
             updated[key] = build_full_secret_name(secret_name, scope_value, source, scope)
-        # 2. If the value is already a Key Vault reference, leave as is (or set to built name for display)
         elif validate_secret_name_dynamic(value):
             updated[key] = build_full_secret_name(secret_name, scope_value, source, scope)
-        # 3. Otherwise, store in Key Vault and set to the new secret name
         else:
             try:
                 full_secret_name = store_secret_in_key_vault(secret_name, value, scope_value, source=source, scope=scope)
@@ -244,25 +230,23 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
     Raises:
         Exception: If retrieving a key from Key Vault fails.
     """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return agent_dict
     source = "agent"
     updated = dict(agent_dict)
     agent_name = updated.get('name', 'agent')
-    # Decide which key to retrieve based on enable_agent_gpt_apim
     use_apim = updated.get('enable_agent_gpt_apim', False)
-    if use_apim:
-        key = 'azure_agent_apim_gpt_subscription_key'
-    else:
-        key = 'azure_openai_gpt_key'
-
+    key = 'azure_agent_apim_gpt_subscription_key' if use_apim else 'azure_openai_gpt_key'
     if key in updated and updated[key]:
         value = updated[key]
-        # If the value is a Key Vault reference, retrieve the actual key
         if validate_secret_name_dynamic(value):
             try:
-                """
-                actual_key = retrieve_secret_from_key_vault(value)
-                updated[key] = actual_key
-                """
+                # Uncomment below to actually retrieve the secret value
+                # actual_key = retrieve_secret_from_key_vault(value)
+                # updated[key] = actual_key
                 updated[key] = ui_trigger_word
             except Exception as e:
                 raise Exception(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
@@ -304,3 +288,54 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
             except Exception as e:
                 raise Exception(f"Failed to store plugin key in Key Vault: {e}")
     return updated
+
+# Helper to delete agent secrets from Key Vault
+def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
+    """
+    For agent dicts, delete sensitive keys from Key Vault if they are stored as Key Vault references.
+    Only processes 'azure_agent_apim_gpt_subscription_key' and 'azure_openai_gpt_key'.
+
+    Args:
+        agent_dict (dict): The agent dictionary to process.
+        scope_value (str): The value for the scope (e.g., agent id).
+        scope (str): The scope (e.g., 'user', 'global').
+
+    Returns:
+        None
+    """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return agent_dict
+    source = "agent"
+    updated = dict(agent_dict)
+    agent_name = updated.get('name', 'agent')
+    use_apim = updated.get('enable_agent_gpt_apim', False)
+    keys = ['azure_agent_apim_gpt_subscription_key'] if use_apim else ['azure_openai_gpt_key']
+    for key in keys:
+        if key in updated and updated[key]:
+            secret_name = updated[key]
+            if validate_secret_name_dynamic(secret_name):
+                try:
+                    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+                    client.begin_delete_secret(secret_name)
+                except Exception as e:
+                    logging.error(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
+    return agent_dict
+
+def get_keyvault_credential():
+    """
+    Get the Key Vault credential using DefaultAzureCredential, optionally with a managed identity client ID.
+
+    Returns:
+        DefaultAzureCredential: The credential object for Key Vault access.
+    """
+    settings = get_settings()
+    key_vault_identity = settings.get("key_vault_identity", None)
+    if key_vault_identity is not None:
+        credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
+    else:
+        credential = DefaultAzureCredential()
+    return credential

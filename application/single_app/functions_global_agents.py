@@ -14,7 +14,7 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
-from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault, keyvault_agent_get_helper
+from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 
 
@@ -122,10 +122,7 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
-        settings = get_settings()
-        # Code to retrieve and replace Key Vault secrets if needed
-        if settings.get("enable_key_vault_secret_storage", False):
-            agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
+        agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
         print(f"✅ Found global agent: {agent_id}")
         return agent
     except Exception as e:
@@ -164,11 +161,8 @@ def save_global_agent(agent_data):
         )
         print(f"💾 Saving global agent: {agent_data.get('name', 'Unknown')}")
         
-
-        settings = get_settings()
-        if settings.get("enable_key_vault_secret_storage", False):
-            # Use the new helper to store sensitive agent keys in Key Vault
-            agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
+        # Use the new helper to store sensitive agent keys in Key Vault
+        agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
 
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
         log_event(
@@ -202,6 +196,8 @@ def delete_global_agent(agent_id):
     try:
         user_id = get_current_user_id()
         print(f"🗑️ Deleting global agent: {agent_id}")
+        agent_dict = get_global_agent(agent_id)
+        keyvault_agent_delete_helper(agent_dict, agent_id, scope="global")
         cosmos_global_agents_container.delete_item(
             item=agent_id,
             partition_key=agent_id
