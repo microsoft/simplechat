@@ -302,25 +302,23 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
     Raises:
         Exception: If retrieving a key from Key Vault fails.
     """
+    settings = get_settings()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return agent_dict
     source = "agent"
     updated = dict(agent_dict)
     agent_name = updated.get('name', 'agent')
-    # Decide which key to retrieve based on enable_agent_gpt_apim
     use_apim = updated.get('enable_agent_gpt_apim', False)
-    if use_apim:
-        key = 'azure_agent_apim_gpt_subscription_key'
-    else:
-        key = 'azure_openai_gpt_key'
-
+    key = 'azure_agent_apim_gpt_subscription_key' if use_apim else 'azure_openai_gpt_key'
     if key in updated and updated[key]:
         value = updated[key]
-        # If the value is a Key Vault reference, retrieve the actual key
         if validate_secret_name_dynamic(value):
             try:
-                """
-                actual_key = retrieve_secret_from_key_vault(value)
-                updated[key] = actual_key
-                """
+                # Uncomment below to actually retrieve the secret value
+                # actual_key = retrieve_secret_from_key_vault(value)
+                # updated[key] = actual_key
                 updated[key] = ui_trigger_word
             except Exception as e:
                 raise Exception(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
