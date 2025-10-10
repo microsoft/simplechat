@@ -65,7 +65,13 @@ def ensure_default_global_agent_exists():
             print("ℹ️ At least one global agent already exists.")
 
         settings = get_settings()
-        if settings and settings.get("global_selected_agent", {}).name != "":
+        needs_default = False
+        global_selected = settings.get("global_selected_agent") if settings else None
+        if not isinstance(global_selected, dict):
+            needs_default = True
+        elif global_selected.get("name", "") == "":
+            needs_default = True
+        if settings and needs_default:
             settings["global_selected_agent"] = {
                 "name": default_agent["name"],
                 "is_global": True
