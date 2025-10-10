@@ -7,7 +7,7 @@ from azure.identity import DefaultAzureCredential
 
 class AzureFunctionPlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
-        self.manifest = manifest
+        super().__init__(manifest)
         self.endpoint = manifest.get('endpoint')
         self.key = manifest.get('auth', {}).get('key')
         self.auth_type = manifest.get('auth', {}).get('type', 'key')
