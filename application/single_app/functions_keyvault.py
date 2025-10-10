@@ -196,13 +196,9 @@ def validate_secret_name_dynamic(secret_name):
     pattern = rf"^(.+)--({sources_pattern})--({scopes_pattern})--(.+)$"
     match = re.match(pattern, secret_name)
     if not match:
-        print(f"Secret name '{secret_name}' does not match the required pattern.")
-        logging.warning(f"Secret name '{secret_name}' does not match the required pattern.")
         return False
     # Optionally, check length
     if len(secret_name) > 127:
-        print(f"Secret name '{secret_name}' exceeds the maximum length of 127 characters.")
-        logging.warning(f"Secret name '{secret_name}' exceeds the maximum length of 127 characters.")
         return False
     return True
 
