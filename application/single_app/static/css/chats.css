@@ -943,12 +943,12 @@ a.citation-link:hover {
 
 /* Optional: Style links within messages */
 .message-text a {
-  color: #ffeb3b; /* Bootstrap warning color for better visibility */
+  color: #0d6efd;
   text-decoration: underline;
 }
 
 [data-bs-theme="dark"] .message-text a {
-  color: #212529;
+  color: #ffeb3b;
   text-decoration: underline;
 }
 
