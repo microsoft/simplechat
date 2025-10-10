@@ -88,9 +88,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-# Allow overriding the session file directory; default to /app/flask_session with proper permissions
-SESSION_FILE_DIR = os.getenv('SESSION_FILE_DIR', '/app/flask_session')
-VERSION = "0.230.001"
+VERSION = "0.229.063"
+
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 

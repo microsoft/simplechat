@@ -1,6 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.229.063)**
+
+#### Bug Fixes
+
+*   **Admin Plugins Modal Load Fix**
+    *   Fixed issue where Admin Plugins modal would fail to load when using sidenav navigation.
+    *   **Root Cause**: JavaScript code attempted to access DOM elements that didn't exist in sidenav navigation.
+    *   **Solution**: Corrected DOM element checks to ensure compatibility with both top-nav and sidenav layouts.
+    *   **User Experience**: Admins can now access the Plugins modal reglardless of navigation style.
+    *   (Ref: `admin_plugins.js`, DOM existence checks)
+
 ### **(v0.229.062)**
 
 #### Bug Fixes

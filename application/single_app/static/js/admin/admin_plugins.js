@@ -4,7 +4,7 @@ import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest 
 
 // Main logic
 document.addEventListener('DOMContentLoaded', function () {
-    if (!document.getElementById('agents-tab')) return;
+    if (!document.getElementById('actions-configuration')) return;
 
     // Load and render plugins table
     loadPlugins();
