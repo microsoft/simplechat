@@ -88,6 +88,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
+# Allow overriding the session file directory; default to /app/flask_session with proper permissions
+SESSION_FILE_DIR = os.getenv('SESSION_FILE_DIR', '/app/flask_session')
 VERSION = "0.230.001"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -134,6 +136,7 @@ CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
 
 
 # Azure AD Configuration
@@ -183,6 +186,26 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
+
+def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
+    """
+    Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
+    
+    Args:
+        redis_hostname (str): The hostname of the Redis cache instance
+        
+    Returns:
+        str: The complete endpoint URL for Redis cache infrastructure token acquisition
+    """
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://{redis_hostname}.cacheinfra.azure.us:10225/appid"
+    elif AZURE_ENVIRONMENT == "custom" and CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE:
+        # For custom environments, allow override via environment variable
+        # Format: https://{hostname}.custom-cache-domain.com:10225/appid
+        return CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE.format(hostname=redis_hostname)
+    else:
+        # Default to Azure Public Cloud
+        return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
