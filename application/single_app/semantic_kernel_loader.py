@@ -468,17 +468,21 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         # Create logged plugin loader for enhanced logging
         logged_loader = create_logged_plugin_loader(kernel)
         
-        # Get plugin manifests based on mode
+        global_plugins = get_global_actions()
         if mode_label == "per-user":
             if user_id:
                 all_plugin_manifests = get_personal_actions(user_id)
+                personal_action_names = {p.get('name') for p in plugin_manifests}
+                for g in global_plugins:
+                    if g.get('name') not in personal_action_names:
+                        plugin_manifests.append(g)
                 print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
             else:
                 print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            all_plugin_manifests = get_global_actions()
+            all_plugin_manifests = global_plugins
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
