@@ -10,7 +10,6 @@ import uuid
 import json
 import traceback
 from datetime import datetime
-
 from config import cosmos_global_actions_container
 
 def get_global_actions():
@@ -25,7 +24,7 @@ def get_global_actions():
             query="SELECT * FROM c",
             enable_cross_partition_query=True
         ))
-        
+
         return actions
         
     except Exception as e:
@@ -45,8 +44,6 @@ def get_global_action(action_id):
         dict: Action data or None if not found
     """
     try:
-        from config import cosmos_global_actions_container
-        
         action = cosmos_global_actions_container.read_item(
             item=action_id,
             partition_key=action_id
@@ -71,8 +68,6 @@ def save_global_action(action_data):
         dict: Saved action data or None if failed
     """
     try:
-        from config import cosmos_global_actions_container
-        
         # Ensure required fields
         if 'id' not in action_data:
             action_data['id'] = str(uuid.uuid4())
@@ -106,8 +101,6 @@ def delete_global_action(action_id):
         bool: True if successful, False otherwise
     """
     try:
-        from config import cosmos_global_actions_container
-        
         print(f"🗑️ Deleting global action: {action_id}")
         
         cosmos_global_actions_container.delete_item(
