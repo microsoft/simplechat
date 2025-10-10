@@ -70,12 +70,12 @@ def get_personal_agent(user_id, agent_id):
             partition_key=user_id
         )
         
-    # Remove Cosmos metadata and retrieve secrets from Key Vault
-    cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
-    cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user")
-    return cleaned_agent
-        
+        # Remove Cosmos metadata and retrieve secrets from Key Vault
+        cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
+        cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user")
+        return cleaned_agent
     except exceptions.CosmosResourceNotFoundError:
+        current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
         return None
     except Exception as e:
         current_app.logger.error(f"Error fetching agent {agent_id} for user {user_id}: {e}")
@@ -156,6 +156,7 @@ def delete_personal_agent(user_id, agent_id):
         )
         return True
     except exceptions.CosmosResourceNotFoundError:
+        current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
         return False
     except Exception as e:
         current_app.logger.error(f"Error deleting agent {agent_id} for user {user_id}: {e}")
