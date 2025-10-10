@@ -1106,30 +1106,37 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Only load core Semantic Kernel plugins here
     if settings.get('enable_time_plugin', True):
         load_time_plugin(kernel)
+        print(f"[SK Loader] Loaded Time plugin.")
         log_event("[SK Loader] Loaded Time plugin.", level=logging.INFO)
 
     if settings.get('enable_fact_memory_plugin', True):
         load_fact_memory_plugin(kernel)
+        print(f"[SK Loader] Loaded Fact Memory plugin.")
         log_event("[SK Loader] Loaded Fact Memory plugin.", level=logging.INFO)
 
     if settings.get('enable_math_plugin', True):
         load_math_plugin(kernel)
+        print(f"[SK Loader] Loaded Math plugin.")
         log_event("[SK Loader] Loaded Math plugin.", level=logging.INFO)
 
     if settings.get('enable_text_plugin', True):
         load_text_plugin(kernel)
+        print(f"[SK Loader] Loaded Text plugin.")
         log_event("[SK Loader] Loaded Text plugin.", level=logging.INFO)
 
     if settings.get('enable_http_plugin', True):
         load_http_plugin(kernel)
+        print(f"[SK Loader] Loaded HTTP plugin.")
         log_event("[SK Loader] Loaded HTTP plugin.", level=logging.INFO)
 
     if settings.get('enable_wait_plugin', True):
         load_wait_plugin(kernel)
+        print(f"[SK Loader] Loaded Wait plugin.")
         log_event("[SK Loader] Loaded Wait plugin.", level=logging.INFO)
 
     if settings.get('enable_default_embedding_model_plugin', True):
         load_embedding_model_plugin(kernel, settings)
+        print(f"[SK Loader] Loaded Default Embedding Model plugin.")
         log_event("[SK Loader] Loaded Default Embedding Model plugin.", level=logging.INFO)
     
     # Get selected agent from user settings (this still needs to be in user settings for UI state)
