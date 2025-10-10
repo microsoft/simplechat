@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}
+    Workflow - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+    <style>
+        .scope-card {
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
+            cursor: pointer;
+        }
+        .scope-card:hover {
+            border-color: #0d6efd;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .scope-card.selected {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        .scope-icon {
+            font-size: 2.5rem;
+            color: #6c757d;
+        }
+        .scope-card:hover .scope-icon,
+        .scope-card.selected .scope-icon {
+            color: #0d6efd;
+        }
+        .workflow-container {
+            margin: 0;
+            padding: 1rem 0;
+        }
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 0 2rem;
+        }
+        .workflow-step {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 2rem;
+            margin-left: 1rem;
+            margin-right: 1rem;
+        }
+        .step-number {
+            background: #0d6efd;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 1rem;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="workflow-container">
+    <div class="workflow-header">
+        <h1><i class="bi bi-diagram-3 me-2"></i>Workflow</h1>
+        <p class="text-muted">Create document summaries with enhanced citations and AI-powered analysis</p>
+    </div>
+
+    <div class="workflow-step">
+        <div class="d-flex align-items-center mb-3">
+            <div class="step-number">1</div>
+            <h3 class="mb-0">Select Document Scope</h3>
+        </div>
+        <p class="text-muted mb-4">Choose where to find or upload your document for analysis.</p>
+        
+        <div class="row g-3">
+            {% if app_settings.enable_user_workspace %}
+            <div class="col-md-4">
+                <div class="card scope-card h-100" data-scope="workspace">
+                    <div class="card-body text-center">
+                        <div class="scope-icon">
+                            <i class="bi bi-person-workspace"></i>
+                        </div>
+                        <h5 class="card-title mt-3">Personal Workspace</h5>
+                        <p class="card-text text-muted">Select from your personal documents or upload new files</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if app_settings.enable_group_workspaces %}
+            <div class="col-md-4">
+                <div class="card scope-card h-100" data-scope="group">
+                    <div class="card-body text-center">
+                        <div class="scope-icon">
+                            <i class="bi bi-people"></i>
+                        </div>
+                        <h5 class="card-title mt-3">Group Workspace</h5>
+                        <p class="card-text text-muted">Access shared group documents for analysis</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if app_settings.enable_public_workspaces %}
+            <div class="col-md-4">
+                <div class="card scope-card h-100" data-scope="public">
+                    <div class="card-body text-center">
+                        <div class="scope-icon">
+                            <i class="bi bi-globe"></i>
+                        </div>
+                        <h5 class="card-title mt-3">Public Workspace</h5>
+                        <p class="card-text text-muted">Select from publicly available documents</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="text-center mt-4">
+            <button id="continueBtn" class="btn btn-primary btn-lg" disabled>
+                Continue to Processing Mode <i class="bi bi-arrow-right ms-2"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="workflow-step">
+        <div class="d-flex align-items-center mb-3">
+            <div class="step-number bg-secondary">2</div>
+            <h3 class="mb-0 text-muted">Choose Processing Mode</h3>
+        </div>
+        <p class="text-muted">Select whether to process a single document or multiple documents in bulk.</p>
+    </div>
+
+    <div class="workflow-step">
+        <div class="d-flex align-items-center mb-3">
+            <div class="step-number bg-secondary">3</div>
+            <h3 class="mb-0 text-muted">Select or Upload Document(s)</h3>
+        </div>
+        <p class="text-muted">Choose existing document(s) or upload new files for analysis.</p>
+    </div>
+
+    <div class="workflow-step">
+        <div class="d-flex align-items-center mb-3">
+            <div class="step-number bg-secondary">4</div>
+            <h3 class="mb-0 text-muted">Choose Workflow Type</h3>
+        </div>
+        <p class="text-muted">Select the type of analysis to perform on your document(s).</p>
+    </div>
+
+    <div class="workflow-step">
+        <div class="d-flex align-items-center mb-3">
+            <div class="step-number bg-secondary">5</div>
+            <h3 class="mb-0 text-muted">View Results</h3>
+        </div>
+        <p class="text-muted">Review your document(s) alongside the generated analysis with progress tracking.</p>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const scopeCards = document.querySelectorAll('.scope-card');
+    const continueBtn = document.getElementById('continueBtn');
+    
+    let selectedScope = null;
+
+    // Scope selection
+    scopeCards.forEach(card => {
+        card.addEventListener('click', function() {
+            // Remove selected class from all cards
+            scopeCards.forEach(c => c.classList.remove('selected'));
+            
+            // Add selected class to clicked card
+            this.classList.add('selected');
+            
+            // Get the selected scope
+            selectedScope = this.getAttribute('data-scope');
+            
+            // Enable continue button
+            continueBtn.disabled = false;
+        });
+    });
+
+    // Continue to processing mode selection
+    continueBtn.addEventListener('click', function() {
+        if (selectedScope) {
+            window.location.href = `/workflow/processing-mode-selection?scope=${selectedScope}`;
+        }
+    });
+});
+</script>
+{% endblock %}

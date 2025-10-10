@@ -121,7 +121,7 @@ CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
 ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'docx', 'xlsx', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
+    'txt', 'pdf', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
     'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
     'dvr-ms', 'wav'
 }
@@ -135,6 +135,7 @@ CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
 
 
 # Azure AD Configuration
@@ -152,8 +153,10 @@ AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernm
 
 if AZURE_ENVIRONMENT == "custom":
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-else:
+elif AZURE_ENVIRONMENT == "usgovernment":
     AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 # Commercial Azure Video Indexer Endpoint
 video_indexer_endpoint = "https://api.videoindexer.ai"
@@ -181,6 +184,27 @@ else:
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    video_indexer_endpoint = "https://api.videoindexer.ai"
+
+def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
+    """
+    Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
+    
+    Args:
+        redis_hostname (str): The hostname of the Redis cache instance
+        
+    Returns:
+        str: The complete endpoint URL for Redis cache infrastructure token acquisition
+    """
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://{redis_hostname}.cacheinfra.azure.us:10225/appid"
+    elif AZURE_ENVIRONMENT == "custom" and CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE:
+        # For custom environments, allow override via environment variable
+        # Format: https://{hostname}.custom-cache-domain.com:10225/appid
+        return CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE.format(hostname=redis_hostname)
+    else:
+        # Default to Azure Public Cloud
+        return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"

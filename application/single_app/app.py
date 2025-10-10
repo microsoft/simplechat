@@ -3,6 +3,7 @@ import builtins
 import logging
 import pickle
 import json
+import os
 
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
@@ -27,6 +28,7 @@ from route_frontend_profile import *
 from route_frontend_admin_settings import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
+from route_frontend_workflow import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
@@ -67,6 +69,14 @@ app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
 
+# Ensure filesystem session directory (when used) points to a writable path inside container.
+if SESSION_TYPE == 'filesystem':
+    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
+    try:
+        os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+    except Exception as e:
+        print(f"WARNING: Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}")
+
 Session(app)
 
 app.register_blueprint(admin_plugins_bp)
@@ -97,6 +107,55 @@ from route_external_health import *
 
 configure_azure_monitor()
 
+# =================== Session Configuration ===================
+def configure_sessions(settings):
+    """Configure session backend (Redis or filesystem) once.
+
+    Falls back to filesystem if Redis settings are incomplete. Supports managed identity
+    or key auth for Azure Redis. Uses SESSION_FILE_DIR already prepared in config/app init.
+    """
+    try:
+        if settings.get('enable_redis_cache'):
+            redis_url = settings.get('redis_url', '').strip()
+            redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+
+            if redis_url:
+                app.config['SESSION_TYPE'] = 'redis'
+                if redis_auth_type == 'managed_identity':
+                    print("Redis enabled using Managed Identity")
+                    from config import get_redis_cache_infrastructure_endpoint
+                    credential = DefaultAzureCredential()
+                    redis_hostname = redis_url.split('.')[0]
+                    cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+                    token = credential.get_token(cache_endpoint)
+                    app.config['SESSION_REDIS'] = Redis(
+                        host=redis_url,
+                        port=6380,
+                        db=0,
+                        password=token.token,
+                        ssl=True
+                    )
+                else:
+                    redis_key = settings.get('redis_key', '').strip()
+                    print("Redis enabled using Access Key")
+                    app.config['SESSION_REDIS'] = Redis(
+                        host=redis_url,
+                        port=6380,
+                        db=0,
+                        password=redis_key,
+                        ssl=True
+                    )
+            else:
+                print("Redis enabled but URL missing; falling back to filesystem.")
+                app.config['SESSION_TYPE'] = 'filesystem'
+        else:
+            app.config['SESSION_TYPE'] = 'filesystem'
+    except Exception as e:
+        print(f"WARNING: Session configuration error; falling back to filesystem: {e}")
+        app.config['SESSION_TYPE'] = 'filesystem'
+
+    # Initialize session interface
+    Session(app)
 
 # =================== Helper Functions ===================
 @app.before_first_request
@@ -176,43 +235,6 @@ def before_first_request():
     timer_thread.start()
     print("Logging timer background task started.")
 
-
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
-
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
-
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
     per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
@@ -220,85 +242,9 @@ def before_first_request():
         print("Semantic Kernel is enabled. Initializing...")
         initialize_semantic_kernel()
 
-    Session(app)
+    # Unified session setup
+    configure_sessions(settings)
 
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
-
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
-
-    Session(app)
-
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
-
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
-
-    Session(app)
 
 @app.context_processor
 def inject_settings():
@@ -439,6 +385,9 @@ register_route_frontend_admin_settings(app)
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
 
+# ------------------- Workflow Routes --------------------
+register_route_frontend_workflow(app)
+
 # ------------------- Conversations Routes ---------------
 register_route_frontend_conversations(app)
 
@@ -519,4 +468,3 @@ if __name__ == '__main__':
         # Production
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)
-

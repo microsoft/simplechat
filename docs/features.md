@@ -1,3 +1,10 @@
+---
+layout: page
+title: "Features"
+description: "Comprehensive overview of Simple Chat's features and capabilities"
+section: "overview"
+---
+
 # Simple Chat - Features
 
 - [Features](#features)
@@ -44,7 +51,7 @@
 
 -   **Supported File Types**:
     -   Text: `txt`, `md`, `html`, `json`
-    *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xls`, `csv`
+    *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
     *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif` (processed via Document Intelligence OCR)
     *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm` (requires Video Indexer)
     *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a` (requires Speech Service)
