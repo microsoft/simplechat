@@ -941,11 +941,6 @@ a.citation-link:hover {
   margin-bottom: 10px; /* Add some space before the footer or citation box */
 }
 
-[data-bs-theme="dark"] .message-text a {
-  color: #212529;
-  text-decoration: underline;
-}
-
 /* Optional: Style links within messages */
 .message-text a {
   color: #ffeb3b; /* Bootstrap warning color for better visibility */
