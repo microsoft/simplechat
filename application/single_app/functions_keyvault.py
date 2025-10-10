@@ -196,9 +196,13 @@ def validate_secret_name_dynamic(secret_name):
     pattern = rf"^(.+)--({sources_pattern})--({scopes_pattern})--(.+)$"
     match = re.match(pattern, secret_name)
     if not match:
+        print(f"Secret name '{secret_name}' does not match the required pattern.")
+        logging.warning(f"Secret name '{secret_name}' does not match the required pattern.")
         return False
     # Optionally, check length
     if len(secret_name) > 127:
+        print(f"Secret name '{secret_name}' exceeds the maximum length of 127 characters.")
+        logging.warning(f"Secret name '{secret_name}' exceeds the maximum length of 127 characters.")
         return False
     return True
 
@@ -287,7 +291,7 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
                 return updated
     return updated
 
-def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
+def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_actual_key=False):
     """
     For agent dicts, retrieve sensitive keys from Key Vault if they are stored as Key Vault references.
     Only processes 'azure_agent_apim_gpt_subscription_key' and 'azure_openai_gpt_key'.
@@ -296,6 +300,7 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
         agent_dict (dict): The agent dictionary to process.
         scope_value (str): The value for the scope (e.g., agent id).
         scope (str): The scope (e.g., 'user', 'global').
+        return_actual_key (bool): If True, retrieves the actual secret value from Key Vault. If False, replaces with ui_trigger_word.
 
     Returns:
         dict: A new agent dict with sensitive values replaced by Key Vault references.
@@ -316,11 +321,13 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global"):
         value = updated[key]
         if validate_secret_name_dynamic(value):
             try:
-                # Uncomment below to actually retrieve the secret value
-                # actual_key = retrieve_secret_from_key_vault(value)
-                # updated[key] = actual_key
-                updated[key] = ui_trigger_word
+                if return_actual_key:
+                    actual_key = retrieve_secret_from_key_vault(value)
+                    updated[key] = actual_key
+                else:
+                    updated[key] = ui_trigger_word
             except Exception as e:
+                logging.error(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
                 raise Exception(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
     return updated
 
