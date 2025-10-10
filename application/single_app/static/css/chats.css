@@ -943,7 +943,7 @@ a.citation-link:hover {
 
 /* Optional: Style links within messages */
 .message-text a {
-  color: #ffeb3b; /* Bootstrap warning color for better visibility */
+  color: #0d6efd;
   text-decoration: underline;
 }
 
