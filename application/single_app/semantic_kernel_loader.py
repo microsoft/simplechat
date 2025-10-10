@@ -22,6 +22,7 @@ from functions_authentication import get_current_user_id
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
 import logging
@@ -31,6 +32,14 @@ import importlib.util
 import inspect
 import builtins
 from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_keyvault_by_full_name
+from functions_global_actions import get_global_actions
+from functions_global_agents import get_global_agents
+from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
+from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
+from semantic_kernel_plugins.plugin_loader import discover_plugins
+from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+
+
 
 # Agent and Azure OpenAI chat service imports
 log_event("[SK Loader] Starting loader imports")
@@ -126,7 +135,7 @@ def resolve_agent_config(agent, settings):
         api_version = agent.get("azure_apim_gpt_api_version")
 
         # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and key:
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
@@ -147,7 +156,7 @@ def resolve_agent_config(agent, settings):
         api_version = settings.get("azure_apim_gpt_api_version")
 
         # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and key:
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
@@ -168,7 +177,7 @@ def resolve_agent_config(agent, settings):
         api_version = agent.get("azure_openai_gpt_api_version")
 
         # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and key:
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
@@ -189,7 +198,7 @@ def resolve_agent_config(agent, settings):
         api_version = settings.get("azure_openai_gpt_api_version") or selected_model.get("api_version")
 
         # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and key:
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
@@ -294,9 +303,7 @@ def load_time_plugin(kernel: Kernel):
     )
 
 def load_http_plugin(kernel: Kernel):
-    # Import the smart HTTP plugin for better content size management
     try:
-        from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
         # Use smart HTTP plugin with 75k character limit (≈50k tokens)
         smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
         kernel.add_plugin(
@@ -463,7 +470,6 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         
         # Get plugin manifests based on mode
         if mode_label == "per-user":
-            from functions_personal_actions import get_personal_actions
             if user_id:
                 all_plugin_manifests = get_personal_actions(user_id)
                 print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
@@ -472,7 +478,6 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            from functions_global_actions import get_global_actions
             all_plugin_manifests = get_global_actions()
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
@@ -537,13 +542,11 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         try:
             # Get plugin manifests again for fallback
             if mode_label == "per-user":
-                from functions_personal_actions import get_personal_actions
                 if user_id:
                     all_plugin_manifests = get_personal_actions(user_id)
                 else:
                     all_plugin_manifests = []
             else:
-                from functions_global_actions import get_global_actions
                 all_plugin_manifests = get_global_actions()
                 
             plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
@@ -563,7 +566,6 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
     """
     try:
         # Load the filtered plugins using original method
-        from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()
         
         for manifest in plugin_manifests:
@@ -587,12 +589,11 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                 try:
                     # Special handling for OpenAPI plugins
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
-                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                         print(f"[SK Loader] Created OpenAPI plugin: {name}")
                     else:
                         # Standard plugin instantiation
-                        from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
+                        
                         plugin_instance, instantiation_errors = PluginHealthChecker.create_plugin_safely(
                             matched_class, manifest, name
                         )
@@ -604,9 +605,6 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                             raise Exception(f"Plugin creation failed: {'; '.join(instantiation_errors)}")
                             
                         plugin = plugin_instance
-                    
-                    # Add plugin to kernel
-                    from semantic_kernel.functions.kernel_plugin import KernelPlugin
                     
                     # Special handling for OpenAPI plugins with dynamic functions
                     if hasattr(plugin, 'get_kernel_plugin'):
@@ -795,10 +793,48 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     log_event(f"[SK Loader] load_single_agent_for_kernel completed - returning {len(agent_objs)} agents: {list(agent_objs.keys())}", level=logging.INFO)
     return kernel, agent_objs
 
+def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
+    """
+    Resolve any Key Vault secrets in a plugin manifest.
+    """
+    if not isinstance(plugin_manifest, dict):
+        raise ValueError("Plugin manifest must be a dictionary")
+    
+    kv_name = settings.get("key_vault_name")
+    if not kv_name:
+        raise ValueError("Key Vault name not configured in settings")
+    
+    def resolve_value(value):
+        if isinstance(value, str) and validate_secret_name_dynamic(value):
+            resolved = retrieve_secret_from_keyvault(kv_name, value)
+            if resolved:
+                return resolved
+            else:
+                raise ValueError(f"Failed to retrieve secret '{value}' from Key Vault '{kv_name}'")
+        return value
+    
+    resolved_manifest = {}
+    for k, v in plugin_manifest.items():
+        if isinstance(v, str):
+            resolved_manifest[k] = resolve_value(v)
+        elif isinstance(v, list):
+            resolved_manifest[k] = [resolve_value(item) for item in v]
+        elif isinstance(v, dict):
+            resolved_manifest[k] = {sub_k: resolve_value(sub_v) for sub_k, sub_v in v.items()}
+        else:
+            resolved_manifest[k] = v  # Leave other types unchanged
+    return resolved_manifest
+
 def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="global"):
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
+        try:
+            plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
+        except Exception as e:
+            log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
+            print(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}")
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
     
@@ -912,7 +948,6 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
     Original plugin loading method as fallback.
     """
     try:
-        from semantic_kernel_plugins.plugin_loader import discover_plugins
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
             plugin_type = manifest.get('type')
@@ -932,7 +967,6 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                 try:
                     # Special handling for OpenAPI plugins
                     if normalized_type == normalize('openapi') or 'openapi' in normalized_type:
-                        from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
                         # Use the factory to create OpenAPI plugins from configuration
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                     else:
@@ -1004,13 +1038,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         load_core_plugins_only(kernel, settings)
         return kernel, None
     
-    # Redis is now optional for per-user mode. If not present, state will not persist.
-    
-    # Load agents from personal_agents container
-    from functions_personal_agents import get_personal_agents, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_migration_complete(user_id)
+    ensure_agents_migration_complete(user_id)
     agents_cfg = get_personal_agents(user_id)
     
     print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
@@ -1023,7 +1052,6 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     print(f"[SK Loader] merge_global_semantic_kernel_with_workspace: {merge_global}")
     if merge_global:
-        from functions_global_agents import get_global_agents
         global_agents = get_global_agents()
         print(f"[SK Loader] Found {len(global_agents)} global agents to merge")
         # Mark global agents
@@ -1056,17 +1084,12 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             "agents": agents_cfg
         },
         level=logging.INFO)
-        
-    # Load plugins from personal_actions container
-    from functions_personal_actions import get_personal_actions, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
-    ensure_migration_complete(user_id)
+    ensure_actions_migration_complete(user_id)
     plugin_manifests = get_personal_actions(user_id)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:
-        from functions_global_actions import get_global_actions
         global_plugins = get_global_actions()
         # User plugins take precedence
         all_plugins = {p.get('name'): p for p in plugin_manifests}
@@ -1206,7 +1229,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
     log_event("[SK Loader] Global Semantic Kernel mode enabled. Loading global plugins and agents.", level=logging.INFO)
     
     # Conditionally load core plugins based on settings
-    from functions_global_actions import get_global_actions
+    
     plugin_manifests = get_global_actions()
     log_event(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests", level=logging.INFO)
     
@@ -1215,7 +1238,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
 
 # --- Agent and Service Loading ---
 # region Multi-agent Orchestration
-    from functions_global_agents import get_global_agents
+    
     agents_cfg = get_global_agents()
     enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
