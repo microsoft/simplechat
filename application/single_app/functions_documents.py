@@ -656,6 +656,23 @@ def calculate_processing_percentage(doc_metadata):
     Returns:
         int: The calculated percentage (0-100).
     """
+    # Defensive: ensure doc_metadata is a dict. Sometimes callers may pass a
+    # JSON string or a list; normalize here to avoid 'string indices must be integers' errors.
+    if not isinstance(doc_metadata, dict):
+        try:
+            if isinstance(doc_metadata, str):
+                doc_metadata = json.loads(doc_metadata)
+            elif isinstance(doc_metadata, list) and len(doc_metadata) > 0 and isinstance(doc_metadata[0], dict):
+                doc_metadata = doc_metadata[0]
+        except Exception:
+            # If normalization failed, log and set to defaults
+            add_file_task_to_file_processing_log(
+                document_id=doc_metadata.get('id') if isinstance(doc_metadata, dict) and 'id' in doc_metadata else None,
+                user_id=None,
+                content=f"calculate_processing_percentage received malformed doc_metadata (type={type(doc_metadata)}): {repr(doc_metadata)[:500]}"
+            )
+            doc_metadata = {}
+
     status = doc_metadata.get('status', '')
     if isinstance(status, str):
         status = status.lower()
@@ -1012,7 +1029,35 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         if not metadata:
             raise ValueError(f"No metadata found for document {document_id} (group: {is_group})")
 
-        version = metadata.get("version") if metadata.get("version") else 1 
+        # Defensive: metadata may sometimes be returned as a JSON string or a list
+        # (depending on upstream calls). Normalize to a dict here and log helpful
+        # diagnostics if it's malformed to avoid 'string indices must be integers' errors.
+        try:
+            # If metadata is a JSON string, attempt to parse it
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    # leave as-is; we'll handle below
+                    pass
+
+            # If metadata is a list of items, prefer the first dict element
+            if isinstance(metadata, list) and len(metadata) > 0 and isinstance(metadata[0], dict):
+                metadata = metadata[0]
+
+            if not isinstance(metadata, dict):
+                raise TypeError(f"Document metadata is not a dict (type={type(metadata)}) for document {document_id}: {repr(metadata)[:200]}")
+
+        except Exception as norm_e:
+            # Add a processing log entry before raising so the root cause is easy to find in logs
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
+                content=f"Malformed metadata for document {document_id}: {repr(norm_e)}. Raw metadata: {repr(metadata)[:800]}"
+            )
+            raise
+
+        version = metadata.get("version") if metadata.get("version") else 1
         if version is None:
             raise ValueError(f"Metadata for document {document_id} missing 'version' field")
         
