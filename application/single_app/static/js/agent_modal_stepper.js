@@ -1165,12 +1165,22 @@ export class AgentModalStepper {
       }
       
       // Use appropriate endpoint and save method based on context
-      if (this.isAdmin) {
-        // Admin context - save to global agents
-        await this.saveGlobalAgent(agentData);
-      } else {
-        // User context - save to personal agents
-        await this.savePersonalAgent(agentData);
+      let saveBtn = document.getElementById('agent-modal-save-btn');
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+      saveBtn.disabled = true;
+      try {
+        if (this.isAdmin) {
+          // Admin context - save to global agents
+          await this.saveGlobalAgent(agentData);
+        } else {
+          // User context - save to personal agents
+          await this.savePersonalAgent(agentData);
+        }
+      //No catch to allow outer catch to handle errors
+      } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
       }
       
     } catch (error) {

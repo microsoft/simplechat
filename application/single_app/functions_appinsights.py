@@ -71,6 +71,7 @@ def log_event(
                 exc_info_to_use = True
 
         # Format message with extra properties for structured logging
+        print(f"[Log] {message} -- {extra}")  # Debug print to console
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
             logger.log(

@@ -105,6 +105,7 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
+#TODO: Remove this after speaking with Paul
 configure_azure_monitor()
 
 # =================== Session Configuration ===================

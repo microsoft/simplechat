@@ -2,6 +2,7 @@
 
 import re
 import logging
+from functions_appinsights import log_event
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -20,10 +21,6 @@ key_vault_identity # setting from functions_settings.py
 """
 
 supported_sources = [
-    'model_deployment',
-    'speech_service',
-    'storage_account',
-    'cognitive_service',
     'action',
     'action-addset',
     'agent',
@@ -40,6 +37,7 @@ supported_action_auth_types = [
     'key',
     'servicePrincipal',
     'basic',
+    'username_password',
     'connection_string'
 ]
 
@@ -85,13 +83,14 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
     settings = get_settings()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
-        logging.error(f"Key Vault secret storage is not enabled.")
-        raise Exception("Key Vault secret storage is not enabled.")
+        return value
 
     key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
-        logging.error(f"Key Vault name is not configured.")
-        raise Exception("Key Vault name is not configured.")
+        return value
+
+    if not validate_secret_name_dynamic(full_secret_name):
+        return value
 
     try:
         key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
@@ -101,7 +100,9 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
         print(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.")
         return retrieved_secret.value
     except Exception as e:
-        raise Exception(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}") from e
+        logging.error(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}")
+        return value
+        
 
 def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="global", scope="global"):
     """
@@ -122,13 +123,13 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     settings = get_settings()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
-        logging.error(f"Key Vault secret storage is not enabled.")
-        raise Exception("Key Vault secret storage is not enabled.")
+        logging.warn(f"Key Vault secret storage is not enabled.")
+        return secret_value
 
     key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
-        logging.error(f"Key Vault name is not configured.")
-        raise Exception("Key Vault name is not configured.")
+        logging.warn(f"Key Vault name is not configured.")
+        return secret_value
 
     if source not in supported_sources:
         logging.error(f"Source '{source}' is not supported. Supported sources: {supported_sources}")
@@ -148,7 +149,7 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
         return full_secret_name
     except Exception as e:
         logging.error(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}")
-        raise Exception(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}") from e
+        return secret_value
 
 def build_full_secret_name(secret_name, scope_value, source, scope):
     """
@@ -267,13 +268,13 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ac
         if validate_secret_name_dynamic(value):
             try:
                 if return_actual_key:
-                    actual_key = retrieve_secret_from_key_vault(value)
+                    actual_key = retrieve_secret_from_key_vault_by_full_name(value)
                     updated[key] = actual_key
                 else:
                     updated[key] = ui_trigger_word
             except Exception as e:
                 logging.error(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
-                raise Exception(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
+                return updated
     return updated
 
 def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
@@ -375,8 +376,8 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                         new_auth['key'] = ui_trigger_word
                         updated['auth'] = new_auth
                 except Exception as e:
-                    logging.error(f"Failed to retrieve plugin key from Key Vault: {e}")
-                    raise Exception(f"Failed to retrieve plugin key from Key Vault: {e}")
+                    logging.error(f"Failed to retrieve action key from Key Vault: {e}")
+                    raise Exception(f"Failed to retrieve action key from Key Vault: {e}")
 
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
@@ -393,8 +394,8 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                     else:
                         new_additional_fields[k] = ui_trigger_word
                 except Exception as e:
-                    logging.error(f"Failed to retrieve plugin additionalField secret '{k}' from Key Vault: {e}")
-                    raise Exception(f"Failed to retrieve plugin additionalField secret '{k}' from Key Vault: {e}")
+                    logging.error(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}")
+                    raise Exception(f"Failed to retrieve action additionalField secret '{k}' from Key Vault: {e}")
         updated['additionalFields'] = new_additional_fields
     return updated
 # Helper to delete plugin secrets from Key Vault
@@ -413,12 +414,13 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     Raises:
     """
     if scope not in supported_scopes:
-        logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level="WARNING")
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
     settings = get_settings()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
+        log_event(f"Key Vault secret storage is not enabled or key vault name is missing.", level="WARNING")
         return plugin_dict
     source = "action"
     plugin_name = plugin_dict.get('name', 'plugin')
@@ -429,11 +431,12 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
             if validate_secret_name_dynamic(secret_name):
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    log_event(f"Deleting action secret '{secret_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level="INFO")
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
                 except Exception as e:
-                    logging.error(f"Error deleting plugin secret '{secret_name}' for plugin '{plugin_name}': {e}")
-                    raise Exception(f"Error deleting plugin secret '{secret_name}' for plugin '{plugin_name}': {e}")
+                    logging.error(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}")
+                    raise Exception(f"Error deleting action secret '{secret_name}' for action '{plugin_name}': {e}")
 
     additional_fields = plugin_dict.get('additionalFields', {})
     if isinstance(additional_fields, dict):
@@ -445,11 +448,12 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
                 try:
                     keyvault_secret_name = build_full_secret_name(akv_key, scope_value, addset_source, scope)
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level="INFO")
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(keyvault_secret_name)
                 except Exception as e:
-                    logging.error(f"Error deleting plugin additionalField secret '{k}' for plugin '{plugin_name}': {e}")
-                    raise Exception(f"Error deleting plugin additionalField secret '{k}' for plugin '{plugin_name}': {e}")
+                    logging.error(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}")
+                    raise Exception(f"Error deleting action additionalField secret '{k}' for action '{plugin_name}': {e}")
     return plugin_dict
 
 # Helper to delete agent secrets from Key Vault
@@ -482,6 +486,7 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
             if validate_secret_name_dynamic(secret_name):
                 try:
                     key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    log_event(f"Deleting agent secret '{secret_name}' for agent '{agent_name}' for '{scope}' '{scope_value}'", level="INFO")
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
                 except Exception as e:

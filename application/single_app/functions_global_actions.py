@@ -11,8 +11,9 @@ import json
 import traceback
 from datetime import datetime
 from config import cosmos_global_actions_container
+from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper
 
-def get_global_actions():
+def get_global_actions(return_actual_key=False):
     """
     Get all global actions.
     
@@ -24,7 +25,8 @@ def get_global_actions():
             query="SELECT * FROM c",
             enable_cross_partition_query=True
         ))
-
+        # Resolve Key Vault references for each action
+        actions = [keyvault_plugin_get_helper(a, scope_value=a.get('id'), scope="global", return_actual_key=return_actual_key) for a in actions]
         return actions
         
     except Exception as e:
@@ -33,7 +35,7 @@ def get_global_actions():
         return []
 
 
-def get_global_action(action_id):
+def get_global_action(action_id, return_actual_key=False):
     """
     Get a specific global action by ID.
     
@@ -48,7 +50,8 @@ def get_global_action(action_id):
             item=action_id,
             partition_key=action_id
         )
-        
+        # Resolve Key Vault references
+        action = keyvault_plugin_get_helper(action, scope_value=action_id, scope="global", return_actual_key=return_actual_key)
         print(f"✅ Found global action: {action_id}")
         return action
         
@@ -71,16 +74,14 @@ def save_global_action(action_data):
         # Ensure required fields
         if 'id' not in action_data:
             action_data['id'] = str(uuid.uuid4())
-        
         # Add metadata
         action_data['is_global'] = True
         action_data['created_at'] = datetime.utcnow().isoformat()
         action_data['updated_at'] = datetime.utcnow().isoformat()
-        
         print(f"💾 Saving global action: {action_data.get('name', 'Unknown')}")
-        
+        # Store secrets in Key Vault before upsert
+        action_data = keyvault_plugin_save_helper(action_data, scope_value=action_data.get('id'), scope="global")
         result = cosmos_global_actions_container.upsert_item(body=action_data)
-        
         print(f"✅ Global action saved successfully: {result['id']}")
         return result
         
@@ -102,12 +103,14 @@ def delete_global_action(action_id):
     """
     try:
         print(f"🗑️ Deleting global action: {action_id}")
-        
+        # Delete secrets from Key Vault before deleting the action
+        action = get_global_action(action_id)
+        if action:
+            keyvault_plugin_delete_helper(action, scope_value=action_id, scope="global")
         cosmos_global_actions_container.delete_item(
             item=action_id,
             partition_key=action_id
         )
-        
         print(f"✅ Global action deleted successfully: {action_id}")
         return True
         

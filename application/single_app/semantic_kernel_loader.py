@@ -5,6 +5,12 @@ Loader for Semantic Kernel plugins/actions from app settings.
 - Registers plugins with the Semantic Kernel instance
 """
 
+import logging
+import importlib
+import os
+import importlib.util
+import inspect
+import builtins
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
 from semantic_kernel.agents import Agent
@@ -25,12 +31,6 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-import logging
-import importlib
-import os
-import importlib.util
-import inspect
-import builtins
 from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_keyvault_by_full_name
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
@@ -449,7 +449,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
-def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_id=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -460,25 +460,26 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         user_id: User ID for per-user mode
     """
     if not plugin_names:
+        debug_print(f"[SK Loader] No plugin names provided to load_agent_specific_plugins")
         return
         
     print(f"[SK Loader] Loading {len(plugin_names)} agent-specific plugins: {plugin_names}")
     
     try:
+        merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
         # Create logged plugin loader for enhanced logging
         logged_loader = create_logged_plugin_loader(kernel)
         
-        global_plugins = get_global_actions()
         if mode_label == "per-user":
             if user_id:
-                all_plugin_manifests = get_personal_actions(user_id)
-                personal_action_names = {p.get('name') for p in plugin_manifests}
-                for g in global_plugins:
-                    if g.get('name') not in personal_action_names:
-                        plugin_manifests.append(g)
-                print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
+                all_plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
+                if merge_global:
+                    global_plugins = get_global_actions(return_actual_key=True)
+                    for g in global_plugins:
+                        all_plugin_manifests.append(g)
+                debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
             else:
-                print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
+                debug_print(f"[SK Loader] Warning: No user_id provided for per-user plugin loading")
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
@@ -491,6 +492,18 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
             p for p in all_plugin_manifests 
             if p.get('name') in plugin_names or p.get('id') in plugin_names
         ]
+
+        debug_print(f"[SK Loader] Filtered to {len(plugin_manifests)} plugin manifests after matching names/IDs")
+        debug_print(f"[SK Loader] Plugin manifests to load: {plugin_manifests}")
+
+        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
+            debug_print(f"[SK Loader] Resolving Key Vault secrets in plugin manifests if needed")
+            try:
+                plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
+                debug_print(f"[SK Loader] Resolved Key Vault secrets in plugin manifests {plugin_manifests}")
+            except Exception as e:
+                log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
+                print(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}")
         
         if not plugin_manifests:
             print(f"[SK Loader] Warning: No plugin manifests found for names/IDs: {plugin_names}")
@@ -535,33 +548,38 @@ def load_agent_specific_plugins(kernel, plugin_names, mode_label="global", user_
         
     except Exception as e:
         log_event(
-            f"[SK Loader] Error in agent-specific plugin loading: {e}",
+            f"[SK Loader][Error] Error in agent-specific plugin loading: {e}",
             extra={"error": str(e), "mode": mode_label, "user_id": user_id, "plugin_names": plugin_names},
             level=logging.ERROR,
             exceptionTraceback=True
         )
+        print(f"[SK Loader][Error] Error in agent-specific plugin loading: {e}")
         
         # Fallback to original method
-        log_event("[SK Loader] Falling back to original plugin loading method due to error", level=logging.WARNING)
         try:
             # Get plugin manifests again for fallback
             if mode_label == "per-user":
                 if user_id:
-                    all_plugin_manifests = get_personal_actions(user_id)
+                    all_plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
+                    if merge_global:
+                        global_plugins = get_global_actions(return_actual_key=True)
+                        for g in global_plugins:
+                            all_plugin_manifests.append(g)
                 else:
                     all_plugin_manifests = []
             else:
-                all_plugin_manifests = get_global_actions()
-                
+                all_plugin_manifests = get_global_actions(return_actual_key=True)
+
             plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
         except Exception as fallback_error:
             log_event(
-                f"[SK Loader] Fallback plugin loading also failed: {fallback_error}",
+                f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}",
                 extra={"error": str(fallback_error), "mode": mode_label, "user_id": user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True
             )
+            print(f"[SK Loader][Error] Fallback plugin loading also failed: {fallback_error}")
 
 
 def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="global"):
@@ -741,7 +759,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             plugin_mode = "global" if agent_is_global else mode_label
             user_id = get_current_user_id() if not agent_is_global else None
             print(f"[SK Loader] Agent is_global: {agent_is_global}, using plugin_mode: {plugin_mode}")
-            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], plugin_mode, user_id=user_id)
+            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], settings, plugin_mode, user_id=user_id)
         
         try:
             kwargs = {
@@ -810,7 +828,7 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     
     def resolve_value(value):
         if isinstance(value, str) and validate_secret_name_dynamic(value):
-            resolved = retrieve_secret_from_keyvault(kv_name, value)
+            resolved = retrieve_secret_from_keyvault_by_full_name(value)
             if resolved:
                 return resolved
             else:
@@ -838,7 +856,6 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
             plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
         except Exception as e:
             log_event(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}", level=logging.ERROR, exceptionTraceback=True)
-            print(f"[SK Loader] Failed to resolve Key Vault secrets in plugin manifests: {e}")
     # Create logged plugin loader for enhanced logging
     logged_loader = create_logged_plugin_loader(kernel)
     
@@ -1090,11 +1107,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         level=logging.INFO)
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_actions_migration_complete(user_id)
-    plugin_manifests = get_personal_actions(user_id)
+    plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:
-        global_plugins = get_global_actions()
+        global_plugins = get_global_actions(return_actual_key=True)
         # User plugins take precedence
         all_plugins = {p.get('name'): p for p in plugin_manifests}
         all_plugins.update({p.get('name'): p for p in global_plugins})
@@ -1208,6 +1225,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
                     f"[SK Loader] User {user_id} No agent found matching global selected agent: {global_selected_agent_name}",
                     level=logging.WARNING
                 )
+
     # If still not found, DON'T use first agent - only load when explicitly selected
     if agent_cfg is None and agents_cfg:
         debug_print(f"[SK Loader] User {user_id} Agent selection final status: agent_cfg is None")
@@ -1241,7 +1259,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
     
     # Conditionally load core plugins based on settings
     
-    plugin_manifests = get_global_actions()
+    plugin_manifests = get_global_actions(return_actual_key=True)
     log_event(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests", level=logging.INFO)
     
     # --- Dynamic Plugin Type Loading (semantic_kernel_plugins) ---
