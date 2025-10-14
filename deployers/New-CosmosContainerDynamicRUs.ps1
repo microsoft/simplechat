@@ -1,4 +1,5 @@
 #requires -Module Az.CosmosDB
+#requires -Module Az.Accounts
 param(
     [Parameter(Mandatory=$true)]
     [string]$ResourceGroup,
