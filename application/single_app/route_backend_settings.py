@@ -4,6 +4,9 @@ from config import *
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
+from functions_appinsights import log_event
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import redis 
 
@@ -279,6 +282,9 @@ def register_route_backend_settings(app):
             elif test_type == 'chunking_api':
                 # If you have a chunking API test, implement it here.
                 return jsonify({'message': 'Chunking API connection successful'}), 200
+            
+            elif test_type == 'key_vault':
+                return _test_key_vault_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
@@ -693,3 +699,34 @@ def _test_azure_doc_intelligence_connection(payload):
         return jsonify({'message': 'Azure document intelligence connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
+
+def _test_key_vault_connection(payload):
+    """Attempt to connect to Azure Key Vault using ephemeral settings."""
+    vault_name = payload.get('vault_name', '').strip()
+    client_id = payload.get('client_id', '').strip()
+
+    if not vault_name:
+        return jsonify({'error': 'Key Vault name is required'}), 400
+
+    try:
+        vault_url = f"https://{vault_name}{KEY_VAULT_DOMAIN}"
+
+        if client_id:
+            credential = DefaultAzureCredential(managed_identity_client_id=client_id)
+        else:
+            credential = DefaultAzureCredential()
+
+        if AZURE_ENVIRONMENT in ("custom"):
+            kv_client = SecretClient(vault_url=vault_url, credential=credential, credential_scopes=[key_vault_scope])
+        else:
+            kv_client = SecretClient(vault_url=vault_url, credential=credential)
+
+        # Perform a simple list operation to verify connectivity
+        secrets = kv_client.list_properties_of_secrets()
+        _ = next(secrets, None)  # Attempt to get the first secret (if any)
+
+        return jsonify({'message': 'Key Vault connection successful'}), 200
+
+    except Exception as e:
+        log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
+        return jsonify({'error': f'Key Vault connection error. Check Application Insights using "[AKV_TEST]" for details.'}), 500
