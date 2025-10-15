@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Azure Billing Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "description": "API version to use for Azure Cost Management REST API calls (e.g., '2023-03-01', '2025-03-01').",
+      "default": "2025-03-01"
+    }
+  },
+  "required": ["api_version"],
+  "additionalProperties": false
+}

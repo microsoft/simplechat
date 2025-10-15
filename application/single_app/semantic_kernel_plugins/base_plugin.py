@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 import re
+import inspect
 
 class BasePlugin(ABC):
     @property

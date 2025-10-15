@@ -52,3 +52,4 @@ cython
 pyyaml==6.0.2
 aiohttp==3.12.15
 html2text==2025.4.15
+matplotlib==3.10.7
