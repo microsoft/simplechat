@@ -141,14 +141,14 @@ class LoggedPluginLoader:
                 if matched_class:
                     try:
                         plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
-                        log_event(f"[Logged Plugin Loader] Instanced plugin: {name} (type: {plugin_type}) [{mode_label}]", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                        log_event(f"[Logged Plugin Loader] Instanced plugin: {name} (type: {plugin_type})", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                         return plugin
                     except Exception as e:
                         log_event(f"[Logged Plugin Loader] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
                 else:
-                    log_event(f"[Logged Plugin Loader] Unknown plugin type: {plugin_type} for plugin '{name}' [{mode_label}]", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+                    log_event(f"[Logged Plugin Loader] Unknown plugin type: {plugin_type} for plugin '{name}'", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
             except Exception as e:
-                log_event(f"[Logged Plugin Loader] Error discovering plugin types for {mode_label} mode: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                log_event(f"[Logged Plugin Loader] Error discovering plugin types: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
     
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
@@ -156,8 +156,6 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
         
         try:
-            log_event(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory", level=logging.DEBUG)
-            
             log_event(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory", 
                      extra={"plugin_name": plugin_name, "manifest": manifest}, 
                      level=logging.DEBUG)
@@ -357,7 +355,7 @@ class LoggedPluginLoader:
         total_count = len(results)
         
         log_event(
-            f"[Plugin Loader] Loaded {successful_count}/{total_count} plugins",
+            f"[Logged Plugin Loader] Loaded {successful_count}/{total_count} plugins",
             extra={
                 "successful_plugins": [name for name, success in results.items() if success],
                 "failed_plugins": [name for name, success in results.items() if not success],

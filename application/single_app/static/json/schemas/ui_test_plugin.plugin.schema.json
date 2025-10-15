@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "UI Test Plugin",
-  "description": "Schema for UI Test Plugin configuration, restricting auth.type to key, connection_string, and identity.",
+  "description": "NYI-Schema for UI Test Plugin configuration, restricting auth.type to user, key, connection_string, and identity.",
   "allOf": [
     { "$ref": "plugin.schema.json" },
     {

@@ -716,8 +716,9 @@ def _test_key_vault_connection(payload):
         else:
             credential = DefaultAzureCredential()
 
-        if AZURE_ENVIRONMENT in ("custom"):
-            kv_client = SecretClient(vault_url=vault_url, credential=credential, credential_scopes=[key_vault_scope])
+        if AZURE_ENVIRONMENT == "custom":
+            #TODO: Needs to be tested with a custom environment
+            kv_client = SecretClient(vault_url=vault_url, credential=credential)
         else:
             kv_client = SecretClient(vault_url=vault_url, credential=credential)
 

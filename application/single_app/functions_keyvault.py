@@ -66,9 +66,9 @@ def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", sou
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
 
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
-    return retrieve_secret_from_keyvault_by_full_name(full_secret_name)
+    return retrieve_secret_from_key_vault_by_full_name(full_secret_name)
 
-def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
+def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
     """
     Retrieve a secret from Key Vault using a preformatted full secret name.
 
@@ -83,14 +83,14 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
     settings = get_settings()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
-        return value
+        return full_secret_name
 
     key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
-        return value
+        return full_secret_name
 
     if not validate_secret_name_dynamic(full_secret_name):
-        return value
+        return full_secret_name
 
     try:
         key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
@@ -101,7 +101,7 @@ def retrieve_secret_from_keyvault_by_full_name(full_secret_name):
         return retrieved_secret.value
     except Exception as e:
         logging.error(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}")
-        return value
+        return full_secret_name
         
 
 def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="global", scope="global"):
@@ -369,7 +369,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
             if validate_secret_name_dynamic(value):
                 try:
                     if return_actual_key:
-                        actual_key = retrieve_secret_from_key_vault(plugin_name, scope_value, scope, source)
+                        actual_key = retrieve_secret_from_key_vault_by_full_name(value)
                         new_auth = dict(auth)
                         new_auth['key'] = actual_key
                         updated['auth'] = new_auth

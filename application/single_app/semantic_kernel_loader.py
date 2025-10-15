@@ -31,7 +31,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_keyvault_by_full_name
+from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
@@ -139,7 +139,7 @@ def resolve_agent_config(agent, settings):
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
                     if resolved_key:
                         # Update the agent dict with the resolved key for this session
                         agent["azure_apim_gpt_subscription_key"] = resolved_key
@@ -160,7 +160,7 @@ def resolve_agent_config(agent, settings):
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
                     if resolved_key:
                         # Update the settings dict with the resolved key for this session
                         settings["azure_apim_gpt_subscription_key"] = resolved_key
@@ -181,7 +181,7 @@ def resolve_agent_config(agent, settings):
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
                     if resolved_key:
                         # Update the agent dict with the resolved key for this session
                         agent["azure_openai_gpt_key"] = resolved_key
@@ -202,7 +202,7 @@ def resolve_agent_config(agent, settings):
             try:
                 if validate_secret_name_dynamic(key):
                     # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_keyvault_by_full_name(key)
+                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
                     if resolved_key:
                         # Update the settings dict with the resolved key for this session
                         settings["azure_openai_gpt_key"] = resolved_key
@@ -483,7 +483,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            all_plugin_manifests = global_plugins
+            all_plugin_manifests = get_global_plugins(return_actual_key=True)
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
@@ -828,7 +828,7 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     
     def resolve_value(value):
         if isinstance(value, str) and validate_secret_name_dynamic(value):
-            resolved = retrieve_secret_from_keyvault_by_full_name(value)
+            resolved = retrieve_secret_from_key_vault_by_full_name(value)
             if resolved:
                 return resolved
             else:

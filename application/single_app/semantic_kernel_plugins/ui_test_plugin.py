@@ -1,8 +1,8 @@
 """
-SQL Schema Plugin for Semantic Kernel
-- Connects to various SQL databases (SQL Server, PostgreSQL, MySQL, SQLite)
-- Extracts schema information (tables, columns, data types, relationships)
-- Provides structured schema data for query generation
+UI Test Plugin for Semantic Kernel
+- Provides demonstration methods for UI testing (greeting, farewell, manifest retrieval)
+- Useful for testing plugin integration and UI workflows
+- Does not interact with external systems or databases
 """
 
 import json

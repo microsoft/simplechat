@@ -2112,7 +2112,7 @@ export class PluginModalStepper {
       if (typeof additionalFieldsObj === 'object' && additionalFieldsObj !== null) {
         previewContent = JSON.stringify(additionalFieldsObj, null, 2);
       } else {
-        previewContent = additionalFields;
+        previewContent = '';
       }
       document.getElementById('summary-additional-fields-content').textContent = previewContent;
       additionalFieldsPreview.style.display = '';
