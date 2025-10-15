@@ -588,4 +588,8 @@ def clean_name_for_keyvault(name):
     # Remove invalid characters
     cleaned_name = re.sub(r"[^a-zA-Z0-9-]", "-", name)
     # Truncate to 127 characters
+<<<<<<< HEAD
     return cleaned_name[:127]
+=======
+    return cleaned_name[:127]
+>>>>>>> eeef42b (fix for agents/plugins with invalid akv chars)
