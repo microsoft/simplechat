@@ -166,7 +166,7 @@ def build_full_secret_name(secret_name, scope_value, source, scope):
     Raises:
         ValueError: If the name exceeds 127 characters.
     """
-    full_secret_name = f"{scope_value}--{source}--{scope}--{secret_name}"
+    full_secret_name = f"{clean_name_for_keyvault(scope_value)}--{source}--{scope}--{clean_name_for_keyvault(secret_name)}"
     if not validate_secret_name_dynamic(full_secret_name):
         logging.error(f"The full secret name '{full_secret_name}' is invalid.")
         raise ValueError(f"The full secret name '{full_secret_name}' is invalid.")
@@ -235,6 +235,8 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
             except Exception as e:
                 logging.error(f"Failed to store agent key '{key}' in Key Vault: {e}")
                 raise Exception(f"Failed to store agent key '{key}' in Key Vault: {e}")
+    else:
+        log_event(f"Agent key '{key}' not found while APIM is '{use_apim}' or empty in agent '{agent_name}'. No action taken.", level="INFO")
     return updated
 
 def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_actual_key=False):
@@ -508,3 +510,18 @@ def get_keyvault_credential():
     else:
         credential = DefaultAzureCredential()
     return credential
+
+def clean_name_for_keyvault(name):
+    """
+    Clean a name to be used as a Key Vault secret name by removing invalid characters and truncating to 127 characters.
+
+    Args:
+        name (str): The name to clean.
+
+    Returns:
+        str: The cleaned name.
+    """
+    # Remove invalid characters
+    cleaned_name = re.sub(r"[^a-zA-Z0-9-]", "-", name)
+    # Truncate to 127 characters
+    return cleaned_name[:127]
