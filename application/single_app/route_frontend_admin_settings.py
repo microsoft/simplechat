@@ -768,6 +768,10 @@ def register_route_frontend_admin_settings(app):
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
 
+                'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
+                'key_vault_name': form_data.get('key_vault_name', '').strip(),
+                'key_vault_identity': form_data.get('key_vault_identity', ''),
+
                 # Authentication & Redirect Settings
                 'enable_front_door': enable_front_door,
                 'front_door_url': front_door_url,
