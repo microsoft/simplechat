@@ -1440,6 +1440,9 @@
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
 
 <script>
+// Make app settings available to JavaScript (same as base.html)
+const appSettings = {{ app_settings|tojson|safe }};
+
 // Function to navigate to specific tabs when stat cards are clicked
 function navigateToTab(tabId) {
     // Check if we're using sidebar navigation by looking at the DOM

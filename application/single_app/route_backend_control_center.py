@@ -48,7 +48,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                 },
                 'document_metrics': {
                     'personal_workspace_enabled': user.get('settings', {}).get('enable_personal_workspace', False),
-                    'enhanced_citation_enabled': app_enhanced_citations,  # Use app setting instead of user setting
+                    # enhanced_citation_enabled is NOT stored in user data - frontend gets it from app settings
                     'last_day_uploads': 0,
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
@@ -108,14 +108,14 @@ def enhance_user_with_activity(user, force_refresh=False):
                         # Merge cached document metrics with settings-based flags
                         cached_doc_metrics = cached_metrics['document_metrics'].copy()
                         cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
-                        cached_doc_metrics['enhanced_citation_enabled'] = user.get('settings', {}).get('enable_enhanced_citation', False)
+                        # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
-                    
                     return enhanced
                 except Exception as cache_e:
                     current_app.logger.debug(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
             
             # If no cached metrics and not forcing refresh, return with default/empty metrics
+            # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
             current_app.logger.debug(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
             return enhanced
             
@@ -352,9 +352,9 @@ def enhance_user_with_activity(user, force_refresh=False):
             
             enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
             
-            # Get actual storage account size if enhanced citation is enabled
-            debug_print(f"💾 [STORAGE DEBUG] Enhanced citation enabled: {enhanced['activity']['document_metrics']['enhanced_citation_enabled']}")
-            if enhanced['activity']['document_metrics']['enhanced_citation_enabled']:
+            # Get actual storage account size if enhanced citation is enabled (check app settings)
+            debug_print(f"💾 [STORAGE DEBUG] Enhanced citation enabled: {app_enhanced_citations}")
+            if app_enhanced_citations:
                 debug_print(f"💾 [STORAGE DEBUG] Starting storage calculation for user {user.get('id')}")
                 try:
                     # Query actual file sizes from Azure Storage

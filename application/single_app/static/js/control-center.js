@@ -291,7 +291,8 @@ class ControlCenter {
         const totalDocs = docMetrics.total_documents || 0;
         const aiSearchSize = docMetrics.ai_search_size || 0;
         const storageSize = docMetrics.storage_account_size || 0;
-        const enhancedCitation = docMetrics.enhanced_citation_enabled;
+        // Always get enhanced citation setting from app settings, not user data
+        const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
         const personalWorkspace = docMetrics.personal_workspace_enabled;
         
         // If all values are zero/empty, show refresh message
