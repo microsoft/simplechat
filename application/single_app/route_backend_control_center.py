@@ -984,6 +984,7 @@ def register_route_backend_control_center(app):
             search = request.args.get('search', '').strip()
             access_filter = request.args.get('access_filter', 'all')  # all, allow, deny
             force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+            export_all = request.args.get('all', 'false').lower() == 'true'  # For CSV export
             
             # Build query with filters
             query_conditions = []
@@ -998,6 +999,33 @@ def register_route_backend_control_center(app):
                 parameters.append({"name": "@access_status", "value": access_filter})
             
             where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
+            
+            if export_all:
+                # For CSV export, get all users without pagination
+                users_query = f"""
+                    SELECT c.id, c.email, c.display_name, c.lastUpdated, c.settings
+                    FROM c 
+                    WHERE {where_clause}
+                    ORDER BY c.display_name
+                """
+                
+                users = list(cosmos_user_settings_container.query_items(
+                    query=users_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                # Enhance user data with activity information
+                enhanced_users = []
+                for user in users:
+                    enhanced_user = enhance_user_with_activity(user, force_refresh=force_refresh)
+                    enhanced_users.append(enhanced_user)
+                
+                return jsonify({
+                    'success': True,
+                    'users': enhanced_users,
+                    'total_count': len(enhanced_users)
+                }), 200
             
             # Get total count for pagination
             count_query = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"

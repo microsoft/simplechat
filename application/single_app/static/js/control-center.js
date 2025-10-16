@@ -41,6 +41,10 @@ class ControlCenter {
         document.getElementById('refreshStatsBtn')?.addEventListener('click', 
             () => this.refreshStats());
         
+        // Export button
+        document.getElementById('exportUsersBtn')?.addEventListener('click', 
+            () => this.exportUsersToCSV());
+        
         // User selection
         document.getElementById('selectAllUsers')?.addEventListener('change', 
             (e) => this.handleSelectAll(e));
@@ -708,6 +712,143 @@ class ControlCenter {
     async refreshStats() {
         // Reload the page to refresh statistics
         window.location.reload();
+    }
+    
+    async exportUsersToCSV() {
+        try {
+            // Show loading state
+            const exportBtn = document.getElementById('exportUsersBtn');
+            const originalText = exportBtn.innerHTML;
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+            
+            // Get all users data (not just current page)
+            const response = await fetch('/api/admin/control-center/users?all=true');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch users: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to fetch users');
+            }
+            
+            // Convert users data to CSV
+            const csvContent = this.convertUsersToCSV(data.users);
+            
+            // Create and download CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            
+            // Generate filename with current date
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+            link.setAttribute('download', `users_export_${dateStr}.csv`);
+            
+            // Trigger download
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            this.showSuccess(`Successfully exported ${data.users.length} users to CSV`);
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showError(`Export failed: ${error.message}`);
+        } finally {
+            // Restore button state
+            const exportBtn = document.getElementById('exportUsersBtn');
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = '<i class="bi bi-download me-1"></i>Export';
+        }
+    }
+    
+    convertUsersToCSV(users) {
+        if (!users || users.length === 0) {
+            return 'No users to export';
+        }
+        
+        // Define CSV headers
+        const headers = [
+            'Name',
+            'Email', 
+            'Access Status',
+            'File Upload Status',
+            'Last Login',
+            'Total Logins',
+            'Total Conversations',
+            'Total Messages',
+            'Last Day Conversations',
+            'Total Documents',
+            'Last Day Uploads',
+            'AI Search Size (MB)'
+        ];
+        
+        // Add enhanced citations column if enabled
+        const enhancedCitationsEnabled = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
+        if (enhancedCitationsEnabled) {
+            headers.push('Storage Account Size (MB)');
+        }
+        
+        // Convert users to CSV rows
+        const csvRows = [headers.join(',')];
+        
+        users.forEach(user => {
+            const activity = user.activity || {};
+            const loginMetrics = activity.login_metrics || {};
+            const chatMetrics = activity.chat_metrics || {};
+            const docMetrics = activity.document_metrics || {};
+            
+            const row = [
+                this.escapeCSVField(user.display_name || ''),
+                this.escapeCSVField(user.email || user.mail || ''),
+                this.escapeCSVField(user.access_status || ''),
+                this.escapeCSVField(user.file_upload_status || ''),
+                this.escapeCSVField(loginMetrics.last_login || 'Never'),
+                loginMetrics.total_logins || 0,
+                chatMetrics.total_conversations || 0,
+                chatMetrics.total_messages || 0,
+                chatMetrics.last_day_conversations || 0,
+                docMetrics.total_documents || 0,
+                docMetrics.last_day_uploads || 0,
+                this.formatBytesForCSV(docMetrics.ai_search_size || 0)
+            ];
+            
+            // Add storage account size if enhanced citations is enabled
+            if (enhancedCitationsEnabled) {
+                row.push(this.formatBytesForCSV(docMetrics.storage_account_size || 0));
+            }
+            
+            csvRows.push(row.join(','));
+        });
+        
+        return csvRows.join('\n');
+    }
+    
+    escapeCSVField(field) {
+        if (field === null || field === undefined) {
+            return '';
+        }
+        
+        const stringField = String(field);
+        
+        // If field contains comma, quote, or newline, wrap in quotes and escape quotes
+        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+            return '"' + stringField.replace(/"/g, '""') + '"';
+        }
+        
+        return stringField;
+    }
+    
+    formatBytesForCSV(bytes) {
+        if (!bytes || bytes === 0) return '0';
+        
+        // Convert to MB and round to 2 decimal places
+        const mb = bytes / (1024 * 1024);
+        return Math.round(mb * 100) / 100;
     }
     
     showLoading(show) {
