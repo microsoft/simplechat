@@ -38,6 +38,7 @@ from functions_personal_actions import get_personal_actions, ensure_migration_co
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from app_settings_cache import get_settings_cache
 
 
 
@@ -400,7 +401,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
         "[SK Loader] Starting to load Semantic Kernel Agent and Plugins",
         level=logging.INFO
     )
-    settings = get_settings()
+    settings = get_settings_cache()
     print(f"[SK Loader] Settings check - per_user_semantic_kernel: {settings.get('per_user_semantic_kernel', False)}, user_id: {user_id}")
     log_event(f"[SK Loader] Settings check - per_user_semantic_kernel: {settings.get('per_user_semantic_kernel', False)}, user_id: {user_id}", level=logging.INFO)
     
@@ -837,7 +838,7 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     
     resolved_manifest = {}
     for k, v in plugin_manifest.items():
-        print(f"[SK Loader] Resolving plugin manifest key: {k} with value type: {type(v)}")
+        debug_print(f"[SK Loader] Resolving plugin manifest key: {k} with value type: {type(v)}")
         if isinstance(v, str):
             resolved_manifest[k] = resolve_value(v)
         elif isinstance(v, list):
