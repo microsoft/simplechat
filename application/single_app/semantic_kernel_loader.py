@@ -31,7 +31,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.smart_http_plugin import SmartHttpPlugin
 from functions_debug import debug_print
 from flask import g
-from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name
+from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name, SecretReturnType
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
@@ -472,9 +472,9 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         
         if mode_label == "per-user":
             if user_id:
-                all_plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
+                all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
                 if merge_global:
-                    global_plugins = get_global_actions(return_actual_key=True)
+                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
                     for g in global_plugins:
                         all_plugin_manifests.append(g)
                 debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
@@ -483,7 +483,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            all_plugin_manifests = get_global_plugins(return_actual_key=True)
+            all_plugin_manifests = get_global_plugins(return_type=SecretReturnType.NAME)
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
@@ -560,15 +560,15 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             # Get plugin manifests again for fallback
             if mode_label == "per-user":
                 if user_id:
-                    all_plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
+                    all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
                     if merge_global:
-                        global_plugins = get_global_actions(return_actual_key=True)
+                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
                         for g in global_plugins:
                             all_plugin_manifests.append(g)
                 else:
                     all_plugin_manifests = []
             else:
-                all_plugin_manifests = get_global_actions(return_actual_key=True)
+                all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
 
             plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names]
             _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label)
@@ -837,6 +837,7 @@ def resolve_key_vault_secrets_in_plugins(plugin_manifest, settings):
     
     resolved_manifest = {}
     for k, v in plugin_manifest.items():
+        print(f"[SK Loader] Resolving plugin manifest key: {k} with value type: {type(v)}")
         if isinstance(v, str):
             resolved_manifest[k] = resolve_value(v)
         elif isinstance(v, list):
@@ -1107,11 +1108,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         level=logging.INFO)
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_actions_migration_complete(user_id)
-    plugin_manifests = get_personal_actions(user_id, return_actual_key=True)
+    plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:
-        global_plugins = get_global_actions(return_actual_key=True)
+        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
         # User plugins take precedence
         all_plugins = {p.get('name'): p for p in plugin_manifests}
         all_plugins.update({p.get('name'): p for p in global_plugins})
@@ -1259,7 +1260,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
     
     # Conditionally load core plugins based on settings
     
-    plugin_manifests = get_global_actions(return_actual_key=True)
+    plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
     log_event(f"[SK Loader] Found {len(plugin_manifests)} plugin manifests", level=logging.INFO)
     
     # --- Dynamic Plugin Type Loading (semantic_kernel_plugins) ---

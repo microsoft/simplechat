@@ -11,9 +11,9 @@ import json
 import traceback
 from datetime import datetime
 from config import cosmos_global_actions_container
-from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper
+from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 
-def get_global_actions(return_actual_key=False):
+def get_global_actions(return_type=SecretReturnType.TRIGGER):
     """
     Get all global actions.
     
@@ -26,7 +26,7 @@ def get_global_actions(return_actual_key=False):
             enable_cross_partition_query=True
         ))
         # Resolve Key Vault references for each action
-        actions = [keyvault_plugin_get_helper(a, scope_value=a.get('id'), scope="global", return_actual_key=return_actual_key) for a in actions]
+        actions = [keyvault_plugin_get_helper(a, scope_value=a.get('id'), scope="global", return_type=return_type) for a in actions]
         return actions
         
     except Exception as e:
@@ -35,7 +35,7 @@ def get_global_actions(return_actual_key=False):
         return []
 
 
-def get_global_action(action_id, return_actual_key=False):
+def get_global_action(action_id, return_type=SecretReturnType.TRIGGER):
     """
     Get a specific global action by ID.
     
@@ -51,7 +51,7 @@ def get_global_action(action_id, return_actual_key=False):
             partition_key=action_id
         )
         # Resolve Key Vault references
-        action = keyvault_plugin_get_helper(action, scope_value=action_id, scope="global", return_actual_key=return_actual_key)
+        action = keyvault_plugin_get_helper(action, scope_value=action_id, scope="global", return_type=return_type)
         print(f"✅ Found global action: {action_id}")
         return action
         

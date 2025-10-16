@@ -6,6 +6,7 @@ from functions_appinsights import log_event
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from enum import Enum
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -42,6 +43,11 @@ supported_action_auth_types = [
 ]
 
 ui_trigger_word = "Stored_In_KeyVault"
+
+class SecretReturnType(Enum):
+    VALUE = "value"
+    TRIGGER = "trigger"
+    NAME = "name"
 
 def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", source="global"):
     """
@@ -239,7 +245,7 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
         log_event(f"Agent key '{key}' not found while APIM is '{use_apim}' or empty in agent '{agent_name}'. No action taken.", level="INFO")
     return updated
 
-def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_actual_key=False):
+def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
     """
     For agent dicts, retrieve sensitive keys from Key Vault if they are stored as Key Vault references.
     Only processes 'azure_agent_apim_gpt_subscription_key' and 'azure_openai_gpt_key'.
@@ -269,9 +275,11 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ac
         value = updated[key]
         if validate_secret_name_dynamic(value):
             try:
-                if return_actual_key:
+                if return_type == SecretReturnType.VALUE:
                     actual_key = retrieve_secret_from_key_vault_by_full_name(value)
                     updated[key] = actual_key
+                elif return_type == SecretReturnType.NAME:
+                    updated[key] = value
                 else:
                     updated[key] = ui_trigger_word
             except Exception as e:
@@ -309,7 +317,13 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
         auth_type = auth.get('type', None)
         if auth_type in supported_action_auth_types and 'key' in auth and auth['key']:
             value = auth['key']
-            if not validate_secret_name_dynamic(value):
+            if value == ui_trigger_word:
+                auth['key'] = build_full_secret_name(plugin_name, scope_value, source, scope)
+                updated['auth'] = auth
+            elif validate_secret_name_dynamic(value):
+                auth['key'] = build_full_secret_name(plugin_name, scope_value, source, scope)
+                updated['auth'] = auth
+            else:
                 try:
                     full_secret_name = store_secret_in_key_vault(plugin_name, value, scope_value, source=source, scope=scope)
                     new_auth = dict(auth)
@@ -331,19 +345,23 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global"):
                 base_field = k[:-8]  # Remove '__Secret'
                 akv_key = f"{plugin_name}-{base_field}".replace('__', '-')
                 full_secret_name = build_full_secret_name(akv_key, scope_value, addset_source, scope)
-                if not validate_secret_name_dynamic(full_secret_name):
-                    logging.error(f"Generated secret name for additionalField '{k}' is not valid.")
-                    raise ValueError(f"Generated secret name for additionalField '{k}' is not valid.")
-                try:
-                    full_secret_name = store_secret_in_key_vault(akv_key, v, scope_value, source=addset_source, scope=scope)
+                if v == ui_trigger_word:
                     new_additional_fields[k] = full_secret_name
-                except Exception as e:
-                    logging.error(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
-                    raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+                    continue
+                elif validate_secret_name_dynamic(v):
+                    new_additional_fields[k] = full_secret_name
+                    continue
+                else:
+                    try:
+                        full_secret_name = store_secret_in_key_vault(akv_key, v, scope_value, source=addset_source, scope=scope)
+                        new_additional_fields[k] = full_secret_name
+                    except Exception as e:
+                        logging.error(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+                        raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
         updated['additionalFields'] = new_additional_fields
     return updated
 # Helper to retrieve plugin secrets from Key Vault
-def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_actual_key=False):
+def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
     """
     For plugin dicts, retrieve secrets from Key Vault for auth.key and any additionalFields key ending with '__Secret'.
     If the value is a Key Vault reference, retrieve the actual secret and replace with ui_trigger_word.
@@ -368,10 +386,14 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
             value = auth['key']
             if validate_secret_name_dynamic(value):
                 try:
-                    if return_actual_key:
+                    if return_type == SecretReturnType.VALUE:
                         actual_key = retrieve_secret_from_key_vault_by_full_name(value)
                         new_auth = dict(auth)
                         new_auth['key'] = actual_key
+                        updated['auth'] = new_auth
+                    elif return_type == SecretReturnType.NAME:
+                        new_auth = dict(auth)
+                        new_auth['key'] = value
                         updated['auth'] = new_auth
                     else:
                         new_auth = dict(auth)
@@ -390,9 +412,11 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                 base_field = k[:-8]  # Remove '__Secret'
                 akv_key = f"{plugin_name}-{base_field}".replace('__', '-')
                 try:
-                    if return_actual_key:
+                    if return_type == SecretReturnType.VALUE:
                         actual_secret = retrieve_secret_from_key_vault(f"{akv_key}", scope_value, scope, addset_source)
                         new_additional_fields[k] = actual_secret
+                    elif return_type == SecretReturnType.NAME:
+                        new_additional_fields[k] = v
                     else:
                         new_additional_fields[k] = ui_trigger_word
                 except Exception as e:

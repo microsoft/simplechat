@@ -11,12 +11,12 @@ import uuid
 from datetime import datetime
 from azure.cosmos import exceptions
 from flask import current_app
-from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper
+from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 from functions_settings import get_user_settings, update_user_settings
 from config import cosmos_personal_actions_container
 import logging
 
-def get_personal_actions(user_id, return_actual_key=False):
+def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch all personal actions/plugins for a user.
     
@@ -40,7 +40,7 @@ def get_personal_actions(user_id, return_actual_key=False):
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_actual_key=return_actual_key)
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
         return cleaned_actions
         
@@ -50,7 +50,7 @@ def get_personal_actions(user_id, return_actual_key=False):
         current_app.logger.error(f"Error fetching personal actions for user {user_id}: {e}")
         return []
 
-def get_personal_action(user_id, action_id, return_actual_key=False):
+def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch a specific personal action/plugin.
     
@@ -87,7 +87,7 @@ def get_personal_action(user_id, action_id, return_actual_key=False):
         
         # Remove Cosmos metadata and resolve Key Vault references
         cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-        cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_actual_key=return_actual_key)
+        cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
         return cleaned_action
         
     except Exception as e:
@@ -269,7 +269,7 @@ def migrate_actions_from_user_settings(user_id):
         current_app.logger.error(f"Error during action migration for user {user_id}: {e}")
         return 0
 
-def get_actions_by_names(user_id, action_names, return_actual_key=False):
+def get_actions_by_names(user_id, action_names, return_type=SecretReturnType.TRIGGER):
     """
     Get multiple actions by their names.
     
@@ -302,7 +302,7 @@ def get_actions_by_names(user_id, action_names, return_actual_key=False):
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_actual_key=return_actual_key)
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
             
         return cleaned_actions
@@ -311,7 +311,7 @@ def get_actions_by_names(user_id, action_names, return_actual_key=False):
         current_app.logger.error(f"Error fetching actions by names for user {user_id}: {e}")
         return []
 
-def get_actions_by_type(user_id, action_type, return_actual_key=False):
+def get_actions_by_type(user_id, action_type, return_type=SecretReturnType.TRIGGER):
     """
     Get all actions of a specific type for a user.
     
@@ -339,7 +339,7 @@ def get_actions_by_type(user_id, action_type, return_actual_key=False):
         cleaned_actions = []
         for action in actions:
             cleaned_action = {k: v for k, v in action.items() if not k.startswith('_')}
-            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_actual_key=return_actual_key)
+            cleaned_action = keyvault_plugin_get_helper(cleaned_action, scope_value=user_id, scope="user", return_type=return_type)
             cleaned_actions.append(cleaned_action)
             
         return cleaned_actions
