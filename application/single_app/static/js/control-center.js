@@ -35,7 +35,7 @@ class ControlCenter {
         document.getElementById('accessFilterSelect')?.addEventListener('change', 
             () => this.handleFilterChange());
         
-        // Refresh buttons
+        // Refresh buttons - these reload cached data, don't recalculate metrics
         document.getElementById('refreshUsersBtn')?.addEventListener('click', 
             () => this.loadUsers());
         document.getElementById('refreshStatsBtn')?.addEventListener('click', 
@@ -259,13 +259,18 @@ class ControlCenter {
     
     renderChatMetrics(chatMetrics) {
         if (!chatMetrics) {
-            return '<div class="small text-muted">No data</div>';
+            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
         }
         
         const lastDayConversation = chatMetrics.last_day_conversation || 'Never';
         const totalConversations = chatMetrics.total_conversations || 0;
         const totalMessages = chatMetrics.total_messages || 0;
         const messageSize = chatMetrics.total_message_size || 0;
+        
+        // If all values are zero/empty, show refresh message
+        if (totalConversations === 0 && totalMessages === 0 && messageSize === 0 && lastDayConversation === 'Never') {
+            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
+        }
         
         return `
             <div class="small">
@@ -279,7 +284,7 @@ class ControlCenter {
     
     renderDocumentMetrics(docMetrics) {
         if (!docMetrics) {
-            return '<div class="small text-muted">No data</div>';
+            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
         }
         
         const lastDayUpload = docMetrics.last_day_upload || 'Never';
@@ -288,6 +293,11 @@ class ControlCenter {
         const storageSize = docMetrics.storage_account_size || 0;
         const enhancedCitation = docMetrics.enhanced_citation_enabled;
         const personalWorkspace = docMetrics.personal_workspace_enabled;
+        
+        // If all values are zero/empty, show refresh message
+        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0 && lastDayUpload === 'Never') {
+            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
+        }
         
         let html = `
             <div class="small">
@@ -314,11 +324,16 @@ class ControlCenter {
     
     renderLoginActivity(loginMetrics) {
         if (!loginMetrics) {
-            return '<div class="small text-muted">No login data</div>';
+            return '<div class="small text-muted">No login data<br><em>Use Refresh Data button</em></div>';
         }
         
         const totalLogins = loginMetrics.total_logins || 0;
         const lastLogin = loginMetrics.last_login;
+        
+        // If no logins recorded and no last login, show refresh message
+        if (totalLogins === 0 && !lastLogin) {
+            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
+        }
         
         let lastLoginFormatted = 'Never';
         if (lastLogin) {

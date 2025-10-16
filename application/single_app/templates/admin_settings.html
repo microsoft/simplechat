@@ -1797,6 +1797,17 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and participate in shared group workspaces for team collaboration, document sharing, and collective knowledge building."></i>
                     </div>
 
+                    <div class="form-group form-check form-switch mb-3" id="enable_group_creation_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_group_creation"
+                            name="enable_group_creation"
+                            {% if settings.enable_group_creation %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_group_creation">
+                            Enable Group Creation
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create new groups. When disabled, users can still participate in existing groups but cannot create new ones."></i>
+                    </div>
                     
                     <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
                         <hr> 

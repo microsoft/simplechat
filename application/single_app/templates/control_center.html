@@ -126,6 +126,135 @@
             opacity: 1;
             transform: translateY(-50%) rotate(180deg);
         }
+        
+        /* Group Management Table Styles */
+        .group-table th {
+            font-weight: 600;
+            background-color: var(--bs-light);
+        }
+        
+        /* Dark mode support for group table headers */
+        [data-bs-theme="dark"] .group-table th {
+            background-color: var(--bs-dark);
+            color: var(--bs-light);
+            border-color: var(--bs-border-color);
+        }
+        
+        /* Sortable group table headers */
+        .group-table th.sortable {
+            cursor: pointer;
+            position: relative;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+        
+        .group-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        [data-bs-theme="dark"] .group-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.2);
+        }
+        
+        .group-table th.sortable::after {
+            content: '';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border: 4px solid transparent;
+            border-bottom: 4px solid #6c757d;
+            opacity: 0.3;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        
+        .group-table th.sortable:hover::after {
+            opacity: 0.6;
+        }
+        
+        .group-table th.sortable.sort-asc::after {
+            border-bottom: 4px solid var(--bs-primary);
+            border-top: none;
+            opacity: 1;
+        }
+        
+        .group-table th.sortable.sort-desc::after {
+            border-top: 4px solid var(--bs-primary);
+            border-bottom: none;
+            opacity: 1;
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        /* Group status badges */
+        .group-status-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+        }
+        
+        .group-status-active {
+            background-color: var(--bs-success);
+            color: white;
+        }
+        
+        .group-status-locked {
+            background-color: var(--bs-warning);
+            color: black;
+        }
+        
+        .group-status-upload-disabled {
+            background-color: var(--bs-info);
+            color: white;
+        }
+        
+        .group-status-inactive {
+            background-color: var(--bs-secondary);
+            color: white;
+        }
+        
+        /* Group ownership badge */
+        .ownership-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 0.25rem;
+            background-color: var(--bs-primary);
+            color: white;
+        }
+        
+        /* Member count styling */
+        .member-count {
+            color: var(--bs-info);
+            font-weight: 500;
+        }
+        
+        /* Document count styling */
+        .document-count {
+            color: var(--bs-success);
+            font-weight: 500;
+        }
+        
+        /* Activity indicators */
+        .activity-indicator {
+            font-size: 0.875rem;
+        }
+        
+        .activity-recent {
+            color: var(--bs-success);
+        }
+        
+        .activity-moderate {
+            color: var(--bs-warning);
+        }
+        
+        .activity-old {
+            color: var(--bs-danger);
+        }
+        
+        .activity-never {
+            color: var(--bs-secondary);
+        }
         .access-badge {
             font-size: 0.75rem;
             padding: 0.25rem 0.5rem;
@@ -506,7 +635,7 @@
                                             <i class="bi bi-gear-fill me-1"></i>Bulk
                                         </button>
                                         <button type="button" class="btn btn-outline-primary" id="refreshUsersBtn">
-                                            <i class="bi bi-arrow-clockwise"></i>Status
+                                            <i class="bi bi-arrow-clockwise"></i>Reload View
                                         </button>
                                     </div>
                                 </div>
@@ -561,10 +690,109 @@
                         
                         <!-- Group Management Tab -->
                         <div class="tab-pane fade" id="groups" role="tabpanel">
-                            <div class="text-center py-5">
-                                <i class="bi bi-collection" style="font-size: 4rem; color: var(--bs-secondary);"></i>
-                                <h4 class="mt-3">Group Management</h4>
-                                <p class="text-muted">Group management functionality will be available in future updates.</p>
+                            <!-- Global Group Settings -->
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="card-title mb-0">
+                                                <i class="bi bi-gear-fill me-2"></i>Global Group Settings
+                                            </h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row align-items-center">
+                                                <div class="col-md-8">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="disableGroupCreation" {% if not settings.enable_group_creation %}checked{% endif %}>
+                                                        <label class="form-check-label" for="disableGroupCreation">
+                                                            <strong>Disable Group Creation</strong>
+                                                            <br><small class="text-muted">Prevent users from creating new groups system-wide</small>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4 text-end">
+                                                    <button type="button" class="btn btn-primary" id="saveGlobalGroupSettings">
+                                                        <i class="bi bi-check-lg me-1"></i>Save Settings
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Group Management Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="groupSearchInput" placeholder="Search groups by name or owner...">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="groupStatusFilterSelect">
+                                        <option value="all">All Groups</option>
+                                        <option value="active">Active Groups</option>
+                                        <option value="locked">Locked Groups</option>
+                                        <option value="upload_disabled">Upload Disabled</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkGroupActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshGroupsBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>Refresh
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Groups Table -->
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover group-table" id="groupsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 50px;">
+                                                        <input type="checkbox" class="form-check-input" id="selectAllGroups">
+                                                    </th>
+                                                    <th class="sortable" data-sort="name" style="padding-right: 25px;">Group Name</th>
+                                                    <th class="sortable" data-sort="owner" style="padding-right: 25px;">Owner</th>
+                                                    <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
+                                                    <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
+                                                    <th class="sortable" data-sort="lastUpload" style="padding-right: 25px;">Last Upload</th>
+                                                    <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="groupsTableBody">
+                                                <tr>
+                                                    <td colspan="8" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading groups...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="groupsPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Groups pagination">
+                                            <ul class="pagination mb-0" id="groupsPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
@@ -896,6 +1124,301 @@
         </div>
     </div>
     
+    <!-- Group Management Modal -->
+    <div class="modal fade" id="groupManagementModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-collection-fill me-2"></i>Manage Group
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Group Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Information</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>Name:</strong> <span id="modalGroupName">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Owner:</strong> <span id="modalGroupOwner">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Members:</strong> <span id="modalGroupMembers">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Documents:</strong> <span id="modalGroupDocuments">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Created:</strong> <span id="modalGroupCreated">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Last Upload:</strong> <span id="modalGroupLastUpload">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Group Status Control -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Status Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Group Status</label>
+                                        <select class="form-select" id="groupStatusSelect">
+                                            <option value="active">Active</option>
+                                            <option value="locked">Locked (Read-only)</option>
+                                            <option value="upload_disabled">Upload Disabled</option>
+                                            <option value="inactive">Inactive</option>
+                                        </select>
+                                        <div class="form-text">Locked groups prevent members from adding users or files. Upload disabled prevents new file uploads only.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Group Ownership -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Ownership</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Transfer Ownership</label>
+                                        <select class="form-select" id="groupOwnershipSelect">
+                                            <option value="">Keep current owner</option>
+                                            <option value="admin">Take Administrator Ownership</option>
+                                            <option value="transfer">Transfer to Another User</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="transferUserGroup" style="display: none;">
+                                        <label class="form-label">New Owner Email</label>
+                                        <input type="email" class="form-control" id="groupNewOwnerEmail" placeholder="Enter user email">
+                                        <div class="form-text">User must be a member of the group to become owner.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Member Management -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Member Management</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-info w-100" id="manageMembersBtn" data-bs-toggle="modal" data-bs-target="#groupMembersModal">
+                                                <i class="bi bi-people me-2"></i>View & Manage Members
+                                            </button>
+                                            <small class="text-muted">Add/remove members and assign roles</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn" data-bs-toggle="modal" data-bs-target="#groupActivityModal">
+                                                <i class="bi bi-activity me-2"></i>View Group Activity
+                                            </button>
+                                            <small class="text-muted">See detailed group activity timeline</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dangerous Actions -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold text-danger">Dangerous Actions</h6>
+                            <div class="card border-danger">
+                                <div class="card-body">
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>
+                                        These actions cannot be undone. Please proceed with caution.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-outline-danger w-100" id="deleteDocumentsBtn">
+                                                <i class="bi bi-trash me-2"></i>Delete All Documents
+                                            </button>
+                                            <small class="text-muted">Remove all files but keep group structure</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-danger w-100" id="deleteGroupBtn">
+                                                <i class="bi bi-trash-fill me-2"></i>Delete Entire Group
+                                            </button>
+                                            <small class="text-muted">Permanently delete group and all content</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveGroupChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bulk Group Action Modal -->
+    <div class="modal fade" id="bulkGroupActionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-gear-fill me-2"></i>Bulk Group Action
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Action Type</label>
+                        <select class="form-select" id="bulkGroupActionType">
+                            <option value="">Select action...</option>
+                            <option value="lock">Lock Groups</option>
+                            <option value="unlock">Unlock Groups</option>
+                            <option value="disable_upload">Disable File Uploads</option>
+                            <option value="enable_upload">Enable File Uploads</option>
+                            <option value="take_ownership">Take Ownership</option>
+                            <option value="delete_documents">Delete All Documents</option>
+                        </select>
+                    </div>
+                    
+                    <div class="alert alert-warning" id="bulkGroupWarning" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong id="bulkGroupWarningText"></strong>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This action will be applied to <strong id="selectedGroupCount">0</strong> selected group(s).
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="executeBulkGroupActionBtn">
+                        <i class="bi bi-gear-fill me-1"></i>Execute Action
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Activity Modal -->
+    <div class="modal fade" id="groupActivityModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-activity me-2"></i>Group Activity Timeline
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 id="activityGroupName">Group Activity</h6>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <select class="form-select form-select-sm" id="activityTimeRange">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="all">All time</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-container" style="max-height: 400px; overflow-y: auto;">
+                        <div id="activityTimeline">
+                            <!-- Activity timeline will be populated here -->
+                            <div class="text-center py-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <div class="mt-2">Loading activity...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" id="exportActivityBtn">
+                        <i class="bi bi-download me-1"></i>Export Activity
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Members Management Modal -->
+    <div class="modal fade" id="groupMembersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-people me-2"></i>Manage Group Members
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 id="membersGroupName">Group Members</h6>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button type="button" class="btn btn-primary btn-sm" id="addMemberBtn">
+                                <i class="bi bi-person-plus me-1"></i>Add Member
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Member</th>
+                                    <th>Role</th>
+                                    <th>Joined</th>
+                                    <th>Last Active</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="groupMembersTableBody">
+                                <!-- Members will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveMemberChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none" style="background: rgba(0,0,0,0.5); z-index: 9999;">
         <div class="d-flex justify-content-center align-items-center h-100">
@@ -1096,11 +1619,641 @@ class TableSorter {
     }
 }
 
+// Group Table Sorter - similar to user table but for groups
+class GroupTableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'members' || sortKey === 'documents' || sortKey === 'lastUpload') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'name':
+                // Extract group name
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'owner':
+                // Extract owner name
+                value = cell.textContent.trim();
+                break;
+            case 'members':
+                // Extract member count
+                const memberText = cell.textContent.trim();
+                const memberMatch = memberText.match(/(\d+)/);
+                value = memberMatch ? memberMatch[1] : '0';
+                break;
+            case 'status':
+                // Extract status from badge
+                const statusBadge = cell.querySelector('.group-status-badge, .badge');
+                value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
+                break;
+            case 'lastUpload':
+                // Extract date values
+                value = cell.textContent.trim();
+                if (value.toLowerCase() === 'never') return '0';
+                break;
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
+// Group Management Functions
+const GroupManager = {
+    // Initialize group management functionality
+    init: function() {
+        this.bindEvents();
+        this.loadGroups();
+    },
+
+    // Bind event handlers
+    bindEvents: function() {
+        // Global settings
+        document.getElementById('saveGlobalGroupSettings')?.addEventListener('click', this.saveGlobalSettings);
+        
+        // Search and filter
+        document.getElementById('groupSearchInput')?.addEventListener('input', this.handleSearch);
+        document.getElementById('groupStatusFilterSelect')?.addEventListener('change', this.handleFilter);
+        
+        // Bulk actions
+        document.getElementById('bulkGroupActionBtn')?.addEventListener('click', this.showBulkActionModal);
+        document.getElementById('refreshGroupsBtn')?.addEventListener('click', this.refreshGroups);
+        
+        // Select all checkbox
+        document.getElementById('selectAllGroups')?.addEventListener('change', this.handleSelectAll);
+        
+        // Modal controls
+        document.getElementById('groupOwnershipSelect')?.addEventListener('change', this.handleOwnershipChange);
+        document.getElementById('saveGroupChangesBtn')?.addEventListener('click', this.saveGroupChanges);
+        document.getElementById('deleteDocumentsBtn')?.addEventListener('click', this.deleteDocuments);
+        document.getElementById('deleteGroupBtn')?.addEventListener('click', this.deleteGroup);
+        
+        // Member management modal
+        document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
+    },
+
+    // Load groups data (placeholder - would connect to backend)
+    loadGroups: function() {
+        const tbody = document.getElementById('groupsTableBody');
+        if (!tbody) return;
+
+        // Simulate loading groups data
+        setTimeout(() => {
+            tbody.innerHTML = this.generateSampleGroupRows();
+            // Initialize sorting after data is loaded
+            window.groupTableSorter = new GroupTableSorter('groupsTable');
+        }, 1000);
+    },
+
+    // Load global group settings from backend (simplified - initial state set in HTML)
+    loadGlobalSettings: async function() {
+        // Initial state is now set directly in HTML template based on backend settings
+        // This function is kept for backward compatibility but no longer needed for initial load
+        console.log('Global group settings initial state set from backend template');
+    },
+
+    // Apply pending global settings when element becomes available (no longer needed)
+    applyPendingGlobalSettings: function() {
+        // This function is kept for backward compatibility but no longer needed
+        // Initial state is now set directly in HTML template
+    },
+
+    // Generate sample group rows for demonstration
+    generateSampleGroupRows: function() {
+        const sampleGroups = [
+            {
+                id: 'group-1',
+                name: 'Engineering Team',
+                owner: 'John Smith',
+                ownerEmail: 'john.smith@company.com',
+                members: 12,
+                status: 'active',
+                lastUpload: '2024-10-14',
+                documents: 45,
+                created: '2024-01-15',
+                memberList: ['john.smith@company.com', 'alice.doe@company.com', 'bob.wilson@company.com']
+            },
+            {
+                id: 'group-2', 
+                name: 'Marketing Department',
+                owner: 'Sarah Johnson',
+                ownerEmail: 'sarah.johnson@company.com',
+                members: 8,
+                status: 'locked',
+                lastUpload: '2024-10-10',
+                documents: 23,
+                created: '2024-02-08',
+                memberList: ['sarah.johnson@company.com', 'mike.brown@company.com', 'lisa.white@company.com']
+            },
+            {
+                id: 'group-3',
+                name: 'Product Research',
+                owner: 'Mike Davis',
+                ownerEmail: 'mike.davis@company.com',
+                members: 5,
+                status: 'upload_disabled',
+                lastUpload: 'Never',
+                documents: 12,
+                created: '2024-03-22',
+                memberList: ['mike.davis@company.com', 'emma.green@company.com', 'david.black@company.com']
+            },
+            {
+                id: 'group-4',
+                name: 'Sales Team',
+                owner: 'Jennifer Lee',
+                ownerEmail: 'jennifer.lee@company.com',
+                members: 15,
+                status: 'active',
+                lastUpload: '2024-10-16',
+                documents: 67,
+                created: '2023-11-05',
+                memberList: ['jennifer.lee@company.com', 'robert.jones@company.com', 'mary.taylor@company.com']
+            },
+            {
+                id: 'group-5',
+                name: 'HR Department',
+                owner: 'Amanda Wilson',
+                ownerEmail: 'amanda.wilson@company.com',
+                members: 6,
+                status: 'active',
+                lastUpload: '2024-10-12',
+                documents: 34,
+                created: '2024-01-30',
+                memberList: ['amanda.wilson@company.com', 'thomas.anderson@company.com', 'susan.clark@company.com']
+            }
+        ];
+
+        return sampleGroups.map(group => this.createGroupRow(group)).join('');
+    },
+
+    // Create a group table row
+    createGroupRow: function(group) {
+        const statusClass = `group-status-${group.status.replace('_', '-')}`;
+        const statusText = {
+            'active': 'Active',
+            'locked': 'Locked',
+            'upload_disabled': 'Upload Disabled',
+            'inactive': 'Inactive'
+        }[group.status] || 'Unknown';
+
+        return `
+            <tr data-group-id="${group.id}">
+                <td>
+                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
+                </td>
+                <td>
+                    <div class="fw-bold">${group.name}</div>
+                    <small class="text-muted">ID: ${group.id}</small>
+                </td>
+                <td>
+                    <div>${group.owner}</div>
+                    <span class="ownership-badge">Owner</span>
+                </td>
+                <td>
+                    <span class="member-count">${group.members}</span> members
+                </td>
+                <td>
+                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
+                </td>
+                <td>
+                    <div class="activity-indicator ${this.getActivityClass(group.lastUpload)}">
+                        ${group.lastUpload}
+                    </div>
+                </td>
+                <td>
+                    <span class="document-count">${group.documents}</span> docs
+                </td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline-primary" 
+                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
+                        <i class="bi bi-gear me-1"></i>Manage
+                    </button>
+                </td>
+            </tr>
+        `;
+    },
+
+    // Get activity class based on date
+    getActivityClass: function(dateStr) {
+        if (dateStr === 'Never') return 'activity-never';
+        
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays <= 7) return 'activity-recent';
+        if (diffDays <= 30) return 'activity-moderate';
+        return 'activity-old';
+    },
+
+    // Handle search functionality
+    handleSearch: function(event) {
+        const searchTerm = event.target.value.toLowerCase();
+        const rows = document.querySelectorAll('#groupsTableBody tr:not([style*="display: none"])');
+        
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchTerm) ? '' : 'none';
+        });
+    },
+
+    // Handle status filter
+    handleFilter: function(event) {
+        const filterValue = event.target.value;
+        const rows = document.querySelectorAll('#groupsTableBody tr[data-group-id]');
+        
+        rows.forEach(row => {
+            const statusBadge = row.querySelector('.group-status-badge');
+            if (!statusBadge) return;
+            
+            const status = statusBadge.className.includes('active') ? 'active' :
+                          statusBadge.className.includes('locked') ? 'locked' :
+                          statusBadge.className.includes('upload-disabled') ? 'upload_disabled' : 'inactive';
+            
+            row.style.display = (filterValue === 'all' || status === filterValue) ? '' : 'none';
+        });
+    },
+
+    // Handle select all functionality
+    handleSelectAll: function(event) {
+        const checkboxes = document.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(cb => cb.checked = event.target.checked);
+        
+        const bulkButton = document.getElementById('bulkGroupActionBtn');
+        if (bulkButton) {
+            bulkButton.disabled = !event.target.checked;
+        }
+    },
+
+    // Save global settings
+    saveGlobalSettings: async function() {
+        const disableToggle = document.getElementById('disableGroupCreation');
+        const saveButton = document.getElementById('saveGlobalGroupSettings');
+        
+        if (!disableToggle) {
+            alert('Error: Toggle element not found');
+            return;
+        }
+        
+        const disableCreation = disableToggle.checked;
+        
+        try {
+            // Disable button during save
+            saveButton.disabled = true;
+            saveButton.innerHTML = '<i class="bi bi-clock me-1"></i>Saving...';
+            
+            // Convert "disable creation" to "enable creation" (inverted)
+            const enableCreation = !disableCreation;
+            
+            const response = await fetch('/api/admin/agents/settings/enable_group_creation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: enableCreation })
+            });
+            
+            if (response.ok) {
+                alert('Global group settings saved successfully!');
+            } else {
+                const data = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+                alert('Error saving settings: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Error saving global group settings:', error);
+            alert('Error saving settings: ' + error.message);
+        } finally {
+            // Re-enable button
+            saveButton.disabled = false;
+            saveButton.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Settings';
+        }
+    },
+
+    // Manage individual group
+    manageGroup: function(groupId) {
+        console.log('Managing group:', groupId);
+        
+        // Find the group data
+        const sampleGroups = [
+            {
+                id: 'group-1',
+                name: 'Engineering Team',
+                owner: 'John Smith',
+                ownerEmail: 'john.smith@company.com',
+                members: 12,
+                status: 'active',
+                lastUpload: '2024-10-14',
+                documents: 45,
+                created: '2024-01-15'
+            },
+            {
+                id: 'group-2', 
+                name: 'Marketing Department',
+                owner: 'Sarah Johnson',
+                ownerEmail: 'sarah.johnson@company.com',
+                members: 8,
+                status: 'locked',
+                lastUpload: '2024-10-10',
+                documents: 23,
+                created: '2024-02-08'
+            },
+            {
+                id: 'group-3',
+                name: 'Product Research',
+                owner: 'Mike Davis',
+                ownerEmail: 'mike.davis@company.com',
+                members: 5,
+                status: 'upload_disabled',
+                lastUpload: 'Never',
+                documents: 12,
+                created: '2024-03-22'
+            },
+            {
+                id: 'group-4',
+                name: 'Sales Team',
+                owner: 'Jennifer Lee',
+                ownerEmail: 'jennifer.lee@company.com',
+                members: 15,
+                status: 'active',
+                lastUpload: '2024-10-16',
+                documents: 67,
+                created: '2023-11-05'
+            },
+            {
+                id: 'group-5',
+                name: 'HR Department',
+                owner: 'Amanda Wilson',
+                ownerEmail: 'amanda.wilson@company.com',
+                members: 6,
+                status: 'active',
+                lastUpload: '2024-10-12',
+                documents: 34,
+                created: '2024-01-30'
+            }
+        ];
+        
+        const group = sampleGroups.find(g => g.id === groupId);
+        if (!group) return;
+        
+        // Populate modal with group data
+        document.getElementById('modalGroupName').textContent = group.name;
+        document.getElementById('modalGroupOwner').textContent = `${group.owner} (${group.ownerEmail})`;
+        document.getElementById('modalGroupMembers').textContent = `${group.members} active members`;
+        document.getElementById('modalGroupDocuments').textContent = `${group.documents} documents`;
+        document.getElementById('modalGroupCreated').textContent = group.created;
+        document.getElementById('modalGroupLastUpload').textContent = group.lastUpload;
+        
+        // Set group status
+        document.getElementById('groupStatusSelect').value = group.status;
+        
+        // Store current group ID for saving changes
+        document.getElementById('groupManagementModal').setAttribute('data-group-id', groupId);
+        
+        // Show the modal
+        const modal = new bootstrap.Modal(document.getElementById('groupManagementModal'));
+        modal.show();
+    },
+
+    // View group activity
+    viewActivity: function(groupId) {
+        console.log('Viewing activity for group:', groupId);  
+        alert(`Activity view for ${groupId} would open here`);
+    },
+
+    // Show bulk action modal
+    showBulkActionModal: function() {
+        const selectedGroups = document.querySelectorAll('.group-checkbox:checked');
+        if (selectedGroups.length === 0) {
+            alert('Please select groups to perform bulk actions');
+            return;
+        }
+        
+        alert(`Bulk action modal for ${selectedGroups.length} selected groups would open here`);
+    },
+
+    // Refresh groups
+    refreshGroups: function() {
+        const tbody = document.getElementById('groupsTableBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4">Loading groups...</td></tr>';
+            GroupManager.loadGroups();
+        }
+    },
+
+    // Handle ownership change
+    handleOwnershipChange: function(event) {
+        const transferUserGroup = document.getElementById('transferUserGroup');
+        if (event.target.value === 'transfer') {
+            transferUserGroup.style.display = 'block';
+        } else {
+            transferUserGroup.style.display = 'none';
+        }
+    },
+
+    // Save group changes
+    saveGroupChanges: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        const status = document.getElementById('groupStatusSelect').value;
+        const ownership = document.getElementById('groupOwnershipSelect').value;
+        const newOwnerEmail = document.getElementById('groupNewOwnerEmail').value;
+        
+        console.log('Saving changes for group:', groupId, {
+            status,
+            ownership,
+            newOwnerEmail
+        });
+        
+        // Simulate API call
+        setTimeout(() => {
+            alert('Group settings saved successfully!');
+            bootstrap.Modal.getInstance(modal).hide();
+            // Refresh the groups table
+            GroupManager.refreshGroups();
+        }, 500);
+    },
+
+    // Delete documents
+    deleteDocuments: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        if (confirm('Are you sure you want to delete ALL documents in this group? This action cannot be undone.')) {
+            console.log('Deleting documents for group:', groupId);
+            alert('All documents would be deleted from this group.');
+        }
+    },
+
+    // Delete entire group
+    deleteGroup: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        if (confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
+            console.log('Deleting group:', groupId);
+            alert('Group would be permanently deleted.');
+            bootstrap.Modal.getInstance(modal).hide();
+            GroupManager.refreshGroups();
+        }
+    },
+
+    // Load group members
+    loadGroupMembers: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        // Sample member data
+        const sampleMembers = {
+            'group-1': [
+                { name: 'John Smith', email: 'john.smith@company.com', role: 'Owner', joined: '2024-01-15', lastActive: '2024-10-16' },
+                { name: 'Alice Doe', email: 'alice.doe@company.com', role: 'Admin', joined: '2024-01-20', lastActive: '2024-10-15' },
+                { name: 'Bob Wilson', email: 'bob.wilson@company.com', role: 'Member', joined: '2024-02-01', lastActive: '2024-10-14' },
+                { name: 'Carol Brown', email: 'carol.brown@company.com', role: 'Member', joined: '2024-02-15', lastActive: '2024-10-13' }
+            ],
+            'group-2': [
+                { name: 'Sarah Johnson', email: 'sarah.johnson@company.com', role: 'Owner', joined: '2024-02-08', lastActive: '2024-10-12' },
+                { name: 'Mike Brown', email: 'mike.brown@company.com', role: 'Admin', joined: '2024-02-10', lastActive: '2024-10-11' },
+                { name: 'Lisa White', email: 'lisa.white@company.com', role: 'Member', joined: '2024-02-20', lastActive: '2024-10-10' }
+            ]
+        };
+
+        const members = sampleMembers[groupId] || [];
+        const groupName = document.getElementById('modalGroupName').textContent;
+        
+        // Populate members modal
+        document.getElementById('membersGroupName').textContent = `${groupName} Members`;
+        
+        const tbody = document.getElementById('groupMembersTableBody');
+        tbody.innerHTML = members.map(member => `
+            <tr>
+                <td>
+                    <div class="fw-bold">${member.name}</div>
+                    <small class="text-muted">${member.email}</small>
+                </td>
+                <td>
+                    <span class="badge ${member.role === 'Owner' ? 'bg-primary' : member.role === 'Admin' ? 'bg-info' : 'bg-secondary'}">${member.role}</span>
+                </td>
+                <td>${member.joined}</td>
+                <td>${member.lastActive}</td>
+                <td>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-sm btn-outline-primary" title="Change Role">
+                            <i class="bi bi-person-gear"></i>
+                        </button>
+                        ${member.role !== 'Owner' ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Remove Member">
+                            <i class="bi bi-person-dash"></i>
+                        </button>` : ''}
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    }
+};
+
 // Initialize table sorting when the page loads
 document.addEventListener('DOMContentLoaded', function() {
     // Wait a bit for the control center to load
     setTimeout(() => {
         window.tableSorter = new TableSorter('usersTable');
+        window.groupTableSorter = new GroupTableSorter('groupsTable');
+        GroupManager.init();
     }, 1000);
 });
 </script>

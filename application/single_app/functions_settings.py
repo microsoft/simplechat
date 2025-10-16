@@ -120,6 +120,7 @@ def get_settings():
         # Workspaces
         'enable_user_workspace': True,
         'enable_group_workspaces': True,
+        'enable_group_creation': True,
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,

@@ -1717,11 +1717,20 @@ function setupToggles() {
     }
 
     if (enableGroupWorkspacesToggle && createGroupPermissionSettingDiv) {
+        const enableGroupCreationSetting = document.getElementById('enable_group_creation_setting');
+        
         // Initial state
         createGroupPermissionSettingDiv.style.display = enableGroupWorkspacesToggle.checked ? 'block' : 'none';
+        if (enableGroupCreationSetting) {
+            enableGroupCreationSetting.style.display = enableGroupWorkspacesToggle.checked ? 'block' : 'none';
+        }
+        
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            if (enableGroupCreationSetting) {
+                enableGroupCreationSetting.style.display = this.checked ? 'block' : 'none';
+            }
             markFormAsModified();
         });
     }

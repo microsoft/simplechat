@@ -16,6 +16,18 @@ def enhance_user_with_activity(user, force_refresh=False):
     If force_refresh is False, will try to use cached metrics from user settings.
     """
     try:
+        user_id = user.get('id')
+        debug_print(f"👤 [USER DEBUG] Processing user {user_id}, force_refresh={force_refresh}")
+        
+        # Check both user and app settings for enhanced citations
+        user_enhanced_citation = user.get('settings', {}).get('enable_enhanced_citation', False)
+        from functions_settings import get_settings
+        app_settings = get_settings()
+        app_enhanced_citations = app_settings.get('enable_enhanced_citations', False) if app_settings else False
+        
+        debug_print(f"📋 [SETTINGS DEBUG] User enhanced citation: {user_enhanced_citation}")
+        debug_print(f"📋 [SETTINGS DEBUG] App enhanced citations: {app_enhanced_citations}")
+        debug_print(f"📋 [SETTINGS DEBUG] Will use app setting: {app_enhanced_citations}")
         enhanced = {
             'id': user.get('id'),
             'email': user.get('email', ''),
@@ -36,10 +48,10 @@ def enhance_user_with_activity(user, force_refresh=False):
                 },
                 'document_metrics': {
                     'personal_workspace_enabled': user.get('settings', {}).get('enable_personal_workspace', False),
-                    'enhanced_citation_enabled': user.get('settings', {}).get('enable_enhanced_citation', False),
+                    'enhanced_citation_enabled': app_enhanced_citations,  # Use app setting instead of user setting
                     'last_day_uploads': 0,
                     'total_documents': 0,
-                    'ai_search_size': 0,  # pages × 80KB
+                    'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
                 }
             },
@@ -86,31 +98,28 @@ def enhance_user_with_activity(user, force_refresh=False):
             cached_metrics = user.get('settings', {}).get('metrics')
             if cached_metrics and cached_metrics.get('calculated_at'):
                 try:
-                    # Check if cache is less than 1 hour old
-                    cache_time = datetime.fromisoformat(cached_metrics['calculated_at'].replace('Z', '+00:00') if 'Z' in cached_metrics['calculated_at'] else cached_metrics['calculated_at'])
-                    current_time = datetime.now(timezone.utc)
+                    current_app.logger.debug(f"Using cached metrics for user {user.get('id')}")
+                    # Use cached data regardless of age when not forcing refresh
+                    if 'login_metrics' in cached_metrics:
+                        enhanced['activity']['login_metrics'] = cached_metrics['login_metrics']
+                    if 'chat_metrics' in cached_metrics:
+                        enhanced['activity']['chat_metrics'] = cached_metrics['chat_metrics']
+                    if 'document_metrics' in cached_metrics:
+                        # Merge cached document metrics with settings-based flags
+                        cached_doc_metrics = cached_metrics['document_metrics'].copy()
+                        cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
+                        cached_doc_metrics['enhanced_citation_enabled'] = user.get('settings', {}).get('enable_enhanced_citation', False)
+                        enhanced['activity']['document_metrics'] = cached_doc_metrics
                     
-                    if (current_time - cache_time).total_seconds() < 3600:  # 1 hour cache
-                        current_app.logger.debug(f"Using cached metrics for user {user.get('id')}")
-                        # Use cached data
-                        if 'login_metrics' in cached_metrics:
-                            enhanced['activity']['login_metrics'] = cached_metrics['login_metrics']
-                        if 'chat_metrics' in cached_metrics:
-                            enhanced['activity']['chat_metrics'] = cached_metrics['chat_metrics']
-                        if 'document_metrics' in cached_metrics:
-                            # Merge cached document metrics with settings-based flags
-                            cached_doc_metrics = cached_metrics['document_metrics'].copy()
-                            cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
-                            cached_doc_metrics['enhanced_citation_enabled'] = user.get('settings', {}).get('enable_enhanced_citation', False)
-                            enhanced['activity']['document_metrics'] = cached_doc_metrics
-                        
-                        return enhanced
-                    else:
-                        current_app.logger.debug(f"Cache expired for user {user.get('id')}, refreshing metrics")
+                    return enhanced
                 except Exception as cache_e:
-                    current_app.logger.debug(f"Error checking cache for user {user.get('id')}: {cache_e}")
+                    current_app.logger.debug(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
             
-        current_app.logger.debug(f"Calculating fresh metrics for user {user.get('id')}")
+            # If no cached metrics and not forcing refresh, return with default/empty metrics
+            current_app.logger.debug(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
+            return enhanced
+            
+        current_app.logger.debug(f"Force refresh requested - calculating fresh metrics for user {user.get('id')}")
         
         
         # Try to get comprehensive conversation metrics
@@ -344,25 +353,35 @@ def enhance_user_with_activity(user, force_refresh=False):
             enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
             
             # Get actual storage account size if enhanced citation is enabled
+            debug_print(f"💾 [STORAGE DEBUG] Enhanced citation enabled: {enhanced['activity']['document_metrics']['enhanced_citation_enabled']}")
             if enhanced['activity']['document_metrics']['enhanced_citation_enabled']:
+                debug_print(f"💾 [STORAGE DEBUG] Starting storage calculation for user {user.get('id')}")
                 try:
                     # Query actual file sizes from Azure Storage
                     storage_client = CLIENTS.get("storage_account_office_docs_client")
+                    debug_print(f"💾 [STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
                     if storage_client:
                         user_folder_prefix = f"{user.get('id')}/"
                         total_storage_size = 0
+                        
+                        debug_print(f"💾 [STORAGE DEBUG] Looking for blobs with prefix: {user_folder_prefix}")
                         
                         # List all blobs in the user's folder
                         container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
                         blob_list = container_client.list_blobs(name_starts_with=user_folder_prefix)
                         
+                        blob_count = 0
                         for blob in blob_list:
                             total_storage_size += blob.size
+                            blob_count += 1
+                            debug_print(f"💾 [STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
                             current_app.logger.debug(f"Storage blob {blob.name}: {blob.size} bytes")
                         
+                        debug_print(f"💾 [STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         current_app.logger.debug(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
                     else:
+                        debug_print(f"💾 [STORAGE DEBUG] Storage client NOT available for user {user.get('id')}")
                         current_app.logger.debug(f"Storage client not available for user {user.get('id')}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
@@ -397,9 +416,11 @@ def enhance_user_with_activity(user, force_refresh=False):
                             total_storage_size += estimated_size
                         
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        debug_print(f"💾 [STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
                         current_app.logger.debug(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
                     
                 except Exception as storage_e:
+                    debug_print(f"❌ [STORAGE DEBUG] Storage calculation failed for user {user.get('id')}: {storage_e}")
                     current_app.logger.debug(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
                     # Set to 0 if we can't calculate
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
@@ -1564,45 +1585,81 @@ def register_route_backend_control_center(app):
         This will recalculate all user metrics and cache them in user settings.
         """
         try:
+            debug_print("🔄 [REFRESH DEBUG] Starting Control Center data refresh...")
             current_app.logger.info("Starting Control Center data refresh...")
             
+            # Check if request has specific user_id
+            from flask import request
+            try:
+                request_data = request.get_json(force=True) or {}
+            except:
+                # Handle case where no JSON body is sent
+                request_data = {}
+                
+            specific_user_id = request_data.get('user_id')
+            force_refresh = request_data.get('force_refresh', False)
+            
+            debug_print(f"🔄 [REFRESH DEBUG] Request data: user_id={specific_user_id}, force_refresh={force_refresh}")
+            
             # Get all users to refresh their metrics
+            debug_print("🔄 [REFRESH DEBUG] Querying all users...")
             users_query = "SELECT c.id, c.email, c.display_name, c.lastUpdated, c.settings FROM c"
             all_users = list(cosmos_user_settings_container.query_items(
                 query=users_query,
                 enable_cross_partition_query=True
             ))
+            debug_print(f"🔄 [REFRESH DEBUG] Found {len(all_users)} users to process")
             
             refreshed_count = 0
             failed_count = 0
             
             # Refresh metrics for each user
+            debug_print("🔄 [REFRESH DEBUG] Starting user refresh loop...")
             for user in all_users:
                 try:
+                    user_id = user.get('id')
+                    debug_print(f"🔄 [REFRESH DEBUG] Processing user {user_id}")
+                    
                     # Force refresh of metrics for this user
                     enhanced_user = enhance_user_with_activity(user, force_refresh=True)
                     refreshed_count += 1
-                    current_app.logger.debug(f"Refreshed metrics for user {user.get('id')}")
+                    
+                    debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed user {user_id}")
+                    current_app.logger.debug(f"Refreshed metrics for user {user_id}")
                 except Exception as user_error:
                     failed_count += 1
+                    debug_print(f"❌ [REFRESH DEBUG] Failed to refresh user {user.get('id')}: {user_error}")
+                    debug_print(f"❌ [REFRESH DEBUG] User error traceback:")
+                    import traceback
+                    debug_print(traceback.format_exc())
                     current_app.logger.error(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
             
+            debug_print(f"🔄 [REFRESH DEBUG] User refresh loop completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
+            
             # Update admin settings with refresh timestamp
+            debug_print("🔄 [REFRESH DEBUG] Updating admin settings...")
             try:
                 from functions_settings import get_settings, update_settings
                 
                 settings = get_settings()
-                settings['control_center_last_refresh'] = datetime.now(timezone.utc).isoformat()
-                update_success = update_settings(settings)
-                
-                if not update_success:
-                    current_app.logger.warning("Failed to update admin settings with refresh timestamp")
+                if settings:
+                    settings['control_center_last_refresh'] = datetime.now(timezone.utc).isoformat()
+                    update_success = update_settings(settings)
+                    
+                    if not update_success:
+                        debug_print("⚠️ [REFRESH DEBUG] Failed to update admin settings")
+                        current_app.logger.warning("Failed to update admin settings with refresh timestamp")
+                    else:
+                        debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
+                        current_app.logger.info("Updated admin settings with refresh timestamp")
                 else:
-                    current_app.logger.info("Updated admin settings with refresh timestamp")
+                    debug_print("⚠️ [REFRESH DEBUG] Could not get admin settings")
                     
             except Exception as admin_error:
+                debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
                 current_app.logger.error(f"Error updating admin settings: {admin_error}")
             
+            debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Refreshed: {refreshed_count}, Failed: {failed_count}")
             current_app.logger.info(f"Control Center data refresh completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
             
             return jsonify({
@@ -1614,6 +1671,10 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
+            debug_print(f"💥 [REFRESH DEBUG] MAJOR ERROR in refresh endpoint: {e}")
+            debug_print("💥 [REFRESH DEBUG] Full traceback:")
+            import traceback
+            debug_print(traceback.format_exc())
             current_app.logger.error(f"Error refreshing Control Center data: {e}")
             return jsonify({'error': 'Failed to refresh data'}), 500
     
