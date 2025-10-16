@@ -317,9 +317,11 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ac
         value = updated[key]
         if validate_secret_name_dynamic(value):
             try:
-                if return_actual_key:
+                if return_type == SecretReturnType.VALUE:
                     actual_key = retrieve_secret_from_key_vault_by_full_name(value)
                     updated[key] = actual_key
+                elif return_type == SecretReturnType.NAME:
+                    updated[key] = value
                 else:
                     updated[key] = ui_trigger_word
             except Exception as e:
