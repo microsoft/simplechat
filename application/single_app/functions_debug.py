@@ -1,6 +1,6 @@
 # functions_debug.py
-
-from functions_settings import get_settings
+#
+from app_settings_cache import get_settings_cache
 
 def debug_print(message):
     """
@@ -10,8 +10,8 @@ def debug_print(message):
         message (str): The debug message to print
     """
     try:
-        settings = get_settings()
-        if settings and settings.get('enable_debug_logging', False):
+        cache = get_settings_cache()
+        if cache and cache.get('enable_debug_logging', False):
             print(f"DEBUG: {message}")
     except Exception:
         # If there's any error getting settings, don't print debug messages
@@ -26,7 +26,8 @@ def is_debug_enabled():
         bool: True if debug logging is enabled, False otherwise
     """
     try:
-        settings = get_settings()
-        return settings and settings.get('enable_debug_logging', False)
+        cache = get_settings_cache()
+        print(f"IS_DEBUG_ENABLED: {cache.get('enable_debug_logging', False)}")
+        return cache and cache.get('enable_debug_logging', False)
     except Exception:
         return False

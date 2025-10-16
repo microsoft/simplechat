@@ -5,6 +5,8 @@ import pickle
 import json
 import os
 
+from app_settings_cache import APP_SETTINGS_CACHE, update_settings_cache, get_settings_cache
+
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
 
@@ -163,6 +165,7 @@ def configure_sessions(settings):
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
+    update_settings_cache(settings)
     print(f"DEBUG:Application settings: {settings}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)

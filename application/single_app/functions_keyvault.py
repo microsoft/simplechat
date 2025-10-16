@@ -7,6 +7,7 @@ from config import *
 from functions_authentication import *
 from functions_settings import *
 from enum import Enum
+from app_settings_cache import get_settings_cache
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -86,7 +87,7 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
     Raises:
         Exception: If retrieval fails or configuration is invalid.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
         return full_secret_name
@@ -126,7 +127,7 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     Raises:
         Exception: If storing fails or configuration is invalid.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     if not enable_key_vault_secret_storage:
         logging.warn(f"Key Vault secret storage is not enabled.")
@@ -217,7 +218,7 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global"):
     Raises:
         Exception: If storing a key in Key Vault fails.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
@@ -261,7 +262,7 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
     Raises:
         Exception: If retrieving a key from Key Vault fails.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
@@ -442,7 +443,7 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level="WARNING")
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
@@ -496,7 +497,7 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
     Returns:
         agent_dict (dict): The original agent dict.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
@@ -527,7 +528,7 @@ def get_keyvault_credential():
     Returns:
         DefaultAzureCredential: The credential object for Key Vault access.
     """
-    settings = get_settings()
+    settings = get_settings_cache()
     key_vault_identity = settings.get("key_vault_identity", None)
     if key_vault_identity is not None:
         credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
