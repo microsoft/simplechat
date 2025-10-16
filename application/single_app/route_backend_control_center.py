@@ -465,6 +465,284 @@ def enhance_user_with_activity(user, force_refresh=False):
         current_app.logger.error(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
 
+def enhance_group_with_activity(group, force_refresh=False):
+    """
+    Enhance group data with activity information and computed fields.
+    Follows the same pattern as user enhancement but for groups.
+    """
+    try:
+        group_id = group.get('id')
+        debug_print(f"👥 [GROUP DEBUG] Processing group {group_id}, force_refresh={force_refresh}")
+        
+        # Get app settings for enhanced citations
+        from functions_settings import get_settings
+        app_settings = get_settings()
+        app_enhanced_citations = app_settings.get('enable_enhanced_citations', False) if app_settings else False
+        
+        debug_print(f"📋 [GROUP SETTINGS DEBUG] App enhanced citations: {app_enhanced_citations}")
+        
+        # Create flat structure that matches frontend expectations
+        owner_info = group.get('owner', {})
+        users_list = group.get('users', [])
+        
+        enhanced = {
+            'id': group.get('id'),
+            'name': group.get('name', ''),
+            'description': group.get('description', ''),
+            'owner': group.get('owner', {}),
+            'users': users_list,
+            'admins': group.get('admins', []),
+            'documentManagers': group.get('documentManagers', []),
+            'pendingUsers': group.get('pendingUsers', []),
+            'createdDate': group.get('createdDate'),
+            'modifiedDate': group.get('modifiedDate'),
+            'created_at': group.get('createdDate'),  # Alias for frontend
+            
+            # Flat fields expected by frontend
+            'owner_name': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'owner_email': owner_info.get('email', ''),
+            'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'member_count': len(users_list) + (1 if owner_info else 0),
+            'document_count': 0,  # Will be updated from database
+            'storage_size': 0,  # Will be updated from storage account
+            'last_activity': None,  # Will be updated from group_documents
+            'recent_activity_count': 0,  # Will be calculated
+            'status': 'active',  # default - can be determined by business logic
+            
+            # Keep nested structure for backward compatibility
+            'activity': {
+                'document_metrics': {
+                    'last_day_uploads': 0,
+                    'total_documents': 0,
+                    'ai_search_size': 0,  # pages × 80KB  
+                    'storage_account_size': 0  # Actual file sizes from storage
+                },
+                'member_metrics': {
+                    'total_members': len(users_list) + (1 if owner_info else 0),
+                    'admin_count': len(group.get('admins', [])),
+                    'document_manager_count': len(group.get('documentManagers', [])),
+                    'pending_count': len(group.get('pendingUsers', []))
+                }
+            }
+        }
+        
+        # Check for cached metrics if not forcing refresh
+        if not force_refresh:
+            # Groups don't have settings like users, but we could store metrics in the group doc
+            cached_metrics = group.get('metrics')
+            if cached_metrics and cached_metrics.get('calculated_at'):
+                try:
+                    # Check if cache is recent (within last hour)
+                    cache_time = datetime.fromisoformat(cached_metrics['calculated_at'].replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    
+                    if now - cache_time < timedelta(hours=1):
+                        debug_print(f"👥 [GROUP DEBUG] Using cached metrics for group {group_id}")
+                        if 'document_metrics' in cached_metrics:
+                            doc_metrics = cached_metrics['document_metrics']
+                            enhanced['activity']['document_metrics'] = doc_metrics
+                            # Update flat fields
+                            enhanced['document_count'] = doc_metrics.get('total_documents', 0)
+                            enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
+                        
+                        return enhanced
+                except Exception as cache_e:
+                    debug_print(f"Error using cached metrics for group {group_id}: {cache_e}")
+            
+            debug_print(f"No cached metrics for group {group_id}, calculating basic document count")
+            
+            # Calculate at least the basic document count
+            try:
+                doc_count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.group_id = @group_id"
+                doc_count_params = [{"name": "@group_id", "value": group_id}]
+                
+                doc_count_results = list(cosmos_group_documents_container.query_items(
+                    query=doc_count_query,
+                    parameters=doc_count_params,
+                    enable_cross_partition_query=True
+                ))
+                
+                total_docs = 0
+                if doc_count_results and len(doc_count_results) > 0:
+                    total_docs = doc_count_results[0] if isinstance(doc_count_results[0], int) else 0
+                
+                debug_print(f"📄 [GROUP BASIC DEBUG] Document count for group {group_id}: {total_docs}")
+                enhanced['activity']['document_metrics']['total_documents'] = total_docs
+                enhanced['document_count'] = total_docs
+                
+            except Exception as basic_e:
+                debug_print(f"Error calculating basic document count for group {group_id}: {basic_e}")
+            
+            return enhanced
+            
+        # Force refresh - calculate fresh metrics
+        debug_print(f"👥 [GROUP DEBUG] Force refresh - calculating fresh metrics for group {group_id}")
+        
+        # Calculate document metrics from group_documents container
+        try:
+            # Count total documents for this group
+            doc_count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.group_id = @group_id"
+            doc_count_params = [{"name": "@group_id", "value": group_id}]
+            
+            total_docs = 0
+            doc_count_results = list(cosmos_group_documents_container.query_items(
+                query=doc_count_query,
+                parameters=doc_count_params,
+                enable_cross_partition_query=True
+            ))
+            if doc_count_results:
+                total_docs = doc_count_results[0]
+            
+            debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
+            enhanced['activity']['document_metrics']['total_documents'] = total_docs
+            enhanced['document_count'] = total_docs  # Update flat field
+            
+            # Calculate last day uploads and AI search size
+            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+            yesterday_str = yesterday.strftime('%Y-%m-%d')
+            
+            # Get documents uploaded in the last day
+            last_day_query = """
+                SELECT * FROM c 
+                WHERE c.group_id = @group_id 
+                AND c.upload_date >= @yesterday
+            """
+            last_day_params = [
+                {"name": "@group_id", "value": group_id},
+                {"name": "@yesterday", "value": yesterday_str}
+            ]
+            
+            last_day_docs = list(cosmos_group_documents_container.query_items(
+                query=last_day_query,
+                parameters=last_day_params,
+                enable_cross_partition_query=True
+            ))
+            
+            enhanced['activity']['document_metrics']['last_day_uploads'] = len(last_day_docs)
+            
+            # Find the most recent document upload for last_activity
+            recent_activity_query = """
+                SELECT TOP 1 c.upload_date, c.created_at, c.modified_at
+                FROM c 
+                WHERE c.group_id = @group_id 
+                ORDER BY c.upload_date DESC, c.created_at DESC, c.modified_at DESC
+            """
+            recent_activity_params = [{"name": "@group_id", "value": group_id}]
+            
+            recent_docs = list(cosmos_group_documents_container.query_items(
+                query=recent_activity_query,
+                parameters=recent_activity_params,
+                enable_cross_partition_query=True
+            ))
+            
+            if recent_docs:
+                recent_doc = recent_docs[0]
+                # Try multiple date fields to find the most recent activity
+                activity_date = (recent_doc.get('upload_date') or 
+                               recent_doc.get('modified_at') or 
+                               recent_doc.get('created_at'))
+                enhanced['last_activity'] = activity_date
+                debug_print(f"📅 [GROUP ACTIVITY DEBUG] Last activity for group {group_id}: {activity_date}")
+            
+            # Calculate recent activity count (documents in last 7 days)
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            week_ago_str = week_ago.strftime('%Y-%m-%d')
+            
+            recent_activity_count_query = """
+                SELECT VALUE COUNT(1) FROM c 
+                WHERE c.group_id = @group_id 
+                AND c.upload_date >= @week_ago
+            """
+            recent_activity_count_params = [
+                {"name": "@group_id", "value": group_id},
+                {"name": "@week_ago", "value": week_ago_str}
+            ]
+            
+            recent_count_results = list(cosmos_group_documents_container.query_items(
+                query=recent_activity_count_query,
+                parameters=recent_activity_count_params,
+                enable_cross_partition_query=True
+            ))
+            
+            if recent_count_results:
+                enhanced['recent_activity_count'] = recent_count_results[0]
+                debug_print(f"📊 [GROUP ACTIVITY DEBUG] Recent activity count for group {group_id}: {recent_count_results[0]}")
+            
+            # Calculate AI Search size (pages × 80KB approximation)
+            total_pages = 0
+            all_docs_query = "SELECT c.num_chunks FROM c WHERE c.group_id = @group_id AND IS_DEFINED(c.num_chunks)"
+            all_docs_params = [{"name": "@group_id", "value": group_id}]
+            
+            for doc in cosmos_group_documents_container.query_items(
+                query=all_docs_query,
+                parameters=all_docs_params,
+                enable_cross_partition_query=True
+            ):
+                chunks = doc.get('num_chunks', 0)
+                if isinstance(chunks, (int, float)) and chunks > 0:
+                    total_pages += chunks
+                    
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            
+            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}")
+            
+        except Exception as doc_e:
+            debug_print(f"❌ [GROUP DOCUMENT DEBUG] Error calculating document metrics for group {group_id}: {doc_e}")
+            
+        # Get actual storage account size if enhanced citation is enabled (check app settings)
+        debug_print(f"💾 [GROUP STORAGE DEBUG] Enhanced citation enabled: {app_enhanced_citations}")
+        if app_enhanced_citations:
+            debug_print(f"💾 [GROUP STORAGE DEBUG] Starting storage calculation for group {group_id}")
+            try:
+                # Query actual file sizes from Azure Storage for group documents
+                storage_client = CLIENTS.get("storage_account_office_docs_client")
+                debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
+                if storage_client:
+                    group_folder_prefix = f"group-documents/{group_id}/"
+                    total_storage_size = 0
+                    
+                    debug_print(f"💾 [GROUP STORAGE DEBUG] Looking for blobs with prefix: {group_folder_prefix}")
+                    
+                    # List all blobs in the group's folder
+                    container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
+                    blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
+                    
+                    blob_count = 0
+                    for blob in blob_list:
+                        blob_count += 1
+                        if blob.size:
+                            total_storage_size += blob.size
+                            debug_print(f"💾 [GROUP STORAGE DEBUG] Blob: {blob.name}, Size: {blob.size}")
+                    
+                    enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                    enhanced['storage_size'] = total_storage_size  # Update flat field
+                    debug_print(f"💾 [GROUP STORAGE DEBUG] Total storage size for group {group_id}: {total_storage_size} bytes ({blob_count} blobs)")
+                    
+            except Exception as storage_e:
+                debug_print(f"❌ [GROUP STORAGE DEBUG] Error calculating storage size for group {group_id}: {storage_e}")
+                
+        # Cache the computed metrics in the group document
+        if force_refresh:
+            try:
+                metrics_cache = {
+                    'document_metrics': enhanced['activity']['document_metrics'],
+                    'calculated_at': datetime.now(timezone.utc).isoformat()
+                }
+                
+                # Update group document with cached metrics
+                group['metrics'] = metrics_cache
+                cosmos_groups_container.upsert_item(group)
+                debug_print(f"Successfully cached metrics for group {group_id}")
+                    
+            except Exception as cache_save_e:
+                debug_print(f"Error saving metrics cache for group {group_id}: {cache_save_e}")
+        
+        return enhanced
+        
+    except Exception as e:
+        current_app.logger.error(f"Error enhancing group data: {e}")
+        return group  # Return original group data if enhancement fails
+
 def get_activity_trends_data(start_date, end_date):
     """
     Get aggregated activity data for the specified date range from existing containers.
@@ -1029,11 +1307,12 @@ def register_route_backend_control_center(app):
             
             # Get total count for pagination
             count_query = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            total_items = list(cosmos_user_settings_container.query_items(
+            total_items_result = list(cosmos_user_settings_container.query_items(
                 query=count_query,
                 parameters=parameters,
                 enable_cross_partition_query=True
-            ))[0]
+            ))
+            total_items = total_items_result[0] if total_items_result and isinstance(total_items_result[0], int) else 0
             
             # Calculate pagination
             offset = (page - 1) * per_page
@@ -1272,6 +1551,260 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
+
+    # Group Management APIs
+    @app.route('/api/admin/control-center/groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_get_all_groups():
+        """
+        Get all groups with their activity data and metrics.
+        Supports pagination and filtering.
+        """
+        try:
+            page = int(request.args.get('page', 1))
+            per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
+            search = request.args.get('search', '').strip()
+            status_filter = request.args.get('status_filter', 'all')  # all, active, locked, etc.
+            force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+            export_all = request.args.get('all', 'false').lower() == 'true'  # For CSV export
+            
+            # Build query with filters
+            query_conditions = []
+            parameters = []
+            
+            if search:
+                query_conditions.append("(CONTAINS(LOWER(c.name), @search) OR CONTAINS(LOWER(c.description), @search))")
+                parameters.append({"name": "@search", "value": search.lower()})
+            
+            # Note: status filtering would need to be implemented based on business logic
+            # For now, we'll get all groups and filter client-side if needed
+            
+            where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
+            
+            if export_all:
+                # For CSV export, get all groups without pagination
+                groups_query = f"""
+                    SELECT *
+                    FROM c 
+                    WHERE {where_clause}
+                    ORDER BY c.name
+                """
+                
+                groups = list(cosmos_groups_container.query_items(
+                    query=groups_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                # Enhance group data with activity information
+                enhanced_groups = []
+                for group in groups:
+                    enhanced_group = enhance_group_with_activity(group, force_refresh=force_refresh)
+                    enhanced_groups.append(enhanced_group)
+                
+                return jsonify({
+                    'success': True,
+                    'groups': enhanced_groups,
+                    'total_count': len(enhanced_groups)
+                }), 200
+            
+            # Get total count for pagination
+            count_query = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
+            total_items_result = list(cosmos_groups_container.query_items(
+                query=count_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            total_items = total_items_result[0] if total_items_result and isinstance(total_items_result[0], int) else 0
+            
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            total_pages = (total_items + per_page - 1) // per_page
+            
+            # Get paginated results
+            groups_query = f"""
+                SELECT *
+                FROM c 
+                WHERE {where_clause}
+                ORDER BY c.name
+                OFFSET {offset} LIMIT {per_page}
+            """
+            
+            groups = list(cosmos_groups_container.query_items(
+                query=groups_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            # Enhance group data with activity information
+            enhanced_groups = []
+            for group in groups:
+                enhanced_group = enhance_group_with_activity(group, force_refresh=force_refresh)
+                enhanced_groups.append(enhanced_group)
+            
+            return jsonify({
+                'groups': enhanced_groups,
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total_items': total_items,
+                    'total_pages': total_pages,
+                    'has_prev': page > 1,
+                    'has_next': page < total_pages
+                }
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting groups: {e}")
+            return jsonify({'error': 'Failed to retrieve groups'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_update_group_status(group_id):
+        """
+        Update group status (active, locked, inactive, etc.)
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            status = data.get('status')
+            if not status:
+                return jsonify({'error': 'Status is required'}), 400
+                
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+                
+            # Update group status (you may need to implement your own status logic)
+            group['status'] = status
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Update in database
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log admin action
+            admin_user = session.get('user', {})
+            log_event("[ControlCenter] Group Status Update", {
+                "admin_user": admin_user.get('preferred_username', 'unknown'),
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "new_status": status
+            })
+            
+            return jsonify({'message': 'Group status updated successfully'}), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error updating group status: {e}")
+            return jsonify({'error': 'Failed to update group status'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_get_group_details_admin(group_id):
+        """
+        Get detailed information about a specific group
+        """
+        try:
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Enhance with activity data
+            enhanced_group = enhance_group_with_activity(group)
+            
+            return jsonify(enhanced_group), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting group details: {e}")
+            return jsonify({'error': 'Failed to retrieve group details'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def api_delete_group_admin(group_id):
+        """
+        Delete a group and optionally its documents
+        """
+        try:
+            data = request.get_json() or {}
+            delete_documents = data.get('delete_documents', True)  # Default to True for safety
+            
+            # Get the group first
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+                
+            # Initialize docs list
+            docs_to_delete = []
+            
+            # If requested, delete all group documents
+            if delete_documents:
+                # Delete from group_documents container
+                docs_query = "SELECT c.id FROM c WHERE c.group_id = @group_id"
+                docs_params = [{"name": "@group_id", "value": group_id}]
+                
+                docs_to_delete = list(cosmos_group_documents_container.query_items(
+                    query=docs_query,
+                    parameters=docs_params,
+                    enable_cross_partition_query=True
+                ))
+                
+                for doc in docs_to_delete:
+                    try:
+                        cosmos_group_documents_container.delete_item(
+                            item=doc['id'], 
+                            partition_key=doc['id']
+                        )
+                    except Exception as doc_e:
+                        current_app.logger.warning(f"Failed to delete document {doc['id']}: {doc_e}")
+                
+                # Delete files from Azure Storage
+                try:
+                    storage_client = CLIENTS.get("storage_account_office_docs_client")
+                    if storage_client:
+                        container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
+                        group_folder_prefix = f"group-documents/{group_id}/"
+                        
+                        blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
+                        for blob in blob_list:
+                            try:
+                                container_client.delete_blob(blob.name)
+                            except Exception as blob_e:
+                                current_app.logger.warning(f"Failed to delete blob {blob.name}: {blob_e}")
+                except Exception as storage_e:
+                    current_app.logger.warning(f"Error deleting storage files for group {group_id}: {storage_e}")
+            
+            # Delete the group
+            cosmos_groups_container.delete_item(item=group_id, partition_key=group_id)
+            
+            # Log admin action
+            admin_user = session.get('user', {})
+            log_event("[ControlCenter] Group Deletion", {
+                "admin_user": admin_user.get('preferred_username', 'unknown'),
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "deleted_documents": delete_documents,
+                "document_count": len(docs_to_delete)
+            })
+            
+            return jsonify({'message': 'Group deleted successfully'}), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error deleting group: {e}")
+            return jsonify({'error': 'Failed to delete group'}), 500
 
     # Activity Trends API
     @app.route('/api/admin/control-center/activity-trends', methods=['GET'])

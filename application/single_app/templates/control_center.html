@@ -1793,17 +1793,75 @@ const GroupManager = {
         document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
     },
 
-    // Load groups data (placeholder - would connect to backend)
-    loadGroups: function() {
+    // Load groups data from backend API
+    loadGroups: async function() {
         const tbody = document.getElementById('groupsTableBody');
         if (!tbody) return;
 
-        // Simulate loading groups data
-        setTimeout(() => {
-            tbody.innerHTML = this.generateSampleGroupRows();
+        // Show loading state
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Loading groups...</div>
+                </td>
+            </tr>
+        `;
+
+        try {
+            // Get current filter values
+            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
+            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+
+            // Build API URL with filters
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 100, // Get more groups for now
+                search: searchTerm,
+                status_filter: statusFilter
+            });
+
+            const response = await fetch(`/api/admin/control-center/groups?${params}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.groups && data.groups.length > 0) {
+                tbody.innerHTML = data.groups.map(group => this.createRealGroupRow(group)).join('');
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-4">
+                            <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
+                            <div class="mt-2">No groups found</div>
+                        </td>
+                    </tr>
+                `;
+            }
+
             // Initialize sorting after data is loaded
-            window.groupTableSorter = new GroupTableSorter('groupsTable');
-        }, 1000);
+            if (!window.groupTableSorter) {
+                window.groupTableSorter = new GroupTableSorter('groupsTable');
+            }
+
+        } catch (error) {
+            console.error('Error loading groups:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center py-4 text-danger">
+                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
+                        <div class="mt-2">Error loading groups: ${error.message}</div>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="GroupManager.loadGroups()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
     },
 
     // Load global group settings from backend (simplified - initial state set in HTML)
@@ -1934,6 +1992,86 @@ const GroupManager = {
         `;
     },
 
+    // Create a real group table row from API data
+    createRealGroupRow: function(group) {
+        const statusClass = `group-status-${(group.status || 'active').replace('_', '-')}`;
+        const statusText = {
+            'active': 'Active',
+            'locked': 'Locked',
+            'upload_disabled': 'Upload Disabled',
+            'inactive': 'Inactive'
+        }[group.status || 'active'] || 'Unknown';
+
+        // Format storage size
+        const formatStorageSize = (sizeBytes) => {
+            if (!sizeBytes || sizeBytes === 0) return '0 B';
+            
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = sizeBytes;
+            let unitIndex = 0;
+            
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            
+            return `${size.toFixed(1)} ${units[unitIndex]}`;
+        };
+
+        // Format date or show "Never"
+        const formatDate = (dateStr) => {
+            if (!dateStr) return 'Never';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString();
+            } catch (e) {
+                return 'Never';
+            }
+        };
+
+        // Get member count - prioritize member_count, fallback to members array length
+        const memberCount = group.member_count || (group.members ? group.members.length : 0);
+
+        return `
+            <tr data-group-id="${group.id}">
+                <td>
+                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
+                </td>
+                <td>
+                    <div class="fw-bold">${group.name || 'Unnamed Group'}</div>
+                </td>
+                <td>
+                    <div>${group.owner_name || group.created_by || 'Unknown'}</div>
+                    <small class="text-muted">${group.owner_email || ''}</small>
+                </td>
+                <td>
+                    ${memberCount} members
+                </td>
+                <td>
+                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
+                </td>
+                <td>
+                    <div class="activity-indicator ${this.getActivityClass(group.last_activity)}">
+                        <div>${formatDate(group.last_activity)}</div>
+                        ${group.recent_activity_count ? `<small class="text-muted">${group.recent_activity_count} recent</small>` : ''}
+                    </div>
+                </td>
+                <td>
+                    <div>
+                        ${group.document_count || 0} docs
+                        ${group.storage_size ? `<div><small class="text-muted">${formatStorageSize(group.storage_size)}</small></div>` : ''}
+                    </div>
+                </td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline-primary" 
+                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
+                        <i class="bi bi-gear me-1"></i>Manage
+                    </button>
+                </td>
+            </tr>
+        `;
+    },
+
     // Get activity class based on date
     getActivityClass: function(dateStr) {
         if (dateStr === 'Never') return 'activity-never';
@@ -2029,88 +2167,140 @@ const GroupManager = {
     },
 
     // Manage individual group
-    manageGroup: function(groupId) {
+    manageGroup: async function(groupId) {
         console.log('Managing group:', groupId);
         
-        // Find the group data
-        const sampleGroups = [
-            {
-                id: 'group-1',
-                name: 'Engineering Team',
-                owner: 'John Smith',
-                ownerEmail: 'john.smith@company.com',
-                members: 12,
-                status: 'active',
-                lastUpload: '2024-10-14',
-                documents: 45,
-                created: '2024-01-15'
-            },
-            {
-                id: 'group-2', 
-                name: 'Marketing Department',
-                owner: 'Sarah Johnson',
-                ownerEmail: 'sarah.johnson@company.com',
-                members: 8,
-                status: 'locked',
-                lastUpload: '2024-10-10',
-                documents: 23,
-                created: '2024-02-08'
-            },
-            {
-                id: 'group-3',
-                name: 'Product Research',
-                owner: 'Mike Davis',
-                ownerEmail: 'mike.davis@company.com',
-                members: 5,
-                status: 'upload_disabled',
-                lastUpload: 'Never',
-                documents: 12,
-                created: '2024-03-22'
-            },
-            {
-                id: 'group-4',
-                name: 'Sales Team',
-                owner: 'Jennifer Lee',
-                ownerEmail: 'jennifer.lee@company.com',
-                members: 15,
-                status: 'active',
-                lastUpload: '2024-10-16',
-                documents: 67,
-                created: '2023-11-05'
-            },
-            {
-                id: 'group-5',
-                name: 'HR Department',
-                owner: 'Amanda Wilson',
-                ownerEmail: 'amanda.wilson@company.com',
-                members: 6,
-                status: 'active',
-                lastUpload: '2024-10-12',
-                documents: 34,
-                created: '2024-01-30'
+        try {
+            // Fetch group details from API
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch group details: ${response.statusText}`);
             }
-        ];
+            
+            const group = await response.json();
+            
+            // Populate modal with group data
+            document.getElementById('modalGroupName').textContent = group.name || 'Unknown Group';
+            document.getElementById('modalGroupOwner').textContent = `${group.owner_name || group.created_by || 'Unknown'} (${group.owner_email || 'No email'})`;
+            document.getElementById('modalGroupMembers').textContent = `${group.member_count || 0} active members`;
+            document.getElementById('modalGroupDocuments').textContent = `${group.document_count || 0} documents`;
+            
+            // Format dates
+            const formatDate = (dateStr) => {
+                if (!dateStr) return 'Unknown';
+                try {
+                    return new Date(dateStr).toLocaleDateString();
+                } catch (e) {
+                    return 'Unknown';
+                }
+            };
+            
+            document.getElementById('modalGroupCreated').textContent = formatDate(group.created_at);
+            document.getElementById('modalGroupLastUpload').textContent = formatDate(group.last_activity) || 'Never';
+            
+            // Set group status
+            document.getElementById('groupStatusSelect').value = group.status || 'active';
+            
+            // Store current group ID for saving changes
+            document.getElementById('groupManagementModal').setAttribute('data-group-id', groupId);
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('groupManagementModal'));
+            modal.show();
+            
+        } catch (error) {
+            console.error('Error loading group details:', error);
+            alert(`Error loading group details: ${error.message}`);
+        }
+    },
+
+    // View group details
+    viewGroupDetails: function(groupId) {
+        console.log('Viewing details for group:', groupId);
+        // For now, just use the manage function - could be expanded later
+        this.manageGroup(groupId);
+    },
+
+    // Edit group
+    editGroup: function(groupId) {
+        console.log('Editing group:', groupId);
+        // For now, redirect to manage function - could be expanded later with edit modal
+        this.manageGroup(groupId);
+    },
+
+    // Manage group members
+    manageMembers: function(groupId) {
+        console.log('Managing members for group:', groupId);
+        // First open the group management modal, then open members modal
+        this.manageGroup(groupId).then(() => {
+            // Small delay to let the modal open first
+            setTimeout(() => {
+                this.loadGroupMembers();
+            }, 500);
+        }).catch(error => {
+            console.error('Error managing members:', error);
+        });
+    },
+
+    // Change group status
+    changeStatus: async function(groupId, newStatus) {
+        console.log('Changing status for group:', groupId, 'to:', newStatus);
         
-        const group = sampleGroups.find(g => g.id === groupId);
-        if (!group) return;
+        const statusText = {
+            'active': 'Active',
+            'locked': 'Locked',
+            'upload_disabled': 'Upload Disabled',
+            'inactive': 'Inactive'
+        }[newStatus] || newStatus;
         
-        // Populate modal with group data
-        document.getElementById('modalGroupName').textContent = group.name;
-        document.getElementById('modalGroupOwner').textContent = `${group.owner} (${group.ownerEmail})`;
-        document.getElementById('modalGroupMembers').textContent = `${group.members} active members`;
-        document.getElementById('modalGroupDocuments').textContent = `${group.documents} documents`;
-        document.getElementById('modalGroupCreated').textContent = group.created;
-        document.getElementById('modalGroupLastUpload').textContent = group.lastUpload;
+        if (!confirm(`Are you sure you want to change this group's status to "${statusText}"?`)) {
+            return;
+        }
         
-        // Set group status
-        document.getElementById('groupStatusSelect').value = group.status;
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+            
+            if (response.ok) {
+                alert(`Group status changed to "${statusText}" successfully!`);
+                this.loadGroups(); // Refresh the groups list
+            } else {
+                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                alert(`Error changing group status: ${error.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error changing group status:', error);
+            alert(`Error changing group status: ${error.message}`);
+        }
+    },
+
+    // Delete group (from dropdown menu)
+    deleteGroup: async function(groupId) {
+        console.log('Deleting group:', groupId);
         
-        // Store current group ID for saving changes
-        document.getElementById('groupManagementModal').setAttribute('data-group-id', groupId);
+        if (!confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
+            return;
+        }
         
-        // Show the modal
-        const modal = new bootstrap.Modal(document.getElementById('groupManagementModal'));
-        modal.show();
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                alert('Group deleted successfully!');
+                this.loadGroups(); // Refresh the groups list
+            } else {
+                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                alert(`Error deleting group: ${error.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error deleting group:', error);
+            alert(`Error deleting group: ${error.message}`);
+        }
     },
 
     // View group activity
@@ -2184,15 +2374,33 @@ const GroupManager = {
     },
 
     // Delete entire group
-    deleteGroup: function() {
+    deleteGroup: async function() {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
+        if (!groupId) {
+            alert('No group selected for deletion');
+            return;
+        }
+        
         if (confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
-            console.log('Deleting group:', groupId);
-            alert('Group would be permanently deleted.');
-            bootstrap.Modal.getInstance(modal).hide();
-            GroupManager.refreshGroups();
+            try {
+                const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('Group deleted successfully!');
+                    bootstrap.Modal.getInstance(modal).hide();
+                    this.loadGroups(); // Refresh the groups list
+                } else {
+                    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    alert(`Error deleting group: ${error.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error deleting group:', error);
+                alert(`Error deleting group: ${error.message}`);
+            }
         }
     },
 
@@ -2246,6 +2454,11 @@ const GroupManager = {
                 </td>
             </tr>
         `).join('');
+    },
+
+    // Alias for backward compatibility
+    refreshGroups: function() {
+        return this.loadGroups();
     }
 };
 
