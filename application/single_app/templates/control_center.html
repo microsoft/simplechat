@@ -19,6 +19,32 @@
             background-color: rgba(var(--bs-primary-rgb), 0.02);
             border: 1px solid rgba(var(--bs-primary-rgb), 0.2);
         }
+        
+        .stat-card.clickable:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        /* Add pointer cursor and transition for better UX */
+        .stat-card.clickable {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card.clickable::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(var(--bs-primary-rgb), 0.1), transparent);
+            transition: left 0.5s;
+        }
+        
+        .stat-card.clickable:hover::before {
+            left: 100%;
+        }
         .stat-number {
             font-size: 2rem;
             font-weight: bold;
@@ -45,6 +71,60 @@
         .user-table th {
             font-weight: 600;
             background-color: var(--bs-light);
+        }
+        
+        /* Dark mode support for table headers */
+        [data-bs-theme="dark"] .user-table th {
+            background-color: var(--bs-dark);
+            color: var(--bs-light);
+            border-color: var(--bs-border-color);
+        }
+        
+        /* Sortable table headers */
+        .user-table th.sortable {
+            cursor: pointer;
+            position: relative;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+        
+        .user-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        [data-bs-theme="dark"] .user-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.2);
+        }
+        
+        .user-table th.sortable::after {
+            content: '';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border: 4px solid transparent;
+            border-bottom: 4px solid #6c757d;
+            opacity: 0.3;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        
+        .user-table th.sortable:hover::after {
+            opacity: 0.6;
+        }
+        
+        .user-table th.sortable.sort-asc::after {
+            border-bottom: 4px solid var(--bs-primary);
+            border-top: none;
+            opacity: 1;
+        }
+        
+        .user-table th.sortable.sort-desc::after {
+            border-top: 4px solid var(--bs-primary);
+            border-bottom: none;
+            opacity: 1;
+            transform: translateY(-50%) rotate(180deg);
         }
         .access-badge {
             font-size: 0.75rem;
@@ -200,7 +280,10 @@
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" title="Click to view User Management">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" 
+                                         title="Click to view User Management" role="button" tabindex="0" 
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('users-tab')"
+                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -211,7 +294,7 @@
                                                     </div>
                                                 </div>
                                                 <div class="text-primary">
-                                                    <i class="bi bi-people-fill" style="font-size: 2rem;"></i>
+                                                    <i class="bi bi-people-fill" style="font-size: 2rem;" aria-hidden="true"></i>
                                                 </div>
                                             </div>
                                         </div>
@@ -219,7 +302,10 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" title="Click to view Group Management">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" 
+                                         title="Click to view Group Management" role="button" tabindex="0"
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('groups-tab')"
+                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -230,7 +316,7 @@
                                                     </div>
                                                 </div>
                                                 <div class="text-info">
-                                                    <i class="bi bi-collection-fill" style="font-size: 2rem;"></i>
+                                                    <i class="bi bi-collection-fill" style="font-size: 2rem;" aria-hidden="true"></i>
                                                 </div>
                                             </div>
                                         </div>
@@ -238,7 +324,10 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" title="Click to view Public Workspaces Management">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" 
+                                         title="Click to view Public Workspaces Management" role="button" tabindex="0"
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('workspaces-tab')"
+                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}">
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -249,7 +338,7 @@
                                                     </div>
                                                 </div>
                                                 <div class="text-success">
-                                                    <i class="bi bi-folder2-open" style="font-size: 2rem;"></i>
+                                                    <i class="bi bi-folder2-open" style="font-size: 2rem;" aria-hidden="true"></i>
                                                 </div>
                                             </div>
                                         </div>
@@ -433,12 +522,12 @@
                                                     <th style="width: 50px;">
                                                         <input type="checkbox" class="form-check-input" id="selectAllUsers">
                                                     </th>
-                                                    <th>User</th>
-                                                    <th>Access Status</th>
-                                                    <th>File Upload Status</th>
-                                                    <th>Login Activity</th>
-                                                    <th>Conversations</th>
-                                                    <th>Documents</th>
+                                                    <th class="sortable" data-sort="user" style="padding-right: 25px;">User</th>
+                                                    <th class="sortable" data-sort="access" style="padding-right: 25px;">Access Status</th>
+                                                    <th class="sortable" data-sort="fileUpload" style="padding-right: 25px;">File Upload Status</th>
+                                                    <th class="sortable" data-sort="lastLogin" style="padding-right: 25px;">Login Activity</th>
+                                                    <th class="sortable" data-sort="conversations" style="padding-right: 25px;">Conversations</th>
+                                                    <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
                                                     <th>Actions</th>
                                                 </tr>
                                             </thead>
@@ -830,18 +919,189 @@
 <script>
 // Function to navigate to specific tabs when stat cards are clicked
 function navigateToTab(tabId) {
-    // Get the tab button and trigger click
-    const tabButton = document.getElementById(tabId);
-    if (tabButton) {
-        // Use Bootstrap's tab API to show the tab
-        const tab = new bootstrap.Tab(tabButton);
-        tab.show();
+    // Check if we're using sidebar navigation by looking at the DOM
+    const tabNavigation = document.getElementById('controlCenterTab');
+    const usingSidebar = !tabNavigation || tabNavigation.style.display === 'none';
+    
+    if (usingSidebar) {
+        // Handle sidebar navigation
+        const targetSection = tabId.replace('-tab', '');
         
-        // Also trigger any existing ControlCenter tab change logic if it exists
+        // Use the existing ControlCenter sidebar navigation if available
         if (typeof window.controlCenter !== 'undefined' && window.controlCenter.handleTabChange) {
-            window.controlCenter.handleTabChange(tabId.replace('-tab', ''));
+            window.controlCenter.handleTabChange(targetSection);
+        } else {
+            // Fallback: directly show the content pane
+            const contentPanes = document.querySelectorAll('.tab-pane');
+            contentPanes.forEach(pane => {
+                pane.classList.remove('show', 'active');
+            });
+            
+            const targetPane = document.getElementById(targetSection);
+            if (targetPane) {
+                targetPane.classList.add('show', 'active');
+            }
+        }
+    } else {
+        // Handle traditional tab navigation
+        const tabButton = document.getElementById(tabId);
+        if (tabButton) {
+            // Use Bootstrap's tab API to show the tab
+            const tab = new bootstrap.Tab(tabButton);
+            tab.show();
+            
+            // Also trigger any existing ControlCenter tab change logic if it exists
+            if (typeof window.controlCenter !== 'undefined' && window.controlCenter.handleTabChange) {
+                window.controlCenter.handleTabChange(tabId.replace('-tab', ''));
+            }
         }
     }
+    
+    // Scroll to top of the page for better user experience
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
+
+// Table sorting functionality
+class TableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'lastLogin' || sortKey === 'conversations' || sortKey === 'documents') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'user':
+                // Extract user name from the cell
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'access':
+            case 'fileUpload':
+                // Extract status from badge
+                const badge = cell.querySelector('.access-badge, .badge');
+                value = badge ? badge.textContent.trim() : cell.textContent.trim();
+                break;
+            case 'lastLogin':
+                // Extract last login date
+                value = cell.textContent.trim();
+                if (value.toLowerCase() === 'never') return '0'; // Sort 'never' to beginning
+                break;
+            case 'conversations':
+                // Extract conversation count
+                const convText = cell.textContent.trim();
+                const convMatch = convText.match(/Total:\s*(\d+)/);
+                value = convMatch ? convMatch[1] : '0';
+                break;
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/Total Docs:\s*(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
+// Initialize table sorting when the page loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait a bit for the control center to load
+    setTimeout(() => {
+        window.tableSorter = new TableSorter('usersTable');
+    }, 1000);
+});
 </script>
 {% endblock %}
