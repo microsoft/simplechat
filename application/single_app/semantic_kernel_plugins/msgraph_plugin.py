@@ -53,7 +53,7 @@ class MSGraphPlugin(BasePlugin):
 
     def _get_token(self, scopes=None):
         # Use the existing authentication helper to get a valid token for Graph
-        scopes = scopes or ["https://graph.microsoft.com/.default"]
+        scopes = scopes or [f"{self.manifest.get('endpoint', 'https://graph.microsoft.com').rstrip('/')}/.default"]
         token = get_valid_access_token(scopes=scopes)
         if not token:
             raise Exception("Could not acquire MS Graph access token. User may need to re-authenticate.")
