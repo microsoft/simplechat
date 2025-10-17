@@ -69,6 +69,12 @@ class BasePlugin(ABC):
         Default implementation returns an empty list.
         Override this method if you want to explicitly declare exposed functions.
         """
-        return []
+        functions = []
+        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            # Check for a custom attribute set by the decorator
+            if getattr(method, "is_kernel_function", False):
+                print(f"Registering function: {name}")
+                functions.append(name)
+        return functions
 
     
