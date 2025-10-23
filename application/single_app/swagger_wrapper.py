@@ -435,6 +435,123 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
+    """
+    Analyze a function's source code to detect request body usage and generate schema.
+    
+    Args:
+        func: Function to analyze
+        
+    Returns:
+        Request body schema dictionary or None if no request body detected
+    """
+    try:
+        # Get the source code
+        source = inspect.getsource(func)
+        
+        # Remove leading indentation to avoid parse errors
+        import textwrap
+        source = textwrap.dedent(source)
+        
+        tree = ast.parse(source)
+        
+        request_body_detected = False
+        json_fields = set()
+        
+        class RequestBodyVisitor(ast.NodeVisitor):
+            def visit_Call(self, node):
+                # Look for request.get_json() calls
+                if (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and
+                    node.func.value.id == 'request' and
+                    node.func.attr == 'get_json'):
+                    nonlocal request_body_detected
+                    request_body_detected = True
+                
+                self.generic_visit(node)
+            
+            def visit_Subscript(self, node):
+                # Look for data['field'] patterns after data = request.get_json()
+                if (isinstance(node.value, ast.Name) and
+                    node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                    isinstance(node.slice, ast.Constant) and
+                    isinstance(node.slice.value, str)):
+                    json_fields.add(node.slice.value)
+                elif (isinstance(node.value, ast.Name) and
+                      node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                      hasattr(node.slice, 's')):  # Python < 3.9 compatibility
+                    json_fields.add(node.slice.s)
+                
+                self.generic_visit(node)
+            
+            def visit_Call(self, node):
+                # Look for data.get('field') patterns
+                if (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and
+                    node.func.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                    node.func.attr == 'get' and
+                    node.args and
+                    isinstance(node.args[0], ast.Constant) and
+                    isinstance(node.args[0].value, str)):
+                    json_fields.add(node.args[0].value)
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Name) and
+                      node.func.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                      node.func.attr == 'get' and
+                      node.args and
+                      hasattr(node.args[0], 's')):  # Python < 3.9 compatibility
+                    json_fields.add(node.args[0].s)
+                
+                # Continue with the original request.get_json() detection
+                if (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and
+                    node.func.value.id == 'request' and
+                    node.func.attr == 'get_json'):
+                    nonlocal request_body_detected
+                    request_body_detected = True
+                
+                self.generic_visit(node)
+        
+        visitor = RequestBodyVisitor()
+        visitor.visit(tree)
+        
+        if not request_body_detected:
+            return None
+        
+        # Generate schema based on detected fields
+        if json_fields:
+            properties = {}
+            for field in json_fields:
+                # Try to infer field types from common naming patterns
+                if field.lower() in ['id', 'user_id', 'conversation_id', 'group_id', 'count', 'page', 'limit']:
+                    properties[field] = {"type": "integer", "description": f"{field.replace('_', ' ').title()}"}
+                elif field.lower() in ['email', 'name', 'title', 'description', 'message', 'content', 'text']:
+                    properties[field] = {"type": "string", "description": f"{field.replace('_', ' ').title()}"}
+                elif field.lower() in ['enabled', 'active', 'deleted', 'public', 'private', 'required']:
+                    properties[field] = {"type": "boolean", "description": f"{field.replace('_', ' ').title()}"}
+                elif field.lower().endswith('_date') or field.lower().endswith('_time'):
+                    properties[field] = {"type": "string", "format": "date-time", "description": f"{field.replace('_', ' ').title()}"}
+                else:
+                    # Default to string for unknown fields
+                    properties[field] = {"type": "string", "description": f"{field.replace('_', ' ').title()}"}
+            
+            return {
+                "type": "object",
+                "properties": properties,
+                "description": "Request body containing the required parameters"
+            }
+        else:
+            # Generic request body if we detect request.get_json() but no specific fields
+            return {
+                "type": "object",
+                "description": "Request body with JSON data",
+                "additionalProperties": True
+            }
+        
+    except Exception as e:
+        # If analysis fails, return None (no auto-generated request body)
+        return None
+
 def _generate_summary_from_function_name(func_name: str) -> str:
     """
     Generate a human-readable summary from function name.
@@ -528,7 +645,8 @@ def swagger_route(
     auto_schema: bool = True,
     auto_summary: bool = True,
     auto_description: bool = True,
-    auto_tags: bool = True
+    auto_tags: bool = True,
+    auto_request_body: bool = True
 ):
     """
     Decorator to add Swagger/OpenAPI documentation to Flask routes.
@@ -546,6 +664,7 @@ def swagger_route(
         auto_summary: Whether to automatically generate summary from function name
         auto_description: Whether to automatically use function docstring as description
         auto_tags: Whether to automatically generate tags from route path
+        auto_request_body: Whether to automatically detect and generate request body schema from function code
     
     Returns:
         Decorated function with swagger documentation attached
@@ -575,12 +694,17 @@ def swagger_route(
         if auto_schema and not parameters:
             final_parameters = _analyze_function_parameters(func)
         
+        # Auto-generate request body if not provided
+        final_request_body = request_body
+        if auto_request_body and auto_schema and not request_body:
+            final_request_body = _analyze_function_request_body(func)
+        
         # Store the documentation metadata (tags will be resolved later in extract_route_info)
         setattr(wrapper, '_swagger_doc', {
             'summary': final_summary,
             'description': final_description,
             'tags': tags,  # Keep original tags, will be processed in extract_route_info
-            'request_body': request_body,
+            'request_body': final_request_body,
             'responses': final_responses or {},
             'parameters': final_parameters or [],
             'deprecated': deprecated,
