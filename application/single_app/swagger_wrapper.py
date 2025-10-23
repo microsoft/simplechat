@@ -98,6 +98,7 @@ from datetime import datetime, timedelta
 import hashlib
 import time
 import threading
+import yaml
 from functions_authentication import *
 
 # Global registry to store route documentation
@@ -156,15 +157,24 @@ class SwaggerCache:
             self._request_counts[client_ip][0] += 1
             return False
     
-    def get_spec(self, app, force_refresh=False):
-        """Get cached swagger spec or generate new one."""
+    def get_spec(self, app, force_refresh=False, format='json'):
+        """Get cached swagger spec or generate new one in specified format.
+        
+        Args:
+            app: Flask application instance
+            force_refresh: Whether to force cache refresh
+            format: Output format ('json' or 'yaml')
+            
+        Returns:
+            Tuple of (spec_content, status_code, content_type)
+        """
         client_ip = request.remote_addr or 'unknown'
         
         # Rate limiting check
         if self._is_rate_limited(client_ip):
-            return None, 429  # Too Many Requests
+            return None, 429, 'application/json'  # Too Many Requests
         
-        cache_key = self._get_cache_key(app)
+        cache_key = f"{self._get_cache_key(app)}_{format}"
         current_time = time.time()
         
         with self._cache_lock:
@@ -172,16 +182,32 @@ class SwaggerCache:
             if not force_refresh and cache_key in self._cache:
                 cached_spec, cached_time = self._cache[cache_key]
                 if current_time - cached_time < self.cache_ttl:
-                    return cached_spec, 200
+                    content_type = 'application/x-yaml' if format == 'yaml' else 'application/json'
+                    return cached_spec, 200, content_type
             
             # Generate fresh spec
             try:
-                fresh_spec = extract_route_info(app)
-                self._cache = {cache_key: (fresh_spec, current_time)}  # Keep only latest
-                return fresh_spec, 200
+                openapi_dict = extract_route_info(app)
+                
+                if format == 'yaml':
+                    # Convert to YAML format
+                    yaml_content = yaml.dump(openapi_dict, 
+                                           default_flow_style=False, 
+                                           sort_keys=False,
+                                           allow_unicode=True,
+                                           indent=2)
+                    self._cache[cache_key] = (yaml_content, current_time)
+                    return yaml_content, 200, 'application/x-yaml'
+                else:
+                    # Default JSON format
+                    json_content = openapi_dict
+                    self._cache[cache_key] = (json_content, current_time)
+                    return json_content, 200, 'application/json'
+                    
             except Exception as e:
                 print(f"Error generating swagger spec: {e}")
-                return {"error": "Failed to generate specification"}, 500
+                error_response = {"error": "Failed to generate specification"}
+                return error_response, 500, 'application/json'
     
     def clear_cache(self):
         """Clear the cache (useful for development)."""
@@ -191,10 +217,23 @@ class SwaggerCache:
     def get_cache_stats(self):
         """Get cache statistics for monitoring."""
         with self._cache_lock:
+            # Analyze cache entries by format
+            format_counts = {'json': 0, 'yaml': 0}
+            for cache_key in self._cache.keys():
+                if cache_key.endswith('_json'):
+                    format_counts['json'] += 1
+                elif cache_key.endswith('_yaml'):
+                    format_counts['yaml'] += 1
+            
             return {
                 'cached_specs': len(self._cache),
                 'cache_ttl_seconds': self.cache_ttl,
-                'rate_limit_per_minute': self.rate_limit_requests
+                'rate_limit_per_minute': self.rate_limit_requests,
+                'formats': {
+                    'json_cached': format_counts['json'],
+                    'yaml_cached': format_counts['yaml'],
+                    'supported_formats': ['json', 'yaml']
+                }
             }
 
 # Global cache instance
@@ -1395,9 +1434,92 @@ def register_swagger_routes(app: Flask):
         .search-shortcut:hover {
             background: #d0d0d0;
         }
+        
+        /* Format selection buttons */
+        .format-selection {
+            margin: 20px 0 !important;
+            display: flex !important;
+            gap: 10px !important;
+            align-items: center !important;
+            padding: 15px 20px !important;
+            background: #f8f9fa !important;
+            border: 1px solid #e9ecef !important;
+            border-radius: 6px !important;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+        }
+        
+        .format-label {
+            font-weight: bold !important;
+            margin-right: 15px !important;
+            color: #333 !important;
+            font-size: 14px !important;
+            vertical-align: middle !important;
+        }
+        
+        .format-button {
+            background: #1976d2 !important;
+            color: white !important;
+            border: 1px solid #1976d2 !important;
+            padding: 10px 20px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 14px !important;
+            text-decoration: none !important;
+            display: inline-block !important;
+            font-weight: 500 !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
+            margin-right: 10px !important;
+        }
+        
+        .format-button:hover {
+            background: #1565c0 !important;
+            color: white !important;
+            text-decoration: none !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+        }
+        
+        .format-button:visited {
+            color: white !important;
+        }
+        
+        .format-button:active {
+            background: #0d47a1 !important;
+            color: white !important;
+        }
+        
+        /* Hide default Swagger UI download URL */
+        .swagger-ui .info .download-url-wrapper {
+            display: none !important;
+        }
+        
+        .swagger-ui .download-url {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .link {
+            display: none !important;
+        }
+        
+        .swagger-ui .info a[href*="swagger.json"] {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .url {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .link {
+            display: none !important;
+        }
+        
+        .swagger-ui .info a[href*="swagger.json"] {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
+
     <!-- Custom Search Interface -->
     <div class="api-search-container">
         <div class="api-search-box">
@@ -1428,6 +1550,27 @@ def register_swagger_routes(app: Flask):
     <script>
         let currentSpec = null;
         let allOperations = [];
+        
+        function insertFormatButtons() {
+            // Wait a bit for DOM to be fully ready
+            setTimeout(function() {
+                // Find the info section (after title and description)
+                const infoSection = document.querySelector('.swagger-ui .info');
+                if (infoSection && !document.querySelector('.format-selection')) {
+                    // Create format buttons container
+                    const formatDiv = document.createElement('div');
+                    formatDiv.className = 'format-selection';
+                    formatDiv.innerHTML = `
+                        <span class="format-label">Download API Specification:</span>
+                        <a href="/swagger.json" class="format-button" target="_blank" title="Download JSON format">📄 JSON Format</a>
+                        <a href="/swagger.yaml" class="format-button" target="_blank" title="Download YAML format">📝 YAML Format</a>
+                    `;
+                    
+                    // Insert after the info section
+                    infoSection.parentNode.insertBefore(formatDiv, infoSection.nextSibling);
+                }
+            }, 100);
+        }
         
         // Search functionality
         function setupSearch() {
@@ -1595,6 +1738,8 @@ def register_swagger_routes(app: Flask):
             performSearch(term);
         }
         
+
+        
         // Initialize Swagger UI
         window.onload = function() {
             const ui = SwaggerUIBundle({
@@ -1606,7 +1751,7 @@ def register_swagger_routes(app: Flask):
                     SwaggerUIStandalonePreset
                 ],
                 plugins: [
-                    SwaggerUIBundle.plugins.DownloadUrl
+                    // DownloadUrl plugin removed to avoid duplicate links
                 ],
                 layout: "StandaloneLayout",
                 validatorUrl: null,
@@ -1618,6 +1763,7 @@ def register_swagger_routes(app: Flask):
                 supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
                 onComplete: function() {
                     setupSearch();
+                    insertFormatButtons();
                 }
             });
         };
@@ -1659,7 +1805,7 @@ def register_swagger_routes(app: Flask):
         force_refresh = request.args.get('refresh') == 'true'
         
         # Get spec from cache
-        spec, status_code = _swagger_cache.get_spec(app, force_refresh=force_refresh)
+        spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='json')
         
         if status_code == 429:
             return jsonify({
@@ -1680,6 +1826,62 @@ def register_swagger_routes(app: Flask):
         # Add generation timestamp for monitoring
         response.headers['X-Generated-At'] = datetime.utcnow().isoformat() + 'Z'
         response.headers['X-Spec-Paths'] = str(len(spec.get('paths', {})))
+        
+        return response
+    
+    @app.route('/swagger.yaml')
+    @swagger_route(
+        summary="OpenAPI Specification (YAML)",
+        description="Serve the OpenAPI 3.0 specification as YAML with caching and rate limiting.",
+        tags=["Documentation"],
+        responses={
+            200: {
+                "description": "OpenAPI specification in YAML format",
+                "content": {
+                    "application/x-yaml": {
+                        "schema": {"type": "string"}
+                    }
+                }
+            },
+            429: {
+                "description": "Rate limit exceeded",
+                "content": {
+                    "application/json": {
+                        "schema": COMMON_SCHEMAS["error_response"]
+                    }
+                }
+            }
+        },
+        security=get_auth_security()
+    )
+    @login_required
+    def swagger_yaml():
+        """Serve OpenAPI specification as YAML with caching and rate limiting."""
+        # Check for cache refresh parameter (admin use)
+        force_refresh = request.args.get('refresh') == 'true'
+        
+        # Get spec from cache in YAML format
+        spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='yaml')
+        
+        if status_code == 429:
+            return jsonify({
+                "error": "Rate limit exceeded",
+                "message": "Too many requests for swagger.yaml. Please wait before trying again.",
+                "retry_after": 60
+            }), 429
+        elif status_code == 500:
+            return jsonify(spec), 500
+        
+        # Create response with cache headers
+        response = make_response(spec)  # spec is already YAML string
+        response.headers['Content-Type'] = content_type
+        
+        # Add cache control headers (5 minutes client cache)
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        response.headers['ETag'] = hashlib.md5(spec.encode()).hexdigest()[:16]
+        
+        # Add generation timestamp for monitoring
+        response.headers['X-Generated-At'] = datetime.utcnow().isoformat() + 'Z'
         
         return response
     
