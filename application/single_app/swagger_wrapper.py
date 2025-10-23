@@ -496,36 +496,23 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         
         request_body_detected = False
         json_fields = set()
+        form_data_detected = False
+        form_fields = set()
+        file_upload_detected = False
         
         class RequestBodyVisitor(ast.NodeVisitor):
             def visit_Call(self, node):
+                nonlocal request_body_detected, form_data_detected, form_fields, json_fields
+                
                 # Look for request.get_json() calls
                 if (isinstance(node.func, ast.Attribute) and
                     isinstance(node.func.value, ast.Name) and
                     node.func.value.id == 'request' and
                     node.func.attr == 'get_json'):
-                    nonlocal request_body_detected
                     request_body_detected = True
                 
-                self.generic_visit(node)
-            
-            def visit_Subscript(self, node):
-                # Look for data['field'] patterns after data = request.get_json()
-                if (isinstance(node.value, ast.Name) and
-                    node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
-                    isinstance(node.slice, ast.Constant) and
-                    isinstance(node.slice.value, str)):
-                    json_fields.add(node.slice.value)
-                elif (isinstance(node.value, ast.Name) and
-                      node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
-                      hasattr(node.slice, 's')):  # Python < 3.9 compatibility
-                    json_fields.add(node.slice.s)
-                
-                self.generic_visit(node)
-            
-            def visit_Call(self, node):
-                # Look for data.get('field') patterns
-                if (isinstance(node.func, ast.Attribute) and
+                # Look for data.get('field') patterns  
+                elif (isinstance(node.func, ast.Attribute) and
                     isinstance(node.func.value, ast.Name) and
                     node.func.value.id in ['data', 'json_data', 'payload', 'request_data'] and
                     node.func.attr == 'get' and
@@ -541,60 +528,226 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
                       hasattr(node.args[0], 's')):  # Python < 3.9 compatibility
                     json_fields.add(node.args[0].s)
                 
-                # Continue with the original request.get_json() detection
+                # Look for form_data.get('field') or request.form.get('field') patterns
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Name) and
+                      node.func.value.id in ['form_data', 'form'] and
+                      node.func.attr == 'get' and
+                      node.args and
+                      isinstance(node.args[0], ast.Constant) and
+                      isinstance(node.args[0].value, str)):
+                    form_data_detected = True
+                    form_fields.add(node.args[0].value)
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Attribute) and
+                      isinstance(node.func.value.value, ast.Name) and
+                      node.func.value.value.id == 'request' and
+                      node.func.value.attr == 'form' and
+                      node.func.attr == 'get' and
+                      node.args and
+                      isinstance(node.args[0], ast.Constant) and
+                      isinstance(node.args[0].value, str)):
+                    form_data_detected = True
+                    form_fields.add(node.args[0].value)
+                
+                self.generic_visit(node)
+            
+            def visit_Subscript(self, node):
+                nonlocal json_fields
+                
+                # Look for data['field'] patterns after data = request.get_json()
+                if (isinstance(node.value, ast.Name) and
+                    node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                    isinstance(node.slice, ast.Constant) and
+                    isinstance(node.slice.value, str)):
+                    json_fields.add(node.slice.value)
+                elif (isinstance(node.value, ast.Name) and
+                      node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                      hasattr(node.slice, 's')):  # Python < 3.9 compatibility
+                    json_fields.add(node.slice.s)
+                
+                self.generic_visit(node)
+        
+        # Also detect file uploads by looking for request.files usage
+        class FileUploadVisitor(ast.NodeVisitor):
+            def __init__(self):
+                super().__init__()
+                
+            def visit_Subscript(self, node):
+                # Look for request.files['field'] patterns
+                if (isinstance(node.value, ast.Attribute) and
+                    isinstance(node.value.value, ast.Name) and
+                    node.value.value.id == 'request' and
+                    node.value.attr == 'files'):
+                    nonlocal file_upload_detected
+                    file_upload_detected = True
+                
+                self.generic_visit(node)
+            
+            def visit_Call(self, node):
+                # Look for request.files.get() or request.files.getlist() patterns
                 if (isinstance(node.func, ast.Attribute) and
-                    isinstance(node.func.value, ast.Name) and
-                    node.func.value.id == 'request' and
-                    node.func.attr == 'get_json'):
-                    nonlocal request_body_detected
-                    request_body_detected = True
+                    isinstance(node.func.value, ast.Attribute) and
+                    isinstance(node.func.value.value, ast.Name) and
+                    node.func.value.value.id == 'request' and
+                    node.func.value.attr == 'files' and
+                    node.func.attr in ['get', 'getlist']):
+                    nonlocal file_upload_detected
+                    file_upload_detected = True
                 
                 self.generic_visit(node)
         
         visitor = RequestBodyVisitor()
         visitor.visit(tree)
         
-        if not request_body_detected:
+        file_visitor = FileUploadVisitor()
+        file_visitor.visit(tree)
+        
+        # If no request body patterns detected, return None
+        if not request_body_detected and not form_data_detected and not file_upload_detected:
             return None
         
-        # Generate schema based on detected fields with enhanced type inference
-        if json_fields:
-            properties = {}
-            required_fields = []
+        # Generate schema based on detected patterns
+        content_schemas = {}
+        
+        # Handle JSON data
+        if json_fields or request_body_detected:
+            json_properties = {}
+            json_required_fields = []
             
             for field in json_fields:
                 field_def = _infer_field_definition(field, source)
-                properties[field] = field_def
+                json_properties[field] = field_def
                 
                 # Check if field appears to be required based on usage patterns
                 if _is_field_required(field, source):
-                    required_fields.append(field)
+                    json_required_fields.append(field)
             
-            schema = {
+            json_schema = {
                 "type": "object",
-                "properties": properties,
-                "description": f"Request body for {func.__name__} endpoint"
+                "properties": json_properties,
+                "description": f"JSON request body for {func.__name__} endpoint"
             }
             
-            if required_fields:
-                schema["required"] = required_fields
+            if json_required_fields:
+                json_schema["required"] = json_required_fields
             
-            return {
+            # If no specific fields found but JSON detected, use generic schema
+            if not json_properties and request_body_detected:
+                json_schema = {
+                    "type": "object",
+                    "description": "Request body with JSON data",
+                    "additionalProperties": True
+                }
+            
+            content_schemas["application/json"] = {"schema": json_schema}
+        
+        # Handle form data
+        if form_fields or form_data_detected:
+            form_properties = {}
+            form_required_fields = []
+            
+            for field in form_fields:
+                field_def = _infer_form_field_definition(field, source)
+                form_properties[field] = field_def
+                
+                # Check if field appears to be required based on usage patterns
+                if _is_field_required(field, source):
+                    form_required_fields.append(field)
+            
+            form_schema = {
                 "type": "object",
-                "properties": properties,
-                "description": "Request body containing the required parameters"
+                "properties": form_properties,
+                "description": f"Form data for {func.__name__} endpoint"
             }
-        else:
-            # Generic request body if we detect request.get_json() but no specific fields
-            return {
+            
+            if form_required_fields:
+                form_schema["required"] = form_required_fields
+            
+            # If no specific fields found but form data detected, use generic schema
+            if not form_properties and form_data_detected:
+                form_schema = {
+                    "type": "object",
+                    "description": "Form data with key-value pairs",
+                    "additionalProperties": {"type": "string"}
+                }
+            
+            content_schemas["application/x-www-form-urlencoded"] = {"schema": form_schema}
+        
+        # Handle file uploads (multipart/form-data)
+        if file_upload_detected:
+            # For file uploads, we typically have both form fields and files
+            multipart_properties = {}
+            
+            # Include any form fields detected
+            for field in form_fields:
+                field_def = _infer_form_field_definition(field, source)
+                multipart_properties[field] = field_def
+            
+            # Add common file field
+            multipart_properties["file"] = {
+                "type": "string",
+                "format": "binary",
+                "description": "File to upload"
+            }
+            
+            multipart_schema = {
                 "type": "object",
-                "description": "Request body with JSON data",
-                "additionalProperties": True
+                "properties": multipart_properties,
+                "description": f"Multipart form data for {func.__name__} endpoint"
             }
+            
+            content_schemas["multipart/form-data"] = {"schema": multipart_schema}
+        
+        # Return the appropriate content schema
+        if content_schemas:
+            # If multiple content types detected, prefer multipart > form > json
+            if "multipart/form-data" in content_schemas:
+                return {"content": {"multipart/form-data": content_schemas["multipart/form-data"]}}
+            elif "application/x-www-form-urlencoded" in content_schemas:
+                return {"content": {"application/x-www-form-urlencoded": content_schemas["application/x-www-form-urlencoded"]}}
+            else:
+                return {"content": {"application/json": content_schemas["application/json"]}}
+        
+        return None
         
     except Exception as e:
         # If analysis fails, return None (no auto-generated request body)
         return None
+
+def _infer_form_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
+    """
+    Infer form field definition from field name and source code context.
+    
+    Args:
+        field_name: Name of the form field
+        source_code: Source code to analyze for context
+        
+    Returns:
+        Form field definition dictionary
+    """
+    field_lower = field_name.lower()
+    
+    # Form-specific field inference
+    if field_lower in ['app_title', 'external_links_menu_name']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "minLength": 1}
+    elif field_lower.endswith('_mb') or field_lower in ['max_file_size_mb']:
+        return {"type": "integer", "minimum": 1, "description": f"{field_name.replace('_', ' ').title()} in megabytes"}
+    elif field_lower.endswith('_limit') or field_lower in ['conversation_history_limit']:
+        return {"type": "integer", "minimum": 1, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.startswith('enable_') or field_lower.startswith('require_'):
+        return {"type": "string", "enum": ["on"], "description": f"Checkbox: {field_name.replace('_', ' ').title()}", "nullable": True}
+    elif field_lower.endswith('_json') and 'classification' in field_lower:
+        return {"type": "string", "description": "JSON array of classification categories", "example": '[{"label": "Public", "color": "#28a745"}]'}
+    elif field_lower.endswith('_json') and 'external_links' in field_lower:
+        return {"type": "string", "description": "JSON array of external links", "example": '[{"label": "Example", "url": "https://example.com"}]'}
+    elif field_lower in ['user_id', 'active_workspace_id', 'workspace_id']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "nullable": True}
+    elif field_lower in ['classification']:
+        return {"type": "string", "description": "Document classification", "nullable": True}
+    else:
+        # Default form field type
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "nullable": True}
 
 def _infer_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
     """
@@ -710,106 +863,10 @@ def _is_field_required(field_name: str, source_code: str) -> bool:
     
     return False
 
-def _get_schema_ref_for_route(route_path: str, method: str) -> Optional[str]:
-    """
-    Map route paths and methods to appropriate schema references.
-    
-    Args:
-        route_path: Flask route path
-        method: HTTP method
-        
-    Returns:
-        Schema reference string or None for auto-generation
-    """
-    # Core essential schemas - only the most common patterns
-    route_mappings = {
-        ('/api/chat', 'POST'): 'ChatRequest',
-        ('/api/documents/<document_id>', 'PATCH'): 'DocumentUpdateRequest',
-    }
-    
-    # Pattern-based mappings for common operations
-    if method in ['POST', 'PATCH', 'PUT'] and 'share' in route_path.lower():
-        if 'user_id' in route_path or '/share' in route_path:
-            return 'SimpleIdRequest'
-    
-    if method == 'POST' and 'delete' in route_path.lower() and 'multiple' in route_path.lower():
-        return 'BulkIdsRequest'
-    
-    if method == 'POST' and any(keyword in route_path.lower() for keyword in ['citation', 'get_citation']):
-        return 'SimpleIdRequest'
-    
-    if method in ['PATCH', 'PUT'] and any(keyword in route_path.lower() for keyword in ['status', 'enable', 'disable']):
-        return 'StatusUpdateRequest'
-    
-    # Check exact matches first
-    key = (route_path, method)
-    if key in route_mappings:
-        return route_mappings[key]
-    
-    # Check pattern matches for parameterized routes
-    for (pattern, pattern_method), schema in route_mappings.items():
-        if method == pattern_method and _route_matches_pattern(route_path, pattern):
-            return schema
-    
-    return None
+# Removed: _get_schema_ref_for_route() function - schemas are now generated inline, not as references
 
-def _analyze_route_patterns(app: Flask) -> Dict[str, str]:
-    """
-    Analyze all routes in the app to detect common request body patterns.
-    
-    Args:
-        app: Flask application instance
-        
-    Returns:
-        Dictionary mapping (route, method) to suggested schema names
-    """
-    pattern_mappings = {}
-    
-    for rule in app.url_map.iter_rules():
-        if rule.endpoint == 'static':
-            continue
-            
-        methods = rule.methods or set()
-        for method in methods:
-            if method in ['HEAD', 'OPTIONS', 'GET']:
-                continue  # These typically don't have request bodies
-                
-            route_path = rule.rule
-            
-            # Detect common patterns
-            if 'conversation' in route_path and method in ['POST', 'PUT']:
-                if 'delete' in route_path and 'multiple' in route_path:
-                    pattern_mappings[(route_path, method)] = 'BulkIdsRequest'
-                else:
-                    pattern_mappings[(route_path, method)] = 'ConversationRequest'
-            
-            elif 'document' in route_path and method == 'PATCH':
-                pattern_mappings[(route_path, method)] = 'DocumentUpdateRequest'
-            
-            elif 'share' in route_path and method == 'POST':
-                pattern_mappings[(route_path, method)] = 'SimpleIdRequest'
-            
-            elif method == 'POST' and any(kw in route_path.lower() for kw in ['citation', 'file_content']):
-                pattern_mappings[(route_path, method)] = 'SimpleIdRequest'
-    
-    return pattern_mappings
-
-def _route_matches_pattern(route_path: str, pattern: str) -> bool:
-    """
-    Check if a route path matches a pattern with parameters.
-    
-    Args:
-        route_path: Actual route path
-        pattern: Pattern with <param> placeholders
-        
-    Returns:
-        True if route matches pattern
-    """
-    import re
-    # Convert Flask pattern to regex
-    regex_pattern = re.sub(r'<[^>]+>', r'[^/]+', pattern)
-    regex_pattern = f"^{regex_pattern}$"
-    return bool(re.match(regex_pattern, route_path))
+# Removed: _analyze_route_patterns() and _route_matches_pattern() functions
+# These were generating unused schema mappings since schemas are now inline
 
 def _generate_summary_from_function_name(func_name: str) -> str:
     """
@@ -976,14 +1033,17 @@ def swagger_route(
 
 def _generate_dynamic_schemas(app: Flask) -> Dict[str, Any]:
     """
-    Dynamically generate schema components by analyzing actual routes.
+    Generate minimal essential schema components.
+    Most schemas are now generated inline in request bodies for better accuracy.
     
     Args:
         app: Flask application instance
         
     Returns:
-        Dictionary of schema definitions
+        Dictionary of essential schema definitions
     """
+    # Only include schemas that are actually referenced somewhere
+    # Most request body schemas are now generated inline from actual route analysis
     schemas = {
         "ErrorResponse": {
             "type": "object",
@@ -997,54 +1057,10 @@ def _generate_dynamic_schemas(app: Flask) -> Dict[str, Any]:
         }
     }
     
-    # Analyze actual routes to build schemas
-    schema_definitions = {}
-    
-    for rule in app.url_map.iter_rules():
-        if rule.endpoint == 'static':
-            continue
-            
-        view_func = app.view_functions.get(rule.endpoint)
-        if not view_func:
-            continue
-            
-        swagger_doc = getattr(view_func, '_swagger_doc', None)
-        if not swagger_doc:
-            continue
-            
-        # Check if this route should have a predefined schema
-        schema_ref = _get_schema_ref_for_route(rule.rule, 'POST')
-        if schema_ref and schema_ref not in schema_definitions:
-            # Generate schema based on actual function analysis
-            request_body_schema = _analyze_function_request_body(view_func)
-            if request_body_schema:
-                schema_definitions[schema_ref] = request_body_schema
-    
-    # No more hardcoded schemas - everything is generated inline from actual route analysis
-    # This eliminates outdated parameters like 'bing_search' and ensures accuracy
-    
-    # Add minimal required schemas
-    minimal_schemas = _generate_minimal_required_schemas()
-    schemas.update(minimal_schemas)
-    
-    # Merge with detected schemas
-    schemas.update(schema_definitions)
-    
-    print(f"📊 Generated {len(schemas)} dynamic schemas: {list(schemas.keys())}")
+    print(f"📊 Generated {len(schemas)} essential schemas: {list(schemas.keys())}")
     return schemas
 
-def _generate_minimal_required_schemas() -> Dict[str, Any]:
-    """
-    Generate only essential base schemas (mostly for error responses).
-    Most request schemas are now generated inline from actual route analysis.
-    
-    Returns:
-        Dictionary of minimal base schemas
-    """
-    return {
-        # Keep only essential base schemas that are truly reused
-        # Request body schemas are now generated inline from actual routes
-    }
+# Removed: _generate_minimal_required_schemas() function - now handled directly in _generate_dynamic_schemas()
 
 def extract_route_info(app: Flask) -> Dict[str, Any]:
     """
@@ -1213,17 +1229,31 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
                     
                     # 3. Create the request body specification
                     if request_body_schema:
-                        is_required = request_body_schema.get('required') and len(request_body_schema.get('required', [])) > 0
-                        operation["requestBody"] = {
-                            "required": is_required,
-                            "content": {
-                                "application/json": {
-                                    "schema": request_body_schema
+                        # Check if the schema already has content types specified
+                        if isinstance(request_body_schema, dict) and 'content' in request_body_schema:
+                            # Use the detected content types and schemas
+                            content_types = list(request_body_schema['content'].keys())
+                            is_required = any(
+                                schema_info.get('schema', {}).get('required') 
+                                for schema_info in request_body_schema['content'].values()
+                            )
+                            operation["requestBody"] = {
+                                "required": is_required,
+                                "content": request_body_schema['content']
+                            }
+                            print(f"  🔧 Generated inline schema for {method} {path} with content types: {content_types} (required: {is_required})")
+                        else:
+                            # Legacy fallback - assume JSON
+                            is_required = request_body_schema.get('required') and len(request_body_schema.get('required', [])) > 0
+                            operation["requestBody"] = {
+                                "required": is_required,
+                                "content": {
+                                    "application/json": {
+                                        "schema": request_body_schema
+                                    }
                                 }
                             }
-                        }
-                        
-                        print(f"  🔧 Generated inline schema for {method} {path} (required: {is_required})")
+                            print(f"  🔧 Generated inline JSON schema for {method} {path} (required: {is_required})")
                     else:
                         print(f"  ❌ No request body schema generated for {method} {path}")
                 
