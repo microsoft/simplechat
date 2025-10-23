@@ -667,6 +667,23 @@ def safety_violation_admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def control_center_admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = session.get('user', {})
+        settings = get_settings()
+        require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
+
+        if require_member_of_control_center_admin:
+            if 'roles' not in user or 'ControlCenterAdmin' not in user['roles']:
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterAdmin role required)"}), 403
+                else:
+                    return "Forbidden: ControlCenterAdmin role required", 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 def create_group_role_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):

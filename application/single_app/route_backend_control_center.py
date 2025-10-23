@@ -1251,6 +1251,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_get_all_users():
         """
         Get all users with their settings, activity data, and access status.
@@ -1359,6 +1360,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_update_user_access(user_id):
         """
         Update user access permissions (allow/deny with optional time-based restriction).
@@ -1415,6 +1417,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_update_user_file_uploads(user_id):
         """
         Update user file upload permissions (allow/deny with optional time-based restriction).
@@ -1471,6 +1474,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_bulk_user_action():
         """
         Perform bulk actions on multiple users (access control, file upload control).
@@ -1557,6 +1561,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_get_all_groups():
         """
         Get all groups with their activity data and metrics.
@@ -1664,6 +1669,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_update_group_status(group_id):
         """
         Update group status (active, locked, inactive, etc.)
@@ -1709,6 +1715,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_get_group_details_admin(group_id):
         """
         Get detailed information about a specific group
@@ -1733,6 +1740,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_delete_group_admin(group_id):
         """
         Delete a group and optionally its documents
@@ -1811,6 +1819,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_get_activity_trends():
         """
         Get activity trends data for the control center dashboard.
@@ -1862,6 +1871,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_export_activity_trends():
         """
         Export activity trends raw data as CSV file based on selected charts and date range.
@@ -1987,6 +1997,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_chat_activity_trends():
         """
         Create a new chat conversation with activity trends data as CSV message.
@@ -2140,6 +2151,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def api_refresh_control_center_data():
         """
         Refresh all Control Center metrics data and update admin timestamp.
@@ -2243,7 +2255,8 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required  
+    @admin_required
+    @control_center_admin_required  
     def api_get_refresh_status():
         """
         Get the last refresh timestamp for Control Center data.

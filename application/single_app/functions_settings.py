@@ -172,6 +172,7 @@ def get_settings():
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'require_member_of_safety_violation_admin': False,
+        'require_member_of_control_center_admin': False,
         'content_safety_endpoint': '',
         'content_safety_key': '',
         'content_safety_authentication_type': 'key',

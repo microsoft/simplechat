@@ -180,6 +180,7 @@ function scrollToSection(sectionId) {
         'external-links-section': 'external-links-section',
         'health-check-section': 'health-check-section',
         'system-settings-section': 'system-settings-section',
+        'control-center-admin-section': 'control-center-admin-section',
         // Logging tab sections
         'application-insights-section': 'application-insights-section',
         'debug-logging-section': 'debug-logging-section',

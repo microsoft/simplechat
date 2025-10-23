@@ -36,6 +36,8 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_create_public_workspace'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
+        if 'require_member_of_control_center_admin' not in settings:
+            settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
         # --- End NEW Default Checks ---
@@ -284,6 +286,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
+            require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
             # --- Handle Document Classification Toggle ---
@@ -793,6 +796,8 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+
+                'require_member_of_control_center_admin': require_member_of_control_center_admin
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---

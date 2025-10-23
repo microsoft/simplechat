@@ -13,6 +13,7 @@ def register_route_frontend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
+    @control_center_admin_required
     def control_center():
         """
         Control Center main page for administrators.

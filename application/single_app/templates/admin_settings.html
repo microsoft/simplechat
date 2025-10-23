@@ -1199,6 +1199,29 @@
                             rows="5">{{ settings.default_system_prompt }}</textarea>
                     </div>
                 </div>
+                
+                <!-- Control Center Section -->
+                <div class="card p-3 mb-3" id="control-center-admin-section">
+                    <h5>
+                        <i class="bi bi-shield-check me-2"></i>Control Center
+                    </h5>
+                    <p class="text-muted">Control access to Control Center administrative functions.</p>
+
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_control_center_admin"
+                            name="require_member_of_control_center_admin"
+                            {% if settings.require_member_of_control_center_admin %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_member_of_control_center_admin">
+                            Require Membership for Control Center Admin Access
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Restrict access to Control Center administrative functions to users with the 'ControlCenterAdmin' role instead of general admin access."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        If enabled, only users who are members of the 'ControlCenterAdmin' role (defined in your App registration) can access Control Center administrative functions. If disabled, any user with the general 'Admin' role can access them.
+                    </p>
+                </div>
             </div>
 
             
