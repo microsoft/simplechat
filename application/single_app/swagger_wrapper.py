@@ -552,6 +552,58 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         # If analysis fails, return None (no auto-generated request body)
         return None
 
+def _get_schema_ref_for_route(route_path: str, method: str) -> Optional[str]:
+    """
+    Map route paths and methods to appropriate schema references.
+    
+    Args:
+        route_path: Flask route path
+        method: HTTP method
+        
+    Returns:
+        Schema reference string or None for auto-generation
+    """
+    # Define route mappings to schema references
+    route_mappings = {
+        ('/api/chat', 'POST'): 'ChatRequest',
+        ('/api/documents/<document_id>', 'PATCH'): 'DocumentUpdateRequest',
+        ('/api/documents/<document_id>/share', 'POST'): 'ShareDocumentRequest',
+        ('/api/documents/<document_id>/unshare', 'DELETE'): 'ShareDocumentRequest',
+        ('/api/conversations/<conversation_id>', 'PUT'): 'ConversationRequest',
+        ('/api/delete_multiple_conversations', 'POST'): 'BulkDeleteRequest',
+        ('/api/get_citation', 'POST'): 'CitationRequest',
+        ('/api/get_file_content', 'POST'): 'FileContentRequest'
+    }
+    
+    # Check exact matches first
+    key = (route_path, method)
+    if key in route_mappings:
+        return route_mappings[key]
+    
+    # Check pattern matches for parameterized routes
+    for (pattern, pattern_method), schema in route_mappings.items():
+        if method == pattern_method and _route_matches_pattern(route_path, pattern):
+            return schema
+    
+    return None
+
+def _route_matches_pattern(route_path: str, pattern: str) -> bool:
+    """
+    Check if a route path matches a pattern with parameters.
+    
+    Args:
+        route_path: Actual route path
+        pattern: Pattern with <param> placeholders
+        
+    Returns:
+        True if route matches pattern
+    """
+    import re
+    # Convert Flask pattern to regex
+    regex_pattern = re.sub(r'<[^>]+>', r'[^/]+', pattern)
+    regex_pattern = f"^{regex_pattern}$"
+    return bool(re.match(regex_pattern, route_path))
+
 def _generate_summary_from_function_name(func_name: str) -> str:
     """
     Generate a human-readable summary from function name.
@@ -768,6 +820,160 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
                         }
                     },
                     "required": ["error"]
+                },
+                "ChatRequest": {
+                    "type": "object",
+                    "required": ["message"],
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "The user's message content."
+                        },
+                        "conversation_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "nullable": True,
+                            "description": "The existing conversation ID. If null/missing, a new conversation is created."
+                        },
+                        "hybrid_search": {
+                            "type": "boolean",
+                            "description": "Whether to enable hybrid search augmentation (requires AI Search config).",
+                            "default": False
+                        },
+                        "selected_document_id": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "If specified, scope hybrid search to this specific document ID (parent document)."
+                        },
+                        "bing_search": {
+                            "type": "boolean",
+                            "description": "Whether to enable Bing web search augmentation (requires Bing config).",
+                            "default": False
+                        },
+                        "image_generation": {
+                            "type": "boolean",
+                            "description": "Whether to enable image generation instead of text response (requires Image Gen config).",
+                            "default": False
+                        },
+                        "doc_scope": {
+                            "type": "string",
+                            "enum": ["group", "all", "personal"],
+                            "description": "The scope for document search ('personal' personal workspace, 'group' active group, or 'all')."
+                        },
+                        "active_group_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "nullable": True,
+                            "description": "The user's active group ID, required if doc_scope is 'group'."
+                        },
+                        "model_deployment": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Optional override for the GPT model deployment."
+                        }
+                    }
+                },
+                "DocumentUpdateRequest": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Document title"
+                        },
+                        "abstract": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Document abstract"
+                        },
+                        "keywords": {
+                            "oneOf": [
+                                {"type": "array", "items": {"type": "string"}},
+                                {"type": "string"}
+                            ],
+                            "nullable": True,
+                            "description": "Keywords as array or comma-separated string"
+                        },
+                        "publication_date": {
+                            "type": "string",
+                            "format": "date",
+                            "nullable": True,
+                            "description": "Publication date"
+                        },
+                        "document_classification": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Document classification"
+                        },
+                        "authors": {
+                            "oneOf": [
+                                {"type": "array", "items": {"type": "string"}},
+                                {"type": "string"}
+                            ],
+                            "nullable": True,
+                            "description": "Authors as array or single string"
+                        }
+                    }
+                },
+                "ShareDocumentRequest": {
+                    "type": "object",
+                    "required": ["user_id"],
+                    "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "Target user ID to share document with"
+                        }
+                    }
+                },
+                "ConversationRequest": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Conversation title"
+                        },
+                        "archived": {
+                            "type": "boolean",
+                            "nullable": True,
+                            "description": "Whether conversation is archived"
+                        }
+                    }
+                },
+                "BulkDeleteRequest": {
+                    "type": "object",
+                    "required": ["conversation_ids"],
+                    "properties": {
+                        "conversation_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Array of conversation IDs to delete"
+                        }
+                    }
+                },
+                "CitationRequest": {
+                    "type": "object",
+                    "required": ["citation_id"],
+                    "properties": {
+                        "citation_id": {
+                            "type": "string",
+                            "description": "Citation ID to retrieve"
+                        }
+                    }
+                },
+                "FileContentRequest": {
+                    "type": "object",
+                    "required": ["conversation_id", "file_id"],
+                    "properties": {
+                        "conversation_id": {
+                            "type": "string",
+                            "description": "Conversation ID containing the file"
+                        },
+                        "file_id": {
+                            "type": "string",
+                            "description": "File ID to retrieve content for"
+                        }
+                    }
                 }
             },
             "securitySchemes": {
@@ -842,14 +1048,31 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
                 
                 # Add request body if provided
                 if swagger_doc.get('request_body'):
-                    operation["requestBody"] = {
-                        "required": True,
-                        "content": {
-                            "application/json": {
-                                "schema": swagger_doc['request_body']
+                    # Check if we should use a schema reference
+                    schema_ref = _get_schema_ref_for_route(path, method)
+                    
+                    if schema_ref:
+                        # Use schema reference for known endpoints
+                        operation["requestBody"] = {
+                            "required": True,
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": f"#/components/schemas/{schema_ref}"
+                                    }
+                                }
                             }
                         }
-                    }
+                    else:
+                        # Use inline schema for auto-generated or custom schemas
+                        operation["requestBody"] = {
+                            "required": True,
+                            "content": {
+                                "application/json": {
+                                    "schema": swagger_doc['request_body']
+                                }
+                            }
+                        }
                 
                 # Add parameters if provided
                 if swagger_doc.get('parameters'):
