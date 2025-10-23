@@ -303,7 +303,7 @@ def register_route_backend_chats(app):
                             cosmos_container = cosmos_group_documents_container
                         elif document_scope == 'public':
                             cosmos_container = cosmos_public_documents_container
-                        else:
+                        elif document_scope == 'personal':
                             cosmos_container = cosmos_user_documents_container
                         
                         doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"

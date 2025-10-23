@@ -518,22 +518,27 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         if not request_body_detected:
             return None
         
-        # Generate schema based on detected fields
+        # Generate schema based on detected fields with enhanced type inference
         if json_fields:
             properties = {}
+            required_fields = []
+            
             for field in json_fields:
-                # Try to infer field types from common naming patterns
-                if field.lower() in ['id', 'user_id', 'conversation_id', 'group_id', 'count', 'page', 'limit']:
-                    properties[field] = {"type": "integer", "description": f"{field.replace('_', ' ').title()}"}
-                elif field.lower() in ['email', 'name', 'title', 'description', 'message', 'content', 'text']:
-                    properties[field] = {"type": "string", "description": f"{field.replace('_', ' ').title()}"}
-                elif field.lower() in ['enabled', 'active', 'deleted', 'public', 'private', 'required']:
-                    properties[field] = {"type": "boolean", "description": f"{field.replace('_', ' ').title()}"}
-                elif field.lower().endswith('_date') or field.lower().endswith('_time'):
-                    properties[field] = {"type": "string", "format": "date-time", "description": f"{field.replace('_', ' ').title()}"}
-                else:
-                    # Default to string for unknown fields
-                    properties[field] = {"type": "string", "description": f"{field.replace('_', ' ').title()}"}
+                field_def = _infer_field_definition(field, source)
+                properties[field] = field_def
+                
+                # Check if field appears to be required based on usage patterns
+                if _is_field_required(field, source):
+                    required_fields.append(field)
+            
+            schema = {
+                "type": "object",
+                "properties": properties,
+                "description": f"Request body for {func.__name__} endpoint"
+            }
+            
+            if required_fields:
+                schema["required"] = required_fields
             
             return {
                 "type": "object",
@@ -552,6 +557,120 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         # If analysis fails, return None (no auto-generated request body)
         return None
 
+def _infer_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
+    """
+    Infer detailed field definition from field name and source code context.
+    
+    Args:
+        field_name: Name of the field
+        source_code: Source code to analyze for context
+        
+    Returns:
+        Field definition dictionary
+    """
+    field_lower = field_name.lower()
+    
+    # Enhanced type inference based on field names and patterns
+    if field_lower in ['message', 'content', 'text']:
+        return {"type": "string", "description": "The message content", "minLength": 1}
+    elif field_lower in ['conversation_id', 'active_group_id', 'selected_document_id']:
+        return {"type": "string", "format": "uuid", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower == 'model_deployment':
+        return {"type": "string", "nullable": True, "description": "Optional override for the model deployment"}
+    elif field_lower in ['hybrid_search', 'image_generation']:
+        return {"type": "boolean", "default": False, "description": f"Whether to enable {field_name.replace('_', ' ')}"}
+    elif field_lower == 'doc_scope':
+        # Analyze source to find actual enum values used
+        doc_scope_values = _extract_doc_scope_enum_from_source(source_code)
+        return {"type": "string", "enum": doc_scope_values, "description": "The scope for document search"}
+    elif field_lower == 'chat_type':
+        return {"type": "string", "enum": ["user", "group"], "default": "user", "description": "Type of chat conversation"}
+    elif field_lower in ['top_n', 'top_n_results']:
+        return {"type": "integer", "minimum": 1, "nullable": True, "description": "Number of top results to return"}
+    elif field_lower == 'classifications':
+        return {"type": "array", "items": {"type": "string"}, "nullable": True, "description": "Document classifications to filter by"}
+    elif field_lower.endswith('_id') or field_lower in ['id']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.endswith('_enabled') or field_lower in ['enabled', 'active', 'deleted', 'public', 'private']:
+        return {"type": "boolean", "description": f"Whether {field_name.replace('_', ' ')} is enabled"}
+    elif field_lower.endswith('_count') or field_lower in ['count', 'limit', 'page', 'size']:
+        return {"type": "integer", "minimum": 0, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.endswith('_date') or field_lower.endswith('_time'):
+        return {"type": "string", "format": "date-time", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+    else:
+        # Default fallback with nullable for optional fields
+        return {"type": "string", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+
+def _extract_doc_scope_enum_from_source(source_code: str) -> List[str]:
+    """
+    Extract actual doc_scope enum values from source code analysis.
+    
+    Args:
+        source_code: Source code to analyze
+        
+    Returns:
+        List of enum values
+    """
+    # Look for doc_scope comparisons and assignments in the source
+    import re
+    
+    # Default values
+    default_values = ["user", "group", "all", "personal"]
+    
+    # Try to find actual enum values used in the code
+    patterns = [
+        r"doc_scope\s*[=!]=\s*['\"]([^'\"]+)['\"]",
+        r"document_scope\s*[=!]=\s*['\"]([^'\"]+)['\"]",
+        r"scope\s*in\s*\[([^\]]+)\]",
+    ]
+    
+    found_values = set()
+    for pattern in patterns:
+        matches = re.findall(pattern, source_code, re.IGNORECASE)
+        for match in matches:
+            if isinstance(match, tuple):
+                found_values.update([v.strip().strip("'\"") for v in match])
+            else:
+                found_values.add(match.strip().strip("'\""))
+    
+    # If we found specific values, use them; otherwise use defaults
+    if found_values:
+        return sorted(list(found_values))
+    else:
+        return default_values
+
+def _is_field_required(field_name: str, source_code: str) -> bool:
+    """
+    Determine if a field is required based on source code analysis.
+    
+    Args:
+        field_name: Name of the field
+        source_code: Source code to analyze
+        
+    Returns:
+        True if field appears to be required
+    """
+    field_lower = field_name.lower()
+    
+    # Core message fields are typically required
+    if field_lower in ['message', 'content', 'text']:
+        return True
+    
+    # Check if field is validated or has error handling that suggests it's required
+    import re
+    
+    required_patterns = [
+        rf"if\s+not\s+{re.escape(field_name)}",
+        rf"if\s+{re.escape(field_name)}\s+is\s+None",
+        rf"{re.escape(field_name)}\s*=\s*data\s*\[\s*['\"][^'\"]*['\"]\s*\]"  # No .get() indicates required
+    ]
+    
+    for pattern in required_patterns:
+        if re.search(pattern, source_code, re.IGNORECASE):
+            return True
+    
+    return False
+
 def _get_schema_ref_for_route(route_path: str, method: str) -> Optional[str]:
     """
     Map route paths and methods to appropriate schema references.
@@ -563,17 +682,25 @@ def _get_schema_ref_for_route(route_path: str, method: str) -> Optional[str]:
     Returns:
         Schema reference string or None for auto-generation
     """
-    # Define route mappings to schema references
+    # Core essential schemas - only the most common patterns
     route_mappings = {
         ('/api/chat', 'POST'): 'ChatRequest',
         ('/api/documents/<document_id>', 'PATCH'): 'DocumentUpdateRequest',
-        ('/api/documents/<document_id>/share', 'POST'): 'ShareDocumentRequest',
-        ('/api/documents/<document_id>/unshare', 'DELETE'): 'ShareDocumentRequest',
-        ('/api/conversations/<conversation_id>', 'PUT'): 'ConversationRequest',
-        ('/api/delete_multiple_conversations', 'POST'): 'BulkDeleteRequest',
-        ('/api/get_citation', 'POST'): 'CitationRequest',
-        ('/api/get_file_content', 'POST'): 'FileContentRequest'
     }
+    
+    # Pattern-based mappings for common operations
+    if method in ['POST', 'PATCH', 'PUT'] and 'share' in route_path.lower():
+        if 'user_id' in route_path or '/share' in route_path:
+            return 'SimpleIdRequest'
+    
+    if method == 'POST' and 'delete' in route_path.lower() and 'multiple' in route_path.lower():
+        return 'BulkIdsRequest'
+    
+    if method == 'POST' and any(keyword in route_path.lower() for keyword in ['citation', 'get_citation']):
+        return 'SimpleIdRequest'
+    
+    if method in ['PATCH', 'PUT'] and any(keyword in route_path.lower() for keyword in ['status', 'enable', 'disable']):
+        return 'StatusUpdateRequest'
     
     # Check exact matches first
     key = (route_path, method)
@@ -586,6 +713,47 @@ def _get_schema_ref_for_route(route_path: str, method: str) -> Optional[str]:
             return schema
     
     return None
+
+def _analyze_route_patterns(app: Flask) -> Dict[str, str]:
+    """
+    Analyze all routes in the app to detect common request body patterns.
+    
+    Args:
+        app: Flask application instance
+        
+    Returns:
+        Dictionary mapping (route, method) to suggested schema names
+    """
+    pattern_mappings = {}
+    
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint == 'static':
+            continue
+            
+        methods = rule.methods or set()
+        for method in methods:
+            if method in ['HEAD', 'OPTIONS', 'GET']:
+                continue  # These typically don't have request bodies
+                
+            route_path = rule.rule
+            
+            # Detect common patterns
+            if 'conversation' in route_path and method in ['POST', 'PUT']:
+                if 'delete' in route_path and 'multiple' in route_path:
+                    pattern_mappings[(route_path, method)] = 'BulkIdsRequest'
+                else:
+                    pattern_mappings[(route_path, method)] = 'ConversationRequest'
+            
+            elif 'document' in route_path and method == 'PATCH':
+                pattern_mappings[(route_path, method)] = 'DocumentUpdateRequest'
+            
+            elif 'share' in route_path and method == 'POST':
+                pattern_mappings[(route_path, method)] = 'SimpleIdRequest'
+            
+            elif method == 'POST' and any(kw in route_path.lower() for kw in ['citation', 'file_content']):
+                pattern_mappings[(route_path, method)] = 'SimpleIdRequest'
+    
+    return pattern_mappings
 
 def _route_matches_pattern(route_path: str, pattern: str) -> bool:
     """
@@ -767,6 +935,78 @@ def swagger_route(
         return wrapper
     return decorator
 
+def _generate_dynamic_schemas(app: Flask) -> Dict[str, Any]:
+    """
+    Dynamically generate schema components by analyzing actual routes.
+    
+    Args:
+        app: Flask application instance
+        
+    Returns:
+        Dictionary of schema definitions
+    """
+    schemas = {
+        "ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "description": "Error message"
+                }
+            },
+            "required": ["error"]
+        }
+    }
+    
+    # Analyze actual routes to build schemas
+    schema_definitions = {}
+    
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint == 'static':
+            continue
+            
+        view_func = app.view_functions.get(rule.endpoint)
+        if not view_func:
+            continue
+            
+        swagger_doc = getattr(view_func, '_swagger_doc', None)
+        if not swagger_doc:
+            continue
+            
+        # Check if this route should have a predefined schema
+        schema_ref = _get_schema_ref_for_route(rule.rule, 'POST')
+        if schema_ref and schema_ref not in schema_definitions:
+            # Generate schema based on actual function analysis
+            request_body_schema = _analyze_function_request_body(view_func)
+            if request_body_schema:
+                schema_definitions[schema_ref] = request_body_schema
+    
+    # No more hardcoded schemas - everything is generated inline from actual route analysis
+    # This eliminates outdated parameters like 'bing_search' and ensures accuracy
+    
+    # Add minimal required schemas
+    minimal_schemas = _generate_minimal_required_schemas()
+    schemas.update(minimal_schemas)
+    
+    # Merge with detected schemas
+    schemas.update(schema_definitions)
+    
+    print(f"📊 Generated {len(schemas)} dynamic schemas: {list(schemas.keys())}")
+    return schemas
+
+def _generate_minimal_required_schemas() -> Dict[str, Any]:
+    """
+    Generate only essential base schemas (mostly for error responses).
+    Most request schemas are now generated inline from actual route analysis.
+    
+    Returns:
+        Dictionary of minimal base schemas
+    """
+    return {
+        # Keep only essential base schemas that are truly reused
+        # Request body schemas are now generated inline from actual routes
+    }
+
 def extract_route_info(app: Flask) -> Dict[str, Any]:
     """
     Extract route information from Flask app and generate OpenAPI specification.
@@ -810,172 +1050,7 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
         ],
         "paths": {},
         "components": {
-            "schemas": {
-                "ErrorResponse": {
-                    "type": "object",
-                    "properties": {
-                        "error": {
-                            "type": "string",
-                            "description": "Error message"
-                        }
-                    },
-                    "required": ["error"]
-                },
-                "ChatRequest": {
-                    "type": "object",
-                    "required": ["message"],
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "The user's message content."
-                        },
-                        "conversation_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "nullable": True,
-                            "description": "The existing conversation ID. If null/missing, a new conversation is created."
-                        },
-                        "hybrid_search": {
-                            "type": "boolean",
-                            "description": "Whether to enable hybrid search augmentation (requires AI Search config).",
-                            "default": False
-                        },
-                        "selected_document_id": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "If specified, scope hybrid search to this specific document ID (parent document)."
-                        },
-                        "bing_search": {
-                            "type": "boolean",
-                            "description": "Whether to enable Bing web search augmentation (requires Bing config).",
-                            "default": False
-                        },
-                        "image_generation": {
-                            "type": "boolean",
-                            "description": "Whether to enable image generation instead of text response (requires Image Gen config).",
-                            "default": False
-                        },
-                        "doc_scope": {
-                            "type": "string",
-                            "enum": ["group", "all", "personal"],
-                            "description": "The scope for document search ('personal' personal workspace, 'group' active group, or 'all')."
-                        },
-                        "active_group_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "nullable": True,
-                            "description": "The user's active group ID, required if doc_scope is 'group'."
-                        },
-                        "model_deployment": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "Optional override for the GPT model deployment."
-                        }
-                    }
-                },
-                "DocumentUpdateRequest": {
-                    "type": "object",
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "Document title"
-                        },
-                        "abstract": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "Document abstract"
-                        },
-                        "keywords": {
-                            "oneOf": [
-                                {"type": "array", "items": {"type": "string"}},
-                                {"type": "string"}
-                            ],
-                            "nullable": True,
-                            "description": "Keywords as array or comma-separated string"
-                        },
-                        "publication_date": {
-                            "type": "string",
-                            "format": "date",
-                            "nullable": True,
-                            "description": "Publication date"
-                        },
-                        "document_classification": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "Document classification"
-                        },
-                        "authors": {
-                            "oneOf": [
-                                {"type": "array", "items": {"type": "string"}},
-                                {"type": "string"}
-                            ],
-                            "nullable": True,
-                            "description": "Authors as array or single string"
-                        }
-                    }
-                },
-                "ShareDocumentRequest": {
-                    "type": "object",
-                    "required": ["user_id"],
-                    "properties": {
-                        "user_id": {
-                            "type": "string",
-                            "description": "Target user ID to share document with"
-                        }
-                    }
-                },
-                "ConversationRequest": {
-                    "type": "object",
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "nullable": True,
-                            "description": "Conversation title"
-                        },
-                        "archived": {
-                            "type": "boolean",
-                            "nullable": True,
-                            "description": "Whether conversation is archived"
-                        }
-                    }
-                },
-                "BulkDeleteRequest": {
-                    "type": "object",
-                    "required": ["conversation_ids"],
-                    "properties": {
-                        "conversation_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Array of conversation IDs to delete"
-                        }
-                    }
-                },
-                "CitationRequest": {
-                    "type": "object",
-                    "required": ["citation_id"],
-                    "properties": {
-                        "citation_id": {
-                            "type": "string",
-                            "description": "Citation ID to retrieve"
-                        }
-                    }
-                },
-                "FileContentRequest": {
-                    "type": "object",
-                    "required": ["conversation_id", "file_id"],
-                    "properties": {
-                        "conversation_id": {
-                            "type": "string",
-                            "description": "Conversation ID containing the file"
-                        },
-                        "file_id": {
-                            "type": "string",
-                            "description": "File ID to retrieve content for"
-                        }
-                    }
-                }
-            },
+            "schemas": _generate_dynamic_schemas(app),
             "securitySchemes": {
                 "bearerAuth": {
                     "type": "http",
@@ -1046,33 +1121,72 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
                     })
                 }
                 
-                # Add request body if provided
-                if swagger_doc.get('request_body'):
-                    # Check if we should use a schema reference
-                    schema_ref = _get_schema_ref_for_route(path, method)
+                # Add request body if provided or if method typically requires one
+                should_have_request_body = swagger_doc.get('request_body') or (method in ['POST', 'PUT', 'PATCH'] and not any(keyword in path.lower() for keyword in ['get', 'export', 'download']))
+                
+                if should_have_request_body:
+                    # Generate dynamic inline schema from actual route analysis
+                    request_body_schema = None
                     
-                    if schema_ref:
-                        # Use schema reference for known endpoints
-                        operation["requestBody"] = {
-                            "required": True,
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "$ref": f"#/components/schemas/{schema_ref}"
+                    # 1. Try to analyze the actual view function for request body
+                    if swagger_doc.get('request_body'):
+                        request_body_schema = swagger_doc['request_body']
+                    else:
+                        # Analyze the actual route implementation
+                        request_body_schema = _analyze_function_request_body(view_func)
+                    
+                    # 2. If no schema detected but method suggests request body, create minimal schema
+                    if not request_body_schema and method in ['POST', 'PUT', 'PATCH']:
+                        # Pattern-based fallback schemas (inline, not references)
+                        if any(keyword in path.lower() for keyword in ['id', 'delete']):
+                            if 'multiple' in path.lower() or 'bulk' in path.lower():
+                                request_body_schema = {
+                                    "type": "object",
+                                    "required": ["ids"],
+                                    "properties": {
+                                        "ids": {"type": "array", "items": {"type": "string"}, "description": "Array of resource identifiers"}
                                     }
                                 }
+                            else:
+                                request_body_schema = {
+                                    "type": "object",
+                                    "required": ["id"],
+                                    "properties": {
+                                        "id": {"type": "string", "description": "Resource identifier"}
+                                    }
+                                }
+                        elif any(keyword in path.lower() for keyword in ['status', 'enable', 'disable']):
+                            request_body_schema = {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string", "description": "New status value"},
+                                    "enabled": {"type": "boolean", "nullable": True, "description": "Whether item is enabled"}
+                                }
                             }
-                        }
-                    else:
-                        # Use inline schema for auto-generated or custom schemas
+                        else:
+                            # Generic object schema with additionalProperties for unknown endpoints
+                            request_body_schema = {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": True,
+                                "description": f"Request body for {method} {path}"
+                            }
+                    
+                    # 3. Create the request body specification
+                    if request_body_schema:
+                        is_required = request_body_schema.get('required') and len(request_body_schema.get('required', [])) > 0
                         operation["requestBody"] = {
-                            "required": True,
+                            "required": is_required,
                             "content": {
                                 "application/json": {
-                                    "schema": swagger_doc['request_body']
+                                    "schema": request_body_schema
                                 }
                             }
                         }
+                        
+                        print(f"  🔧 Generated inline schema for {method} {path} (required: {is_required})")
+                    else:
+                        print(f"  ❌ No request body schema generated for {method} {path}")
                 
                 # Add parameters if provided
                 if swagger_doc.get('parameters'):
