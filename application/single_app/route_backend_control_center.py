@@ -6,7 +6,7 @@ from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from functions_debug import debug_print
 
@@ -580,31 +580,95 @@ def enhance_group_with_activity(group, force_refresh=False):
         
         # Calculate document metrics from group_documents container
         try:
-            # Count total documents for this group
-            doc_count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.group_id = @group_id"
-            doc_count_params = [{"name": "@group_id", "value": group_id}]
-            
-            total_docs = 0
-            doc_count_results = list(cosmos_group_documents_container.query_items(
+            # Get document count using separate query (avoid MultipleAggregates issue) - same as user management
+            doc_count_query = """
+                SELECT VALUE COUNT(1)
+                FROM c 
+                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+            """
+            doc_metrics_params = [{"name": "@group_id", "value": group_id}]
+            doc_count_result = list(cosmos_group_documents_container.query_items(
                 query=doc_count_query,
-                parameters=doc_count_params,
+                parameters=doc_metrics_params,
                 enable_cross_partition_query=True
             ))
-            if doc_count_results:
-                total_docs = doc_count_results[0]
             
-            debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
+            # Get total pages using separate query - same as user management
+            doc_pages_query = """
+                SELECT VALUE SUM(c.number_of_pages)
+                FROM c 
+                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+            """
+            doc_pages_result = list(cosmos_group_documents_container.query_items(
+                query=doc_pages_query,
+                parameters=doc_metrics_params,
+                enable_cross_partition_query=True
+            ))
+            
+            total_docs = doc_count_result[0] if doc_count_result else 0
+            total_pages = doc_pages_result[0] if doc_pages_result and doc_pages_result[0] else 0
+            
             enhanced['activity']['document_metrics']['total_documents'] = total_docs
             enhanced['document_count'] = total_docs  # Update flat field
+            # AI search size = pages × 80KB
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
             
-            # Calculate last day uploads and AI search size
+            debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
+            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 80 * 1024} bytes")
+            
+            # Get last day document upload (most recent last_updated date, formatted as MM/DD/YYYY) - same as user management
+            last_doc_query = """
+                SELECT c.last_updated
+                FROM c 
+                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+            """
+            last_doc_result = list(cosmos_group_documents_container.query_items(
+                query=last_doc_query,
+                parameters=doc_metrics_params,
+                enable_cross_partition_query=True
+            ))
+            
+            last_day_upload = 'Never'
+            if last_doc_result:
+                # Find the most recent date in code (avoiding ORDER BY composite index requirement)
+                most_recent_date = None
+                most_recent_str = None
+                
+                for result in last_doc_result:
+                    last_updated = result.get('last_updated')
+                    if last_updated:
+                        try:
+                            # Parse the date to datetime object for proper comparison
+                            date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                            if most_recent_date is None or date_obj > most_recent_date:
+                                most_recent_date = date_obj
+                                most_recent_str = last_updated
+                        except Exception as parse_e:
+                            debug_print(f"📅 [GROUP UPLOAD DEBUG] Error parsing date '{last_updated}': {parse_e}")
+                            continue
+                
+                if most_recent_date:
+                    try:
+                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
+                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Last upload date for group {group_id}: {last_day_upload} (from {most_recent_str})")
+                    except Exception as format_e:
+                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Error formatting date for group {group_id}: {format_e}")
+                        last_day_upload = 'Invalid date'
+                else:
+                    debug_print(f"📅 [GROUP UPLOAD DEBUG] No valid dates found for group {group_id}")
+            else:
+                debug_print(f"📅 [GROUP UPLOAD DEBUG] No documents found for group {group_id}")
+                
+            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
+            
+            # Calculate last day uploads (count of documents uploaded in last day) - for compatibility
             yesterday = datetime.now(timezone.utc) - timedelta(days=1)
             yesterday_str = yesterday.strftime('%Y-%m-%d')
             
-            # Get documents uploaded in the last day
-            last_day_query = """
-                SELECT * FROM c 
+            last_day_count_query = """
+                SELECT VALUE COUNT(1) FROM c 
                 WHERE c.group_id = @group_id 
+                AND c.type = 'document_metadata'
                 AND c.upload_date >= @yesterday
             """
             last_day_params = [
@@ -612,13 +676,13 @@ def enhance_group_with_activity(group, force_refresh=False):
                 {"name": "@yesterday", "value": yesterday_str}
             ]
             
-            last_day_docs = list(cosmos_group_documents_container.query_items(
-                query=last_day_query,
+            last_day_count_result = list(cosmos_group_documents_container.query_items(
+                query=last_day_count_query,
                 parameters=last_day_params,
                 enable_cross_partition_query=True
             ))
             
-            enhanced['activity']['document_metrics']['last_day_uploads'] = len(last_day_docs)
+            enhanced['activity']['document_metrics']['last_day_uploads'] = last_day_count_result[0] if last_day_count_result else 0
             
             # Find the most recent document upload for last_activity (avoid ORDER BY composite index)
             recent_activity_query = """
@@ -695,24 +759,7 @@ def enhance_group_with_activity(group, force_refresh=False):
                 enhanced['recent_activity_count'] = recent_count_results[0]
                 debug_print(f"📊 [GROUP ACTIVITY DEBUG] Recent activity count for group {group_id}: {recent_count_results[0]}")
             
-            # Calculate AI Search size (pages × 80KB) - use same pattern as users
-            doc_pages_query = """
-                SELECT VALUE SUM(c.number_of_pages)
-                FROM c 
-                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
-            """
-            doc_pages_params = [{"name": "@group_id", "value": group_id}]
-            
-            doc_pages_result = list(cosmos_group_documents_container.query_items(
-                query=doc_pages_query,
-                parameters=doc_pages_params,
-                enable_cross_partition_query=True
-            ))
-            
-            total_pages = doc_pages_result[0] if doc_pages_result and doc_pages_result[0] else 0
-            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
-            
-            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages} (from {len(doc_pages_result)} results)")
+            # AI search size already calculated above with document count
             
         except Exception as doc_e:
             debug_print(f"❌ [GROUP DOCUMENT DEBUG] Error calculating document metrics for group {group_id}: {doc_e}")
@@ -720,87 +767,78 @@ def enhance_group_with_activity(group, force_refresh=False):
         # Get actual storage account size if enhanced citation is enabled (check app settings)
         debug_print(f"💾 [GROUP STORAGE DEBUG] Enhanced citation enabled: {app_enhanced_citations}")
         if app_enhanced_citations:
-            debug_print(f"💾 [GROUP STORAGE DEBUG] Starting storage calculation for group {group_id}")
-            try:
-                # Query actual file sizes from Azure Storage for group documents
-                storage_client = CLIENTS.get("storage_account_office_docs_client")
-                debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
-                if storage_client:
-                    group_folder_prefix = f"{group_id}/"
-                    total_storage_size = 0
-                    
-                    debug_print(f"💾 [GROUP STORAGE DEBUG] Looking for blobs with prefix: {group_folder_prefix}")
-                    
-                    # List all blobs in the group's folder - use GROUP documents container, not user documents
-                    container_client = storage_client.get_container_client(storage_account_group_documents_container_name)
-                    blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
-                    
-                    blob_count = 0
-                    for blob in blob_list:
-                        blob_count += 1
-                        if blob.size:
+                debug_print(f"💾 [GROUP STORAGE DEBUG] Starting storage calculation for group {group_id}")
+                try:
+                    # Query actual file sizes from Azure Storage for group documents
+                    storage_client = CLIENTS.get("storage_account_office_docs_client")
+                    debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
+                    if storage_client:
+                        group_folder_prefix = f"{group_id}/"
+                        total_storage_size = 0
+                        
+                        debug_print(f"💾 [GROUP STORAGE DEBUG] Looking for blobs with prefix: {group_folder_prefix}")
+                        
+                        # List all blobs in the group's folder - use GROUP documents container, not user documents
+                        container_client = storage_client.get_container_client(storage_account_group_documents_container_name)
+                        blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
+                        
+                        blob_count = 0
+                        for blob in blob_list:
                             total_storage_size += blob.size
-                            debug_print(f"💾 [GROUP STORAGE DEBUG] Blob: {blob.name}, Size: {blob.size}")
+                            blob_count += 1
+                            debug_print(f"💾 [GROUP STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
+                            current_app.logger.debug(f"Group storage blob {blob.name}: {blob.size} bytes")
+                        
+                        debug_print(f"💾 [GROUP STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        enhanced['storage_size'] = total_storage_size  # Update flat field
+                        current_app.logger.debug(f"Total storage size for group {group_id}: {total_storage_size} bytes")
+                    else:
+                        debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client NOT available for group {group_id}")
+                        current_app.logger.debug(f"Storage client not available for group {group_id}")
+                        # Fallback to estimation if storage client not available
+                        storage_size_query = """
+                            SELECT c.file_name, c.number_of_pages FROM c 
+                            WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+                        """
+                        storage_docs = list(cosmos_group_documents_container.query_items(
+                            query=storage_size_query,
+                            parameters=doc_metrics_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        total_storage_size = 0
+                        for doc in storage_docs:
+                            # Estimate file size based on pages and file type
+                            pages = doc.get('number_of_pages', 1)
+                            file_name = doc.get('file_name', '')
+                            
+                            if file_name.lower().endswith('.pdf'):
+                                # PDF: ~500KB per page average
+                                estimated_size = pages * 500 * 1024
+                            elif file_name.lower().endswith(('.docx', '.doc')):
+                                # Word docs: ~300KB per page average
+                                estimated_size = pages * 300 * 1024
+                            elif file_name.lower().endswith(('.pptx', '.ppt')):
+                                # PowerPoint: ~800KB per page average
+                                estimated_size = pages * 800 * 1024
+                            else:
+                                # Other files: ~400KB per page average
+                                estimated_size = pages * 400 * 1024
+                            
+                            total_storage_size += estimated_size
+                        
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        enhanced['storage_size'] = total_storage_size  # Update flat field
+                        debug_print(f"💾 [GROUP STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
+                        current_app.logger.debug(f"Estimated storage size for group {group_id}: {total_storage_size} bytes")
                     
-                    enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
-                    enhanced['storage_size'] = total_storage_size  # Update flat field
-                    debug_print(f"💾 [GROUP STORAGE DEBUG] Total storage size for group {group_id}: {total_storage_size} bytes ({blob_count} blobs)")
-                    
-            except Exception as storage_e:
-                debug_print(f"❌ [GROUP STORAGE DEBUG] Error calculating storage size for group {group_id}: {storage_e}")
-        
-        # Calculate last_day_upload date string (avoid ORDER BY due to missing composite index)
-        try:
-            # Get all last_updated dates and find the most recent in code (no ORDER BY to avoid index issues)
-            last_upload_query = """
-                SELECT c.last_updated
-                FROM c 
-                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
-            """
-            last_upload_params = [{"name": "@group_id", "value": group_id}]
-            
-            last_upload_results = list(cosmos_group_documents_container.query_items(
-                query=last_upload_query,
-                parameters=last_upload_params,
-                enable_cross_partition_query=True
-            ))
-            
-            last_day_upload = 'Never'
-            if last_upload_results:
-                # Find the most recent date in code (avoiding ORDER BY composite index requirement)
-                most_recent_date = None
-                most_recent_str = None
-                
-                for result in last_upload_results:
-                    last_updated = result.get('last_updated')
-                    if last_updated:
-                        try:
-                            # Parse the date to compare
-                            date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                            if most_recent_date is None or date_obj > most_recent_date:
-                                most_recent_date = date_obj
-                                most_recent_str = last_updated
-                        except Exception as parse_e:
-                            debug_print(f"📅 [GROUP UPLOAD DEBUG] Error parsing date '{last_updated}': {parse_e}")
-                            continue
-                
-                if most_recent_date:
-                    try:
-                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
-                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Last upload date for group {group_id}: {last_day_upload} (from {most_recent_str})")
-                    except Exception as format_e:
-                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Error formatting date for group {group_id}: {format_e}")
-                        last_day_upload = 'Invalid date'
-                else:
-                    debug_print(f"📅 [GROUP UPLOAD DEBUG] No valid dates found for group {group_id}")
-            else:
-                debug_print(f"📅 [GROUP UPLOAD DEBUG] No documents found for group {group_id}")
-            
-            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
-            
-        except Exception as upload_e:
-            debug_print(f"❌ [GROUP UPLOAD DEBUG] Error calculating last upload date for group {group_id}: {upload_e}")
-            enhanced['activity']['document_metrics']['last_day_upload'] = 'Never'
+                except Exception as storage_e:
+                    debug_print(f"❌ [GROUP STORAGE DEBUG] Storage calculation failed for group {group_id}: {storage_e}")
+                    current_app.logger.debug(f"Could not calculate storage size for group {group_id}: {storage_e}")
+                    # Set to 0 if we can't calculate
+                    enhanced['activity']['document_metrics']['storage_account_size'] = 0
+                    enhanced['storage_size'] = 0
                 
         # Cache the computed metrics in the group document
         if force_refresh:
