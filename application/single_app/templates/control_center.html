@@ -2057,10 +2057,7 @@ const GroupManager = {
                     </div>
                 </td>
                 <td>
-                    <div>
-                        ${group.document_count || 0} docs
-                        ${group.storage_size ? `<div><small class="text-muted">${formatStorageSize(group.storage_size)}</small></div>` : ''}
-                    </div>
+                    ${window.controlCenter ? window.controlCenter.renderGroupDocumentMetrics(group.activity?.document_metrics) : `<div class="small">${group.document_count || 0} docs</div>`}
                 </td>
                 <td>
                     <button type="button" class="btn btn-sm btn-outline-primary" 

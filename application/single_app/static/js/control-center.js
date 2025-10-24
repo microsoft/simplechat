@@ -327,6 +327,39 @@ class ControlCenter {
         return html;
     }
     
+    renderGroupDocumentMetrics(docMetrics) {
+        if (!docMetrics) {
+            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
+        }
+        
+        const lastDayUpload = docMetrics.last_day_upload || 'Never';
+        const totalDocs = docMetrics.total_documents || 0;
+        const aiSearchSize = docMetrics.ai_search_size || 0;
+        const storageSize = docMetrics.storage_account_size || 0;
+        // Always get enhanced citation setting from app settings, not user data
+        const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
+        
+        // If all values are zero/empty, show refresh message
+        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0 && lastDayUpload === 'Never') {
+            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
+        }
+        
+        let html = `
+            <div class="small">
+                <div><strong>Last Day:</strong> ${lastDayUpload}</div>
+                <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                <div><strong>AI Search:</strong> ${this.formatBytes(aiSearchSize)}</div>
+        `;
+        
+        if (enhancedCitation) {
+            html += `<div><strong>Storage:</strong> ${this.formatBytes(storageSize)}</div>`;
+        }
+        
+        html += '<div class="text-muted" style="font-size: 0.75rem;">(Enhanced)</div>';
+        html += '</div>';
+        return html;
+    }
+    
     renderLoginActivity(loginMetrics) {
         if (!loginMetrics) {
             return '<div class="small text-muted">No login data<br><em>Use Refresh Data button</em></div>';
@@ -1545,8 +1578,10 @@ async function refreshControlCenterData() {
         const result = await response.json();
         
         if (result.success) {
-            // Show success message
-            showAlert(`Data refreshed successfully! Updated ${result.refreshed_users} users.`, 'success');
+            // Show success message with both users and groups
+            const usersMsg = `${result.refreshed_users} users`;
+            const groupsMsg = `${result.refreshed_groups || 0} groups`;
+            showAlert(`Data refreshed successfully! Updated ${usersMsg} and ${groupsMsg}.`, 'success');
             
             // Update last refresh timestamp
             await loadRefreshStatus();

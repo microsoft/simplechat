@@ -620,12 +620,11 @@ def enhance_group_with_activity(group, force_refresh=False):
             
             enhanced['activity']['document_metrics']['last_day_uploads'] = len(last_day_docs)
             
-            # Find the most recent document upload for last_activity
+            # Find the most recent document upload for last_activity (avoid ORDER BY composite index)
             recent_activity_query = """
-                SELECT TOP 1 c.upload_date, c.created_at, c.modified_at
+                SELECT c.upload_date, c.created_at, c.modified_at
                 FROM c 
-                WHERE c.group_id = @group_id 
-                ORDER BY c.upload_date DESC, c.created_at DESC, c.modified_at DESC
+                WHERE c.group_id = @group_id
             """
             recent_activity_params = [{"name": "@group_id", "value": group_id}]
             
@@ -636,13 +635,41 @@ def enhance_group_with_activity(group, force_refresh=False):
             ))
             
             if recent_docs:
-                recent_doc = recent_docs[0]
-                # Try multiple date fields to find the most recent activity
-                activity_date = (recent_doc.get('upload_date') or 
-                               recent_doc.get('modified_at') or 
-                               recent_doc.get('created_at'))
-                enhanced['last_activity'] = activity_date
-                debug_print(f"📅 [GROUP ACTIVITY DEBUG] Last activity for group {group_id}: {activity_date}")
+                # Find the most recent activity date from all documents in code
+                most_recent_activity = None
+                most_recent_activity_str = None
+                
+                for doc in recent_docs:
+                    # Try multiple date fields to find the most recent activity
+                    dates_to_check = [
+                        doc.get('upload_date'),
+                        doc.get('modified_at'), 
+                        doc.get('created_at')
+                    ]
+                    
+                    for date_str in dates_to_check:
+                        if date_str:
+                            try:
+                                if isinstance(date_str, str):
+                                    if 'T' in date_str:  # ISO format
+                                        date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                                    else:  # Date only format
+                                        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                                else:
+                                    date_obj = date_str  # Already datetime
+                                
+                                if most_recent_activity is None or date_obj > most_recent_activity:
+                                    most_recent_activity = date_obj
+                                    most_recent_activity_str = date_str
+                            except Exception as date_parse_e:
+                                debug_print(f"📅 [GROUP ACTIVITY DEBUG] Error parsing activity date '{date_str}': {date_parse_e}")
+                                continue
+                
+                if most_recent_activity_str:
+                    enhanced['last_activity'] = most_recent_activity_str
+                    debug_print(f"📅 [GROUP ACTIVITY DEBUG] Last activity for group {group_id}: {most_recent_activity_str}")
+                else:
+                    debug_print(f"📅 [GROUP ACTIVITY DEBUG] No valid activity dates found for group {group_id}")
             
             # Calculate recent activity count (documents in last 7 days)
             week_ago = datetime.now(timezone.utc) - timedelta(days=7)
@@ -668,23 +695,24 @@ def enhance_group_with_activity(group, force_refresh=False):
                 enhanced['recent_activity_count'] = recent_count_results[0]
                 debug_print(f"📊 [GROUP ACTIVITY DEBUG] Recent activity count for group {group_id}: {recent_count_results[0]}")
             
-            # Calculate AI Search size (pages × 80KB approximation)
-            total_pages = 0
-            all_docs_query = "SELECT c.num_chunks FROM c WHERE c.group_id = @group_id AND IS_DEFINED(c.num_chunks)"
-            all_docs_params = [{"name": "@group_id", "value": group_id}]
+            # Calculate AI Search size (pages × 80KB) - use same pattern as users
+            doc_pages_query = """
+                SELECT VALUE SUM(c.number_of_pages)
+                FROM c 
+                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+            """
+            doc_pages_params = [{"name": "@group_id", "value": group_id}]
             
-            for doc in cosmos_group_documents_container.query_items(
-                query=all_docs_query,
-                parameters=all_docs_params,
+            doc_pages_result = list(cosmos_group_documents_container.query_items(
+                query=doc_pages_query,
+                parameters=doc_pages_params,
                 enable_cross_partition_query=True
-            ):
-                chunks = doc.get('num_chunks', 0)
-                if isinstance(chunks, (int, float)) and chunks > 0:
-                    total_pages += chunks
-                    
+            ))
+            
+            total_pages = doc_pages_result[0] if doc_pages_result and doc_pages_result[0] else 0
             enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
             
-            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}")
+            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages} (from {len(doc_pages_result)} results)")
             
         except Exception as doc_e:
             debug_print(f"❌ [GROUP DOCUMENT DEBUG] Error calculating document metrics for group {group_id}: {doc_e}")
@@ -720,6 +748,59 @@ def enhance_group_with_activity(group, force_refresh=False):
                     
             except Exception as storage_e:
                 debug_print(f"❌ [GROUP STORAGE DEBUG] Error calculating storage size for group {group_id}: {storage_e}")
+        
+        # Calculate last_day_upload date string (avoid ORDER BY due to missing composite index)
+        try:
+            # Get all last_updated dates and find the most recent in code (no ORDER BY to avoid index issues)
+            last_upload_query = """
+                SELECT c.last_updated
+                FROM c 
+                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
+            """
+            last_upload_params = [{"name": "@group_id", "value": group_id}]
+            
+            last_upload_results = list(cosmos_group_documents_container.query_items(
+                query=last_upload_query,
+                parameters=last_upload_params,
+                enable_cross_partition_query=True
+            ))
+            
+            last_day_upload = 'Never'
+            if last_upload_results:
+                # Find the most recent date in code (avoiding ORDER BY composite index requirement)
+                most_recent_date = None
+                most_recent_str = None
+                
+                for result in last_upload_results:
+                    last_updated = result.get('last_updated')
+                    if last_updated:
+                        try:
+                            # Parse the date to compare
+                            date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                            if most_recent_date is None or date_obj > most_recent_date:
+                                most_recent_date = date_obj
+                                most_recent_str = last_updated
+                        except Exception as parse_e:
+                            debug_print(f"📅 [GROUP UPLOAD DEBUG] Error parsing date '{last_updated}': {parse_e}")
+                            continue
+                
+                if most_recent_date:
+                    try:
+                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
+                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Last upload date for group {group_id}: {last_day_upload} (from {most_recent_str})")
+                    except Exception as format_e:
+                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Error formatting date for group {group_id}: {format_e}")
+                        last_day_upload = 'Invalid date'
+                else:
+                    debug_print(f"📅 [GROUP UPLOAD DEBUG] No valid dates found for group {group_id}")
+            else:
+                debug_print(f"📅 [GROUP UPLOAD DEBUG] No documents found for group {group_id}")
+            
+            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
+            
+        except Exception as upload_e:
+            debug_print(f"❌ [GROUP UPLOAD DEBUG] Error calculating last upload date for group {group_id}: {upload_e}")
+            enhanced['activity']['document_metrics']['last_day_upload'] = 'Never'
                 
         # Cache the computed metrics in the group document
         if force_refresh:
@@ -2209,6 +2290,45 @@ def register_route_backend_control_center(app):
             
             debug_print(f"🔄 [REFRESH DEBUG] User refresh loop completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
             
+            # Refresh metrics for all groups
+            debug_print("🔄 [REFRESH DEBUG] Starting group refresh...")
+            groups_refreshed_count = 0
+            groups_failed_count = 0
+            
+            try:
+                groups_query = "SELECT * FROM c"
+                all_groups = list(cosmos_groups_container.query_items(
+                    query=groups_query,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"🔄 [REFRESH DEBUG] Found {len(all_groups)} groups to process")
+                
+                # Refresh metrics for each group
+                for group in all_groups:
+                    try:
+                        group_id = group.get('id')
+                        debug_print(f"🔄 [REFRESH DEBUG] Processing group {group_id}")
+                        
+                        # Force refresh of metrics for this group
+                        enhanced_group = enhance_group_with_activity(group, force_refresh=True)
+                        groups_refreshed_count += 1
+                        
+                        debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed group {group_id}")
+                        current_app.logger.debug(f"Refreshed metrics for group {group_id}")
+                    except Exception as group_error:
+                        groups_failed_count += 1
+                        debug_print(f"❌ [REFRESH DEBUG] Failed to refresh group {group.get('id')}: {group_error}")
+                        debug_print(f"❌ [REFRESH DEBUG] Group error traceback:")
+                        import traceback
+                        debug_print(traceback.format_exc())
+                        current_app.logger.error(f"Failed to refresh metrics for group {group.get('id')}: {group_error}")
+                        
+            except Exception as groups_error:
+                debug_print(f"❌ [REFRESH DEBUG] Error querying groups: {groups_error}")
+                current_app.logger.error(f"Error querying groups for refresh: {groups_error}")
+            
+            debug_print(f"🔄 [REFRESH DEBUG] Group refresh loop completed. Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
+            
             # Update admin settings with refresh timestamp
             debug_print("🔄 [REFRESH DEBUG] Updating admin settings...")
             try:
@@ -2232,14 +2352,16 @@ def register_route_backend_control_center(app):
                 debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
                 current_app.logger.error(f"Error updating admin settings: {admin_error}")
             
-            debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Refreshed: {refreshed_count}, Failed: {failed_count}")
-            current_app.logger.info(f"Control Center data refresh completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
+            debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Users - Refreshed: {refreshed_count}, Failed: {failed_count}. Groups - Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
+            current_app.logger.info(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
             
             return jsonify({
                 'success': True,
                 'message': 'Control Center data refreshed successfully',
                 'refreshed_users': refreshed_count,
                 'failed_users': failed_count,
+                'refreshed_groups': groups_refreshed_count,
+                'failed_groups': groups_failed_count,
                 'refresh_timestamp': datetime.now(timezone.utc).isoformat()
             }), 200
             
