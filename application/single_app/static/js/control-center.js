@@ -1,3 +1,4 @@
+
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
@@ -14,6 +15,13 @@ class ControlCenter {
         this.documentsChart = null;
         this.currentTrendDays = 30;
         
+        // Groups-related properties
+        this.currentGroupPage = 1;
+        this.groupsPerPage = 50;
+        this.groupSearchTerm = '';
+        this.groupStatusFilter = 'all';
+        this.selectedGroups = new Set();
+        
         this.init();
     }
     
@@ -28,16 +36,25 @@ class ControlCenter {
         document.getElementById('users-tab')?.addEventListener('click', () => {
             setTimeout(() => this.loadUsers(), 100);
         });
+        document.getElementById('groups-tab')?.addEventListener('click', () => {
+            setTimeout(() => this.loadGroups(), 100);
+        });
         
         // Search and filter controls
         document.getElementById('userSearchInput')?.addEventListener('input', 
             this.debounce(() => this.handleSearchChange(), 300));
         document.getElementById('accessFilterSelect')?.addEventListener('change', 
             () => this.handleFilterChange());
+        document.getElementById('groupSearchInput')?.addEventListener('input', 
+            this.debounce(() => this.handleGroupSearchChange(), 300));
+        document.getElementById('groupStatusFilterSelect')?.addEventListener('change', 
+            () => this.handleGroupFilterChange());
         
         // Refresh buttons - these reload cached data, don't recalculate metrics
         document.getElementById('refreshUsersBtn')?.addEventListener('click', 
             () => this.loadUsers());
+        document.getElementById('refreshGroupsBtn')?.addEventListener('click', 
+            () => this.loadGroups());
         document.getElementById('refreshStatsBtn')?.addEventListener('click', 
             () => this.refreshStats());
         
@@ -49,9 +66,15 @@ class ControlCenter {
         document.getElementById('selectAllUsers')?.addEventListener('change', 
             (e) => this.handleSelectAll(e));
         
+        // Group selection
+        document.getElementById('selectAllGroups')?.addEventListener('change', 
+            (e) => this.handleSelectAllGroups(e));
+        
         // Bulk actions
         document.getElementById('bulkActionBtn')?.addEventListener('click', 
             () => this.showBulkActionModal());
+        document.getElementById('bulkGroupActionBtn')?.addEventListener('click', 
+            () => this.showBulkGroupActionModal());
         document.getElementById('executeBulkActionBtn')?.addEventListener('click', 
             () => this.executeBulkAction());
         
@@ -934,6 +957,274 @@ class ControlCenter {
         toastElement.addEventListener('hidden.bs.toast', () => {
             toastElement.remove();
         });
+    }
+    
+    // Groups Management Functions
+    async loadGroups() {
+        this.showLoading(true);
+        
+        try {
+            const params = new URLSearchParams({
+                page: this.currentGroupPage,
+                per_page: this.groupsPerPage,
+                search: this.groupSearchTerm,
+                status_filter: this.groupStatusFilter
+            });
+            
+            const response = await fetch(`/api/admin/control-center/groups?${params}`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderGroups(data.groups);
+                this.renderGroupsPagination(data.pagination);
+            } else {
+                this.showError('Failed to load groups: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            this.showError('Network error: ' + error.message);
+        } finally {
+            this.showLoading(false);
+        }
+    }
+    
+    renderGroups(groups) {
+        const tbody = document.getElementById('groupsTableBody');
+        if (!tbody) return;
+        
+        if (groups.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center py-4">
+                        <i class="bi bi-people-fill" style="font-size: 2rem; color: var(--bs-secondary);"></i>
+                        <div class="mt-2">No groups found</div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = groups.map(group => {
+            const isSelected = this.selectedGroups.has(group.id);
+            return `
+                <tr>
+                    <td>
+                        <input type="checkbox" class="form-check-input group-checkbox" 
+                               value="${group.id}" ${isSelected ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            ${this.renderGroupIcon(group)}
+                            <div>
+                                <div class="fw-semibold">${this.escapeHtml(group.name || 'Unknown Group')}</div>
+                                <div class="text-muted small">${this.escapeHtml(group.description || '')}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <div>
+                                <div class="fw-semibold">${this.escapeHtml(group.owner_display_name || 'Unknown Owner')}</div>
+                                <div class="text-muted small">${this.escapeHtml(group.owner_email || '')}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary">${group.member_count || 0}</span>
+                    </td>
+                    <td>
+                        ${this.renderGroupStatusBadge(group.status)}
+                    </td>
+                    <td>
+                        ${group.activity?.document_metrics?.last_day_upload || 'Never'}
+                    </td>
+                    <td>
+                        ${this.renderGroupDocumentMetrics(group.activity?.document_metrics)}
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" 
+                                onclick="controlCenter.showGroupModal('${group.id}')">
+                            <i class="bi bi-gear"></i> Manage
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        // Bind checkbox events
+        tbody.querySelectorAll('.group-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => this.handleGroupSelection(e));
+        });
+        
+        this.updateBulkGroupActionButton();
+    }
+    
+    renderGroupIcon(group) {
+        // Simple group icon since groups don't have profile images
+        return `
+            <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" 
+                 style="width: 32px; height: 32px;">
+                <i class="bi bi-people-fill text-white" style="font-size: 0.8rem;"></i>
+            </div>
+        `;
+    }
+    
+    renderGroupStatusBadge(status) {
+        if (status === 'active') {
+            return '<span class="badge bg-success">Active</span>';
+        } else if (status === 'locked') {
+            return '<span class="badge bg-danger">Locked</span>';
+        } else if (status === 'upload_disabled') {
+            return '<span class="badge bg-warning">Upload Disabled</span>';
+        }
+        return '<span class="badge bg-secondary">Unknown</span>';
+    }
+    
+    renderGroupsPagination(pagination) {
+        const paginationInfo = document.getElementById('groupsPaginationInfo');
+        const paginationNav = document.getElementById('groupsPagination');
+        
+        if (paginationInfo) {
+            const start = (pagination.page - 1) * pagination.per_page + 1;
+            const end = Math.min(pagination.page * pagination.per_page, pagination.total_items);
+            paginationInfo.textContent = `Showing ${start}-${end} of ${pagination.total_items} groups`;
+        }
+        
+        if (paginationNav) {
+            let paginationHtml = '';
+            
+            // Previous button
+            paginationHtml += `
+                <li class="page-item ${!pagination.has_prev ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="controlCenter.goToGroupPage(${pagination.page - 1}); return false;">
+                        <i class="bi bi-chevron-left"></i>
+                    </a>
+                </li>
+            `;
+            
+            // Page numbers
+            const startPage = Math.max(1, pagination.page - 2);
+            const endPage = Math.min(pagination.total_pages, pagination.page + 2);
+            
+            if (startPage > 1) {
+                paginationHtml += `
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="controlCenter.goToGroupPage(1); return false;">1</a>
+                    </li>
+                `;
+                if (startPage > 2) {
+                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                }
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHtml += `
+                    <li class="page-item ${i === pagination.page ? 'active' : ''}">
+                        <a class="page-link" href="#" onclick="controlCenter.goToGroupPage(${i}); return false;">${i}</a>
+                    </li>
+                `;
+            }
+            
+            if (endPage < pagination.total_pages) {
+                if (endPage < pagination.total_pages - 1) {
+                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                }
+                paginationHtml += `
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="controlCenter.goToGroupPage(${pagination.total_pages}); return false;">${pagination.total_pages}</a>
+                    </li>
+                `;
+            }
+            
+            // Next button
+            paginationHtml += `
+                <li class="page-item ${!pagination.has_next ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="controlCenter.goToGroupPage(${pagination.page + 1}); return false;">
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                </li>
+            `;
+            
+            paginationNav.innerHTML = paginationHtml;
+        }
+    }
+    
+    goToGroupPage(page) {
+        this.currentGroupPage = page;
+        this.loadGroups();
+    }
+    
+    handleGroupSearchChange() {
+        this.groupSearchTerm = document.getElementById('groupSearchInput')?.value || '';
+        this.currentGroupPage = 1;
+        this.loadGroups();
+    }
+    
+    handleGroupFilterChange() {
+        this.groupStatusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+        this.currentGroupPage = 1;
+        this.loadGroups();
+    }
+    
+    handleSelectAllGroups(e) {
+        const checkboxes = document.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = e.target.checked;
+            if (e.target.checked) {
+                this.selectedGroups.add(checkbox.value);
+            } else {
+                this.selectedGroups.delete(checkbox.value);
+            }
+        });
+        this.updateBulkGroupActionButton();
+    }
+    
+    handleGroupSelection(e) {
+        if (e.target.checked) {
+            this.selectedGroups.add(e.target.value);
+        } else {
+            this.selectedGroups.delete(e.target.value);
+        }
+        
+        // Update select all checkbox
+        const selectAllCheckbox = document.getElementById('selectAllGroups');
+        if (selectAllCheckbox) {
+            const totalCheckboxes = document.querySelectorAll('.group-checkbox').length;
+            const checkedCheckboxes = document.querySelectorAll('.group-checkbox:checked').length;
+            
+            if (checkedCheckboxes === 0) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = false;
+            } else if (checkedCheckboxes === totalCheckboxes) {
+                selectAllCheckbox.indeterminate = false;
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+        
+        this.updateBulkGroupActionButton();
+    }
+    
+    updateBulkGroupActionButton() {
+        const bulkActionBtn = document.getElementById('bulkGroupActionBtn');
+        if (bulkActionBtn) {
+            bulkActionBtn.disabled = this.selectedGroups.size === 0;
+        }
+        
+        const selectedCount = document.getElementById('selectedGroupCount');
+        if (selectedCount) {
+            selectedCount.textContent = this.selectedGroups.size;
+        }
+    }
+    
+    showGroupModal(groupId) {
+        // Placeholder for group modal functionality
+        this.showError('Group management modal not yet implemented');
+    }
+    
+    showBulkGroupActionModal() {
+        // Placeholder for bulk group actions modal
+        this.showError('Bulk group actions not yet implemented');
     }
     
     escapeHtml(text) {

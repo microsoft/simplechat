@@ -726,13 +726,13 @@ def enhance_group_with_activity(group, force_refresh=False):
                 storage_client = CLIENTS.get("storage_account_office_docs_client")
                 debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
                 if storage_client:
-                    group_folder_prefix = f"group-documents/{group_id}/"
+                    group_folder_prefix = f"{group_id}/"
                     total_storage_size = 0
                     
                     debug_print(f"💾 [GROUP STORAGE DEBUG] Looking for blobs with prefix: {group_folder_prefix}")
                     
-                    # List all blobs in the group's folder
-                    container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
+                    # List all blobs in the group's folder - use GROUP documents container, not user documents
+                    container_client = storage_client.get_container_client(storage_account_group_documents_container_name)
                     blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
                     
                     blob_count = 0
