@@ -49,7 +49,6 @@ def enhance_user_with_activity(user, force_refresh=False):
                 'document_metrics': {
                     'personal_workspace_enabled': user.get('settings', {}).get('enable_personal_workspace', False),
                     # enhanced_citation_enabled is NOT stored in user data - frontend gets it from app settings
-                    'last_day_uploads': 0,
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
@@ -327,30 +326,7 @@ def enhance_user_with_activity(user, force_refresh=False):
             # AI search size = pages × 80KB
             enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
             
-            # Get last day document upload (most recent last_updated date, formatted as MM/DD/YYYY)
-            last_doc_query = """
-                SELECT TOP 1 c.last_updated
-                FROM c 
-                WHERE c.user_id = @user_id AND c.type = 'document_metadata'
-                ORDER BY c.last_updated DESC
-            """
-            last_doc_result = list(cosmos_user_documents_container.query_items(
-                query=last_doc_query,
-                parameters=doc_metrics_params,
-                enable_cross_partition_query=True
-            ))
-            
-            last_day_upload = 'Never'
-            if last_doc_result and last_doc_result[0]:
-                last_updated = last_doc_result[0].get('last_updated')
-                if last_updated:
-                    try:
-                        date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                        last_day_upload = date_obj.strftime('%m/%d/%Y')
-                    except:
-                        last_day_upload = 'Invalid date'
-            
-            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
+            # Last day upload tracking removed - keeping only document count and sizes
             
             # Get actual storage account size if enhanced citation is enabled (check app settings)
             debug_print(f"💾 [STORAGE DEBUG] Enhanced citation enabled: {app_enhanced_citations}")
@@ -439,7 +415,6 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'login_metrics': enhanced['activity']['login_metrics'],
                     'chat_metrics': enhanced['activity']['chat_metrics'],
                     'document_metrics': {
-                        'last_day_upload': enhanced['activity']['document_metrics']['last_day_upload'],
                         'total_documents': enhanced['activity']['document_metrics']['total_documents'],
                         'ai_search_size': enhanced['activity']['document_metrics']['ai_search_size'],
                         'storage_account_size': enhanced['activity']['document_metrics']['storage_account_size']
@@ -508,7 +483,6 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             # Keep nested structure for backward compatibility
             'activity': {
                 'document_metrics': {
-                    'last_day_uploads': 0,
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
@@ -538,9 +512,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                             # Update flat fields
                             enhanced['document_count'] = doc_metrics.get('total_documents', 0)
                             enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
-                            # Also update the last_day_upload field if present
-                            if 'last_day_upload' in doc_metrics:
-                                enhanced['activity']['document_metrics']['last_day_upload'] = doc_metrics['last_day_upload']
+                            # Cached document metrics applied successfully
                         
                         debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Returning cached data for {workspace_id}: {enhanced['activity']['document_metrics']}")
                         return enhanced
@@ -604,59 +576,8 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                 enable_cross_partition_query=True
             ))
             
-            last_day_upload = 'Never'
-            if upload_docs:
-                # Parse and find most recent date
-                valid_dates = []
-                for doc in upload_docs:
-                    upload_date_str = doc.get('upload_date')
-                    if upload_date_str:
-                        try:
-                            if isinstance(upload_date_str, str):
-                                upload_date = datetime.fromisoformat(upload_date_str.replace('Z', '+00:00') if 'Z' in upload_date_str else upload_date_str)
-                            else:
-                                upload_date = upload_date_str
-                            valid_dates.append(upload_date)
-                        except Exception as date_e:
-                            debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Error parsing date {upload_date_str}: {date_e}")
-                
-                most_recent_date = max(valid_dates) if valid_dates else None
-                if most_recent_date:
-                    try:
-                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
-                        debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Last upload date for workspace {workspace_id}: {last_day_upload}")
-                    except Exception as format_e:
-                        debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Error formatting date for workspace {workspace_id}: {format_e}")
-                        last_day_upload = 'Invalid date'
-                else:
-                    debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] No valid dates found for workspace {workspace_id}")
-            else:
-                debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] No documents found for workspace {workspace_id}")
-                
-            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
-            
-            # Calculate last day uploads (count of documents uploaded in last day)
-            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
-            yesterday_str = yesterday.strftime('%Y-%m-%d')
-            
-            last_day_count_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.workspace_id = @workspace_id 
-                AND c.type = 'document_metadata'
-                AND c.upload_date >= @yesterday
-            """
-            last_day_params = [
-                {"name": "@workspace_id", "value": workspace_id},
-                {"name": "@yesterday", "value": yesterday_str}
-            ]
-            
-            last_day_count_result = list(cosmos_public_documents_container.query_items(
-                query=last_day_count_query,
-                parameters=last_day_params,
-                enable_cross_partition_query=True
-            ))
-            
-            enhanced['activity']['document_metrics']['last_day_uploads'] = last_day_count_result[0] if last_day_count_result else 0
+            # Last day upload tracking removed - keeping only document count and sizes
+            debug_print(f"� [PUBLIC WORKSPACE DEBUG] Document metrics calculation complete for workspace {workspace_id}")
             
         except Exception as doc_e:
             debug_print(f"❌ [PUBLIC WORKSPACE DOCUMENT DEBUG] Error calculating document metrics for workspace {workspace_id}: {doc_e}")
@@ -779,7 +700,6 @@ def enhance_group_with_activity(group, force_refresh=False):
             # Keep nested structure for backward compatibility
             'activity': {
                 'document_metrics': {
-                    'last_day_uploads': 0,
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
@@ -811,9 +731,7 @@ def enhance_group_with_activity(group, force_refresh=False):
                             # Update flat fields
                             enhanced['document_count'] = doc_metrics.get('total_documents', 0)
                             enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
-                            # Also update the last_day_upload field if present
-                            if 'last_day_upload' in doc_metrics:
-                                enhanced['activity']['document_metrics']['last_day_upload'] = doc_metrics['last_day_upload']
+                            # Cached document metrics applied successfully
                         
                         debug_print(f"👥 [GROUP DEBUG] Returning cached data for {group_id}: {enhanced['activity']['document_metrics']}")
                         return enhanced
@@ -889,73 +807,8 @@ def enhance_group_with_activity(group, force_refresh=False):
             debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
             debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 80 * 1024} bytes")
             
-            # Get last day document upload (most recent last_updated date, formatted as MM/DD/YYYY) - same as user management
-            last_doc_query = """
-                SELECT c.last_updated
-                FROM c 
-                WHERE c.group_id = @group_id AND c.type = 'document_metadata'
-            """
-            last_doc_result = list(cosmos_group_documents_container.query_items(
-                query=last_doc_query,
-                parameters=doc_metrics_params,
-                enable_cross_partition_query=True
-            ))
-            
-            last_day_upload = 'Never'
-            if last_doc_result:
-                # Find the most recent date in code (avoiding ORDER BY composite index requirement)
-                most_recent_date = None
-                most_recent_str = None
-                
-                for result in last_doc_result:
-                    last_updated = result.get('last_updated')
-                    if last_updated:
-                        try:
-                            # Parse the date to datetime object for proper comparison
-                            date_obj = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                            if most_recent_date is None or date_obj > most_recent_date:
-                                most_recent_date = date_obj
-                                most_recent_str = last_updated
-                        except Exception as parse_e:
-                            debug_print(f"📅 [GROUP UPLOAD DEBUG] Error parsing date '{last_updated}': {parse_e}")
-                            continue
-                
-                if most_recent_date:
-                    try:
-                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
-                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Last upload date for group {group_id}: {last_day_upload} (from {most_recent_str})")
-                    except Exception as format_e:
-                        debug_print(f"📅 [GROUP UPLOAD DEBUG] Error formatting date for group {group_id}: {format_e}")
-                        last_day_upload = 'Invalid date'
-                else:
-                    debug_print(f"📅 [GROUP UPLOAD DEBUG] No valid dates found for group {group_id}")
-            else:
-                debug_print(f"📅 [GROUP UPLOAD DEBUG] No documents found for group {group_id}")
-                
-            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
-            
-            # Calculate last day uploads (count of documents uploaded in last day) - for compatibility
-            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
-            yesterday_str = yesterday.strftime('%Y-%m-%d')
-            
-            last_day_count_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.group_id = @group_id 
-                AND c.type = 'document_metadata'
-                AND c.upload_date >= @yesterday
-            """
-            last_day_params = [
-                {"name": "@group_id", "value": group_id},
-                {"name": "@yesterday", "value": yesterday_str}
-            ]
-            
-            last_day_count_result = list(cosmos_group_documents_container.query_items(
-                query=last_day_count_query,
-                parameters=last_day_params,
-                enable_cross_partition_query=True
-            ))
-            
-            enhanced['activity']['document_metrics']['last_day_uploads'] = last_day_count_result[0] if last_day_count_result else 0
+            # Last day upload tracking removed - keeping only document count and sizes
+            debug_print(f"� [GROUP DOCUMENT DEBUG] Document metrics calculation complete for group {group_id}")
             
             # Find the most recent document upload for last_activity (avoid ORDER BY composite index)
             recent_activity_query = """
@@ -2295,9 +2148,10 @@ def register_route_backend_control_center(app):
             search_term = request.args.get('search', '').strip()
             status_filter = request.args.get('status_filter', 'all')
             force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+            export_all = request.args.get('all', 'false').lower() == 'true'  # For CSV export
             
-            # Calculate offset
-            offset = (page - 1) * per_page
+            # Calculate offset (only needed if not exporting all)
+            offset = (page - 1) * per_page if not export_all else 0
             
             # Base query for public workspaces
             if search_term:
@@ -2332,8 +2186,11 @@ def register_route_backend_control_center(app):
             total_count = len(all_workspaces)
             total_pages = math.ceil(total_count / per_page) if per_page > 0 else 0
             
-            # Get the workspaces for current page
-            workspaces_page = all_workspaces[offset:offset + per_page]
+            # Get the workspaces for current page or all for export
+            if export_all:
+                workspaces_page = all_workspaces  # Get all workspaces for CSV export
+            else:
+                workspaces_page = all_workspaces[offset:offset + per_page]
             
             # Enhance each workspace with activity data
             enhanced_workspaces = []
@@ -2346,23 +2203,35 @@ def register_route_backend_control_center(app):
                     # Include the original workspace if enhancement fails
                     enhanced_workspaces.append(workspace)
             
-            # Return paginated response
-            return jsonify({
-                'workspaces': enhanced_workspaces,
-                'pagination': {
-                    'page': page,
-                    'per_page': per_page,
+            # Return response (paginated or all for export)
+            if export_all:
+                return jsonify({
+                    'success': True,
+                    'workspaces': enhanced_workspaces,
                     'total_count': total_count,
-                    'total_pages': total_pages,
-                    'has_next': page < total_pages,
-                    'has_prev': page > 1
-                },
-                'filters': {
-                    'search': search_term,
-                    'status_filter': status_filter,
-                    'force_refresh': force_refresh
-                }
-            })
+                    'filters': {
+                        'search': search_term,
+                        'status_filter': status_filter,
+                        'force_refresh': force_refresh
+                    }
+                })
+            else:
+                return jsonify({
+                    'workspaces': enhanced_workspaces,
+                    'pagination': {
+                        'page': page,
+                        'per_page': per_page,
+                        'total_count': total_count,
+                        'total_pages': total_pages,
+                        'has_next': page < total_pages,
+                        'has_prev': page > 1
+                    },
+                    'filters': {
+                        'search': search_term,
+                        'status_filter': status_filter,
+                        'force_refresh': force_refresh
+                    }
+                })
             
         except Exception as e:
             current_app.logger.error(f"Error getting public workspaces for control center: {e}")

@@ -9,6 +9,8 @@ class ControlCenter {
         this.searchTerm = '';
         this.accessFilter = 'all';
         this.selectedUsers = new Set();
+        this.selectedGroups = new Set();
+        this.selectedPublicWorkspaces = new Set();
         this.currentUser = null;
         this.loginsChart = null;
         this.chatsChart = null;
@@ -56,6 +58,26 @@ class ControlCenter {
             this.debounce((e) => this.searchPublicWorkspaces(e.target.value), 300));
         document.getElementById('publicWorkspaceStatusFilterSelect')?.addEventListener('change', 
             (e) => this.filterPublicWorkspacesByStatus(e.target.value));
+        
+        // Export buttons
+        document.getElementById('exportGroupsBtn')?.addEventListener('click', 
+            () => this.exportGroupsToCSV());
+        document.getElementById('exportPublicWorkspacesBtn')?.addEventListener('click', 
+            () => this.exportPublicWorkspacesToCSV());
+        
+        // Bulk action buttons
+        document.getElementById('bulkPublicWorkspaceActionBtn')?.addEventListener('click', 
+            () => this.showPublicWorkspaceBulkActionModal());
+        
+        // Select all checkboxes
+        document.getElementById('selectAllPublicWorkspaces')?.addEventListener('change', 
+            (e) => this.handleSelectAllPublicWorkspaces(e));
+        
+        // Additional refresh buttons
+        document.getElementById('refreshGroupsBtn')?.addEventListener('click', 
+            () => this.loadGroups());
+        document.getElementById('refreshPublicWorkspacesBtn')?.addEventListener('click', 
+            () => this.refreshPublicWorkspaces());
         
         // Refresh buttons - these reload cached data, don't recalculate metrics
         document.getElementById('refreshUsersBtn')?.addEventListener('click', 
@@ -288,19 +310,17 @@ class ControlCenter {
             return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
         }
         
-        const lastDayConversation = chatMetrics.last_day_conversation || 'Never';
         const totalConversations = chatMetrics.total_conversations || 0;
         const totalMessages = chatMetrics.total_messages || 0;
         const messageSize = chatMetrics.total_message_size || 0;
         
         // If all values are zero/empty, show refresh message
-        if (totalConversations === 0 && totalMessages === 0 && messageSize === 0 && lastDayConversation === 'Never') {
+        if (totalConversations === 0 && totalMessages === 0 && messageSize === 0) {
             return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
         }
         
         return `
             <div class="small">
-                <div><strong>Last Day:</strong> ${lastDayConversation}</div>
                 <div><strong>Total:</strong> ${totalConversations} convos</div>
                 <div><strong>Messages:</strong> ${totalMessages}</div>
                 <div class="text-muted">Size: ${this.formatBytes(messageSize)}</div>
@@ -313,7 +333,6 @@ class ControlCenter {
             return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
         }
         
-        const lastDayUpload = docMetrics.last_day_upload || 'Never';
         const totalDocs = docMetrics.total_documents || 0;
         const aiSearchSize = docMetrics.ai_search_size || 0;
         const storageSize = docMetrics.storage_account_size || 0;
@@ -322,13 +341,12 @@ class ControlCenter {
         const personalWorkspace = docMetrics.personal_workspace_enabled;
         
         // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0 && lastDayUpload === 'Never') {
+        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
             return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
         }
         
         let html = `
             <div class="small">
-                <div><strong>Last Day:</strong> ${lastDayUpload}</div>
                 <div><strong>Total Docs:</strong> ${totalDocs}</div>
                 <div><strong>AI Search:</strong> ${this.formatBytes(aiSearchSize)}</div>
         `;
@@ -354,7 +372,6 @@ class ControlCenter {
             return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
         }
         
-        const lastDayUpload = docMetrics.last_day_upload || 'Never';
         const totalDocs = docMetrics.total_documents || 0;
         const aiSearchSize = docMetrics.ai_search_size || 0;
         const storageSize = docMetrics.storage_account_size || 0;
@@ -362,13 +379,12 @@ class ControlCenter {
         const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
         
         // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0 && lastDayUpload === 'Never') {
+        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
             return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
         }
         
         let html = `
             <div class="small">
-                <div><strong>Last Day:</strong> ${lastDayUpload}</div>
                 <div><strong>Total Docs:</strong> ${totalDocs}</div>
                 <div><strong>AI Search:</strong> ${this.formatBytes(aiSearchSize)}</div>
         `;
@@ -553,6 +569,30 @@ class ControlCenter {
         const selectedCount = document.getElementById('selectedUserCount');
         if (selectedCount) {
             selectedCount.textContent = this.selectedUsers.size;
+        }
+    }
+    
+    updatePublicWorkspaceBulkActionButton() {
+        const bulkActionBtn = document.getElementById('publicWorkspaceBulkActionBtn');
+        if (bulkActionBtn) {
+            bulkActionBtn.disabled = this.selectedPublicWorkspaces.size === 0;
+        }
+        
+        const selectedCount = document.getElementById('selectedPublicWorkspaceCount');
+        if (selectedCount) {
+            selectedCount.textContent = this.selectedPublicWorkspaces.size;
+        }
+    }
+    
+    updateGroupBulkActionButton() {
+        const bulkActionBtn = document.getElementById('groupBulkActionBtn');
+        if (bulkActionBtn) {
+            bulkActionBtn.disabled = this.selectedGroups.size === 0;
+        }
+        
+        const selectedCount = document.getElementById('selectedGroupCount');
+        if (selectedCount) {
+            selectedCount.textContent = this.selectedGroups.size;
         }
     }
     
@@ -836,9 +876,7 @@ class ControlCenter {
             'Total Logins',
             'Total Conversations',
             'Total Messages',
-            'Last Day Conversations',
             'Total Documents',
-            'Last Day Uploads',
             'AI Search Size (MB)'
         ];
         
@@ -866,9 +904,7 @@ class ControlCenter {
                 loginMetrics.total_logins || 0,
                 chatMetrics.total_conversations || 0,
                 chatMetrics.total_messages || 0,
-                chatMetrics.last_day_conversations || 0,
                 docMetrics.total_documents || 0,
-                docMetrics.last_day_uploads || 0,
                 this.formatBytesForCSV(docMetrics.ai_search_size || 0)
             ];
             
@@ -904,6 +940,100 @@ class ControlCenter {
         // Convert to MB and round to 2 decimal places
         const mb = bytes / (1024 * 1024);
         return Math.round(mb * 100) / 100;
+    }
+
+    convertGroupsToCSV(groups) {
+        if (!groups || groups.length === 0) {
+            return 'No groups to export';
+        }
+        
+        // Define CSV headers
+        const headers = [
+            'Group Name',
+            'Description',
+            'Owner Name', 
+            'Owner Email',
+            'Member Count',
+            'Status',
+            'Total Documents',
+            'AI Search Size (MB)',
+            'Storage Account Size (MB)',
+            'Group ID'
+        ];
+        
+        // Convert groups to CSV rows
+        const csvRows = [headers.join(',')];
+        
+        groups.forEach(group => {
+            const activity = group.activity || {};
+            const docMetrics = activity.document_metrics || {};
+            const ownerName = group.owner?.displayName || group.owner?.display_name || 'Unknown';
+            const ownerEmail = group.owner?.email || '';
+            
+            const row = [
+                this.escapeCSVField(group.name || ''),
+                this.escapeCSVField(group.description || ''),
+                this.escapeCSVField(ownerName),
+                this.escapeCSVField(ownerEmail),
+                group.member_count || 0,
+                'Active',
+                docMetrics.total_documents || 0,
+                this.formatBytesForCSV(docMetrics.ai_search_size || 0),
+                this.formatBytesForCSV(docMetrics.storage_account_size || 0),
+                this.escapeCSVField(group.id || '')
+            ];
+            
+            csvRows.push(row.join(','));
+        });
+        
+        return csvRows.join('\n');
+    }
+
+    convertPublicWorkspacesToCSV(workspaces) {
+        if (!workspaces || workspaces.length === 0) {
+            return 'No public workspaces to export';
+        }
+        
+        // Define CSV headers
+        const headers = [
+            'Workspace Name',
+            'Description',
+            'Owner Name', 
+            'Owner Email',
+            'Member Count',
+            'Status',
+            'Total Documents',
+            'AI Search Size (MB)',
+            'Storage Account Size (MB)',
+            'Workspace ID'
+        ];
+        
+        // Convert workspaces to CSV rows
+        const csvRows = [headers.join(',')];
+        
+        workspaces.forEach(workspace => {
+            const activity = workspace.activity || {};
+            const docMetrics = activity.document_metrics || {};
+            const ownerName = workspace.owner?.displayName || workspace.owner?.display_name || workspace.owner_name || 'Unknown';
+            const ownerEmail = workspace.owner?.email || workspace.owner_email || '';
+            
+            const row = [
+                this.escapeCSVField(workspace.name || ''),
+                this.escapeCSVField(workspace.description || ''),
+                this.escapeCSVField(ownerName),
+                this.escapeCSVField(ownerEmail),
+                workspace.member_count || 0,
+                'Active',
+                docMetrics.total_documents || 0,
+                this.formatBytesForCSV(docMetrics.ai_search_size || 0),
+                this.formatBytesForCSV(docMetrics.storage_account_size || 0),
+                this.escapeCSVField(workspace.id || '')
+            ];
+            
+            csvRows.push(row.join(','));
+        });
+        
+        return csvRows.join('\n');
     }
     
     showLoading(show) {
@@ -1696,7 +1826,7 @@ class ControlCenter {
         // Show loading state like users do
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="text-center py-4">
+                <td colspan="7" class="text-center py-4">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
@@ -1750,7 +1880,7 @@ class ControlCenter {
             // Show error state like users do
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="text-center py-4 text-danger">
+                    <td colspan="7" class="text-center py-4 text-danger">
                         <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
                         <div class="mt-2">Error loading groups: ${error.message}</div>
                         <button class="btn btn-sm btn-outline-primary mt-2" onclick="window.controlCenter.loadGroups()">
@@ -1771,7 +1901,7 @@ class ControlCenter {
         if (groups.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="text-center py-4">
+                    <td colspan="7" class="text-center py-4">
                         <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
                         <div class="mt-2">No groups found</div>
                     </td>
@@ -1782,6 +1912,22 @@ class ControlCenter {
         
         // Render groups using the same pattern as users
         tbody.innerHTML = groups.map(group => this.createGroupRow(group)).join('');
+        
+        // Add event listeners to checkboxes
+        const checkboxes = tbody.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    this.selectedGroups.add(e.target.value);
+                } else {
+                    this.selectedGroups.delete(e.target.value);
+                }
+                this.updateGroupBulkActionButton();
+            });
+        });
+        
+        // Update bulk action button state
+        this.updateGroupBulkActionButton();
         
         // Initialize sorting after data is loaded
         if (!window.groupTableSorter) {
@@ -1800,7 +1946,6 @@ class ControlCenter {
         
         // Get document metrics
         const totalDocs = group.activity?.document_metrics?.total_documents || 0;
-        const lastUpload = group.activity?.document_metrics?.last_day_upload || 'Never';
         
         // Get group info
         const memberCount = group.member_count || 0;
@@ -1825,10 +1970,9 @@ class ControlCenter {
                     <div class="text-muted small">${memberCount} members</div>
                 </td>
                 <td>
-                    <div class="text-muted small">${lastUpload}</div>
+                    <span class="badge bg-success">Active</span>
                 </td>
                 <td>
-                    <div><strong>Last Day:</strong> ${lastUpload}</div>
                     <div><strong>Total Docs:</strong> ${totalDocs}</div>
                     <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
                     <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
@@ -1956,6 +2100,22 @@ class ControlCenter {
         
         // Render workspaces using the same pattern as groups
         tbody.innerHTML = workspaces.map(workspace => this.createPublicWorkspaceRow(workspace)).join('');
+        
+        // Add event listeners to checkboxes
+        const checkboxes = tbody.querySelectorAll('.public-workspace-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    this.selectedPublicWorkspaces.add(e.target.value);
+                } else {
+                    this.selectedPublicWorkspaces.delete(e.target.value);
+                }
+                this.updatePublicWorkspaceBulkActionButton();
+            });
+        });
+        
+        // Update bulk action button state
+        this.updatePublicWorkspaceBulkActionButton();
     }
     
     createPublicWorkspaceRow(workspace) {
@@ -1969,7 +2129,6 @@ class ControlCenter {
         
         // Get document metrics
         const totalDocs = workspace.activity?.document_metrics?.total_documents || 0;
-        const lastUpload = workspace.activity?.document_metrics?.last_day_upload || 'Never';
         
         // Get workspace info
         const memberCount = workspace.member_count || 0;
@@ -1978,6 +2137,9 @@ class ControlCenter {
         
         return `
             <tr>
+                <td>
+                    <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
+                </td>
                 <td>
                     <div><strong>${workspace.name || 'Unnamed Workspace'}</strong></div>
                     <div class="text-muted small">${workspace.description || 'No description'}</div>
@@ -1994,15 +2156,10 @@ class ControlCenter {
                     <span class="badge bg-success">Active</span>
                 </td>
                 <td>
-                    <div><strong>Last Day:</strong> ${lastUpload}</div>
                     <div><strong>Total Docs:</strong> ${totalDocs}</div>
                     <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
                     <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
                     ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
-                </td>
-                <td>
-                    <div><strong>${totalDocs}</strong></div>
-                    <div class="text-muted small">${storageSizeFormatted}</div>
                 </td>
                 <td>
                     <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.managePublicWorkspace('${workspace.id}')">
@@ -2069,6 +2226,114 @@ class ControlCenter {
                 console.error('Error refreshing public workspaces:', error);
                 this.showAlert('danger', `Error refreshing public workspaces: ${error.message}`);
             });
+    }
+
+    async exportGroupsToCSV() {
+        try {
+            // Show loading state
+            const exportBtn = document.getElementById('exportGroupsBtn');
+            const originalText = exportBtn.innerHTML;
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+            
+            // Get all groups data
+            const response = await fetch('/api/admin/control-center/groups?all=true&force_refresh=false');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch groups: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to fetch groups');
+            }
+            
+            // Convert groups data to CSV
+            const csvContent = this.convertGroupsToCSV(data.groups || []);
+            
+            // Create and download CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            
+            // Generate filename with current date
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+            link.setAttribute('download', `groups_export_${dateStr}.csv`);
+            
+            // Trigger download
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            this.showAlert('success', `Successfully exported ${data.groups?.length || 0} groups to CSV`);
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showAlert('danger', `Export failed: ${error.message}`);
+        } finally {
+            // Restore button state
+            const exportBtn = document.getElementById('exportGroupsBtn');
+            if (exportBtn) {
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = '<i class="bi bi-download me-1"></i>Export';
+            }
+        }
+    }
+
+    async exportPublicWorkspacesToCSV() {
+        try {
+            // Show loading state
+            const exportBtn = document.getElementById('exportPublicWorkspacesBtn');
+            const originalText = exportBtn.innerHTML;
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Exporting...';
+            
+            // Get all public workspaces data
+            const response = await fetch('/api/admin/control-center/public-workspaces?all=true&force_refresh=false');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch public workspaces: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.message || 'Failed to fetch public workspaces');
+            }
+            
+            // Convert workspaces data to CSV
+            const csvContent = this.convertPublicWorkspacesToCSV(data.workspaces || []);
+            
+            // Create and download CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            
+            // Generate filename with current date
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+            link.setAttribute('download', `public_workspaces_export_${dateStr}.csv`);
+            
+            // Trigger download
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            this.showAlert('success', `Successfully exported ${data.workspaces?.length || 0} public workspaces to CSV`);
+            
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showAlert('danger', `Export failed: ${error.message}`);
+        } finally {
+            // Restore button state
+            const exportBtn = document.getElementById('exportPublicWorkspacesBtn');
+            if (exportBtn) {
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = '<i class="bi bi-download me-1"></i>Export';
+            }
+        }
     }
     
     showAlert(type, message) {

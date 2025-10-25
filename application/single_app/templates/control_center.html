@@ -741,6 +741,9 @@
                                         <button type="button" class="btn btn-primary" id="bulkGroupActionBtn" disabled>
                                             <i class="bi bi-gear-fill me-1"></i>Bulk
                                         </button>
+                                        <button type="button" class="btn btn-outline-success" id="exportGroupsBtn" title="Export groups as CSV">
+                                            <i class="bi bi-download me-1"></i>Export
+                                        </button>
                                         <button type="button" class="btn btn-outline-primary" id="refreshGroupsBtn">
                                             <i class="bi bi-arrow-clockwise"></i>Refresh
                                         </button>
@@ -762,14 +765,13 @@
                                                     <th class="sortable" data-sort="owner" style="padding-right: 25px;">Owner</th>
                                                     <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
                                                     <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
-                                                    <th class="sortable" data-sort="lastUpload" style="padding-right: 25px;">Last Upload</th>
                                                     <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
                                                     <th>Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="groupsTableBody">
                                                 <tr>
-                                                    <td colspan="8" class="text-center py-4">
+                                                    <td colspan="7" class="text-center py-4">
                                                         <div class="spinner-border text-primary" role="status">
                                                             <span class="visually-hidden">Loading...</span>
                                                         </div>
@@ -829,7 +831,20 @@
                                     </select>
                                 </div>
                                 <div class="col-md-3">
-                                    <div class="text-muted small d-flex align-items-center h-100">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkPublicWorkspaceActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk
+                                        </button>
+                                        <button type="button" class="btn btn-outline-success" id="exportPublicWorkspacesBtn" title="Export public workspaces as CSV">
+                                            <i class="bi bi-download me-1"></i>Export
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshPublicWorkspacesBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>Refresh
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="text-muted small mt-2">
                                         <span id="publicWorkspaceCount">Loading...</span>
                                     </div>
                                 </div>
@@ -840,11 +855,13 @@
                                 <table class="table table-hover align-middle" id="publicWorkspacesTable">
                                     <thead class="table-light">
                                         <tr>
+                                            <th style="width: 50px;">
+                                                <input type="checkbox" class="form-check-input" id="selectAllPublicWorkspaces">
+                                            </th>
                                             <th>Workspace Name</th>
                                             <th>Owner</th>
                                             <th>Members</th>
                                             <th>Status</th>
-                                            <th>Last Upload</th>
                                             <th>Documents</th>
                                             <th>Actions</th>
                                         </tr>
@@ -1240,9 +1257,6 @@
                                     <div class="row mt-2">
                                         <div class="col-md-6">
                                             <strong>Created:</strong> <span id="modalGroupCreated">-</span>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <strong>Last Upload:</strong> <span id="modalGroupLastUpload">-</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1750,7 +1764,7 @@ class GroupTableSorter {
             let bValue = this.getCellValue(b, sortKey);
 
             // Handle different data types
-            if (sortKey === 'members' || sortKey === 'documents' || sortKey === 'lastUpload') {
+            if (sortKey === 'members' || sortKey === 'documents') {
                 // Numeric sorting for numbers and dates
                 aValue = this.parseNumericValue(aValue);
                 bValue = this.parseNumericValue(bValue);
@@ -1803,11 +1817,7 @@ class GroupTableSorter {
                 const statusBadge = cell.querySelector('.group-status-badge, .badge');
                 value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
                 break;
-            case 'lastUpload':
-                // Extract date values
-                value = cell.textContent.trim();
-                if (value.toLowerCase() === 'never') return '0';
-                break;
+
             case 'documents':
                 // Extract document count
                 const docText = cell.textContent.trim();
@@ -1912,7 +1922,7 @@ const GroupManager = {
             const data = await response.json();
             
             if (data.groups && data.groups.length > 0) {
-                tbody.innerHTML = data.groups.map(group => this.createRealGroupRow(group)).join('');
+                tbody.innerHTML = data.groups.map(group => this.createGroupRow(group)).join('');
             } else {
                 tbody.innerHTML = `
                     <tr>
@@ -1958,123 +1968,8 @@ const GroupManager = {
         // Initial state is now set directly in HTML template
     },
 
-    // Generate sample group rows for demonstration
-    generateSampleGroupRows: function() {
-        const sampleGroups = [
-            {
-                id: 'group-1',
-                name: 'Engineering Team',
-                owner: 'John Smith',
-                ownerEmail: 'john.smith@company.com',
-                members: 12,
-                status: 'active',
-                lastUpload: '2024-10-14',
-                documents: 45,
-                created: '2024-01-15',
-                memberList: ['john.smith@company.com', 'alice.doe@company.com', 'bob.wilson@company.com']
-            },
-            {
-                id: 'group-2', 
-                name: 'Marketing Department',
-                owner: 'Sarah Johnson',
-                ownerEmail: 'sarah.johnson@company.com',
-                members: 8,
-                status: 'locked',
-                lastUpload: '2024-10-10',
-                documents: 23,
-                created: '2024-02-08',
-                memberList: ['sarah.johnson@company.com', 'mike.brown@company.com', 'lisa.white@company.com']
-            },
-            {
-                id: 'group-3',
-                name: 'Product Research',
-                owner: 'Mike Davis',
-                ownerEmail: 'mike.davis@company.com',
-                members: 5,
-                status: 'upload_disabled',
-                lastUpload: 'Never',
-                documents: 12,
-                created: '2024-03-22',
-                memberList: ['mike.davis@company.com', 'emma.green@company.com', 'david.black@company.com']
-            },
-            {
-                id: 'group-4',
-                name: 'Sales Team',
-                owner: 'Jennifer Lee',
-                ownerEmail: 'jennifer.lee@company.com',
-                members: 15,
-                status: 'active',
-                lastUpload: '2024-10-16',
-                documents: 67,
-                created: '2023-11-05',
-                memberList: ['jennifer.lee@company.com', 'robert.jones@company.com', 'mary.taylor@company.com']
-            },
-            {
-                id: 'group-5',
-                name: 'HR Department',
-                owner: 'Amanda Wilson',
-                ownerEmail: 'amanda.wilson@company.com',
-                members: 6,
-                status: 'active',
-                lastUpload: '2024-10-12',
-                documents: 34,
-                created: '2024-01-30',
-                memberList: ['amanda.wilson@company.com', 'thomas.anderson@company.com', 'susan.clark@company.com']
-            }
-        ];
-
-        return sampleGroups.map(group => this.createGroupRow(group)).join('');
-    },
-
-    // Create a group table row
+    // Create group table row from API data
     createGroupRow: function(group) {
-        const statusClass = `group-status-${group.status.replace('_', '-')}`;
-        const statusText = {
-            'active': 'Active',
-            'locked': 'Locked',
-            'upload_disabled': 'Upload Disabled',
-            'inactive': 'Inactive'
-        }[group.status] || 'Unknown';
-
-        return `
-            <tr data-group-id="${group.id}">
-                <td>
-                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
-                </td>
-                <td>
-                    <div class="fw-bold">${group.name}</div>
-                    <small class="text-muted">ID: ${group.id}</small>
-                </td>
-                <td>
-                    <div>${group.owner}</div>
-                    <span class="ownership-badge">Owner</span>
-                </td>
-                <td>
-                    <span class="member-count">${group.members}</span> members
-                </td>
-                <td>
-                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
-                </td>
-                <td>
-                    <div class="activity-indicator ${this.getActivityClass(group.lastUpload)}">
-                        ${group.lastUpload}
-                    </div>
-                </td>
-                <td>
-                    <span class="document-count">${group.documents}</span> docs
-                </td>
-                <td>
-                    <button type="button" class="btn btn-sm btn-outline-primary" 
-                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
-                        <i class="bi bi-gear me-1"></i>Manage
-                    </button>
-                </td>
-            </tr>
-        `;
-    },
-
-    // Create a real group table row from API data
-    createRealGroupRow: function(group) {
         const statusClass = `group-status-${(group.status || 'active').replace('_', '-')}`;
         const statusText = {
             'active': 'Active',
@@ -2132,12 +2027,6 @@ const GroupManager = {
                     <span class="badge group-status-badge ${statusClass}">${statusText}</span>
                 </td>
                 <td>
-                    <div class="activity-indicator ${this.getActivityClass(group.last_activity)}">
-                        <div>${formatDate(group.last_activity)}</div>
-                        ${group.recent_activity_count ? `<small class="text-muted">${group.recent_activity_count} recent</small>` : ''}
-                    </div>
-                </td>
-                <td>
                     ${window.controlCenter ? window.controlCenter.renderGroupDocumentMetrics(group.activity?.document_metrics) : `<div class="small">${group.document_count || 0} docs</div>`}
                 </td>
                 <td>
@@ -2148,19 +2037,6 @@ const GroupManager = {
                 </td>
             </tr>
         `;
-    },
-
-    // Get activity class based on date
-    getActivityClass: function(dateStr) {
-        if (dateStr === 'Never') return 'activity-never';
-        
-        const date = new Date(dateStr);
-        const now = new Date();
-        const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-        
-        if (diffDays <= 7) return 'activity-recent';
-        if (diffDays <= 30) return 'activity-moderate';
-        return 'activity-old';
     },
 
     // Handle search functionality
@@ -2274,7 +2150,7 @@ const GroupManager = {
             };
             
             document.getElementById('modalGroupCreated').textContent = formatDate(group.created_at);
-            document.getElementById('modalGroupLastUpload').textContent = formatDate(group.last_activity) || 'Never';
+
             
             // Set group status
             document.getElementById('groupStatusSelect').value = group.status || 'active';
@@ -2482,56 +2358,61 @@ const GroupManager = {
         }
     },
 
-    // Load group members
-    loadGroupMembers: function() {
+    // Load group members from API
+    async loadGroupMembers() {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
-        // Sample member data
-        const sampleMembers = {
-            'group-1': [
-                { name: 'John Smith', email: 'john.smith@company.com', role: 'Owner', joined: '2024-01-15', lastActive: '2024-10-16' },
-                { name: 'Alice Doe', email: 'alice.doe@company.com', role: 'Admin', joined: '2024-01-20', lastActive: '2024-10-15' },
-                { name: 'Bob Wilson', email: 'bob.wilson@company.com', role: 'Member', joined: '2024-02-01', lastActive: '2024-10-14' },
-                { name: 'Carol Brown', email: 'carol.brown@company.com', role: 'Member', joined: '2024-02-15', lastActive: '2024-10-13' }
-            ],
-            'group-2': [
-                { name: 'Sarah Johnson', email: 'sarah.johnson@company.com', role: 'Owner', joined: '2024-02-08', lastActive: '2024-10-12' },
-                { name: 'Mike Brown', email: 'mike.brown@company.com', role: 'Admin', joined: '2024-02-10', lastActive: '2024-10-11' },
-                { name: 'Lisa White', email: 'lisa.white@company.com', role: 'Member', joined: '2024-02-20', lastActive: '2024-10-10' }
-            ]
-        };
-
-        const members = sampleMembers[groupId] || [];
-        const groupName = document.getElementById('modalGroupName').textContent;
-        
-        // Populate members modal
-        document.getElementById('membersGroupName').textContent = `${groupName} Members`;
-        
-        const tbody = document.getElementById('groupMembersTableBody');
-        tbody.innerHTML = members.map(member => `
-            <tr>
-                <td>
-                    <div class="fw-bold">${member.name}</div>
-                    <small class="text-muted">${member.email}</small>
-                </td>
-                <td>
-                    <span class="badge ${member.role === 'Owner' ? 'bg-primary' : member.role === 'Admin' ? 'bg-info' : 'bg-secondary'}">${member.role}</span>
-                </td>
-                <td>${member.joined}</td>
-                <td>${member.lastActive}</td>
-                <td>
-                    <div class="btn-group" role="group">
-                        <button type="button" class="btn btn-sm btn-outline-primary" title="Change Role">
-                            <i class="bi bi-person-gear"></i>
-                        </button>
-                        ${member.role !== 'Owner' ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Remove Member">
-                            <i class="bi bi-person-dash"></i>
-                        </button>` : ''}
-                    </div>
-                </td>
-            </tr>
-        `).join('');
+        try {
+            // TODO: Replace with actual API call to fetch group members
+            // const response = await fetch(`/api/admin/groups/${groupId}/members`);
+            // const data = await response.json();
+            // const members = data.members || [];
+            
+            // Placeholder for API implementation
+            const members = [];
+            
+            const groupName = document.getElementById('modalGroupName').textContent;
+            
+            // Populate members modal
+            document.getElementById('membersGroupName').textContent = `${groupName} Members`;
+            
+            const tbody = document.getElementById('groupMembersTableBody');
+            tbody.innerHTML = members.map(member => `
+                <tr>
+                    <td>
+                        <div class="fw-bold">${member.name || 'Unknown User'}</div>
+                        <small class="text-muted">${member.email || 'No email'}</small>
+                    </td>
+                    <td>
+                        <span class="badge ${member.role === 'Owner' ? 'bg-primary' : member.role === 'Admin' ? 'bg-info' : 'bg-secondary'}">${member.role || 'Member'}</span>
+                    </td>
+                    <td>${member.joined || 'Unknown'}</td>
+                    <td>${member.lastActive || 'Never'}</td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-sm btn-outline-primary" title="Change Role">
+                                <i class="bi bi-person-gear"></i>
+                            </button>
+                            ${member.role !== 'Owner' ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Remove Member">
+                                <i class="bi bi-person-dash"></i>
+                            </button>` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+            
+        } catch (error) {
+            console.error('Error loading group members:', error);
+            const tbody = document.getElementById('groupMembersTableBody');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center py-4">
+                        <div class="text-muted">Error loading members. Please try again.</div>
+                    </td>
+                </tr>
+            `;
+        }
     },
 
     // Alias for backward compatibility
