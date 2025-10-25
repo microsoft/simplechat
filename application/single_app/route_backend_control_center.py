@@ -536,16 +536,22 @@ def enhance_group_with_activity(group, force_refresh=False):
                     cache_time = datetime.fromisoformat(cached_metrics['calculated_at'].replace('Z', '+00:00'))
                     now = datetime.now(timezone.utc)
                     
-                    if now - cache_time < timedelta(hours=1):
-                        debug_print(f"👥 [GROUP DEBUG] Using cached metrics for group {group_id}")
+                    if now - cache_time < timedelta(hours=24):  # Use 24-hour cache window
+                        debug_print(f"👥 [GROUP DEBUG] Using cached metrics for group {group_id} (cached at {cache_time})")
                         if 'document_metrics' in cached_metrics:
                             doc_metrics = cached_metrics['document_metrics']
                             enhanced['activity']['document_metrics'] = doc_metrics
                             # Update flat fields
                             enhanced['document_count'] = doc_metrics.get('total_documents', 0)
                             enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
+                            # Also update the last_day_upload field if present
+                            if 'last_day_upload' in doc_metrics:
+                                enhanced['activity']['document_metrics']['last_day_upload'] = doc_metrics['last_day_upload']
                         
+                        debug_print(f"👥 [GROUP DEBUG] Returning cached data for {group_id}: {enhanced['activity']['document_metrics']}")
                         return enhanced
+                    else:
+                        debug_print(f"👥 [GROUP DEBUG] Cache expired for group {group_id} (cached at {cache_time}, age: {now - cache_time})")
                 except Exception as cache_e:
                     debug_print(f"Error using cached metrics for group {group_id}: {cache_e}")
             
@@ -886,7 +892,9 @@ def get_activity_trends_data(start_date, end_date):
             daily_data[date_key] = {
                 'date': date_key,
                 'chats': 0,
-                'documents': 0,
+                'personal_documents': 0,  # Track personal documents separately
+                'group_documents': 0,     # Track group documents separately
+                'documents': 0,           # Keep for backward compatibility
                 'logins': 0,
                 'total': 0
             }
@@ -944,7 +952,7 @@ def get_activity_trends_data(start_date, end_date):
             current_app.logger.warning(f"Could not query conversation/message data: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
 
-        # Query 2: Get document activity
+        # Query 2: Get document activity - separate personal and group documents
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents...")
             
@@ -954,22 +962,22 @@ def get_activity_trends_data(start_date, end_date):
                 WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
             """
             
-            # Query all document containers
+            # Query document containers separately to track personal vs group
             containers = [
-                ('user_documents', cosmos_user_documents_container),
-                ('group_documents', cosmos_group_documents_container), 
-                ('public_documents', cosmos_public_documents_container)
+                ('user_documents', cosmos_user_documents_container, 'personal_documents'),
+                ('group_documents', cosmos_group_documents_container, 'group_documents'), 
+                ('public_documents', cosmos_public_documents_container, 'personal_documents')  # Treat public as personal
             ]
             
             total_docs = 0
-            for container_name, container in containers:
+            for container_name, container, doc_type in containers:
                 docs = list(container.query_items(
                     query=documents_query,
                     parameters=parameters,
                     enable_cross_partition_query=True
                 ))
                 
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} documents in {container_name}")
+                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} documents in {container_name} (type: {doc_type})")
                 total_docs += len(docs)
                 
                 for doc in docs:
@@ -985,7 +993,8 @@ def get_activity_trends_data(start_date, end_date):
                             
                             date_key = doc_date.strftime('%Y-%m-%d')
                             if date_key in daily_data:
-                                daily_data[date_key]['documents'] += 1
+                                daily_data[date_key][doc_type] += 1  # Increment specific document type
+                                daily_data[date_key]['documents'] += 1  # Keep total for backward compatibility
                         except Exception as e:
                             current_app.logger.debug(f"Could not parse document upload_date {upload_date}: {e}")
             
@@ -1093,13 +1102,17 @@ def get_activity_trends_data(start_date, end_date):
         # Group by activity type for chart display  
         result = {
             'chats': {},
-            'documents': {},
+            'documents': {},           # Keep for backward compatibility
+            'personal_documents': {},  # New: personal documents only
+            'group_documents': {},     # New: group documents only
             'logins': {}
         }
         
         for date_key, data in daily_data.items():
             result['chats'][date_key] = data['chats']
-            result['documents'][date_key] = data['documents'] 
+            result['documents'][date_key] = data['documents']  # Total for backward compatibility
+            result['personal_documents'][date_key] = data['personal_documents']
+            result['group_documents'][date_key] = data['group_documents']
             result['logins'][date_key] = data['logins']
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")
@@ -1112,6 +1125,8 @@ def get_activity_trends_data(start_date, end_date):
         return {
             'chats': {},
             'documents': {},
+            'personal_documents': {},
+            'group_documents': {},
             'logins': {}
         }
 
@@ -1196,26 +1211,25 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                 debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting login data: {e}")
                 result['logins'] = []
         
-        # 2. Document Data
-        if 'documents' in charts:
-            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting document records...")
+        # 2. Document Data - Handle personal and group documents separately
+        documents_query = """
+            SELECT c.id, c.user_id, c.filename, c.title, c.page_count, 
+                   c.ai_search_size, c.storage_account_size, c.upload_date
+            FROM c 
+            WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
+        """
+        
+        # Personal Documents (user_documents + public_documents)
+        if 'personal_documents' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting personal document records...")
             try:
-                documents_query = """
-                    SELECT c.id, c.user_id, c.filename, c.title, c.page_count, 
-                           c.ai_search_size, c.storage_account_size, c.upload_date
-                    FROM c 
-                    WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
-                """
-                
-                # Query all document containers
-                containers = [
+                personal_containers = [
                     ('user_documents', cosmos_user_documents_container),
-                    ('group_documents', cosmos_group_documents_container), 
                     ('public_documents', cosmos_public_documents_container)
                 ]
                 
-                document_records = []
-                for container_name, container in containers:
+                personal_document_records = []
+                for container_name, container in personal_containers:
                     docs = list(container.query_items(
                         query=documents_query,
                         parameters=parameters,
@@ -1234,7 +1248,7 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                                 else:
                                     doc_date = upload_date
                                 
-                                document_records.append({
+                                personal_document_records.append({
                                     'display_name': user_info['display_name'],
                                     'email': user_info['email'],
                                     'user_id': user_id,
@@ -1244,17 +1258,80 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                                     'page_count': doc.get('page_count', ''),
                                     'ai_search_size': doc.get('ai_search_size', ''),
                                     'storage_account_size': doc.get('storage_account_size', ''),
-                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S')
+                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'document_type': 'Personal'
                                 })
                             except Exception as e:
-                                debug_print(f"Could not parse document upload_date {upload_date}: {e}")
+                                debug_print(f"Could not parse personal document upload_date {upload_date}: {e}")
                 
-                result['documents'] = document_records
-                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(document_records)} document records")
+                result['personal_documents'] = personal_document_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(personal_document_records)} personal document records")
                 
             except Exception as e:
-                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting document data: {e}")
-                result['documents'] = []
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting personal document data: {e}")
+                result['personal_documents'] = []
+        
+        # Group Documents
+        if 'group_documents' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting group document records...")
+            try:
+                group_containers = [
+                    ('group_documents', cosmos_group_documents_container)
+                ]
+                
+                group_document_records = []
+                for container_name, container in group_containers:
+                    docs = list(container.query_items(
+                        query=documents_query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    ))
+                    
+                    for doc in docs:
+                        user_id = doc.get('user_id', '')
+                        user_info = get_user_info(user_id)
+                        upload_date = doc.get('upload_date')
+                        
+                        if upload_date:
+                            try:
+                                if isinstance(upload_date, str):
+                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
+                                else:
+                                    doc_date = upload_date
+                                
+                                group_document_records.append({
+                                    'display_name': user_info['display_name'],
+                                    'email': user_info['email'],
+                                    'user_id': user_id,
+                                    'document_id': doc.get('id', ''),
+                                    'filename': doc.get('filename', ''),
+                                    'title': doc.get('title', ''),
+                                    'page_count': doc.get('page_count', ''),
+                                    'ai_search_size': doc.get('ai_search_size', ''),
+                                    'storage_account_size': doc.get('storage_account_size', ''),
+                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'document_type': 'Group'
+                                })
+                            except Exception as e:
+                                debug_print(f"Could not parse group document upload_date {upload_date}: {e}")
+                
+                result['group_documents'] = group_document_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(group_document_records)} group document records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting group document data: {e}")
+                result['group_documents'] = []
+        
+        # Keep backward compatibility - if 'documents' is requested, combine both types
+        if 'documents' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting combined document records for backward compatibility...")
+            combined_records = []
+            if 'personal_documents' in result:
+                combined_records.extend(result['personal_documents'])
+            if 'group_documents' in result:
+                combined_records.extend(result['group_documents'])
+            result['documents'] = combined_records
+            debug_print(f"🔍 [RAW ACTIVITY DEBUG] Combined {len(combined_records)} total document records")
         
         # 3. Chat Data
         if 'chats' in charts:
@@ -2039,30 +2116,48 @@ def register_route_backend_control_center(app):
             writer = csv.writer(output)
             
             # Write data for each chart type
+            debug_print(f"🔍 [CSV DEBUG] Processing {len(charts)} chart types: {charts}")
             for chart_type in charts:
+                debug_print(f"🔍 [CSV DEBUG] Processing chart type: {chart_type}")
                 if chart_type in raw_data and raw_data[chart_type]:
+                    debug_print(f"🔍 [CSV DEBUG] Found {len(raw_data[chart_type])} records for {chart_type}")
                     # Add section header
                     writer.writerow([])  # Empty row for separation
-                    writer.writerow([f"=== {chart_type.upper()} DATA ==="])
+                    section_header = f"=== {chart_type.upper()} DATA ==="
+                    debug_print(f"🔍 [CSV DEBUG] Writing section header: {section_header}")
+                    writer.writerow([section_header])
                     
                     # Write headers and data based on chart type
                     if chart_type == 'logins':
+                        debug_print(f"🔍 [CSV DEBUG] Writing login headers for {chart_type}")
                         writer.writerow(['Display Name', 'Email', 'User ID', 'Login Time'])
+                        record_count = 0
                         for record in raw_data[chart_type]:
+                            record_count += 1
+                            if record_count <= 3:  # Debug first 3 records
+                                debug_print(f"🔍 [CSV DEBUG] Login record {record_count} structure: {list(record.keys())}")
+                                debug_print(f"🔍 [CSV DEBUG] Login record {record_count} data: {record}")
                             writer.writerow([
                                 record.get('display_name', ''),
                                 record.get('email', ''),
                                 record.get('user_id', ''),
                                 record.get('login_time', '')
                             ])
+                        debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} login records")
                     
-                    elif chart_type == 'documents':
+                    elif chart_type in ['documents', 'personal_documents', 'group_documents']:
+                        # Handle all document types with same structure
+                        debug_print(f"🔍 [CSV DEBUG] Writing document headers for {chart_type}")
                         writer.writerow([
                             'Display Name', 'Email', 'User ID', 'Document ID', 'Document Filename', 
                             'Document Title', 'Document Page Count', 'Document Size in AI Search', 
-                            'Document Size in Storage Account', 'Upload Date'
+                            'Document Size in Storage Account', 'Upload Date', 'Document Type'
                         ])
+                        record_count = 0
                         for record in raw_data[chart_type]:
+                            record_count += 1
+                            if record_count <= 3:  # Log first 3 records for debugging
+                                debug_print(f"🔍 [CSV DEBUG] Writing {chart_type} record {record_count}: {record.get('filename', 'No filename')}")
                             writer.writerow([
                                 record.get('display_name', ''),
                                 record.get('email', ''),
@@ -2073,15 +2168,23 @@ def register_route_backend_control_center(app):
                                 record.get('page_count', ''),
                                 record.get('ai_search_size', ''),
                                 record.get('storage_account_size', ''),
-                                record.get('upload_date', '')
+                                record.get('upload_date', ''),
+                                record.get('document_type', chart_type.replace('_documents', '').title())
                             ])
+                        debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} records for {chart_type}")
                     
                     elif chart_type == 'chats':
+                        debug_print(f"🔍 [CSV DEBUG] Writing chat headers for {chart_type}")
                         writer.writerow([
                             'Display Name', 'Email', 'User ID', 'Chat ID', 'Chat Title', 
                             'Number of Messages', 'Total Size (characters)', 'Created Date'
                         ])
+                        record_count = 0
                         for record in raw_data[chart_type]:
+                            record_count += 1
+                            if record_count <= 3:  # Debug first 3 records
+                                debug_print(f"🔍 [CSV DEBUG] Chat record {record_count} structure: {list(record.keys())}")
+                                debug_print(f"🔍 [CSV DEBUG] Chat record {record_count} data: {record}")
                             writer.writerow([
                                 record.get('display_name', ''),
                                 record.get('email', ''),
@@ -2092,8 +2195,21 @@ def register_route_backend_control_center(app):
                                 record.get('total_size', ''),
                                 record.get('created_date', '')
                             ])
+                        debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} chat records")
+                else:
+                    debug_print(f"🔍 [CSV DEBUG] No data found for {chart_type} - available keys: {list(raw_data.keys()) if raw_data else 'None'}")
+                    
+            # Add final debug info
+            debug_print(f"🔍 [CSV DEBUG] Finished processing all chart types. Raw data summary:")
+            for key, value in raw_data.items():
+                if isinstance(value, list):
+                    debug_print(f"🔍 [CSV DEBUG] - {key}: {len(value)} records")
+                else:
+                    debug_print(f"🔍 [CSV DEBUG] - {key}: {type(value)} - {value}")
             
             csv_content = output.getvalue()
+            debug_print(f"🔍 [CSV DEBUG] Generated CSV content length: {len(csv_content)} characters")
+            debug_print(f"🔍 [CSV DEBUG] CSV content preview (first 500 chars): {csv_content[:500]}")
             output.close()
             
             # Generate filename with timestamp
@@ -2166,7 +2282,9 @@ def register_route_backend_control_center(app):
                         chart_display_name = {
                             'logins': 'Logins',
                             'chats': 'Chats', 
-                            'documents': 'Documents'
+                            'documents': 'Documents',
+                            'personal_documents': 'Personal Documents',
+                            'group_documents': 'Group Documents'
                         }.get(chart_type, chart_type.title())
                         
                         csv_rows.append([date_key, chart_display_name, count])

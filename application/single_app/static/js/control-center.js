@@ -22,12 +22,22 @@ class ControlCenter {
         this.bindEvents();
         this.loadUsers();
         this.loadActivityTrends();
+        
+        // Also load groups on initial page load
+        // This ensures groups get their cached metrics on first load
+        setTimeout(() => {
+            this.loadGroups();
+        }, 500); // Small delay to ensure DOM is ready
     }
     
     bindEvents() {
         // Tab switching
         document.getElementById('users-tab')?.addEventListener('click', () => {
             setTimeout(() => this.loadUsers(), 100);
+        });
+        
+        document.getElementById('groups-tab')?.addEventListener('click', () => {
+            setTimeout(() => this.loadGroups(), 100);
         });
         
         // Search and filter controls
@@ -982,7 +992,7 @@ class ControlCenter {
                 // Render all three charts
                 this.renderLoginsChart(data.activity_data);
                 this.renderChatsChart(data.activity_data);
-                this.renderDocumentsChart(data.activity_data);
+                this.renderDocumentsChart(data.activity_data);  // Now renders both personal and group
                 // Ensure main loading overlay is hidden after all charts are created
                 this.showLoading(false);
             } else {
@@ -1018,14 +1028,162 @@ class ControlCenter {
     }
     
     renderDocumentsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering documents chart with data:', activityData.documents);
-        this.renderSingleChart('documentsChart', 'documents', activityData.documents, {
-            label: 'Documents',
-            backgroundColor: 'rgba(25, 135, 84, 0.2)',
-            borderColor: '#198754'
+        console.log('🔍 [Frontend Debug] Rendering documents chart with personal and group data');
+        console.log('🔍 [Frontend Debug] Personal documents:', activityData.personal_documents);
+        console.log('🔍 [Frontend Debug] Group documents:', activityData.group_documents);
+        
+        // Render combined chart with both personal and group documents
+        this.renderCombinedDocumentsChart('documentsChart', {
+            personal: activityData.personal_documents || {},
+            group: activityData.group_documents || {}
         });
     }
     
+    renderCombinedDocumentsChart(canvasId, documentsData) {
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error(`❌ [Frontend Debug] Chart.js is not loaded. Cannot render documents chart.`);
+            this.showChartError(canvasId, 'documents');
+            return;
+        }
+        
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) {
+            console.error(`❌ [Frontend Debug] Chart canvas element ${canvasId} not found`);
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error(`❌ [Frontend Debug] Could not get 2D context from ${canvasId} canvas`);
+            return;
+        }
+        
+        console.log(`✅ [Frontend Debug] Chart.js loaded, ${canvasId} canvas found, context ready`);
+        
+        // Show canvas
+        canvas.style.display = 'block';
+        console.log(`🔍 [Frontend Debug] ${canvasId} canvas displayed`);
+        
+        // Destroy existing chart if it exists
+        if (this.documentsChart) {
+            console.log(`🔍 [Frontend Debug] Destroying existing documents chart`);
+            this.documentsChart.destroy();
+        }
+        
+        // Prepare data for Chart.js - get all unique dates and sort them
+        const personalDates = Object.keys(documentsData.personal || {});
+        const groupDates = Object.keys(documentsData.group || {});
+        const allDates = [...new Set([...personalDates, ...groupDates])].sort();
+        
+        console.log(`🔍 [Frontend Debug] Documents date range:`, allDates);
+        
+        const labels = allDates.map(date => {
+            const dateObj = new Date(date);
+            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        
+        // Prepare datasets for both personal and group documents
+        const personalData = allDates.map(date => (documentsData.personal || {})[date] || 0);
+        const groupData = allDates.map(date => (documentsData.group || {})[date] || 0);
+        
+        console.log(`🔍 [Frontend Debug] Personal documents data:`, personalData);
+        console.log(`🔍 [Frontend Debug] Group documents data:`, groupData);
+        
+        const datasets = [
+            {
+                label: 'Personal',
+                data: personalData,
+                backgroundColor: 'rgba(144, 238, 144, 0.4)',  // Light green
+                borderColor: '#90EE90',                        // Light green
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            },
+            {
+                label: 'Group',
+                data: groupData,
+                backgroundColor: 'rgba(34, 139, 34, 0.4)',    // Medium green (forest green)
+                borderColor: '#228B22',                        // Medium green (forest green)
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            }
+        ];
+        
+        console.log(`🔍 [Frontend Debug] Documents datasets prepared:`, datasets);
+        
+        // Create new chart
+        try {
+            this.documentsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,  // Show legend for multiple datasets
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 15
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                title: function(context) {
+                                    const dataIndex = context[0].dataIndex;
+                                    const dateStr = allDates[dataIndex];
+                                    const date = new Date(dateStr);
+                                    return date.toLocaleDateString('en-US', { 
+                                        weekday: 'long', 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            display: true,
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            },
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                }
+            });
+            
+            console.log(`✅ [Frontend Debug] Documents chart created successfully`);
+            
+        } catch (error) {
+            console.error(`❌ [Frontend Debug] Error creating documents chart:`, error);
+            this.showChartError(canvasId, 'documents');
+        }
+    }
+
     renderSingleChart(canvasId, chartType, chartData, chartConfig) {
         // Check if Chart.js is available
         if (typeof Chart === 'undefined') {
@@ -1250,7 +1408,8 @@ class ControlCenter {
             const selectedCharts = [];
             if (document.getElementById('exportLogins').checked) selectedCharts.push('logins');
             if (document.getElementById('exportChats').checked) selectedCharts.push('chats');
-            if (document.getElementById('exportDocuments').checked) selectedCharts.push('documents');
+            if (document.getElementById('exportPersonalDocuments').checked) selectedCharts.push('personal_documents');
+            if (document.getElementById('exportGroupDocuments').checked) selectedCharts.push('group_documents');
             
             if (selectedCharts.length === 0) {
                 alert('Please select at least one chart to export.');
@@ -1461,6 +1620,14 @@ class ControlCenter {
             this.documentsChart.destroy();
             this.documentsChart = null;
         }
+        if (this.personalDocumentsChart) {
+            this.personalDocumentsChart.destroy();
+            this.personalDocumentsChart = null;
+        }
+        if (this.groupDocumentsChart) {
+            this.groupDocumentsChart.destroy();
+            this.groupDocumentsChart = null;
+        }
         console.log('🔍 [Frontend Debug] All charts destroyed');
     }
     
@@ -1507,30 +1674,178 @@ class ControlCenter {
     }
     
     async loadGroups() {
-        console.log('🔄 ControlCenter.loadGroups() called');
+        console.log('🔄 ControlCenter.loadGroups() called - using direct API approach like loadUsers()');
+        
+        const tbody = document.getElementById('groupsTableBody');
+        if (!tbody) {
+            console.warn('⚠️  Groups table body not found');
+            return;
+        }
+        
+        // Show loading state like users do
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Loading groups...</div>
+                </td>
+            </tr>
+        `;
         
         try {
-            // Check GroupManager availability
-            console.log('📋 GroupManager check:', {
-                isDefined: typeof GroupManager !== 'undefined',
-                hasLoadGroups: typeof GroupManager !== 'undefined' && typeof GroupManager.loadGroups === 'function',
-                groupManager: typeof GroupManager !== 'undefined' ? Object.keys(GroupManager) : 'undefined'
+            // Get current filter values like users do
+            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
+            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+            
+            // Build API URL with filters - same pattern as loadUsers
+            // Use cached metrics by default (force_refresh=false) to get pre-calculated data
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 100,
+                search: searchTerm,
+                status_filter: statusFilter,
+                force_refresh: 'false'  // Use cached metrics for performance
             });
             
-            // Call GroupManager's loadGroups method if it exists
-            if (typeof GroupManager !== 'undefined' && GroupManager.loadGroups) {
-                console.log('✅ Calling GroupManager.loadGroups()');
-                await GroupManager.loadGroups();
-                console.log('✅ GroupManager.loadGroups() completed successfully');
-            } else {
-                console.warn('⚠️  GroupManager.loadGroups not available, skipping group refresh');
+            console.log('📡 Fetching groups from API:', `/api/admin/control-center/groups?${params}`);
+            
+            const response = await fetch(`/api/admin/control-center/groups?${params}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
+            
+            const data = await response.json();
+            console.log('📊 Groups data received:', {
+                groupCount: data.groups ? data.groups.length : 0,
+                sampleGroup: data.groups && data.groups[0] ? {
+                    id: data.groups[0].id,
+                    name: data.groups[0].name,
+                    hasCachedMetrics: !!data.groups[0].activity,
+                    storageSize: data.groups[0].activity?.document_metrics?.storage_account_size
+                } : null
+            });
+            
+            // Render groups data directly like users
+            this.renderGroups(data.groups || []);
+            
+            console.log('✅ Groups loaded and rendered successfully');
+            
         } catch (error) {
             console.error('❌ Error loading groups:', error);
-            throw error; // Re-throw to allow calling code to handle
+            
+            // Show error state like users do
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center py-4 text-danger">
+                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
+                        <div class="mt-2">Error loading groups: ${error.message}</div>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="window.controlCenter.loadGroups()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                        </button>
+                    </td>
+                </tr>
+            `;
         }
     }
 
+    renderGroups(groups) {
+        const tbody = document.getElementById('groupsTableBody');
+        if (!tbody) return;
+        
+        console.log('🎨 Rendering', groups.length, 'groups');
+        
+        if (groups.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center py-4">
+                        <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
+                        <div class="mt-2">No groups found</div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        // Render groups using the same pattern as users
+        tbody.innerHTML = groups.map(group => this.createGroupRow(group)).join('');
+        
+        // Initialize sorting after data is loaded
+        if (!window.groupTableSorter) {
+            window.groupTableSorter = new GroupTableSorter('groupsTable');
+        }
+    }
+    
+    createGroupRow(group) {
+        // Format storage size
+        const storageSize = group.activity?.document_metrics?.storage_account_size || 0;
+        const storageSizeFormatted = storageSize > 0 ? this.formatBytes(storageSize) : '0 B';
+        
+        // Format AI search size
+        const aiSearchSize = group.activity?.document_metrics?.ai_search_size || 0;
+        const aiSearchSizeFormatted = aiSearchSize > 0 ? this.formatBytes(aiSearchSize) : '0 B';
+        
+        // Get document metrics
+        const totalDocs = group.activity?.document_metrics?.total_documents || 0;
+        const lastUpload = group.activity?.document_metrics?.last_day_upload || 'Never';
+        
+        // Get group info
+        const memberCount = group.member_count || 0;
+        const ownerName = group.owner?.displayName || group.owner?.display_name || 'Unknown';
+        const ownerEmail = group.owner?.email || '';
+        
+        return `
+            <tr>
+                <td>
+                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
+                </td>
+                <td>
+                    <div class="fw-semibold">${this.escapeHtml(group.name || 'Unnamed Group')}</div>
+                    <div class="text-muted small">${this.escapeHtml(group.description || '')}</div>
+                </td>
+                <td>
+                    <div class="fw-semibold">${this.escapeHtml(ownerName)}</div>
+                    <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
+                </td>
+                <td>
+                    <span class="badge bg-success">Active</span>
+                    <div class="text-muted small">${memberCount} members</div>
+                </td>
+                <td>
+                    <div class="text-muted small">${lastUpload}</div>
+                </td>
+                <td>
+                    <div><strong>Last Day:</strong> ${lastUpload}</div>
+                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                    ${group.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                </td>
+                <td>
+                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.manageGroup('${group.id}')">
+                        <i class="bi bi-gear me-1"></i>Manage
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+    
+    formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    manageGroup(groupId) {
+        // Placeholder for group management - can be implemented later
+        console.log('Managing group:', groupId);
+        alert('Group management functionality would open here');
+    }
+    
     showAlert(type, message) {
         // Create alert element
         const alertDiv = document.createElement('div');
@@ -1696,16 +2011,15 @@ async function refreshActiveTabContent() {
         
         if (!activeTab) {
             console.log('📝 No active tab found, checking for direct content...');
-            // If no tabs (sidebar navigation), refresh users table if it exists
+            // If no tabs (sidebar navigation), refresh both users and groups
             if (window.controlCenter && window.controlCenter.loadUsers) {
                 console.log('👤 Refreshing users in sidebar mode...');
                 await window.controlCenter.loadUsers();
             }
             
-            // Also try to refresh groups directly if GroupManager is available
-            if (typeof GroupManager !== 'undefined' && GroupManager.loadGroups) {
+            if (window.controlCenter && window.controlCenter.loadGroups) {
                 console.log('👥 Refreshing groups in sidebar mode...');
-                await GroupManager.loadGroups();
+                await window.controlCenter.loadGroups();
             }
             return;
         }
@@ -1733,31 +2047,9 @@ async function refreshActiveTabContent() {
                 
             case 'groups-tab':
                 console.log('👥 Refreshing groups content...');
-                
-                // Try ControlCenter method first
-                let groupsRefreshed = false;
+                // Refresh groups using ControlCenter method (same pattern as users)
                 if (window.controlCenter && window.controlCenter.loadGroups) {
-                    console.log('🔄 Using ControlCenter.loadGroups()');
-                    try {
-                        await window.controlCenter.loadGroups();
-                        groupsRefreshed = true;
-                        console.log('✅ ControlCenter.loadGroups() completed');
-                    } catch (error) {
-                        console.error('❌ ControlCenter.loadGroups() failed:', error);
-                    }
-                }
-                
-                // Fallback to direct GroupManager call
-                if (!groupsRefreshed && typeof GroupManager !== 'undefined' && GroupManager.loadGroups) {
-                    console.log('🔄 Fallback: Using GroupManager.loadGroups() directly');
-                    try {
-                        await GroupManager.loadGroups();
-                        console.log('✅ GroupManager.loadGroups() completed');
-                    } catch (error) {
-                        console.error('❌ GroupManager.loadGroups() failed:', error);
-                    }
-                } else if (!groupsRefreshed) {
-                    console.warn('⚠️  No groups refresh method available');
+                    await window.controlCenter.loadGroups();
                 }
                 break;
                 
@@ -1779,20 +2071,15 @@ async function refreshActiveTabContent() {
                 
             default:
                 console.log('🤔 Unknown or no active tab, attempting to refresh all content...');
-                // Default fallback - try to refresh users table and groups
+                // Default fallback - refresh both users and groups using ControlCenter methods
                 if (window.controlCenter && window.controlCenter.loadUsers) {
                     console.log('👤 Fallback: Refreshing users');
                     await window.controlCenter.loadUsers();
                 }
                 
-                // Also refresh groups if available
-                if (typeof GroupManager !== 'undefined' && GroupManager.loadGroups) {
+                if (window.controlCenter && window.controlCenter.loadGroups) {
                     console.log('👥 Fallback: Refreshing groups');
-                    try {
-                        await GroupManager.loadGroups();
-                    } catch (error) {
-                        console.error('❌ Fallback groups refresh failed:', error);
-                    }
+                    await window.controlCenter.loadGroups();
                 }
                 break;
         }

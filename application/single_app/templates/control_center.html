@@ -980,9 +980,15 @@
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" value="documents" id="exportDocuments" checked>
-                            <label class="form-check-label" for="exportDocuments">
-                                <i class="bi bi-file-earmark-text me-2 text-success"></i>Documents
+                            <input class="form-check-input" type="checkbox" value="personal_documents" id="exportPersonalDocuments" checked>
+                            <label class="form-check-label" for="exportPersonalDocuments">
+                                <i class="bi bi-file-earmark-person me-2" style="color: #90EE90;"></i>Personal Documents
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="group_documents" id="exportGroupDocuments" checked>
+                            <label class="form-check-label" for="exportGroupDocuments">
+                                <i class="bi bi-file-earmark-text me-2" style="color: #228B22;"></i>Group Documents
                             </label>
                         </div>
                     </div>
@@ -1027,7 +1033,8 @@
                         <ul class="mb-0 mt-2" style="font-size: 0.9em;">
                             <li><strong>Logins:</strong> Display name, email, user ID, login time</li>
                             <li><strong>Chats:</strong> Display name, email, user ID, chat ID, title, message count, total size, created date</li>
-                            <li><strong>Documents:</strong> Display name, email, user ID, document details, sizes, upload date</li>
+                            <li><strong>Personal Documents:</strong> Display name, email, user ID, personal document details, sizes, upload date</li>
+                        <li><strong>Group Documents:</strong> Display name, email, user ID, group document details, sizes, upload date</li>
                         </ul>
                     </div>
                 </div>
