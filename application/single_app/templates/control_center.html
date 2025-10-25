@@ -797,10 +797,84 @@
                         
                         <!-- Public Workspace Management Tab -->
                         <div class="tab-pane fade" id="workspaces" role="tabpanel">
-                            <div class="text-center py-5">
-                                <i class="bi bi-folder2-open" style="font-size: 4rem; color: var(--bs-secondary);"></i>
-                                <h4 class="mt-3">Public Workspace Management</h4>
-                                <p class="text-muted">Public workspace management functionality will be available in future updates.</p>
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
+                                </h5>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-outline-primary btn-sm" onclick="controlCenter.refreshPublicWorkspaces()">
+                                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Filters -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text">
+                                            <i class="bi bi-search"></i>
+                                        </span>
+                                        <input type="text" 
+                                               class="form-control" 
+                                               id="publicWorkspaceSearchInput" 
+                                               placeholder="Search workspaces by name or description..."
+                                               onkeyup="controlCenter.searchPublicWorkspaces(this.value)">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="publicWorkspaceStatusFilter" onchange="controlCenter.filterPublicWorkspacesByStatus(this.value)">
+                                        <option value="all">All Statuses</option>
+                                        <option value="active">Active</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-muted small d-flex align-items-center h-100">
+                                        <span id="publicWorkspaceCount">Loading...</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Public Workspaces Table -->
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle" id="publicWorkspacesTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Workspace Name</th>
+                                            <th>Owner</th>
+                                            <th>Members</th>
+                                            <th>Status</th>
+                                            <th>Last Upload</th>
+                                            <th>Documents</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="publicWorkspacesTableBody">
+                                        <tr>
+                                            <td colspan="7" class="text-center py-4">
+                                                <div class="spinner-border text-primary" role="status">
+                                                    <span class="visually-hidden">Loading...</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Pagination -->
+                            <nav aria-label="Public workspaces pagination" id="publicWorkspacesPagination" style="display: none;">
+                                <ul class="pagination justify-content-center">
+                                    <!-- Pagination buttons will be inserted here -->
+                                </ul>
+                            </nav>
+
+                            <!-- No Results Message -->
+                            <div id="noPublicWorkspacesMessage" style="display: none;">
+                                <div class="text-center py-5">
+                                    <i class="bi bi-folder2-open text-muted" style="font-size: 3rem;"></i>
+                                    <h6 class="text-muted mt-3">No Public Workspaces Found</h6>
+                                    <p class="text-muted small">No public workspaces match your current search criteria.</p>
+                                </div>
                             </div>
                         </div>
                     </div>

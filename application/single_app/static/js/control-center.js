@@ -23,10 +23,11 @@ class ControlCenter {
         this.loadUsers();
         this.loadActivityTrends();
         
-        // Also load groups on initial page load
-        // This ensures groups get their cached metrics on first load
+        // Also load groups and public workspaces on initial page load
+        // This ensures they get their cached metrics on first load
         setTimeout(() => {
             this.loadGroups();
+            this.loadPublicWorkspaces();
         }, 500); // Small delay to ensure DOM is ready
     }
     
@@ -40,11 +41,21 @@ class ControlCenter {
             setTimeout(() => this.loadGroups(), 100);
         });
         
+        document.getElementById('workspaces-tab')?.addEventListener('click', () => {
+            setTimeout(() => this.loadPublicWorkspaces(), 100);
+        });
+        
         // Search and filter controls
         document.getElementById('userSearchInput')?.addEventListener('input', 
             this.debounce(() => this.handleSearchChange(), 300));
         document.getElementById('accessFilterSelect')?.addEventListener('change', 
             () => this.handleFilterChange());
+        
+        // Public workspace search and filter controls
+        document.getElementById('publicWorkspaceSearchInput')?.addEventListener('input', 
+            this.debounce((e) => this.searchPublicWorkspaces(e.target.value), 300));
+        document.getElementById('publicWorkspaceStatusFilterSelect')?.addEventListener('change', 
+            (e) => this.filterPublicWorkspacesByStatus(e.target.value));
         
         // Refresh buttons - these reload cached data, don't recalculate metrics
         document.getElementById('refreshUsersBtn')?.addEventListener('click', 
@@ -1845,6 +1856,220 @@ class ControlCenter {
         console.log('Managing group:', groupId);
         alert('Group management functionality would open here');
     }
+
+    // Public Workspaces Management Methods
+    async loadPublicWorkspaces() {
+        console.log('🌐 ControlCenter.loadPublicWorkspaces() called - using same approach as loadGroups()');
+        
+        const tbody = document.getElementById('publicWorkspacesTableBody');
+        if (!tbody) {
+            console.warn('⚠️  Public workspaces table body not found');
+            return;
+        }
+        
+        // Show loading state like groups do
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Loading public workspaces...</div>
+                </td>
+            </tr>
+        `;
+        
+        try {
+            // Get current filter values like groups do
+            const searchTerm = document.getElementById('publicWorkspaceSearchInput')?.value || '';
+            const statusFilter = document.getElementById('publicWorkspaceStatusFilterSelect')?.value || 'all';
+            
+            // Build API URL with filters - same pattern as loadGroups
+            // Use cached metrics by default (force_refresh=false) to get pre-calculated data
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 100,
+                search: searchTerm,
+                status_filter: statusFilter,
+                force_refresh: 'false'  // Use cached metrics for performance
+            });
+            
+            console.log('📡 Fetching public workspaces from API:', `/api/admin/control-center/public-workspaces?${params}`);
+            
+            const response = await fetch(`/api/admin/control-center/public-workspaces?${params}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            console.log('📊 Public workspaces data received:', {
+                workspaceCount: data.workspaces ? data.workspaces.length : 0,
+                sampleWorkspace: data.workspaces && data.workspaces[0] ? {
+                    id: data.workspaces[0].id,
+                    name: data.workspaces[0].name,
+                    hasCachedMetrics: !!data.workspaces[0].activity,
+                    storageSize: data.workspaces[0].activity?.document_metrics?.storage_account_size
+                } : null
+            });
+            
+            // Render workspaces data directly like groups
+            this.renderPublicWorkspaces(data.workspaces || []);
+            
+            console.log('✅ Public workspaces loaded and rendered successfully');
+            
+        } catch (error) {
+            console.error('❌ Error loading public workspaces:', error);
+            
+            // Show error state like groups do
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center py-4 text-danger">
+                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
+                        <div class="mt-2">Error loading public workspaces: ${error.message}</div>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="window.controlCenter.loadPublicWorkspaces()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    renderPublicWorkspaces(workspaces) {
+        const tbody = document.getElementById('publicWorkspacesTableBody');
+        if (!tbody) return;
+        
+        console.log('🎨 Rendering', workspaces.length, 'public workspaces');
+        
+        if (workspaces.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center py-4">
+                        <i class="bi bi-globe" style="font-size: 2rem; color: var(--bs-secondary);"></i>
+                        <div class="mt-2">No public workspaces found</div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        // Render workspaces using the same pattern as groups
+        tbody.innerHTML = workspaces.map(workspace => this.createPublicWorkspaceRow(workspace)).join('');
+    }
+    
+    createPublicWorkspaceRow(workspace) {
+        // Format storage size
+        const storageSize = workspace.activity?.document_metrics?.storage_account_size || 0;
+        const storageSizeFormatted = storageSize > 0 ? this.formatBytes(storageSize) : '0 B';
+        
+        // Format AI search size
+        const aiSearchSize = workspace.activity?.document_metrics?.ai_search_size || 0;
+        const aiSearchSizeFormatted = aiSearchSize > 0 ? this.formatBytes(aiSearchSize) : '0 B';
+        
+        // Get document metrics
+        const totalDocs = workspace.activity?.document_metrics?.total_documents || 0;
+        const lastUpload = workspace.activity?.document_metrics?.last_day_upload || 'Never';
+        
+        // Get workspace info
+        const memberCount = workspace.member_count || 0;
+        const ownerName = workspace.owner?.displayName || workspace.owner?.display_name || workspace.owner_name || 'Unknown';
+        const ownerEmail = workspace.owner?.email || workspace.owner_email || '';
+        
+        return `
+            <tr>
+                <td>
+                    <div><strong>${workspace.name || 'Unnamed Workspace'}</strong></div>
+                    <div class="text-muted small">${workspace.description || 'No description'}</div>
+                    <div class="text-muted small">ID: ${workspace.id}</div>
+                </td>
+                <td>
+                    <div>${ownerName}</div>
+                    <div class="text-muted small">${ownerEmail}</div>
+                </td>
+                <td>
+                    <span class="badge bg-light text-dark">${memberCount} member${memberCount !== 1 ? 's' : ''}</span>
+                </td>
+                <td>
+                    <span class="badge bg-success">Active</span>
+                </td>
+                <td>
+                    <div><strong>Last Day:</strong> ${lastUpload}</div>
+                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                    ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                </td>
+                <td>
+                    <div><strong>${totalDocs}</strong></div>
+                    <div class="text-muted small">${storageSizeFormatted}</div>
+                </td>
+                <td>
+                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.managePublicWorkspace('${workspace.id}')">
+                        <i class="bi bi-gear me-1"></i>Manage
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+    
+    managePublicWorkspace(workspaceId) {
+        // Placeholder for public workspace management - can be implemented later
+        console.log('Managing public workspace:', workspaceId);
+        alert('Public workspace management functionality would open here');
+    }
+
+    searchPublicWorkspaces(searchTerm) {
+        // Debounce search like groups
+        clearTimeout(this.publicWorkspaceSearchTimeout);
+        this.publicWorkspaceSearchTimeout = setTimeout(() => {
+            this.loadPublicWorkspaces();
+        }, 300);
+    }
+
+    filterPublicWorkspacesByStatus(status) {
+        // Reload with new filter
+        this.loadPublicWorkspaces();
+    }
+
+    refreshPublicWorkspaces() {
+        console.log('🌐 Refreshing public workspaces with fresh data...');
+        
+        // Get current search and filter values
+        const searchInput = document.getElementById('publicWorkspaceSearchInput');
+        const statusSelect = document.getElementById('publicWorkspaceStatusFilterSelect');
+        
+        const searchTerm = searchInput ? searchInput.value.trim() : '';
+        const statusFilter = statusSelect ? statusSelect.value : 'all';
+        
+        // Build API URL with force_refresh=true
+        const params = new URLSearchParams({
+            page: 1,
+            per_page: 100,
+            search: searchTerm,
+            status_filter: statusFilter,
+            force_refresh: 'true'  // Force fresh calculation
+        });
+        
+        fetch(`/api/admin/control-center/public-workspaces?${params}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('🌍 Refreshed public workspaces data received:', data);
+                this.renderPublicWorkspaces(data.workspaces || []);
+                
+                // Show success message
+                this.showAlert('success', 'Public workspaces refreshed successfully');
+            })
+            .catch(error => {
+                console.error('Error refreshing public workspaces:', error);
+                this.showAlert('danger', `Error refreshing public workspaces: ${error.message}`);
+            });
+    }
     
     showAlert(type, message) {
         // Create alert element
@@ -2055,9 +2280,9 @@ async function refreshActiveTabContent() {
                 
             case 'workspaces-tab':
                 console.log('Refreshing workspaces content...');
-                // Refresh workspaces if available
-                if (window.controlCenter && window.controlCenter.loadWorkspaces) {
-                    await window.controlCenter.loadWorkspaces();
+                // Refresh public workspaces if available
+                if (window.controlCenter && window.controlCenter.loadPublicWorkspaces) {
+                    await window.controlCenter.loadPublicWorkspaces();
                 }
                 break;
                 

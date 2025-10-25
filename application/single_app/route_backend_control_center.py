@@ -465,6 +465,273 @@ def enhance_user_with_activity(user, force_refresh=False):
         current_app.logger.error(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
 
+def enhance_public_workspace_with_activity(workspace, force_refresh=False):
+    """
+    Enhance public workspace data with activity information and computed fields.
+    Follows the same pattern as group enhancement but for public workspaces.
+    """
+    try:
+        workspace_id = workspace.get('id')
+        debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Processing workspace {workspace_id}, force_refresh={force_refresh}")
+        
+        # Get app settings for enhanced citations
+        from functions_settings import get_settings
+        app_settings = get_settings()
+        app_enhanced_citations = app_settings.get('enable_enhanced_citations', False) if app_settings else False
+        
+        debug_print(f"📋 [PUBLIC WORKSPACE SETTINGS DEBUG] App enhanced citations: {app_enhanced_citations}")
+        
+        # Create flat structure that matches frontend expectations
+        owner_info = workspace.get('owner', {})
+        
+        enhanced = {
+            'id': workspace.get('id'),
+            'name': workspace.get('name', ''),
+            'description': workspace.get('description', ''),
+            'owner': workspace.get('owner', {}),
+            'admins': workspace.get('admins', []),
+            'documentManagers': workspace.get('documentManagers', []),
+            'createdDate': workspace.get('createdDate'),
+            'modifiedDate': workspace.get('modifiedDate'),
+            'created_at': workspace.get('createdDate'),  # Alias for frontend
+            
+            # Flat fields expected by frontend
+            'owner_name': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'owner_email': owner_info.get('email', ''),
+            'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'document_count': 0,  # Will be updated from database
+            'storage_size': 0,  # Will be updated from storage account
+            'last_activity': None,  # Will be updated from public_documents
+            'recent_activity_count': 0,  # Will be calculated
+            'status': 'active',  # default - can be determined by business logic
+            
+            # Keep nested structure for backward compatibility
+            'activity': {
+                'document_metrics': {
+                    'last_day_uploads': 0,
+                    'total_documents': 0,
+                    'ai_search_size': 0,  # pages × 80KB  
+                    'storage_account_size': 0  # Actual file sizes from storage
+                },
+                'member_metrics': {
+                    'total_members': len(workspace.get('admins', [])) + len(workspace.get('documentManagers', [])) + (1 if owner_info else 0),
+                    'admin_count': len(workspace.get('admins', [])),
+                    'document_manager_count': len(workspace.get('documentManagers', [])),
+                }
+            }
+        }
+        
+        # Check for cached metrics if not forcing refresh
+        if not force_refresh:
+            cached_metrics = workspace.get('metrics')
+            if cached_metrics and cached_metrics.get('calculated_at'):
+                try:
+                    # Check if cache is recent (within last 24 hours)
+                    cache_time = datetime.fromisoformat(cached_metrics['calculated_at'].replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    
+                    if now - cache_time < timedelta(hours=24):  # Use 24-hour cache window
+                        debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Using cached metrics for workspace {workspace_id} (cached at {cache_time})")
+                        if 'document_metrics' in cached_metrics:
+                            doc_metrics = cached_metrics['document_metrics']
+                            enhanced['activity']['document_metrics'] = doc_metrics
+                            # Update flat fields
+                            enhanced['document_count'] = doc_metrics.get('total_documents', 0)
+                            enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
+                            # Also update the last_day_upload field if present
+                            if 'last_day_upload' in doc_metrics:
+                                enhanced['activity']['document_metrics']['last_day_upload'] = doc_metrics['last_day_upload']
+                        
+                        debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Returning cached data for {workspace_id}: {enhanced['activity']['document_metrics']}")
+                        return enhanced
+                    else:
+                        debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Cache expired for workspace {workspace_id} (cached at {cache_time}, age: {now - cache_time})")
+                except Exception as cache_e:
+                    debug_print(f"Error using cached metrics for workspace {workspace_id}: {cache_e}")
+        
+        # Calculate document metrics from public_documents container
+        try:
+            # Count documents for this workspace
+            documents_count_query = """
+                SELECT VALUE COUNT(1) FROM c 
+                WHERE c.workspace_id = @workspace_id 
+                AND c.type = 'document_metadata'
+            """
+            documents_count_params = [{"name": "@workspace_id", "value": workspace_id}]
+            
+            documents_count_result = list(cosmos_public_documents_container.query_items(
+                query=documents_count_query,
+                parameters=documents_count_params,
+                enable_cross_partition_query=True
+            ))
+            
+            total_documents = documents_count_result[0] if documents_count_result else 0
+            enhanced['activity']['document_metrics']['total_documents'] = total_documents
+            enhanced['document_count'] = total_documents
+            
+            # Calculate AI search size (pages × 80KB)
+            pages_sum_query = """
+                SELECT VALUE SUM(c.page_count) FROM c 
+                WHERE c.workspace_id = @workspace_id 
+                AND c.type = 'document_metadata'
+            """
+            pages_sum_params = [{"name": "@workspace_id", "value": workspace_id}]
+            
+            pages_sum_result = list(cosmos_public_documents_container.query_items(
+                query=pages_sum_query,
+                parameters=pages_sum_params,
+                enable_cross_partition_query=True
+            ))
+            
+            total_pages = pages_sum_result[0] if pages_sum_result and pages_sum_result[0] else 0
+            ai_search_size = total_pages * 80 * 1024  # 80KB per page
+            enhanced['activity']['document_metrics']['ai_search_size'] = ai_search_size
+            
+            debug_print(f"📊 [PUBLIC WORKSPACE DOCUMENT DEBUG] Workspace {workspace_id}: {total_documents} documents, {total_pages} pages, {ai_search_size} AI search size")
+            
+            # Find last upload date
+            last_upload_query = """
+                SELECT c.upload_date
+                FROM c 
+                WHERE c.workspace_id = @workspace_id
+                AND c.type = 'document_metadata'
+            """
+            last_upload_params = [{"name": "@workspace_id", "value": workspace_id}]
+            
+            upload_docs = list(cosmos_public_documents_container.query_items(
+                query=last_upload_query,
+                parameters=last_upload_params,
+                enable_cross_partition_query=True
+            ))
+            
+            last_day_upload = 'Never'
+            if upload_docs:
+                # Parse and find most recent date
+                valid_dates = []
+                for doc in upload_docs:
+                    upload_date_str = doc.get('upload_date')
+                    if upload_date_str:
+                        try:
+                            if isinstance(upload_date_str, str):
+                                upload_date = datetime.fromisoformat(upload_date_str.replace('Z', '+00:00') if 'Z' in upload_date_str else upload_date_str)
+                            else:
+                                upload_date = upload_date_str
+                            valid_dates.append(upload_date)
+                        except Exception as date_e:
+                            debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Error parsing date {upload_date_str}: {date_e}")
+                
+                most_recent_date = max(valid_dates) if valid_dates else None
+                if most_recent_date:
+                    try:
+                        last_day_upload = most_recent_date.strftime('%m/%d/%Y')
+                        debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Last upload date for workspace {workspace_id}: {last_day_upload}")
+                    except Exception as format_e:
+                        debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] Error formatting date for workspace {workspace_id}: {format_e}")
+                        last_day_upload = 'Invalid date'
+                else:
+                    debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] No valid dates found for workspace {workspace_id}")
+            else:
+                debug_print(f"📅 [PUBLIC WORKSPACE UPLOAD DEBUG] No documents found for workspace {workspace_id}")
+                
+            enhanced['activity']['document_metrics']['last_day_upload'] = last_day_upload
+            
+            # Calculate last day uploads (count of documents uploaded in last day)
+            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+            yesterday_str = yesterday.strftime('%Y-%m-%d')
+            
+            last_day_count_query = """
+                SELECT VALUE COUNT(1) FROM c 
+                WHERE c.workspace_id = @workspace_id 
+                AND c.type = 'document_metadata'
+                AND c.upload_date >= @yesterday
+            """
+            last_day_params = [
+                {"name": "@workspace_id", "value": workspace_id},
+                {"name": "@yesterday", "value": yesterday_str}
+            ]
+            
+            last_day_count_result = list(cosmos_public_documents_container.query_items(
+                query=last_day_count_query,
+                parameters=last_day_params,
+                enable_cross_partition_query=True
+            ))
+            
+            enhanced['activity']['document_metrics']['last_day_uploads'] = last_day_count_result[0] if last_day_count_result else 0
+            
+        except Exception as doc_e:
+            debug_print(f"❌ [PUBLIC WORKSPACE DOCUMENT DEBUG] Error calculating document metrics for workspace {workspace_id}: {doc_e}")
+            
+        # Get actual storage account size if enhanced citation is enabled
+        debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Enhanced citation enabled: {app_enhanced_citations}")
+        if app_enhanced_citations:
+                debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Starting storage calculation for workspace {workspace_id}")
+                try:
+                    # Query actual file sizes from Azure Storage for public workspace documents
+                    storage_client = CLIENTS.get("storage_account_office_docs_client")
+                    debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
+                    if storage_client:
+                        workspace_folder_prefix = f"public/{workspace_id}/"
+                        total_storage_size = 0
+                        
+                        debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Looking for blobs with prefix: {workspace_folder_prefix}")
+                        
+                        # List all blobs in the workspace's folder - use PUBLIC documents container
+                        container_client = storage_client.get_container_client(storage_account_public_documents_container_name)
+                        blob_list = container_client.list_blobs(name_starts_with=workspace_folder_prefix)
+                        
+                        blob_count = 0
+                        for blob in blob_list:
+                            total_storage_size += blob.size
+                            blob_count += 1
+                            debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
+                        
+                        debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        enhanced['storage_size'] = total_storage_size  # Update flat field
+                    else:
+                        debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Storage client NOT available for workspace {workspace_id}")
+                        # Fallback to estimation if storage client not available
+                        storage_size_query = """
+                            SELECT VALUE SUM(c.storage_account_size) FROM c 
+                            WHERE c.workspace_id = @workspace_id 
+                            AND c.type = 'document_metadata'
+                        """
+                        storage_size_params = [{"name": "@workspace_id", "value": workspace_id}]
+                        
+                        storage_size_result = list(cosmos_public_documents_container.query_items(
+                            query=storage_size_query,
+                            parameters=storage_size_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        storage_size_estimate = storage_size_result[0] if storage_size_result and storage_size_result[0] else 0
+                        enhanced['activity']['document_metrics']['storage_account_size'] = storage_size_estimate
+                        enhanced['storage_size'] = storage_size_estimate
+                        
+                except Exception as storage_e:
+                    debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Error calculating storage for workspace {workspace_id}: {storage_e}")
+        
+        # Save metrics cache
+        try:
+            metrics_cache = {
+                'document_metrics': enhanced['activity']['document_metrics'],
+                'calculated_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Update workspace document with cached metrics
+            workspace['metrics'] = metrics_cache
+            cosmos_public_workspaces_container.upsert_item(workspace)
+            debug_print(f"Successfully cached metrics for workspace {workspace_id}")
+                
+        except Exception as cache_save_e:
+            debug_print(f"Error saving metrics cache for workspace {workspace_id}: {cache_save_e}")
+    
+        return enhanced
+        
+    except Exception as e:
+        current_app.logger.error(f"Error enhancing public workspace data: {e}")
+        return workspace  # Return original workspace data if enhancement fails
+
 def enhance_group_with_activity(group, force_refresh=False):
     """
     Enhance group data with activity information and computed fields.
@@ -2009,6 +2276,97 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error deleting group: {e}")
             return jsonify({'error': 'Failed to delete group'}), 500
+
+    # Public Workspaces API
+    @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_control_center_public_workspaces():
+        """
+        Get paginated list of public workspaces with activity data for control center management.
+        Similar to groups endpoint but for public workspaces.
+        """
+        try:
+            # Parse request parameters
+            page = int(request.args.get('page', 1))
+            per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 per page
+            search_term = request.args.get('search', '').strip()
+            status_filter = request.args.get('status_filter', 'all')
+            force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+            
+            # Calculate offset
+            offset = (page - 1) * per_page
+            
+            # Base query for public workspaces
+            if search_term:
+                # Search in workspace name and description
+                query = """
+                    SELECT * FROM c 
+                    WHERE CONTAINS(LOWER(c.name), @search_term) 
+                    OR CONTAINS(LOWER(c.description), @search_term)
+                    ORDER BY c.name
+                """
+                parameters = [{"name": "@search_term", "value": search_term.lower()}]
+            else:
+                # Get all workspaces
+                query = "SELECT * FROM c ORDER BY c.name"
+                parameters = []
+            
+            # Execute query to get all matching workspaces
+            all_workspaces = list(cosmos_public_workspaces_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            # Apply status filter if specified
+            if status_filter != 'all':
+                # For now, we'll treat all workspaces as 'active'
+                # This can be enhanced later with actual status logic
+                if status_filter != 'active':
+                    all_workspaces = []
+            
+            # Calculate pagination
+            total_count = len(all_workspaces)
+            total_pages = math.ceil(total_count / per_page) if per_page > 0 else 0
+            
+            # Get the workspaces for current page
+            workspaces_page = all_workspaces[offset:offset + per_page]
+            
+            # Enhance each workspace with activity data
+            enhanced_workspaces = []
+            for workspace in workspaces_page:
+                try:
+                    enhanced_workspace = enhance_public_workspace_with_activity(workspace, force_refresh=force_refresh)
+                    enhanced_workspaces.append(enhanced_workspace)
+                except Exception as enhance_e:
+                    current_app.logger.error(f"Error enhancing workspace {workspace.get('id', 'unknown')}: {enhance_e}")
+                    # Include the original workspace if enhancement fails
+                    enhanced_workspaces.append(workspace)
+            
+            # Return paginated response
+            return jsonify({
+                'workspaces': enhanced_workspaces,
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total_count': total_count,
+                    'total_pages': total_pages,
+                    'has_next': page < total_pages,
+                    'has_prev': page > 1
+                },
+                'filters': {
+                    'search': search_term,
+                    'status_filter': status_filter,
+                    'force_refresh': force_refresh
+                }
+            })
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting public workspaces for control center: {e}")
+            return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
 
     # Activity Trends API
     @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
