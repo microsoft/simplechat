@@ -2913,7 +2913,15 @@
                     Configure Security Settings.
                 </p>
                 <div class="card p-3 mb-3" id="keyvault-section">
-                    <h5><i class="bi bi-safe me-2"></i>Key Vault</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
                     <p class="text-muted">
                         Configure Key Vault settings.
                     </p>
@@ -2975,6 +2983,9 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
