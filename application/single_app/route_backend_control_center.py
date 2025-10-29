@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
+from functions_documents import update_document
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 import json
@@ -520,13 +521,42 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                         debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Cache expired for workspace {workspace_id} (cached at {cache_time}, age: {now - cache_time})")
                 except Exception as cache_e:
                     debug_print(f"Error using cached metrics for workspace {workspace_id}: {cache_e}")
+            
+            debug_print(f"No cached metrics for workspace {workspace_id}, calculating basic document count")
+            
+            # Calculate at least the basic document count
+            try:
+                doc_count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @workspace_id AND c.type = 'document_metadata'"
+                doc_count_params = [{"name": "@workspace_id", "value": workspace_id}]
+                
+                doc_count_results = list(cosmos_public_documents_container.query_items(
+                    query=doc_count_query,
+                    parameters=doc_count_params,
+                    enable_cross_partition_query=True
+                ))
+                
+                total_docs = 0
+                if doc_count_results and len(doc_count_results) > 0:
+                    total_docs = doc_count_results[0] if isinstance(doc_count_results[0], int) else 0
+                
+                debug_print(f"📄 [PUBLIC WORKSPACE BASIC DEBUG] Document count for workspace {workspace_id}: {total_docs}")
+                enhanced['activity']['document_metrics']['total_documents'] = total_docs
+                enhanced['document_count'] = total_docs
+                
+            except Exception as basic_e:
+                debug_print(f"Error calculating basic document count for workspace {workspace_id}: {basic_e}")
+            
+            return enhanced
+        
+        # Force refresh - calculate fresh metrics
+        debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Force refresh - calculating fresh metrics for workspace {workspace_id}")
         
         # Calculate document metrics from public_documents container
         try:
             # Count documents for this workspace
             documents_count_query = """
                 SELECT VALUE COUNT(1) FROM c 
-                WHERE c.workspace_id = @workspace_id 
+                WHERE c.public_workspace_id = @workspace_id 
                 AND c.type = 'document_metadata'
             """
             documents_count_params = [{"name": "@workspace_id", "value": workspace_id}]
@@ -543,8 +573,8 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             
             # Calculate AI search size (pages × 80KB)
             pages_sum_query = """
-                SELECT VALUE SUM(c.page_count) FROM c 
-                WHERE c.workspace_id = @workspace_id 
+                SELECT VALUE SUM(c.number_of_pages) FROM c 
+                WHERE c.public_workspace_id = @workspace_id 
                 AND c.type = 'document_metadata'
             """
             pages_sum_params = [{"name": "@workspace_id", "value": workspace_id}]
@@ -565,7 +595,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             last_upload_query = """
                 SELECT c.upload_date
                 FROM c 
-                WHERE c.workspace_id = @workspace_id
+                WHERE c.public_workspace_id = @workspace_id
                 AND c.type = 'document_metadata'
             """
             last_upload_params = [{"name": "@workspace_id", "value": workspace_id}]
@@ -591,7 +621,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                     storage_client = CLIENTS.get("storage_account_office_docs_client")
                     debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Storage client retrieved: {storage_client is not None}")
                     if storage_client:
-                        workspace_folder_prefix = f"public/{workspace_id}/"
+                        workspace_folder_prefix = f"{workspace_id}/"
                         total_storage_size = 0
                         
                         debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Looking for blobs with prefix: {workspace_folder_prefix}")
@@ -613,39 +643,61 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                         debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Storage client NOT available for workspace {workspace_id}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
-                            SELECT VALUE SUM(c.storage_account_size) FROM c 
-                            WHERE c.workspace_id = @workspace_id 
-                            AND c.type = 'document_metadata'
+                            SELECT c.file_name, c.number_of_pages FROM c 
+                            WHERE c.public_workspace_id = @workspace_id AND c.type = 'document_metadata'
                         """
-                        storage_size_params = [{"name": "@workspace_id", "value": workspace_id}]
-                        
-                        storage_size_result = list(cosmos_public_documents_container.query_items(
+                        storage_docs = list(cosmos_public_documents_container.query_items(
                             query=storage_size_query,
-                            parameters=storage_size_params,
+                            parameters=documents_count_params,
                             enable_cross_partition_query=True
                         ))
                         
-                        storage_size_estimate = storage_size_result[0] if storage_size_result and storage_size_result[0] else 0
-                        enhanced['activity']['document_metrics']['storage_account_size'] = storage_size_estimate
-                        enhanced['storage_size'] = storage_size_estimate
+                        total_storage_size = 0
+                        for doc in storage_docs:
+                            # Estimate file size based on pages and file type
+                            pages = doc.get('number_of_pages', 1)
+                            file_name = doc.get('file_name', '')
+                            
+                            if file_name.lower().endswith('.pdf'):
+                                # PDF: ~500KB per page average
+                                estimated_size = pages * 500 * 1024
+                            elif file_name.lower().endswith(('.docx', '.doc')):
+                                # Word docs: ~300KB per page average
+                                estimated_size = pages * 300 * 1024
+                            elif file_name.lower().endswith(('.pptx', '.ppt')):
+                                # PowerPoint: ~800KB per page average
+                                estimated_size = pages * 800 * 1024
+                            else:
+                                # Other files: ~400KB per page average
+                                estimated_size = pages * 400 * 1024
+                            
+                            total_storage_size += estimated_size
+                        
+                        enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
+                        enhanced['storage_size'] = total_storage_size  # Update flat field
+                        debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
                         
                 except Exception as storage_e:
-                    debug_print(f"💾 [PUBLIC WORKSPACE STORAGE DEBUG] Error calculating storage for workspace {workspace_id}: {storage_e}")
+                    debug_print(f"❌ [PUBLIC WORKSPACE STORAGE DEBUG] Storage calculation failed for workspace {workspace_id}: {storage_e}")
+                    # Set to 0 if we can't calculate
+                    enhanced['activity']['document_metrics']['storage_account_size'] = 0
+                    enhanced['storage_size'] = 0
         
-        # Save metrics cache
-        try:
-            metrics_cache = {
-                'document_metrics': enhanced['activity']['document_metrics'],
-                'calculated_at': datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Update workspace document with cached metrics
-            workspace['metrics'] = metrics_cache
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            debug_print(f"Successfully cached metrics for workspace {workspace_id}")
+        # Cache the computed metrics in the workspace document
+        if force_refresh:
+            try:
+                metrics_cache = {
+                    'document_metrics': enhanced['activity']['document_metrics'],
+                    'calculated_at': datetime.now(timezone.utc).isoformat()
+                }
                 
-        except Exception as cache_save_e:
-            debug_print(f"Error saving metrics cache for workspace {workspace_id}: {cache_save_e}")
+                # Update workspace document with cached metrics
+                workspace['metrics'] = metrics_cache
+                cosmos_public_workspaces_container.upsert_item(workspace)
+                debug_print(f"Successfully cached metrics for workspace {workspace_id}")
+                    
+            except Exception as cache_save_e:
+                debug_print(f"Error saving metrics cache for workspace {workspace_id}: {cache_save_e}")
     
         return enhanced
         
@@ -1014,6 +1066,7 @@ def get_activity_trends_data(start_date, end_date):
                 'chats': 0,
                 'personal_documents': 0,  # Track personal documents separately
                 'group_documents': 0,     # Track group documents separately
+                'public_documents': 0,    # Track public documents separately
                 'documents': 0,           # Keep for backward compatibility
                 'logins': 0,
                 'total': 0
@@ -1082,11 +1135,11 @@ def get_activity_trends_data(start_date, end_date):
                 WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
             """
             
-            # Query document containers separately to track personal vs group
+            # Query document containers separately to track personal vs group vs public
             containers = [
                 ('user_documents', cosmos_user_documents_container, 'personal_documents'),
                 ('group_documents', cosmos_group_documents_container, 'group_documents'), 
-                ('public_documents', cosmos_public_documents_container, 'personal_documents')  # Treat public as personal
+                ('public_documents', cosmos_public_documents_container, 'public_documents')  # Track public separately
             ]
             
             total_docs = 0
@@ -1128,19 +1181,7 @@ def get_activity_trends_data(start_date, end_date):
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying login activity...")
             
-            # First, let's check what's actually in the activity_logs container
-            sample_query = """
-                SELECT TOP 10 c.id, c.activity_type, c.login_method, c.timestamp, c.created_at, c.user_id
-                FROM c 
-                ORDER BY c.timestamp DESC
-            """
-            
-            sample_records = list(cosmos_activity_logs_container.query_items(
-                query=sample_query,
-                enable_cross_partition_query=True
-            ))
-            
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample activity_logs records: {sample_records}")
+            # Query login activity from activity_logs container
             
             # Count total records with login_method
             count_query = """
@@ -1174,23 +1215,6 @@ def get_activity_trends_data(start_date, end_date):
             
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(login_activities)} user_login records")
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Date range: {start_date.isoformat()} to {end_date.isoformat()}")
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Sample login records: {login_activities[:3] if login_activities else 'None'}")
-            
-            # Also check with a simpler query to see if date filtering is the issue
-            if len(login_activities) == 0:
-                simple_query = """
-                    SELECT TOP 5 c.timestamp, c.created_at, c.activity_type
-                    FROM c 
-                    WHERE c.activity_type = 'user_login'
-                    ORDER BY c.timestamp DESC
-                """
-                
-                simple_results = list(cosmos_activity_logs_container.query_items(
-                    query=simple_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Recent login records (no date filter): {simple_results}")
             
             for login in login_activities:
                 timestamp = login.get('timestamp') or login.get('created_at')
@@ -1225,6 +1249,7 @@ def get_activity_trends_data(start_date, end_date):
             'documents': {},           # Keep for backward compatibility
             'personal_documents': {},  # New: personal documents only
             'group_documents': {},     # New: group documents only
+            'public_documents': {},    # New: public documents only
             'logins': {}
         }
         
@@ -1233,6 +1258,7 @@ def get_activity_trends_data(start_date, end_date):
             result['documents'][date_key] = data['documents']  # Total for backward compatibility
             result['personal_documents'][date_key] = data['personal_documents']
             result['group_documents'][date_key] = data['group_documents']
+            result['public_documents'][date_key] = data['public_documents']
             result['logins'][date_key] = data['logins']
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")
@@ -1247,6 +1273,7 @@ def get_activity_trends_data(start_date, end_date):
             'documents': {},
             'personal_documents': {},
             'group_documents': {},
+            'public_documents': {},
             'logins': {}
         }
 
@@ -1283,6 +1310,140 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                     'display_name': '',
                     'email': ''
                 }
+        
+        # Helper function to get AI Search size with caching
+        def get_ai_search_size(doc, cosmos_container):
+            """
+            Get AI Search size for a document (pages × 80KB).
+            Uses cached value from Cosmos if available, otherwise calculates and caches it.
+            
+            Args:
+                doc: The document dict from Cosmos (to check for cached value)
+                cosmos_container: Cosmos container to update with cached value
+                
+            Returns:
+                AI Search size in bytes
+            """
+            try:
+                # Check if AI Search size is already cached in the document
+                cached_size = doc.get('ai_search_size', 0)
+                if cached_size and cached_size > 0:
+                    return cached_size
+                
+                # Not cached or zero, calculate from page count
+                pages = doc.get('number_of_pages', 0) or 0
+                ai_search_size = pages * 80 * 1024 if pages else 0  # 80KB per page
+                
+                # Cache the calculated size in Cosmos for future use using update_document
+                # This ensures we only update the specific field without overwriting other metadata
+                if ai_search_size > 0:
+                    try:
+                        document_id = doc.get('id') or doc.get('document_id')
+                        user_id = doc.get('user_id')
+                        group_id = doc.get('group_id')
+                        public_workspace_id = doc.get('public_workspace_id')
+                        
+                        if document_id and user_id:
+                            update_document(
+                                document_id=document_id,
+                                user_id=user_id,
+                                group_id=group_id,
+                                public_workspace_id=public_workspace_id,
+                                ai_search_size=ai_search_size
+                            )
+                    except Exception as cache_e:
+                        # Don't fail if caching fails, just return the calculated value
+                        pass
+                
+                return ai_search_size
+                
+            except Exception as e:
+                return 0
+        
+        # Helper function to get document storage size from Azure Storage with caching
+        def get_document_storage_size(doc, cosmos_container, container_name, folder_prefix, document_id):
+            """
+            Get actual storage size for a document from Azure Storage.
+            Uses cached value from Cosmos if available, otherwise calculates and caches it.
+            
+            Args:
+                doc: The document dict from Cosmos (to check for cached value)
+                cosmos_container: Cosmos container to update with cached value
+                container_name: Azure Storage container name (e.g., 'user-documents', 'group-documents', 'public-documents')
+                folder_prefix: Folder prefix (e.g., user_id, group_id, public_workspace_id)
+                document_id: Document ID
+                
+            Returns:
+                Total size in bytes of all blobs for this document
+            """
+            try:
+                # Check if storage size is already cached in the document
+                cached_size = doc.get('storage_account_size', 0)
+                if cached_size and cached_size > 0:
+                    debug_print(f"💾 [STORAGE CACHE] Using cached storage size for {document_id}: {cached_size} bytes")
+                    return cached_size
+                
+                # Not cached or zero, calculate from Azure Storage
+                storage_client = CLIENTS.get("storage_account_office_docs_client")
+                if not storage_client:
+                    debug_print(f"❌ [STORAGE DEBUG] Storage client not available for {document_id}")
+                    return 0
+                
+                # Get the file_name from the document to construct the correct blob path
+                # Blob path structure: {folder_prefix}/{file_name}
+                # NOT {folder_prefix}/{document_id}/... 
+                file_name = doc.get('file_name', '')
+                if not file_name:
+                    debug_print(f"⚠️ [STORAGE DEBUG] No file_name for document {document_id}, cannot calculate storage size")
+                    return 0
+                
+                # Construct the exact blob path
+                blob_path = f"{folder_prefix}/{file_name}"
+                
+                debug_print(f"💾 [STORAGE DEBUG] Looking for blob: {blob_path}")
+                
+                container_client = storage_client.get_container_client(container_name)
+                
+                # Try to get the specific blob
+                try:
+                    blob_client = container_client.get_blob_client(blob_path)
+                    blob_properties = blob_client.get_blob_properties()
+                    total_size = blob_properties.size
+                    blob_count = 1
+                    
+                    debug_print(f"💾 [STORAGE CALC] Found blob {blob_path}: {total_size} bytes")
+                except Exception as blob_e:
+                    debug_print(f"⚠️ [STORAGE DEBUG] Blob not found or error: {blob_path} - {blob_e}")
+                    return 0
+                
+                debug_print(f"💾 [STORAGE CALC] Calculated storage size for {document_id}: {total_size} bytes ({blob_count} blobs)")
+                
+                # Cache the calculated size in Cosmos for future use using update_document
+                # This ensures we only update the specific field without overwriting other metadata
+                if total_size > 0:
+                    try:
+                        user_id = doc.get('user_id')
+                        group_id = doc.get('group_id')
+                        public_workspace_id = doc.get('public_workspace_id')
+                        
+                        if document_id and user_id:
+                            update_document(
+                                document_id=document_id,
+                                user_id=user_id,
+                                group_id=group_id,
+                                public_workspace_id=public_workspace_id,
+                                storage_account_size=total_size
+                            )
+                            debug_print(f"💾 [STORAGE CACHE] Cached storage size in Cosmos for {document_id}")
+                    except Exception as cache_e:
+                        debug_print(f"⚠️ [STORAGE CACHE] Could not cache storage size for {document_id}: {cache_e}")
+                        # Don't fail if caching fails, just return the calculated value
+                
+                return total_size
+                
+            except Exception as e:
+                debug_print(f"❌ [STORAGE DEBUG] Error getting storage size for document {document_id}: {e}")
+                return 0
         
         # 1. Login Data
         if 'logins' in charts:
@@ -1333,19 +1494,19 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         
         # 2. Document Data - Handle personal and group documents separately
         documents_query = """
-            SELECT c.id, c.user_id, c.filename, c.title, c.page_count, 
-                   c.ai_search_size, c.storage_account_size, c.upload_date
+            SELECT c.id, c.user_id, c.file_name, c.title, c.number_of_pages, 
+                   c.num_chunks, c.upload_date, c.last_updated, c.status,
+                   c.document_id, c.document_classification
             FROM c 
             WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
         """
         
-        # Personal Documents (user_documents + public_documents)
+        # Personal Documents (user_documents only)
         if 'personal_documents' in charts:
             debug_print("🔍 [RAW ACTIVITY DEBUG] Getting personal document records...")
             try:
                 personal_containers = [
-                    ('user_documents', cosmos_user_documents_container),
-                    ('public_documents', cosmos_public_documents_container)
+                    ('user_documents', cosmos_user_documents_container)
                 ]
                 
                 personal_document_records = []
@@ -1368,16 +1529,30 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                                 else:
                                     doc_date = upload_date
                                 
+                                # Get AI Search size (with caching)
+                                ai_search_size = get_ai_search_size(doc, container)
+                                pages = doc.get('number_of_pages', 0) or 0
+                                
+                                # Get actual storage size from Azure Storage (with caching)
+                                document_id = doc.get('document_id', '') or doc.get('id', '')
+                                storage_size = get_document_storage_size(
+                                    doc,
+                                    container,
+                                    storage_account_user_documents_container_name,
+                                    user_id,
+                                    document_id
+                                )
+                                
                                 personal_document_records.append({
                                     'display_name': user_info['display_name'],
                                     'email': user_info['email'],
                                     'user_id': user_id,
-                                    'document_id': doc.get('id', ''),
-                                    'filename': doc.get('filename', ''),
-                                    'title': doc.get('title', ''),
-                                    'page_count': doc.get('page_count', ''),
-                                    'ai_search_size': doc.get('ai_search_size', ''),
-                                    'storage_account_size': doc.get('storage_account_size', ''),
+                                    'document_id': document_id,
+                                    'filename': doc.get('file_name', ''),
+                                    'title': doc.get('title', 'Unknown Title'),
+                                    'page_count': pages,
+                                    'ai_search_size': ai_search_size,
+                                    'storage_account_size': storage_size,
                                     'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
                                     'document_type': 'Personal'
                                 })
@@ -1419,16 +1594,31 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                                 else:
                                     doc_date = upload_date
                                 
+                                # Get AI Search size (with caching)
+                                ai_search_size = get_ai_search_size(doc, container)
+                                pages = doc.get('number_of_pages', 0) or 0
+                                
+                                # Get actual storage size from Azure Storage (with caching)
+                                document_id = doc.get('document_id', '') or doc.get('id', '')
+                                group_id = doc.get('group_workspace_id', '')
+                                storage_size = get_document_storage_size(
+                                    doc,
+                                    container,
+                                    storage_account_group_documents_container_name,
+                                    group_id,
+                                    document_id
+                                )
+                                
                                 group_document_records.append({
                                     'display_name': user_info['display_name'],
                                     'email': user_info['email'],
                                     'user_id': user_id,
-                                    'document_id': doc.get('id', ''),
-                                    'filename': doc.get('filename', ''),
-                                    'title': doc.get('title', ''),
-                                    'page_count': doc.get('page_count', ''),
-                                    'ai_search_size': doc.get('ai_search_size', ''),
-                                    'storage_account_size': doc.get('storage_account_size', ''),
+                                    'document_id': document_id,
+                                    'filename': doc.get('file_name', ''),
+                                    'title': doc.get('title', 'Unknown Title'),
+                                    'page_count': pages,
+                                    'ai_search_size': ai_search_size,
+                                    'storage_account_size': storage_size,
                                     'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
                                     'document_type': 'Group'
                                 })
@@ -1442,7 +1632,73 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                 debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting group document data: {e}")
                 result['group_documents'] = []
         
-        # Keep backward compatibility - if 'documents' is requested, combine both types
+        # Public Documents
+        if 'public_documents' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting public document records...")
+            try:
+                public_containers = [
+                    ('public_documents', cosmos_public_documents_container)
+                ]
+                
+                public_document_records = []
+                for container_name, container in public_containers:
+                    docs = list(container.query_items(
+                        query=documents_query,
+                        parameters=parameters,
+                        enable_cross_partition_query=True
+                    ))
+                    
+                    for doc in docs:
+                        user_id = doc.get('user_id', '')
+                        user_info = get_user_info(user_id)
+                        upload_date = doc.get('upload_date')
+                        
+                        if upload_date:
+                            try:
+                                if isinstance(upload_date, str):
+                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
+                                else:
+                                    doc_date = upload_date
+                                
+                                # Get AI Search size (with caching)
+                                ai_search_size = get_ai_search_size(doc, container)
+                                pages = doc.get('number_of_pages', 0) or 0
+                                
+                                # Get actual storage size from Azure Storage (with caching)
+                                document_id = doc.get('document_id', '') or doc.get('id', '')
+                                public_workspace_id = doc.get('public_workspace_id', '')
+                                storage_size = get_document_storage_size(
+                                    doc,
+                                    container,
+                                    storage_account_public_documents_container_name,
+                                    public_workspace_id,
+                                    document_id
+                                )
+                                
+                                public_document_records.append({
+                                    'display_name': user_info['display_name'],
+                                    'email': user_info['email'],
+                                    'user_id': user_id,
+                                    'document_id': document_id,
+                                    'filename': doc.get('file_name', ''),
+                                    'title': doc.get('title', 'Unknown Title'),
+                                    'page_count': pages,
+                                    'ai_search_size': ai_search_size,
+                                    'storage_account_size': storage_size,
+                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'document_type': 'Public'
+                                })
+                            except Exception as e:
+                                debug_print(f"Could not parse public document upload_date {upload_date}: {e}")
+                
+                result['public_documents'] = public_document_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(public_document_records)} public document records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting public document data: {e}")
+                result['public_documents'] = []
+        
+        # Keep backward compatibility - if 'documents' is requested, combine all types
         if 'documents' in charts:
             debug_print("🔍 [RAW ACTIVITY DEBUG] Getting combined document records for backward compatibility...")
             combined_records = []
@@ -1450,6 +1706,8 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                 combined_records.extend(result['personal_documents'])
             if 'group_documents' in result:
                 combined_records.extend(result['group_documents'])
+            if 'public_documents' in result:
+                combined_records.extend(result['public_documents'])
             result['documents'] = combined_records
             debug_print(f"🔍 [RAW ACTIVITY DEBUG] Combined {len(combined_records)} total document records")
         
@@ -2372,7 +2630,7 @@ def register_route_backend_control_center(app):
                             ])
                         debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} login records")
                     
-                    elif chart_type in ['documents', 'personal_documents', 'group_documents']:
+                    elif chart_type in ['documents', 'personal_documents', 'group_documents', 'public_documents']:
                         # Handle all document types with same structure
                         debug_print(f"🔍 [CSV DEBUG] Writing document headers for {chart_type}")
                         writer.writerow([
@@ -2511,7 +2769,8 @@ def register_route_backend_control_center(app):
                             'chats': 'Chats', 
                             'documents': 'Documents',
                             'personal_documents': 'Personal Documents',
-                            'group_documents': 'Group Documents'
+                            'group_documents': 'Group Documents',
+                            'public_documents': 'Public Documents'
                         }.get(chart_type, chart_type.title())
                         
                         csv_rows.append([date_key, chart_display_name, count])

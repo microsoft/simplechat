@@ -225,6 +225,7 @@ class ControlCenter {
                             <div>
                                 <div class="fw-semibold">${this.escapeHtml(user.display_name || 'Unknown User')}</div>
                                 <div class="text-muted small">${this.escapeHtml(user.email || '')}</div>
+                                <div class="text-muted small">ID: ${user.id}</div>
                             </div>
                         </div>
                     </td>
@@ -1169,14 +1170,16 @@ class ControlCenter {
     }
     
     renderDocumentsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering documents chart with personal and group data');
+        console.log('🔍 [Frontend Debug] Rendering documents chart with personal, group, and public data');
         console.log('🔍 [Frontend Debug] Personal documents:', activityData.personal_documents);
         console.log('🔍 [Frontend Debug] Group documents:', activityData.group_documents);
+        console.log('🔍 [Frontend Debug] Public documents:', activityData.public_documents);
         
-        // Render combined chart with both personal and group documents
+        // Render combined chart with personal, group, and public documents
         this.renderCombinedDocumentsChart('documentsChart', {
             personal: activityData.personal_documents || {},
-            group: activityData.group_documents || {}
+            group: activityData.group_documents || {},
+            public: activityData.public_documents || {}
         });
     }
     
@@ -1215,7 +1218,8 @@ class ControlCenter {
         // Prepare data for Chart.js - get all unique dates and sort them
         const personalDates = Object.keys(documentsData.personal || {});
         const groupDates = Object.keys(documentsData.group || {});
-        const allDates = [...new Set([...personalDates, ...groupDates])].sort();
+        const publicDates = Object.keys(documentsData.public || {});
+        const allDates = [...new Set([...personalDates, ...groupDates, ...publicDates])].sort();
         
         console.log(`🔍 [Frontend Debug] Documents date range:`, allDates);
         
@@ -1224,12 +1228,14 @@ class ControlCenter {
             return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         });
         
-        // Prepare datasets for both personal and group documents
+        // Prepare datasets for personal, group, and public documents
         const personalData = allDates.map(date => (documentsData.personal || {})[date] || 0);
         const groupData = allDates.map(date => (documentsData.group || {})[date] || 0);
+        const publicData = allDates.map(date => (documentsData.public || {})[date] || 0);
         
         console.log(`🔍 [Frontend Debug] Personal documents data:`, personalData);
         console.log(`🔍 [Frontend Debug] Group documents data:`, groupData);
+        console.log(`🔍 [Frontend Debug] Public documents data:`, publicData);
         
         const datasets = [
             {
@@ -1246,6 +1252,15 @@ class ControlCenter {
                 data: groupData,
                 backgroundColor: 'rgba(34, 139, 34, 0.4)',    // Medium green (forest green)
                 borderColor: '#228B22',                        // Medium green (forest green)
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1
+            },
+            {
+                label: 'Public',
+                data: publicData,
+                backgroundColor: 'rgba(0, 100, 0, 0.4)',      // Dark green
+                borderColor: '#006400',                        // Dark green
                 borderWidth: 2,
                 fill: false,
                 tension: 0.1
@@ -1551,6 +1566,7 @@ class ControlCenter {
             if (document.getElementById('exportChats').checked) selectedCharts.push('chats');
             if (document.getElementById('exportPersonalDocuments').checked) selectedCharts.push('personal_documents');
             if (document.getElementById('exportGroupDocuments').checked) selectedCharts.push('group_documents');
+            if (document.getElementById('exportPublicDocuments').checked) selectedCharts.push('public_documents');
             
             if (selectedCharts.length === 0) {
                 alert('Please select at least one chart to export.');
@@ -1958,11 +1974,12 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
                 </td>
                 <td>
-                    <div class="fw-semibold">${this.escapeHtml(group.name || 'Unnamed Group')}</div>
-                    <div class="text-muted small">${this.escapeHtml(group.description || '')}</div>
+                    <div><strong>${this.escapeHtml(group.name || 'Unnamed Group')}</strong></div>
+                    <div class="text-muted small">${this.escapeHtml(group.description || 'No description')}</div>
+                    <div class="text-muted small">ID: ${group.id}</div>
                 </td>
                 <td>
-                    <div class="fw-semibold">${this.escapeHtml(ownerName)}</div>
+                    <div>${this.escapeHtml(ownerName)}</div>
                     <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>

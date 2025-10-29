@@ -610,6 +610,12 @@
                         
                         <!-- User Management Tab -->
                         <div class="tab-pane fade" id="users" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-people-fill me-2"></i>User Management
+                                </h5>
+                            </div>
+
                             <!-- User Management Controls -->
                             <div class="row mb-3">
                                 <div class="col-md-6">
@@ -651,6 +657,7 @@
                                                         <input type="checkbox" class="form-check-input" id="selectAllUsers">
                                                     </th>
                                                     <th class="sortable" data-sort="user" style="padding-right: 25px;">User</th>
+                                                    <th class="sortable" data-sort="userId" style="padding-right: 25px;">User ID</th>
                                                     <th class="sortable" data-sort="access" style="padding-right: 25px;">Access Status</th>
                                                     <th class="sortable" data-sort="fileUpload" style="padding-right: 25px;">File Upload Status</th>
                                                     <th class="sortable" data-sort="lastLogin" style="padding-right: 25px;">Login Activity</th>
@@ -661,7 +668,7 @@
                                             </thead>
                                             <tbody id="usersTableBody">
                                                 <tr>
-                                                    <td colspan="8" class="text-center py-4">
+                                                    <td colspan="9" class="text-center py-4">
                                                         <div class="spinner-border text-primary" role="status">
                                                             <span class="visually-hidden">Loading...</span>
                                                         </div>
@@ -689,6 +696,12 @@
                         
                         <!-- Group Management Tab -->
                         <div class="tab-pane fade" id="groups" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-collection-fill me-2"></i>Group Management
+                                </h5>
+                            </div>
+
                             <!-- Global Group Settings -->
                             <div class="row mb-4">
                                 <div class="col-12">
@@ -762,6 +775,8 @@
                                                         <input type="checkbox" class="form-check-input" id="selectAllGroups">
                                                     </th>
                                                     <th class="sortable" data-sort="name" style="padding-right: 25px;">Group Name</th>
+                                                    <th class="sortable" data-sort="groupId" style="padding-right: 25px;">Group ID</th>
+                                                    <th class="sortable" data-sort="description" style="padding-right: 25px;">Description</th>
                                                     <th class="sortable" data-sort="owner" style="padding-right: 25px;">Owner</th>
                                                     <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
                                                     <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
@@ -771,7 +786,7 @@
                                             </thead>
                                             <tbody id="groupsTableBody">
                                                 <tr>
-                                                    <td colspan="7" class="text-center py-4">
+                                                    <td colspan="9" class="text-center py-4">
                                                         <div class="spinner-border text-primary" role="status">
                                                             <span class="visually-hidden">Loading...</span>
                                                         </div>
@@ -799,18 +814,11 @@
                         
                         <!-- Public Workspace Management Tab -->
                         <div class="tab-pane fade" id="workspaces" role="tabpanel">
-                            <div class="d-flex justify-content-between align-items-center mb-4">
-                                <h5 class="mb-0">
-                                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
-                                </h5>
-                                <div class="d-flex gap-2">
-                                    <button class="btn btn-outline-primary btn-sm" onclick="controlCenter.refreshPublicWorkspaces()">
-                                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Filters -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h5 class="mb-0">
+                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
+                </h5>
+            </div>                            <!-- Filters -->
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <div class="input-group">
@@ -1082,6 +1090,12 @@
                                 <i class="bi bi-file-earmark-text me-2" style="color: #228B22;"></i>Group Documents
                             </label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="public_documents" id="exportPublicDocuments" checked>
+                            <label class="form-check-label" for="exportPublicDocuments">
+                                <i class="bi bi-globe me-2" style="color: #006400;"></i>Public Documents
+                            </label>
+                        </div>
                     </div>
                     
                     <div class="mb-4">
@@ -1126,6 +1140,7 @@
                             <li><strong>Chats:</strong> Display name, email, user ID, chat ID, title, message count, total size, created date</li>
                             <li><strong>Personal Documents:</strong> Display name, email, user ID, personal document details, sizes, upload date</li>
                         <li><strong>Group Documents:</strong> Display name, email, user ID, group document details, sizes, upload date</li>
+                            <li><strong>Public Documents:</strong> Display name, email, user ID, public document details, sizes, upload date</li>
                         </ul>
                     </div>
                 </div>
@@ -1892,7 +1907,7 @@ const GroupManager = {
         // Show loading state
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="text-center py-4">
+                <td colspan="9" class="text-center py-4">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
@@ -1926,7 +1941,7 @@ const GroupManager = {
             } else {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="8" class="text-center py-4">
+                        <td colspan="9" class="text-center py-4">
                             <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
                             <div class="mt-2">No groups found</div>
                         </td>
@@ -1943,7 +1958,7 @@ const GroupManager = {
             console.error('Error loading groups:', error);
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="text-center py-4 text-danger">
+                    <td colspan="9" class="text-center py-4 text-danger">
                         <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
                         <div class="mt-2">Error loading groups: ${error.message}</div>
                         <button class="btn btn-sm btn-outline-primary mt-2" onclick="GroupManager.loadGroups()">
@@ -2007,6 +2022,10 @@ const GroupManager = {
 
         // Get member count - prioritize member_count, fallback to members array length
         const memberCount = group.member_count || (group.members ? group.members.length : 0);
+        
+        // Get owner info from owner object (matches Cosmos data structure)
+        const ownerName = group.owner?.displayName || group.owner?.display_name || group.owner_name || group.created_by || 'Unknown';
+        const ownerEmail = group.owner?.email || group.owner_email || '';
 
         return `
             <tr data-group-id="${group.id}">
@@ -2017,8 +2036,14 @@ const GroupManager = {
                     <div class="fw-bold">${group.name || 'Unnamed Group'}</div>
                 </td>
                 <td>
-                    <div>${group.owner_name || group.created_by || 'Unknown'}</div>
-                    <small class="text-muted">${group.owner_email || ''}</small>
+                    <div class="text-muted small font-monospace" title="${group.id}">${group.id.substring(0, 8)}...</div>
+                </td>
+                <td>
+                    <div class="small">${group.description || '(No description)'}</div>
+                </td>
+                <td>
+                    <div>${ownerName}</div>
+                    <small class="text-muted">${ownerEmail}</small>
                 </td>
                 <td>
                     ${memberCount} members
