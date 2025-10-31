@@ -22,13 +22,14 @@ def register_route_frontend_control_center(app):
         try:
             # Get settings for configuration data
             settings = get_settings()
+            public_settings = sanitize_settings_for_user(settings)
             
             # Get basic statistics for dashboard
             stats = get_control_center_statistics()
             
             return render_template('control_center.html', 
-                                 app_settings=settings, 
-                                 settings=settings,
+                                 app_settings=public_settings, 
+                                 settings=public_settings,
                                  statistics=stats)
         except Exception as e:
             current_app.logger.error(f"Error loading control center: {e}")

@@ -59,13 +59,6 @@
           </a>
           {% endif %}
         </li>
-        {% if app_settings.enable_workflow and app_settings.enable_enhanced_citations %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('workflow') }}">
-            <i class="bi bi-diagram-3 me-2"></i><span class="nav-text">Workflow</span>
-          </a>
-        </li>
-        {% endif %}
       {% endif %}
     </ul>
 
@@ -409,18 +402,6 @@
             </ul>
           </li>
           <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workflow">
-              <i class="bi bi-diagram-3 me-2"></i><span class="nav-text">Workflow</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="workflow-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workflow" data-section="workflow-settings-section">
-                  <i class="bi bi-gear me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflow Settings</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="safety">
               <i class="bi bi-shield-check me-2"></i><span class="nav-text">Safety</span>
             </a>
@@ -443,18 +424,6 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="conversation-archiving-section">
                   <i class="bi bi-archive me-2" style="font-size: 0.8em;"></i><span class="nav-text">Conversation Archiving</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="pii">
-              <i class="bi bi-shield-check me-2"></i><span class="nav-text">PII Analysis</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="pii-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="pii" data-section="pii-analysis-section">
-                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">PII Analysis</span>
                 </a>
               </li>
             </ul>
