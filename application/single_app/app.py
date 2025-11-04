@@ -5,14 +5,12 @@ import pickle
 import json
 import os
 
-from app_settings_cache import APP_SETTINGS_CACHE, update_settings_cache, get_settings_cache
-
+import app_settings_cache
+from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
 
-from azure.monitor.opentelemetry import configure_azure_monitor
-
-from config import *
+#from azure.monitor.opentelemetry import configure_azure_monitor
 
 from functions_authentication import *
 from functions_content import *
@@ -107,9 +105,6 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
-#TODO: Remove this after speaking with Paul
-configure_azure_monitor()
-
 # =================== Session Configuration ===================
 def configure_sessions(settings):
     """Configure session backend (Redis or filesystem) once.
@@ -165,8 +160,10 @@ def configure_sessions(settings):
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
-    update_settings_cache(settings)
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
     print(f"DEBUG:Application settings: {settings}")
+    print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {app_settings_cache.get_settings_cache()}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -248,7 +245,6 @@ def before_first_request():
 
     # Unified session setup
     configure_sessions(settings)
-
 
 @app.context_processor
 def inject_settings():
@@ -461,13 +457,15 @@ register_route_external_health(app)
 
 if __name__ == '__main__':
     settings = get_settings()
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
     initialize_clients(settings)
 
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True)
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))
