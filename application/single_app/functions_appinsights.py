@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 from azure.monitor.opentelemetry import configure_azure_monitor
-from app_settings_cache import get_settings_cache
+import app_settings_cache
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -45,10 +45,11 @@ def log_event(
         exceptionTraceback (Any, optional): If set to True, includes exception traceback.
     """
     try:
-        cache = get_settings_cache()
-        # Limit message to 32767 characters
-        if message and isinstance(message, str) and len(message) > 32767:
-            message = message[:32767]
+        try:
+            cache = app_settings_cache.get_settings_cache() or None
+        except Exception as e:
+            print(f"[Log] Could not retrieve settings cache: {e}")
+            cache = None
 
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger
         logger = get_appinsights_logger()

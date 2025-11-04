@@ -329,9 +329,9 @@ def _test_gpt_connection(payload):
     # Decide GPT model
     if enable_apim:
         apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
+        endpoint = apim_data.get('endpoint') #.rstrip('/openai')
         api_version = apim_data.get('api_version')
-        gpt_model = apim_data.get('deployment')
+        gpt_model = apim_data.get('deployment').split(',')[0]
         subscription_key = apim_data.get('subscription_key')
 
         gpt_client = AzureOpenAI(

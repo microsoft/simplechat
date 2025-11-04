@@ -1332,6 +1332,7 @@
                     <div class="mb-3">
                         <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
                         <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
                         <input type="text" class="form-control" id="azure_apim_gpt_deployment"
                             name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
                     </div>

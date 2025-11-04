@@ -70,11 +70,49 @@ class BasePlugin(ABC):
         Override this method if you want to explicitly declare exposed functions.
         """
         functions = []
-        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            # Check for a custom attribute set by the decorator
-            if getattr(method, "is_kernel_function", False):
-                print(f"Registering function: {name}")
+        # First check unbound functions on the class where decorator attributes are set
+        for name, fn in inspect.getmembers(self.__class__, predicate=inspect.isfunction):
+            if getattr(fn, "is_kernel_function", False):
                 functions.append(name)
+
+        # Fallback: check bound methods on the instance (older decorators may attach to the bound method)
+        if not functions:
+            for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+                if getattr(method, "is_kernel_function", False):
+                    functions.append(name)
+
+        # Debug print for visibility during registration
+        for f in functions:
+            print(f"Registering function: {f}")
+
         return functions
+
+    def _collect_kernel_methods_for_metadata(self) -> List[Dict[str, str]]:
+        """
+        Collect methods decorated with @kernel_function by parsing the class source code.
+        Falls back to gathering function names and the first line of their docstring when decorator metadata isn't available.
+        """
+        methods: List[Dict[str, str]] = []
+        try:
+            src = inspect.getsource(self.__class__)
+        except Exception:
+            src = None
+        if src:
+            # Try to find @kernel_function(...description="...") followed by the def
+            regex = re.compile(r"@kernel_function\s*\(\s*[^)]*?description\s*=\s*(['\"])(.*?)\1[^)]*?\)\s*(?:\n\s*@[^\"]*?)*\n\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.S)
+            for m in regex.finditer(src):
+                desc = m.group(2).strip()
+                name = m.group(3).strip()
+                methods.append({"name": name, "description": desc})
+        # If parsing didn't find anything, fall back to introspection of methods and docstrings
+        if not methods:
+            for name, fn in inspect.getmembers(self.__class__, predicate=inspect.isfunction):
+                # skip private/internal functions
+                if name.startswith("_"):
+                    continue
+                doc = (fn.__doc__ or "").strip().splitlines()
+                desc = doc[0] if doc else ""
+                methods.append({"name": name, "description": desc})
+        return methods
 
     
