@@ -260,6 +260,24 @@
             <textarea class="form-control" id="agent-additional-settings" rows="6" placeholder='{"example": "value"}'></textarea>
             <div class="form-text">Optional additional configuration settings for this agent in JSON format.</div>
           </div>
+          <div class="mb-3">
+            <div class="d-flex align-items-center mb-3">
+              <label for="agent-power-user-toggle" class="form-label mb-0 me-2">Show Agent Power User Settings</label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="agent-power-user-toggle" />
+                <label class="form-check-label" for="agent-power-user-toggle"></label>
+              </div>
+            </div>
+            <div class="d-none" id="agent-power-user-settings">
+              <label for="max-completion-tokens" class="form-label">Max Completion Tokens</label>
+              <input type="number" value="-1" class="form-control" id="agent-max-completion-tokens" placeholder="e.g., 4096, Use -1 for default" min="-1" />
+              <div class="form-text">
+                Specify the maximum number of tokens the model can generate in a single response. 
+                Set to -1 to use the model's default limit.
+                Note: Setting this value too high may lead to increased latency or higher costs.
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Step 6: Summary -->

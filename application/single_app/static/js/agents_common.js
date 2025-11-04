@@ -47,6 +47,7 @@ export function setAgentModalFields(agent, opts = {}) {
 	root.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
 	root.getElementById('agent-instructions').value = agent.instructions || '';
 	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
+	root.getElementById('agent-max-completion-tokens').value = agent.max_completion_tokens || '';
 	// Actions handled separately
 }
 
@@ -95,6 +96,7 @@ export function getAgentModalFields(opts = {}) {
 		azure_agent_apim_gpt_api_version: root.getElementById('agent-apim-api-version').value.trim(),
 		enable_agent_gpt_apim: root.getElementById('agent-enable-apim').checked,
 		instructions: root.getElementById('agent-instructions').value.trim(),
+		max_completion_tokens: parseInt(root.getElementById('agent-max-completion-tokens').value.trim()) || null,
 		actions_to_load: actions_to_load,
 		other_settings: additionalSettings
 	};

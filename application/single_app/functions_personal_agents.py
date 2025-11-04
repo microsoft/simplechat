@@ -44,6 +44,8 @@ def get_personal_agents(user_id):
         for agent in agents:
             cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
             cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+            if cleaned_agent.get('max_completion_tokens') is None:
+                cleaned_agent['max_completion_tokens'] = -1
             cleaned_agents.append(cleaned_agent)
         return cleaned_agents
         
@@ -73,6 +75,9 @@ def get_personal_agent(user_id, agent_id):
         # Remove Cosmos metadata and retrieve secrets from Key Vault
         cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
         cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user")
+        # Ensure max_completion_tokens field exists
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1
         return cleaned_agent
     except exceptions.CosmosResourceNotFoundError:
         current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
@@ -118,6 +123,8 @@ def save_personal_agent(user_id, agent_data):
         
         # Store sensitive keys in Key Vault if enabled
         agent_data = keyvault_agent_save_helper(agent_data, agent_data.get('id', ''), scope="user")
+        if agent_data.get('max_completion_tokens') is None:
+            agent_data['max_completion_tokens'] = -1
         result = cosmos_personal_agents_container.upsert_item(body=agent_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
