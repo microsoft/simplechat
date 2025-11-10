@@ -476,8 +476,8 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
         "doc_scope": doc_scope,
         "results": results,
         "expiry_time": expiry_time.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "ttl": ttl_seconds  # Cosmos DB TTL in seconds (document-level)
+        "created_at": datetime.now(timezone.utc).isoformat()
+        # No ttl field - app logic handles expiry and deletion manually
     }
     
     try:
@@ -499,8 +499,11 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
         debug_print(f"[DEBUG] Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
 
 
-# Note: Eviction is handled automatically by Cosmos DB TTL (default_ttl=300)
-# No manual eviction needed
+# Cache Expiration Strategy:
+# - App logic checks expiry_time field and deletes expired entries during reads
+# - No Cosmos DB TTL (gives admin full control via settings)
+# - Expired entries cleaned up on-demand when accessed
+# - Event-based invalidation clears cache immediately on document changes
 
 
 def invalidate_personal_search_cache(user_id: str) -> int:
@@ -785,19 +788,32 @@ def get_cache_stats() -> Dict[str, Any]:
         
         total_entries = result[0] if result else 0
         
-        # Note: Cosmos DB automatically removes expired items based on TTL
-        # So all items returned are considered "active"
-        # We could query for items near expiry if needed
-        
+        # Note: Expired items are deleted by app logic on-demand when accessed
+        # Count includes both active and expired entries (no Cosmos TTL)
         cache_enabled, ttl_seconds = get_cache_settings()
+        
+        # Count expired entries by checking expiry_time field
+        now = datetime.now(timezone.utc)
+        expired_count = 0
+        try:
+            query_expired = "SELECT VALUE COUNT(1) FROM c WHERE c.expiry_time < @now"
+            result_expired = list(cosmos_search_cache_container.query_items(
+                query=query_expired,
+                parameters=[{"name": "@now", "value": now.isoformat()}],
+                enable_cross_partition_query=True
+            ))
+            expired_count = result_expired[0] if result_expired else 0
+        except:
+            expired_count = 0  # Ignore errors in counting expired
         
         return {
             "total_entries": total_entries,
-            "active_entries": total_entries,
+            "active_entries": total_entries - expired_count,
+            "expired_entries": expired_count,
             "storage_type": "cosmos_db",
             "cache_enabled": cache_enabled,
             "cache_ttl_seconds": ttl_seconds,
-            "note": "Cosmos DB automatically removes expired items via document-level TTL"
+            "note": "Expired entries deleted on-demand by app logic (no Cosmos DB TTL)"
         }
         
     except Exception as e:
