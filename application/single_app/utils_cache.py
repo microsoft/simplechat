@@ -113,7 +113,7 @@ def get_personal_document_fingerprint(user_id: str) -> str:
         
     except Exception as e:
         logger.error(f"Error generating personal document fingerprint for user {user_id}: {e}")
-        debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", user_id=user_id[:8])
+        debug_print(f"[DEBUG] ERROR generating fingerprint: {e}", "FINGERPRINT", user_id=user_id[:8])
         # Return timestamp-based fingerprint to prevent caching on error
         return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
 
@@ -164,7 +164,7 @@ def get_group_document_fingerprint(group_id: str) -> str:
         
     except Exception as e:
         logger.error(f"Error generating group document fingerprint for group {group_id}: {e}")
-        debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", group_id=group_id[:8])
+        debug_print(f"[DEBUG] ERROR generating fingerprint: {e}", "FINGERPRINT", group_id=group_id[:8])
         return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
 
 
@@ -214,7 +214,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
         
     except Exception as e:
         logger.error(f"Error generating public workspace document fingerprint for workspace {public_workspace_id}: {e}")
-        debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", workspace_id=public_workspace_id[:8])
+        debug_print(f"[DEBUG] ERROR generating fingerprint: {e}", "FINGERPRINT", workspace_id=public_workspace_id[:8])
         return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
 
 
@@ -418,7 +418,7 @@ def get_cached_search_results(
         logger.debug(f"Cache miss for key: {cache_key}")
     except Exception as e:
         logger.error(f"Error reading cache from Cosmos DB: {e}")
-        debug_print(f"Cache read ERROR: {e}", "CACHE", cache_key=cache_key[:16])
+        debug_print(f"[DEBUG] Cache read ERROR: {e}", "CACHE", cache_key=cache_key[:16])
     
     return None
 
@@ -461,14 +461,13 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
             cache_key=cache_key[:16],
             result_count=len(results),
             expires_in=f"{CACHE_TTL_SECONDS}s",
-            scope=doc_scope,
-            partition_key=partition_key[:25]
+            scope=doc_scope
         )
         
-        logger.debug(f"Cached search results with key: {cache_key}, scope: {doc_scope}, partition: {partition_key[:25]}, expires at: {expiry_time}")
+        logger.debug(f"Cached search results with key: {cache_key}, expires at: {expiry_time}")
     except Exception as e:
         logger.error(f"Error caching search results to Cosmos DB: {e}")
-        debug_print(f"Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
+        debug_print(f"[DEBUG] Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
 
 
 # Note: Eviction is handled automatically by Cosmos DB TTL (default_ttl=300)
@@ -532,7 +531,7 @@ def invalidate_personal_search_cache(user_id: str) -> int:
         
     except Exception as e:
         logger.error(f"Error invalidating personal search cache: {e}")
-        debug_print(f"Invalidation ERROR: {e}", "INVALIDATION", user_id=user_id[:8])
+        debug_print(f"[DEBUG] Invalidation ERROR: {e}", "INVALIDATION", user_id=user_id[:8])
         return 0
 
 
@@ -596,7 +595,7 @@ def invalidate_group_search_cache(group_id: str) -> int:
         
     except Exception as e:
         logger.error(f"Error invalidating group search cache: {e}")
-        debug_print(f"Invalidation ERROR: {e}", "INVALIDATION", group_id=group_id[:8])
+        debug_print(f"[DEBUG] Invalidation ERROR: {e}", "INVALIDATION", group_id=group_id[:8])
         return 0
 
 
@@ -659,7 +658,7 @@ def invalidate_public_workspace_search_cache(public_workspace_id: str) -> int:
         
     except Exception as e:
         logger.error(f"Error invalidating public workspace search cache: {e}")
-        debug_print(f"Invalidation ERROR: {e}", "INVALIDATION", workspace_id=public_workspace_id[:8])
+        debug_print(f"[DEBUG] Invalidation ERROR: {e}", "INVALIDATION", workspace_id=public_workspace_id[:8])
         return 0
 
 
@@ -730,12 +729,12 @@ def clear_all_cache() -> int:
                 logger.warning(f"Failed to delete cache item {item['id']}: {e}")
         
         logger.info(f"Cleared all search cache ({count} entries)")
-        debug_print(f"Cleared {count} cache entries", "ADMIN")
+        debug_print(f"[DEBUG] Cleared {count} cache entries", "ADMIN")
         return count
         
     except Exception as e:
         logger.error(f"Error clearing all cache: {e}")
-        debug_print(f"Clear cache ERROR: {e}", "ADMIN")
+        debug_print(f"[DEBUG] Clear cache ERROR: {e}", "ADMIN")
         return 0
 
 
