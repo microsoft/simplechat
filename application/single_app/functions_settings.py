@@ -188,6 +188,10 @@ def get_settings():
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        
+        # Search Result Caching
+        'enable_search_result_caching': True,
+        'search_cache_ttl_seconds': 300,
 
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',

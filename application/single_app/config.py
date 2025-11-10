@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.065"
+VERSION = "0.229.066"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -383,8 +383,8 @@ cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
 cosmos_search_cache_container_name = "search_cache"
 cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_search_cache_container_name,
-    partition_key=PartitionKey(path="/user_id"),
-    default_ttl=300  # 5 minutes TTL - automatically deletes expired cache entries
+    partition_key=PartitionKey(path="/user_id")
+    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 def ensure_custom_logo_file_exists(app, settings):

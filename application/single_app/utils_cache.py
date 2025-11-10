@@ -30,12 +30,28 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 
-# Cache TTL - balance between consistency and performance
-CACHE_TTL_SECONDS = 300  # 5 minutes - reasonable for most use cases
-# Cosmos DB TTL is set at container level (default_ttl=300)
-
 # Debug logging control - set environment variable DEBUG_SEARCH_CACHE=1 to enable
 DEBUG_ENABLED = os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1'
+
+
+def get_cache_settings():
+    """
+    Get cache settings from app settings (admin configurable).
+    Falls back to defaults if settings unavailable.
+    
+    Returns:
+        tuple: (cache_enabled, ttl_seconds)
+    """
+    try:
+        from functions_settings import get_settings
+        settings = get_settings()
+        return (
+            settings.get('enable_search_result_caching', True),
+            settings.get('search_cache_ttl_seconds', 300)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load cache settings, using defaults: {e}")
+        return (True, 300)  # Default: enabled with 5 minute TTL
 
 
 def debug_print(message: str, context: str = "CACHE", **kwargs):
@@ -368,6 +384,12 @@ def get_cached_search_results(
     Returns:
         Cached results if found and not expired, None otherwise
     """
+    # Check if caching is enabled
+    cache_enabled, ttl_seconds = get_cache_settings()
+    if not cache_enabled:
+        debug_print("Cache DISABLED - Skipping cache read", "CACHE")
+        return None
+    
     # Determine correct partition key based on scope for shared cache access
     partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_public_workspace_id)
     
@@ -437,10 +459,16 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
         active_group_id: Active group ID (for group scope partition key)
         active_public_workspace_id: Active public workspace ID (for public scope partition key)
     """
+    # Check if caching is enabled
+    cache_enabled, ttl_seconds = get_cache_settings()
+    if not cache_enabled:
+        debug_print("Cache DISABLED - Skipping cache write", "CACHE")
+        return
+    
     # Determine correct partition key based on scope for shared cache storage
     partition_key = get_cache_partition_key(doc_scope, user_id, active_group_id, active_public_workspace_id)
     
-    expiry_time = datetime.now(timezone.utc) + timedelta(seconds=CACHE_TTL_SECONDS)
+    expiry_time = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
     
     cache_item = {
         "id": cache_key,
@@ -449,7 +477,7 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
         "results": results,
         "expiry_time": expiry_time.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "ttl": CACHE_TTL_SECONDS  # Cosmos DB TTL in seconds
+        "ttl": ttl_seconds  # Cosmos DB TTL in seconds (document-level)
     }
     
     try:
@@ -460,11 +488,12 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
             "CACHE",
             cache_key=cache_key[:16],
             result_count=len(results),
-            expires_in=f"{CACHE_TTL_SECONDS}s",
-            scope=doc_scope
+            expires_in=f"{ttl_seconds}s",
+            scope=doc_scope,
+            partition_key=partition_key[:25]
         )
         
-        logger.debug(f"Cached search results with key: {cache_key}, expires at: {expiry_time}")
+        logger.debug(f"Cached search results with key: {cache_key}, scope: {doc_scope}, partition: {partition_key[:25]}, ttl: {ttl_seconds}s, expires at: {expiry_time}")
     except Exception as e:
         logger.error(f"Error caching search results to Cosmos DB: {e}")
         debug_print(f"[DEBUG] Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
@@ -760,20 +789,25 @@ def get_cache_stats() -> Dict[str, Any]:
         # So all items returned are considered "active"
         # We could query for items near expiry if needed
         
+        cache_enabled, ttl_seconds = get_cache_settings()
+        
         return {
             "total_entries": total_entries,
             "active_entries": total_entries,
             "storage_type": "cosmos_db",
-            "cache_ttl_seconds": CACHE_TTL_SECONDS,
-            "note": "Cosmos DB automatically removes expired items via TTL"
+            "cache_enabled": cache_enabled,
+            "cache_ttl_seconds": ttl_seconds,
+            "note": "Cosmos DB automatically removes expired items via document-level TTL"
         }
         
     except Exception as e:
         logger.error(f"Error getting cache stats: {e}")
+        cache_enabled, ttl_seconds = get_cache_settings()
         return {
             "total_entries": 0,
             "active_entries": 0,
             "storage_type": "cosmos_db",
-            "cache_ttl_seconds": CACHE_TTL_SECONDS,
+            "cache_enabled": cache_enabled,
+            "cache_ttl_seconds": ttl_seconds,
             "error": str(e)
         }
