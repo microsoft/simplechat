@@ -1,0 +1,17 @@
+name: SimpleChat
+metadata:
+  template: custom
+infra:
+  provider: bicep
+  path: bicep
+  options:
+    parameters:  bicep/params/dev.bicepparam
+
+services:
+  web:
+    project: ../application/single_app
+    language: python
+    host: appservice
+    docker:
+      context: ../../
+      dockerfile: application/single_app/Dockerfile

@@ -456,3 +456,11 @@ module openAI_existing 'modules/openAI-existing.bicep' = if (useExistingOpenAISv
     openAIName: existingOpenAIResourceName
   }
 }
+
+//=========================================================
+// Outputs for azd
+//=========================================================
+output AZURE_RESOURCE_GROUP string = rgName
+output SERVICE_WEB_NAME string = appService.outputs.name
+output SERVICE_WEB_URI string = 'https://${appService.outputs.defaultHostName}'
+output SERVICE_WEB_RESOURCE_ID string = appService.outputs.resourceId

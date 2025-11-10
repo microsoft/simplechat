@@ -120,7 +120,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       '${managedIdentityId}': {}
     }
   }
-  tags: tags
+  tags: union(tags, { 'azd-service-name': 'web' })
 }
 
 // configure application logging retention
