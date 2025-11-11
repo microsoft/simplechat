@@ -1687,6 +1687,7 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
         try:
             setattr(prompt_exec_settings, "stop", stop_seqs)
         except Exception:
+            # pass this to prevent additional future agent types from potentially failing
             pass
     
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
@@ -1694,6 +1695,7 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
             try:
                 prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.from_string('auto')
             except Exception:
+                # pass this to prevent additional future agent types from potentially failing
                 pass
     else:
         print(f"[SK Loader] function_choice_behavior attribute not found in prompt execution settings for agent: {agent_config.get('name')}")
