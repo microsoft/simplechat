@@ -1678,6 +1678,7 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
             try:
                 setattr(prompt_exec_settings, fld, val)
             except Exception:
+                # pass this to prevent additional future agent types from potentially failing
                 pass
 
     # stop sequences -> map to 'stop' which OpenAI expects
