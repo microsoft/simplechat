@@ -6,10 +6,6 @@ Loader for Semantic Kernel plugins/actions from app settings.
 """
 
 import logging
-import importlib
-import os
-import importlib.util
-import inspect
 import builtins
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
 from semantic_kernel import Kernel
@@ -1113,7 +1109,8 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             "agents": agents_cfg
         },
         level=logging.INFO)
-
+    # Ensure migration is complete (will migrate any remaining legacy data)
+    ensure_actions_migration_complete(user_id)
     plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
         
     # PATCH: Merge global plugins if enabled
