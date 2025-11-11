@@ -7,11 +7,29 @@ infra:
   options:
     parameters:  bicep/params/dev.bicepparam
 
+hooks:
+  predeploy:
+    posix:
+      shell: sh
+      run: |
+        # Build and push Docker image to ACR
+        cd ..
+        timestamp="$(date +"%Y%m%d-%H%M%S")"
+        echo "Stopping web service prior to deployment..."
+        az webapp stop --name ${SERVICE_WEB_NAME} --resource-group ${AZURE_RESOURCE_GROUP}
+        echo "Building Docker image..."
+        docker build -f application/single_app/Dockerfile -t ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp} .
+        docker tag ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp} ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:latest
+        echo "Logging in to ACR..."
+        az acr login --name ${AZURE_CONTAINER_REGISTRY_NAME}
+        echo "Pushing image to ACR..."
+        docker push ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:latest
+        docker push ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp}
+        echo "Restarting web service..."
+        az webapp start --name ${SERVICE_WEB_NAME} --resource-group ${AZURE_RESOURCE_GROUP}
+
 services:
   web:
     project: ../application/single_app
     language: python
     host: appservice
-    docker:
-      context: ../../
-      dockerfile: application/single_app/Dockerfile

@@ -6,6 +6,7 @@ param environment string
 param tags object
 
 param managedIdentityId string
+param managedIdentityClientId string
 param enableDiagLogging bool
 param logAnalyticsId string
 
@@ -67,6 +68,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
     siteConfig: {
       linuxFxVersion: 'DOCKER|${containerImageName}'
       acrUseManagedIdentityCreds: true
+      acrUserManagedIdentityID: managedIdentityClientId
       alwaysOn: true
       ftpsState: 'Disabled'
       healthCheckPath: '/external/healthcheck'
@@ -115,7 +117,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
     httpsOnly: true
   }
   identity: {
-    type: 'SystemAssigned, UserAssigned'
+    type: 'UserAssigned'
     userAssignedIdentities: {
       '${managedIdentityId}': {}
     }

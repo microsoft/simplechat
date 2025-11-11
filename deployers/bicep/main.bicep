@@ -323,6 +323,7 @@ module appService 'modules/appService.bicep' = {
     #disable-next-line BCP318  // expect one value to be null
     acrName : useExistingAcr ? acr_existing.outputs.acrName : acr_create.outputs.acrName
     managedIdentityId: managedIdentity.outputs.resourceId
+    managedIdentityClientId: managedIdentity.outputs.clientId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
     appServicePlanId: appServicePlan.outputs.appServicePlanId
@@ -464,3 +465,6 @@ output AZURE_RESOURCE_GROUP string = rgName
 output SERVICE_WEB_NAME string = appService.outputs.name
 output SERVICE_WEB_URI string = 'https://${appService.outputs.defaultHostName}'
 output SERVICE_WEB_RESOURCE_ID string = appService.outputs.resourceId
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = '${acrName}${acrCloudSuffix}'
+output AZURE_CONTAINER_REGISTRY_NAME string = acrName
+output SERVICE_WEB_IMAGE_NAME string = containerImageName
