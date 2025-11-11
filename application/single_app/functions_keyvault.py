@@ -267,7 +267,6 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
     key_vault_name = settings.get("key_vault_name", None)
     if not enable_key_vault_secret_storage or not key_vault_name:
         return agent_dict
-    source = "agent"
     updated = dict(agent_dict)
     agent_name = updated.get('name', 'agent')
     use_apim = updated.get('enable_agent_gpt_apim', False)
@@ -284,7 +283,7 @@ def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_ty
                 else:
                     updated[key] = ui_trigger_word
             except Exception as e:
-                logging.error(f"Failed to retrieve agent key '{key}' from Key Vault: {e}")
+                logging.error(f"Failed to retrieve agent key '{key}' for agent '{agent_name}' from Key Vault: {e}")
                 return updated
     return updated
 
