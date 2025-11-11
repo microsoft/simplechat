@@ -59,7 +59,7 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='/static', static_folder='static')
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
@@ -465,7 +465,12 @@ if __name__ == '__main__':
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True)
+        # use_reloader=False prevents too_many_retries errors with static files
+        # Disable excessive logging for static file requests in development
+        import logging
+        werkzeug_logger = logging.getLogger('werkzeug')
+        werkzeug_logger.setLevel(logging.ERROR)
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))
