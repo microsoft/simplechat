@@ -377,7 +377,6 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     if scope not in supported_scopes:
         logging.error(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
-    source = "action"
     updated = dict(plugin_dict)
     plugin_name = updated.get('name', 'plugin')
     auth = updated.get('auth', {})
@@ -400,8 +399,8 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
                         new_auth['key'] = ui_trigger_word
                         updated['auth'] = new_auth
                 except Exception as e:
-                    logging.error(f"Failed to retrieve action key from Key Vault: {e}")
-                    raise Exception(f"Failed to retrieve action key from Key Vault: {e}")
+                    logging.error(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}")
+                    raise Exception(f"Failed to retrieve action {plugin_name} key from Key Vault: {e}")
 
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
