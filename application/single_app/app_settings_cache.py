@@ -4,8 +4,6 @@ WARNING: NEVER 'from app_settings_cache import' settings or any other module tha
 ALWAYS import app_settings_cache and use app_settings_cache.get_settings_cache() to get settings.
 This supports the dynamic selection of redis or in-memory caching of settings.
 """
-import os
-import redis
 import json
 from redis import Redis
 from azure.identity import DefaultAzureCredential

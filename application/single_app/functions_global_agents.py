@@ -14,7 +14,7 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
-from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 
 
