@@ -241,6 +241,134 @@ class AzureBillingPlugin(BasePlugin):
             rows.append(parsed)
         return rows
 
+    def _coerce_rows_for_plot(self, data) -> List[Dict[str, Any]]:
+        """Normalize incoming data into a list of row dictionaries for plotting."""
+        if isinstance(data, list):
+            if not data:
+                raise ValueError("No data provided for plotting")
+            first = data[0]
+            if isinstance(first, dict):
+                try:
+                    return [dict(row) for row in data]
+                except Exception as exc:
+                    raise ValueError("data must contain serializable dictionaries") from exc
+            if isinstance(first, str):
+                return self._parse_csv_to_rows(data)
+            raise ValueError("data must be a list of dicts, a CSV string, or a list of CSV lines")
+        if isinstance(data, str):
+            if not data.strip():
+                raise ValueError("No data provided for plotting")
+            return self._parse_csv_to_rows(data)
+        raise ValueError("data must be a list of dicts, a CSV string, or a list of CSV lines")
+
+    def _build_plot_hints(self, rows: List[Dict[str, Any]], columns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """Generate plotting hints based on the returned Cost Management rows."""
+        hints: Dict[str, Any] = {
+            "available_graph_types": SUPPORTED_GRAPH_TYPES,
+            "row_count": len(rows or []),
+            "label_candidates": [],
+            "numeric_candidates": [],
+            "recommended": {}
+        }
+
+        if not rows:
+            return hints
+
+        sample = rows[0]
+        numeric_candidates = [k for k, v in sample.items() if isinstance(v, (int, float))]
+        resource_preferred = [
+            "ResourceType",
+            "ResourceGroupName",
+            "ResourceName",
+            "ResourceLocation",
+            "ServiceName",
+            "Product",
+            "MeterCategory",
+            "MeterSubCategory",
+            "SubscriptionName",
+            "SubscriptionId"
+        ]
+        temporal_terms = ("date", "time", "month", "period")
+        temporal_candidates: List[str] = []
+        label_candidates: List[str] = []
+
+        for key, value in sample.items():
+            if isinstance(value, (int, float)):
+                continue
+            if key not in label_candidates:
+                label_candidates.append(key)
+            lowered = key.lower()
+            if any(term in lowered for term in temporal_terms) and key not in temporal_candidates:
+                temporal_candidates.append(key)
+
+        ordered_labels: List[str] = []
+        for preferred in resource_preferred:
+            if preferred in sample and preferred not in ordered_labels:
+                ordered_labels.append(preferred)
+
+        for key in label_candidates:
+            if key not in ordered_labels and key not in temporal_candidates:
+                ordered_labels.append(key)
+
+        for temporal in temporal_candidates:
+            if temporal not in ordered_labels:
+                ordered_labels.append(temporal)
+
+        hints["label_candidates"] = ordered_labels or label_candidates
+        hints["numeric_candidates"] = numeric_candidates
+
+        cost_focused = [k for k in numeric_candidates if "cost" in k.lower()]
+        if cost_focused:
+            y_keys = cost_focused[:3]
+        else:
+            y_keys = numeric_candidates[:3]
+
+        pie_label = next((k for k in ordered_labels if "resource" in k.lower()), None)
+        if not pie_label and ordered_labels:
+            pie_label = ordered_labels[0]
+
+        pie_value = y_keys[0] if y_keys else None
+        hints["recommended"]["pie"] = {
+            "graph_type": "pie",
+            "x_keys": [pie_label] if pie_label else [],
+            "y_keys": [pie_value] if pie_value else []
+        }
+
+        temporal_primary = next((k for k in ordered_labels if any(term in k.lower() for term in temporal_terms)), None)
+        stack_candidate = next((k for k in ordered_labels if k != temporal_primary), None)
+
+        default_graph_type = "column_grouped"
+        default_x_keys: List[str] = []
+
+        if temporal_primary:
+            default_x_keys.append(temporal_primary)
+            if stack_candidate:
+                default_x_keys.append(stack_candidate)
+            default_graph_type = "line" if len(y_keys) <= 2 else "column_grouped"
+        else:
+            if ordered_labels:
+                default_x_keys.append(ordered_labels[0])
+            default_graph_type = "column_stacked" if len(y_keys) > 1 else "pie"
+
+        hints["recommended"]["default"] = {
+            "graph_type": default_graph_type,
+            "x_keys": default_x_keys,
+            "y_keys": y_keys
+        }
+
+        if columns:
+            column_summary = []
+            for column in columns:
+                if not isinstance(column, dict):
+                    continue
+                column_summary.append({
+                    "name": column.get("name") or column.get("displayName"),
+                    "type": column.get("type") or column.get("dataType"),
+                })
+            hints["columns"] = column_summary
+
+        return hints
+
     def _iso_utc(dt: datetime.datetime) -> str:
         return dt.astimezone(datetime.timezone.utc).isoformat()
 
@@ -307,10 +435,29 @@ class AzureBillingPlugin(BasePlugin):
             "methods": self._collect_kernel_methods_for_metadata()
         }
 
+    @kernel_function(description="Generate plotting hints for Cost Management data so callers can intentionally choose chart parameters.")
+    @plugin_function_logger("AzureBillingPlugin")
+    def suggest_plot_config(self, data, columns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if columns is not None and not isinstance(columns, list):
+            return {"status": "error", "error": "columns must be a list of column metadata entries"}
+        try:
+            rows = self._coerce_rows_for_plot(data)
+        except ValueError as exc:
+            return {"status": "error", "error": str(exc)}
+        except Exception as exc:  # pragma: no cover - defensive path
+            logging.exception("Unexpected error while preparing data for plot hints")
+            return {"status": "error", "error": f"Failed to parse data for plot hints: {exc}"}
+
+        if not rows:
+            return {"status": "error", "error": "No data provided for plotting"}
+
+        hints = self._build_plot_hints(rows, columns)
+        return hints
+
     @kernel_function(description="Plot a chart/graph from provided data. Supports pie, column_stacked, column_grouped, line, and area.",)
     @plugin_function_logger("AzureBillingPlugin")
     def plot_chart(self,
-                    conversationId: str,
+                    conversation_id: str,
                     data,
                     x_keys: Optional[List[str]] = None,
                     y_keys: Optional[List[str]] = None,
@@ -374,168 +521,178 @@ class AzureBillingPlugin(BasePlugin):
             return {"status": "error", "error": str(ex)}
         if graph_type not in SUPPORTED_GRAPH_TYPES:
             raise ValueError(f"Unsupported graph_type '{graph_type}'. Supported: {SUPPORTED_GRAPH_TYPES}")
+        try:
+            rows = self._coerce_rows_for_plot(data)
+        except ValueError as exc:
+            return {"status": "error", "error": str(exc)}
+        except Exception as exc:
+            logging.exception("Failed to parse input data for plotting")
+            return {"status": "error", "error": f"Failed to parse data for plotting: {str(exc)}"}
 
-
-        # Accept CSV string, list of strings, or list of dicts
-        print(f"=====================================================================\n[ABP][PCC]data type: {type(data)}\n=====================================================================")
-        print(f"=====================================================================\n[ABP][PCC]data content: {str(data)[:125]}\n=====================================================================\n=====================================================================")
-        rows = []
-        if isinstance(data, list):
-            if len(data) == 0:
-                return {"status": "error", "error": "No data provided for plotting"}
-            # If first item is a dict, treat as list of dicts
-            if isinstance(data[0], dict):
-                try:
-                    rows = [r.copy() for r in data]
-                except Exception as ex:
-                    logging.exception("plot_custom_chart expected list[dict] or CSV string/list")
-                    return {"status": "error", "error": "data must be a list of dicts, a CSV string, or a list of CSV lines"}
-            # If first item is a string, treat as list of CSV lines
-            elif isinstance(data[0], str):
-                try:
-                    rows = self._parse_csv_to_rows(data)
-                except Exception as ex:
-                    logging.exception("Failed to parse CSV input for plotting")
-                    return {"status": "error", "error": f"Failed to parse CSV input: {str(ex)}"}
-            else:
-                return {"status": "error", "error": "data must be a list of dicts, a CSV string, or a list of CSV lines"}
-        elif isinstance(data, str):
-            try:
-                rows = self._parse_csv_to_rows(data)
-            except Exception as ex:
-                logging.exception("Failed to parse CSV input for plotting")
-                return {"status": "error", "error": f"Failed to parse CSV input: {str(ex)}"}
-        else:
-            return {"status": "error", "error": "data must be a list of dicts, a CSV string, or a list of CSV lines"}
-
-        # If no data, return an error-like dict
         if not rows:
-            raise ValueError("No data provided for plotting")
+            return {"status": "error", "error": "No data provided for plotting"}
 
-        # Autodetect numeric columns if y_keys not provided
-        if not y_keys and graph_type != "pie":
-            sample = rows[0]
-            y_keys = [k for k, v in sample.items() if isinstance(v, (int, float))]
-            if not y_keys:
+        hints = self._build_plot_hints(rows, None)
+        recommended_defaults = hints.get("recommended", {}).get("default", {})
+        recommended_pie = hints.get("recommended", {}).get("pie", {})
+
+        def ensure_list(value) -> List[Any]:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return list(value)
+            if isinstance(value, tuple):
+                return list(value)
+            if isinstance(value, str):
+                return [value]
+            if hasattr(value, '__iter__'):
+                return list(value)
+            return [value]
+
+        x_keys_list = ensure_list(x_keys)
+        y_keys_list = ensure_list(y_keys)
+
+        if graph_type == "pie":
+            if not y_keys_list:
+                y_keys_list = ensure_list(recommended_pie.get("y_keys") or recommended_defaults.get("y_keys"))
+            if len(y_keys_list) > 1:
+                y_keys_list = y_keys_list[:1]
+            if not y_keys_list:
+                raise ValueError("Pie chart requires a numeric column for values")
+
+            if not x_keys_list:
+                x_keys_list = ensure_list(recommended_pie.get("x_keys") or recommended_defaults.get("x_keys"))
+            if len(x_keys_list) > 1:
+                x_keys_list = x_keys_list[:1]
+            if not x_keys_list:
+                sample_row = rows[0]
+                for candidate in sample_row.keys():
+                    if candidate in hints.get("label_candidates", []):
+                        x_keys_list = [candidate]
+                        break
+            if not x_keys_list:
+                raise ValueError("Pie chart requires a label column (x_keys)")
+
+            x_key = x_keys_list[0]
+            stack_col = None
+            x_vals = None
+        else:
+            if not y_keys_list:
+                y_keys_list = ensure_list(recommended_defaults.get("y_keys"))
+            if not y_keys_list:
+                sample_row = rows[0]
+                y_keys_list = [k for k, v in sample_row.items() if isinstance(v, (int, float))]
+            if not y_keys_list:
                 raise ValueError("Could not autodetect numeric columns for y axis. Provide y_keys explicitly.")
 
-        # Prepare x values and handle x_keys as list
-        x_vals = None
-        x_key = None  # Primary x-axis key
-        stack_col = None  # Secondary key for stacking/grouping
-        
-        if graph_type != "pie":
-            # Normalize x_keys to a list
-            if x_keys is None:
-                x_keys = []
-            elif isinstance(x_keys, str):
-                x_keys = [x_keys]
-            elif not isinstance(x_keys, list):
-                x_keys = list(x_keys) if hasattr(x_keys, '__iter__') else [str(x_keys)]
-            
-            # Auto-detect x_key if not provided
-            if not x_keys:
-                # attempt to pick a sensible x_key (date-like or first non-numeric)
-                for k, v in rows[0].items():
-                    if not isinstance(v, (int, float)):
-                        x_keys.append(k)
+            if not x_keys_list:
+                x_keys_list = ensure_list(recommended_defaults.get("x_keys"))
+            if not x_keys_list:
+                sample_row = rows[0]
+                for key, value in sample_row.items():
+                    if not isinstance(value, (int, float)):
+                        x_keys_list = [key]
                         break
-            
-            if not x_keys:
+            if not x_keys_list:
                 raise ValueError("x_keys is required for this chart type")
-            
-            # Primary x-axis is first key
-            x_key = x_keys[0]
-            # If multiple x_keys provided, second one is for stacking/grouping
-            if len(x_keys) > 1:
-                stack_col = x_keys[1]
-            
+            if len(x_keys_list) > 2:
+                x_keys_list = x_keys_list[:2]
+
+            x_key = x_keys_list[0]
+            stack_col = x_keys_list[1] if len(x_keys_list) > 1 else None
             x_vals = [r.get(x_key) for r in rows]
 
-        # Wrap plotting in try/except so we return structured errors rather than raising
+        fig = None
         try:
-            # Build matplotlib figure
-            fig, ax = plt.subplots(figsize=tuple(figsize))
+            num_legend_items = 0
+            if graph_type == "pie":
+                num_legend_items = len(rows)
+            elif graph_type == "column_stacked":
+                if stack_col:
+                    num_legend_items = len({r.get(stack_col) for r in rows if r.get(stack_col) is not None})
+                else:
+                    num_legend_items = len(y_keys_list)
+            else:
+                num_legend_items = len(y_keys_list)
+
+            scaled_figsize = list(figsize)
+            if num_legend_items > 6:
+                extra_width = min(num_legend_items * 0.12, 5.0)
+                scaled_figsize[0] = figsize[0] + extra_width
+            elif num_legend_items > 3:
+                scaled_figsize[1] = figsize[1] + 0.8
+
+            fig, ax = plt.subplots(figsize=tuple(scaled_figsize))
 
             if graph_type == "pie":
-                # For pie, use first x_key for labels and single y_key for values
-                pie_x_key = x_keys[0] if x_keys else None
-                if not pie_x_key or (not y_keys or len(y_keys) != 1):
-                    raise ValueError("Pie chart requires an x_key (labels) and a single y_key for values")
+                pie_x_key = x_keys_list[0]
+                pie_y_key = y_keys_list[0]
                 labels = [r.get(pie_x_key) for r in rows]
-                values = [r.get(y_keys[0]) or 0 for r in rows]
-                ax.pie(values, labels=labels, autopct="%1.1f%%")
-                ax.set_title(title)
+                labels_display = ["Unknown" if label in (None, "") else str(label) for label in labels]
+                values = [float(r.get(pie_y_key) or 0) for r in rows]
+                wedges, _, _ = ax.pie(values, autopct="%1.1f%%", startangle=90)
+                ax.set_title(title or "Cost distribution")
+                if len(labels_display) <= 6:
+                    ax.legend(wedges, labels_display, loc="center left", bbox_to_anchor=(1, 0.5))
+                else:
+                    ax.legend(wedges, labels_display, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=min(4, len(labels_display)))
 
             elif graph_type in ("line", "area"):
-                for yk in y_keys:
-                    y_vals = [r.get(yk) or 0 for r in rows]
+                for yk in y_keys_list:
+                    y_vals = [float(r.get(yk) or 0) for r in rows]
                     if graph_type == "line":
                         ax.plot(x_vals, y_vals, marker='o', label=yk)
                     else:
-                        ax.fill_between(x_vals, y_vals, alpha=0.5, label=yk)
-                if y_keys and len(y_keys) > 1:
+                        ax.fill_between(range(len(x_vals)), y_vals, alpha=0.5, label=yk)
+                if len(y_keys_list) > 1:
                     ax.legend()
-                ax.set_title(title)
+                ax.set_title(title or "Cost trend")
                 ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel)
+                ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Value"))
+                ax.grid(True, axis='y', alpha=0.3)
 
             elif graph_type == "column_grouped":
-                # Grouped bar chart: for each x position, multiple bars side-by-side
                 n_groups = len(rows)
-                n_bars = len(y_keys)
+                n_bars = len(y_keys_list)
                 index = np.arange(n_groups)
                 bar_width = 0.8 / max(1, n_bars)
-                for i, yk in enumerate(y_keys):
-                    y_vals = [r.get(yk) or 0 for r in rows]
+                for i, yk in enumerate(y_keys_list):
+                    y_vals = [float(r.get(yk) or 0) for r in rows]
                     ax.bar(index + i * bar_width, y_vals, bar_width, label=yk)
                 ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
                 ax.set_xticklabels([str(x) for x in x_vals], rotation=45, ha='right')
-                ax.set_title(title)
+                ax.set_title(title or "Cost comparison")
                 ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel)
-                if y_keys and len(y_keys) > 1:
+                ax.set_ylabel(ylabel or ("Values" if len(y_keys_list) > 1 else y_keys_list[0]))
+                if len(y_keys_list) > 1:
                     ax.legend()
 
             elif graph_type == "column_stacked":
-                # Pivot data for stacking: for each x_val, get a value for each stack (y_key or grouping col)
-                # Get all unique x values (preserve order)
-                x_vals_unique = []
+                x_vals_unique: List[Any] = []
                 seen_x = set()
                 for r in rows:
                     xval = r.get(x_key)
                     if xval not in seen_x:
                         seen_x.add(xval)
                         x_vals_unique.append(xval)
-                
-                # Use stack_col from x_keys if provided, otherwise auto-detect
-                if not stack_col and len(y_keys) == 1:
-                    for k in rows[0].keys():
-                        if k != x_key and k != y_keys[0] and isinstance(rows[0][k], str):
-                            stack_col = k
-                            break
-                
+
+                y_keys_plot: List[Any]
                 pivot = defaultdict(lambda: defaultdict(float))
-                stack_labels = set()
                 if stack_col:
                     for r in rows:
                         xval = r.get(x_key)
                         sval = r.get(stack_col)
-                        yval = r.get(y_keys[0], 0) or 0
+                        yval = float(r.get(y_keys_list[0]) or 0)
                         pivot[xval][sval] += yval
-                        stack_labels.add(sval)
-                    stack_labels = sorted(stack_labels)
-                    y_keys_plot = stack_labels
+                    y_keys_plot = sorted({key for row in pivot.values() for key in row.keys()})
                 else:
                     for r in rows:
                         xval = r.get(x_key)
-                        for yk in y_keys:
-                            yval = r.get(yk, 0) or 0
-                            pivot[xval][yk] += yval
-                    y_keys_plot = y_keys
-                data_matrix = []
-                for yk in y_keys_plot:
-                    data_matrix.append([pivot[x][yk] for x in x_vals_unique])
+                        for yk in y_keys_list:
+                            pivot[xval][yk] += float(r.get(yk) or 0)
+                    y_keys_plot = y_keys_list
+
+                data_matrix = [[pivot[x_val].get(yk, 0.0) for x_val in x_vals_unique] for yk in y_keys_plot]
                 index = np.arange(len(x_vals_unique))
                 bottoms = np.zeros(len(x_vals_unique))
                 for i, yk in enumerate(y_keys_plot):
@@ -543,33 +700,45 @@ class AzureBillingPlugin(BasePlugin):
                     bottoms += np.array(data_matrix[i])
                 ax.set_xticks(index)
                 ax.set_xticklabels([str(x) for x in x_vals_unique], rotation=45, ha='right')
-                ax.set_title(title)
+                ax.set_title(title or "Cost breakdown")
                 ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel)
+                ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Values"))
                 if len(y_keys_plot) > 1:
-                    ax.legend(title=stack_col if stack_col else "")
+                    legend_title = stack_col or "Segments"
+                    ax.legend(title=legend_title)
 
             plt.tight_layout()
             img_b64 = self._fig_to_base64_dict(fig, filename=filename)
-            self.upload_cosmos_message(conversation_id, str(img_b64.get("image_url", "")))
-            return {"type": "image_url", "image_url": {"url": str(img_b64.get("image_url", ""))}}
-            # return f'<img src="{img_b64.get("image_url", "")}"/>'
-            """
-            return {
+            payload = {
                 "status": "ok",
-                "mime": img_b64.get("mime"),
-                "filename": img_b64.get("filename"),
-                "base64": img_b64.get("base64"),
-                "image_url": img_b64.get("image_url"),
-                "metadata": {"type": graph_type, "x_key": x_key, "y_keys": y_keys},
-                "instructions": "Provide the image_url field to the application to render the chart in the chat messages."
+                "type": "image_url",
+                "image_url": {"url": str(img_b64.get("image_url", ""))},
+                "metadata": {
+                    "graph_type": graph_type,
+                    "x_keys": x_keys_list,
+                    "y_keys": y_keys_list,
+                    "stack_key": stack_col,
+                    "figure_size": scaled_figsize,
+                    "recommendations": hints.get("recommended", {})
+                }
             }
-            """
+
+            if conversation_id:
+                try:
+                    self.upload_cosmos_message(conversation_id, str(img_b64.get("image_url", "")))
+                except Exception:
+                    logging.exception("Failed to upload chart image to Cosmos DB")
+                    payload.setdefault("warnings", []).append("Chart rendered but storing to conversation failed.")
+            else:
+                payload.setdefault("warnings", []).append("Chart rendered but conversation_id was not provided; image not persisted.")
+
+            return payload
         except Exception as ex:
-            logging.exception(f"Error while generating chart {str(ex)}")
+            logging.exception("Error while generating chart")
             return {"status": "error", "error": f"Error while generating chart: {str(ex)}"}
         finally:
-            plt.close(fig)
+            if fig is not None:
+                plt.close(fig)
 
 
     @plugin_function_logger("AzureBillingPlugin")
@@ -712,13 +881,11 @@ class AzureBillingPlugin(BasePlugin):
             # Fallback: return raw JSON string in a single column
             return self._csv_from_table([{"raw": json.dumps(data)}])
 
-    @kernel_function(description="Run a general Azure Cost Management query with flexible dataset and aggregation. Defaults to BillingMonthToDate. Supports up to two allowed query aggregations as per API spec. Custom timeframe requires a start and stop time_period in ISO8601 extended format.")
+    @kernel_function(description="Run an Azure Cost Management query and return rows, column metadata, and plotting hints for manual chart selection. Defaults to BillingMonthToDate timeframe.")
     @plugin_function_logger("AzureBillingPlugin")
     def run_data_query(self,
         conversation_id: str,
         subscription_id: str,
-        generate_graph: bool = True,
-        graph_type: str = "stacked_column",
         resource_group_name: Optional[str] = None,
         query_type: str = "Usage",
         timeframe: str = "BillingMonthToDate",
@@ -726,28 +893,17 @@ class AzureBillingPlugin(BasePlugin):
         aggregations: Optional[List[Dict[str, Any]]] = None,
         groupings: Optional[List[Dict[str, Any]]] = None,
         query_filter: Optional[Dict[str, Any]] = None,
-        time_period: Optional[Dict[str, str]] = None,
-        title: Optional[str] = None,
-        xlabel: Optional[str] = None,
-        ylabel: Optional[str] = None,
-        filename: Optional[str] = None,
-        figsize: Optional[List[float]] = None) -> str:
+        time_period: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Run a general Azure Cost Management query.
-        - subscription_id: Azure subscription ID (required)
-        - resource_group_name: Resource group name (optional)
-        - query_type: "Usage", "ActualCost", or "Forecast" (default: "Usage")
-        - timeframe: e.g., "BillingMonthToDate", "MonthToDate", "Custom" (default: "BillingMonthToDate")
-        - granularity: "None", "Daily", "Monthly" (default: "Daily")
-        - aggregations: list of aggregation dicts, e.g., [{"name": "totalCost", "function": "Sum", "column": "PreTaxCost"}]
-        - groupings: list of grouping dicts, e.g., [{"type": "Dimension", "name": "ResourceGroupName"}]
-        - query_filter: dict representing filter (optional)
-                - time_period: dict with "from" and "to" ISO date strings (required if timeframe is "Custom").
-                    Example:
-                    {
-                        "from": "2025-04-01T00:00:00+00:00",
-                        "to": "2025-09-30T23:59:59+00:00"
-                    }
+        Execute an Azure Cost Management query and return structured results.
+
+        Returns a dict containing:
+            - rows: list of result dictionaries
+            - columns: metadata about returned columns
+            - csv: CSV-formatted string of the results
+            - plot_hints: heuristic suggestions for plotting the data
+            - query: the query payload that was submitted
+            - scope/api_version: request context details
         """
         if resource_group_name:
             scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group_name}"
@@ -871,65 +1027,40 @@ class AzureBillingPlugin(BasePlugin):
             if 'from' not in time_period or 'to' not in time_period:
                 return {"status": "error", "error": "time_period must include 'from' and 'to' keys with ISO datetime strings."}
             query["timePeriod"] = time_period
-        print(f"Running Cost Management query with: {json.dumps(query, indent=2)}")
+        logging.debug("Running Cost Management query with payload: %s", json.dumps(query, indent=2))
         data = self._post(url, query)
         if isinstance(data, dict) and ("error" in data or "consent_url" in data):
             return data
         rows = data.get('properties', {}).get('rows', [])
-        columns = [c['name'] for c in data.get('properties', {}).get('columns', [])]
-        result = [dict(zip(columns, row)) for row in rows]
-        data = self._csv_from_table(result)
+        column_objects = data.get('properties', {}).get('columns', [])
+        column_names = [c.get('name') for c in column_objects]
+        result_rows = [dict(zip(column_names, row)) for row in rows]
+        csv_output = self._csv_from_table(result_rows)
 
-        #print(f"Data as CSV:\nColumns: {columns}\n\n{data}\n\nData as rows:\n\n{result}")
-        if generate_graph:
-            # Attempt to generate a simple line chart if possible
-            try:
-                sample = result[0] if result else None
-                print(f"================================================\nData as CSV:\n{sample if sample else 'No rows returned'}\n================================================")
-                numeric_keys = [k for k, v in sample.items() if isinstance(v, (int, float))]
+        columns_meta: List[Dict[str, Any]] = []
+        for col in column_objects:
+            if not isinstance(col, dict):
+                continue
+            columns_meta.append({
+                "name": col.get('name') or col.get('displayName'),
+                "type": col.get('type') or col.get('dataType'),
+                "dataType": col.get('dataType'),
+                "unit": col.get('unit')
+            })
 
-                # 2. Identify likely x_key candidates (prefer date, month, or resource columns)
-                x_candidates = [k for k, v in sample.items() if not isinstance(v, (int, float))]
-                preferred_x_names = ["BillingMonth", "ResourceType", "Date", "Month", "Name"]
-                x_keys = []
-                print(f"================================================\nNumeric keys: {numeric_keys}\nX candidates: {x_candidates}\n================================================")
-                for name in preferred_x_names:
-                    if name in sample:
-                        x_keys.append(name)
-                        break
-                if not x_keys and x_candidates:
-                    x_keys = x_candidates[0]  # fallback to first non-numeric
+        plot_hints = self._build_plot_hints(result_rows, column_objects)
 
-                # 3. Optionally, group y_keys by logical meaning (e.g., cost columns)
-                cost_y_keys = [k for k in numeric_keys if "cost" in k.lower()]
-                if cost_y_keys:
-                    y_keys = cost_y_keys
-                else:
-                    y_keys = numeric_keys
-                print(f"Generating chart with x_keys={x_keys}, y_keys={y_keys}, graph_type={graph_type}")
-                graph = self.plot_custom_chart(
-                    conversation_id=conversation_id,
-                    data=result, #rows
-                    x_keys=x_keys,
-                    y_keys=y_keys,
-                    graph_type=graph_type or "stacked_column",
-                    title=title or "Cost Management Query Results",
-                    xlabel=xlabel or (x_keys[0] if x_keys else "Interval"),
-                    ylabel=ylabel or "Values",
-                    filename=filename or "cost_query_chart.png",
-                    figsize=figsize or [7.0, 5.0]
-                )
-                print(f"Generated graph: {graph}")
-                if isinstance(graph, dict) and graph.get("type") == "image_url":
-                    return {
-                        "image_url": graph.get("image_url"),
-                        "csv_data": data
-                    }
-            except Exception as ex:
-                print(f"EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE\nFailed to generate chart: {str(ex)}EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE\n")
         return {
-            "image_url": None,
-            "csv_data": data    
+            "status": "ok",
+            "conversation_id": conversation_id,
+            "scope": scope,
+            "api_version": self.api_version,
+            "query": query,
+            "rows": result_rows,
+            "row_count": len(result_rows),
+            "columns": columns_meta,
+            "csv": csv_output,
+            "plot_hints": plot_hints
         }
 
     @kernel_function(description="Return available configuration options for Azure Billing report queries.")
@@ -1068,11 +1199,9 @@ class AzureBillingPlugin(BasePlugin):
         Includes required/optional fields, types, valid values, and reflects the latest method signature.
         """
         return {
-            "conversation_id": "<string, required>",
+            "conversation_id": "<string, required - reuse this when calling plot_chart to persist images>",
             "subscription_id": "<string, required>",
             "resource_group_name": "<string, optional>",
-            "generate_graph": "<boolean, optional, default true>",
-            "graph_type": f"<string, optional, one of {SUPPORTED_GRAPH_TYPES}>",
             "query_type": f"<string, optional, one of {QUERY_TYPE}>",
             "timeframe": f"<string, optional, one of {TIME_FRAME_TYPE}>",
             "granularity": f"<string, optional, one of {GRANULARITY_TYPE}>",
@@ -1089,44 +1218,55 @@ class AzureBillingPlugin(BasePlugin):
                     "name": f"<string, one of {GROUPING_DIMENSIONS}>"
                 }
             ],
-            "query_filter": {
-                "<filter_field>": "<value>"
-            },
+            "query_filter": "<object, optional – Cost Management filter definition>",
             "time_period": {
                 "from": "2025-04-01T00:00:00+00:00",
                 "to": "2025-09-30T23:59:59+00:00"
             },
-            "title": "<string, optional, chart title>",
-            "xlabel": "<string, optional, x-axis label>",
-            "ylabel": "<string, optional, y-axis label>",
-            "filename": "<string, optional, output filename, e.g. 'chart.png'>",
-            "figsize": "<list of two floats, optional, e.g. [7.0, 5.0]>",
-            "example": {
+            "example_request": {
                 "conversation_id": "abc123",
                 "subscription_id": "00000000-0000-0000-0000-000000000000",
-                "resource_group_name": "my-resource-group",
-                "generate_graph": True,
-                "graph_type": "column_stacked",
                 "query_type": "Usage",
-                "timeframe": "Custom",
-                "granularity": "Monthly",
+                "timeframe": "BillingMonthToDate",
+                "granularity": "Daily",
                 "aggregations": [
                     {"name": "totalCost", "function": "Sum", "column": "PreTaxCost"}
                 ],
                 "groupings": [
                     {"type": "Dimension", "name": "ResourceType"}
+                ]
+            },
+            "example_response": {
+                "status": "ok",
+                "row_count": 3,
+                "rows": [
+                    {"ResourceType": "microsoft.compute/virtualmachines", "PreTaxCost": 12694.43},
+                    {"ResourceType": "microsoft.compute/disks", "PreTaxCost": 4715.20}
                 ],
-                "query_filter": {},
-                "time_period": {
-                    "from": "2025-04-01T00:00:00+00:00",
-                    "to": "2025-09-30T23:59:59+00:00"
-                },
-                "title": "Monthly Cost by Resource Type",
-                "xlabel": "Month",
-                "ylabel": "Cost (USD)",
-                "filename": "cost_chart.png",
-                "figsize": [7.0, 5.0]
-            }
+                "columns": [
+                    {"name": "ResourceType", "type": "String"},
+                    {"name": "PreTaxCost", "type": "Number"}
+                ],
+                "plot_hints": {
+                    "recommended": {
+                        "default": {
+                            "graph_type": "column_stacked",
+                            "x_keys": ["ResourceType"],
+                            "y_keys": ["PreTaxCost"]
+                        },
+                        "pie": {
+                            "graph_type": "pie",
+                            "x_keys": ["ResourceType"],
+                            "y_keys": ["PreTaxCost"]
+                        }
+                    }
+                }
+            },
+            "workflow": [
+                "Call run_data_query to retrieve rows, columns, csv, and plot_hints.",
+                "Inspect plot_hints['recommended'] for suggested x_keys, y_keys, and chart types.",
+                "Pass rows (or the csv string) plus the chosen keys into plot_chart to render and persist a graph."
+            ]
         }
 
     # Returns the expected input data format for plot_custom_chart
@@ -1139,22 +1279,20 @@ class AzureBillingPlugin(BasePlugin):
         """
         return {
             "conversationId": "<string, required>",
-            "data": (
-                "Currency,PreTaxCost,ResourceType,BillingMonth\n"
-                "USD,381.494,microsoft.aad/domainservices,2025-04-01T00:00:00\n"
-                "USD,29.0501126666667,microsoft.automation/automationaccounts,2025-04-01T00:00:00\n"
-                "USD,4715.19880797811,microsoft.compute/disks,2025-04-01T00:00:00\n"
-                "USD,12694.4370275807,microsoft.compute/virtualmachines,2025-04-01T00:00:00"
-            ),
-            "x_key": "BillingMonth",
+            "data": "<list of dict rows OR CSV string – rows returned from run_data_query['rows']>",
+            "x_keys": ["ResourceType"],
             "y_keys": ["PreTaxCost"],
-            "graph_type": "column_stacked",
-            "title": "Monthly Cost by Resource Type for Subscription xxx",
-            "xlabel": "Month",
+            "graph_type": "pie",
+            "title": "Cost share by resource type",
+            "xlabel": "Resource Type",
             "ylabel": "Cost (USD)",
             "filename": "chart.png",
             "figsize": [7.0, 5.0],
-            "notes": "'data' should be a CSV string with headers and rows, as output by run_data_query. x_key is the field for the x-axis, y_keys are the numeric fields to plot."
+            "notes": [
+                "Feed the list returned in run_data_query['rows'] directly, or supply the CSV from run_data_query['csv'].",
+                "Pick x_keys/y_keys from run_data_query['plot_hints']['recommended'] to ensure compatible chart input.",
+                "Pie charts require exactly one numeric y_key; stacked/grouped charts accept multiple."
+            ]
         }
 
     def upload_cosmos_message(self, 
