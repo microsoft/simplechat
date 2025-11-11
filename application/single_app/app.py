@@ -467,7 +467,6 @@ if __name__ == '__main__':
         # Local development with HTTPS
         # use_reloader=False prevents too_many_retries errors with static files
         # Disable excessive logging for static file requests in development
-        import logging
         werkzeug_logger = logging.getLogger('werkzeug')
         werkzeug_logger.setLevel(logging.ERROR)
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
