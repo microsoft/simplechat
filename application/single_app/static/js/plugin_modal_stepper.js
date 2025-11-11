@@ -2520,7 +2520,7 @@ export class PluginModalStepper {
     // Normalize type for filename
     const safeType = this.getSafeType(type);
     // Choose filename pattern
-    const schemaFile = `${safeType}_plugin.additional_settings.schema.json`
+    const schemaFile = `${safeType}_plugin.additional_settings.schema.json`;
       
     const schemaPath = `/static/json/schemas/${schemaFile}`;
 
