@@ -43,7 +43,7 @@ def validate_plugin(plugin):
     validator = Draft7Validator(schema['definitions']['Plugin'])
     errors = sorted(validator.iter_errors(plugin_copy), key=lambda e: e.path)
     if errors:
-        return '; '.join([e.message for e in errors])
+        return '; '.join([f"{plugin.get('name', '<Unknown>')}: {e.message}" for e in errors])
     
     # Additional business logic validation
     # For non-SQL plugins, endpoint must not be empty

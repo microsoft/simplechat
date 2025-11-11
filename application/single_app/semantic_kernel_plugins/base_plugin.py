@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
+import re
 
 class BasePlugin(ABC):
     @property
@@ -36,8 +37,6 @@ class BasePlugin(ABC):
         # Remove 'Plugin' suffix and format nicely
         name = class_name.replace('Plugin', '')
         
-        # Handle common acronyms by keeping them together
-        import re
         # Split on word boundaries while preserving acronyms
         parts = re.findall(r'[A-Z]+(?=[A-Z][a-z]|$)|[A-Z][a-z]*', name)
         
@@ -45,6 +44,11 @@ class BasePlugin(ABC):
         formatted = ' '.join(parts).replace('_', ' ').strip()
         return formatted if formatted else name
     
+    """
+    This class provides common functionality and enforces a standard interface.
+    All plugins should inherit from this base class.
+    All plugins should call super().__init__(manifest) in their init constructor.
+    """
     @abstractmethod
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
         self.manifest = manifest or {}

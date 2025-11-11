@@ -123,7 +123,6 @@ def register_route_frontend_authentication(app):
         # Store user identity info (claims from ID token)
         debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
         debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
-        debug_print(f" [claims] User token: {result.get('access_token', 'Unknown')}")
 
         session["user"] = result.get("id_token_claims")
 
