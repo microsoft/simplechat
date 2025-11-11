@@ -10,6 +10,16 @@ param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
 
+@description('Enable enterprise app authentication')
+param enableEnterpriseApp bool = false
+
+@description('Enterprise app client ID - used for documentation')
+param enterpriseAppClientId string = ''
+
+@description('Enterprise app client secret to store in Key Vault')
+@secure()
+param enterpriseAppClientSecret string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = {
   name: 'diagnosticConfigs'
@@ -61,4 +71,17 @@ resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
   }
 }
 
+// Store the enterprise app client secret in Key Vault if provided
+resource enterpriseAppSecret 'Microsoft.KeyVault/vaults/secrets@2024-11-01' = if (enableEnterpriseApp && !empty(enterpriseAppClientSecret)) {
+  name: 'enterprise-app-client-secret'
+  parent: kv
+  properties: {
+    value: enterpriseAppClientSecret
+    contentType: 'Client secret for Azure AD enterprise app ${enterpriseAppClientId}'
+  }
+}
+
 output keyVaultId string = kv.id
+output keyVaultName string = kv.name
+output keyVaultUri string = kv.properties.vaultUri
+output enterpriseAppClientSecretUri string = enableEnterpriseApp && !empty(enterpriseAppClientSecret) ? '${kv.properties.vaultUri}secrets/enterprise-app-client-secret' : ''

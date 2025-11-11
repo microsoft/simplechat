@@ -104,6 +104,15 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = if (enableAuthen
   }
 }
 
+// Configure app setting for Key Vault reference if using Key Vault for client secret
+resource clientSecretAppSetting 'Microsoft.Web/sites/config@2022-03-01' = if (enableAuthentication && !empty(clientSecretKeyVaultUri)) {
+  name: 'appsettings'
+  parent: webApp
+  properties: {
+    MICROSOFT_PROVIDER_AUTHENTICATION_SECRET: '@Microsoft.KeyVault(SecretUri=${clientSecretKeyVaultUri})'
+  }
+}
+
 // Output authentication configuration details
 output authenticationEnabled bool = enableAuthentication && !empty(clientId)
 output loginUrl string = enableAuthentication && !empty(clientId) ? 'https://${webApp.properties.defaultHostName}/.auth/login/aad' : ''

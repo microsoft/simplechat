@@ -92,8 +92,9 @@ param enableEnterpriseApp bool = false
 param enterpriseAppClientId string = ''
 
 @description('''Azure AD Application Client Secret for enterprise authentication.
-- Optional: can be stored in Key Vault for better security
-- Leave empty to use Key Vault reference approach''')
+- Required if enableEnterpriseApp is true
+- Should be created in Azure AD App Registration and passed via environment variable
+- Will be stored securely in Azure Key Vault during deployment''')
 @secure()
 param enterpriseAppClientSecret string = ''
 
@@ -176,6 +177,9 @@ module keyVault 'modules/keyVault.bicep' = {
     managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    enableEnterpriseApp: enableEnterpriseApp
+    enterpriseAppClientId: enterpriseAppClientId
+    enterpriseAppClientSecret: enterpriseAppClientSecret
   }
 }
 
@@ -338,7 +342,8 @@ module appService 'modules/appService.bicep' = {
     documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
     appInsightsName: appInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
-    enterpriseAppClientSecret: enterpriseAppClientSecret
+    enterpriseAppClientSecret: ''
+    keyVaultUri: keyVault.outputs.keyVaultUri
   }
 }
 
@@ -369,7 +374,8 @@ module appServiceAuth 'modules/appServiceAuthentication.bicep' = if (enableEnter
   params: {
     webAppName: appService.outputs.name
     clientId: enterpriseAppClientId
-    clientSecret: enterpriseAppClientSecret
+    clientSecret: ''
+    clientSecretKeyVaultUri: keyVault.outputs.enterpriseAppClientSecretUri
     tenantId: tenant().tenantId
     enableAuthentication: enableEnterpriseApp
     unauthenticatedClientAction: unauthenticatedClientAction
@@ -468,3 +474,5 @@ output SERVICE_WEB_RESOURCE_ID string = appService.outputs.resourceId
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = '${acrName}${acrCloudSuffix}'
 output AZURE_CONTAINER_REGISTRY_NAME string = acrName
 output SERVICE_WEB_IMAGE_NAME string = containerImageName
+output AZURE_KEY_VAULT_NAME string = keyVault.outputs.keyVaultName
+output AZURE_KEY_VAULT_URI string = keyVault.outputs.keyVaultUri

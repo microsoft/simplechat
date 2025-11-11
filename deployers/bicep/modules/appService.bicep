@@ -28,6 +28,9 @@ param enterpriseAppClientId string = ''
 @secure()
 param enterpriseAppClientSecret string = ''
 
+@description('Key Vault URI for secret references')
+param keyVaultUri string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = {
   name: 'diagnosticConfigs'
@@ -82,7 +85,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'TENANT_ID', value: tenant().tenantId }
 
         {name: 'CLIENT_ID', value: enterpriseAppClientId }
-        {name: 'SECRET_KEY', value: enterpriseAppClientSecret }
+        {name: 'SECRET_KEY', value: !empty(enterpriseAppClientSecret) ? enterpriseAppClientSecret : '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)' }
 
         {name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrService.name}${acrDomain}' }
         //{name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: acrService.listCredentials().username }
@@ -97,7 +100,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligence.properties.endpoint}
         {name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', value: documentIntelligence.listKeys().key1}
 
-        {name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', value: enterpriseAppClientSecret}
+        {name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'}
 
         {name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.properties.InstrumentationKey}
         {name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString}

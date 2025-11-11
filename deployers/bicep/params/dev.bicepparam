@@ -3,7 +3,7 @@ using '../main.bicep'
 param cloudEnvironment = 'AzureCloud'
 param environment = 'dev'
 param location = 'northcentralus'
-param appName = 'simplechat'
+param appName = 'bicepchat'
 param enableDiagLogging = false
 param useExistingAcr = true
 param existingAcrResourceGroup = 'simplechat-shared-rg'
@@ -19,7 +19,7 @@ param existingOpenAIResourceName = 'stecarr-openai-02'
 // Enterprise Application Settings (disabled by default for dev environment)
 param enableEnterpriseApp = true
 param enterpriseAppClientId = 'e2af9387-1f7b-4066-8362-fd9a8883e48c'
-//param enterpriseAppClientSecret = ''
+param enterpriseAppClientSecret = readEnvironmentVariable('ENTERPRISE_APP_CLIENT_SECRET', '')
 param unauthenticatedClientAction = 'RedirectToLoginPage'
 
 param specialTags = { 
