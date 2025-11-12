@@ -2,6 +2,7 @@
 
 from config import *
 from functions_appinsights import log_event
+import app_settings_cache
 
 def get_settings():
     import secrets
@@ -269,6 +270,7 @@ def update_settings(new_settings):
         settings_item = get_settings()
         settings_item.update(new_settings)
         cosmos_settings_container.upsert_item(settings_item)
+        app_settings_cacheupdate_settings_cache(settings_item) # Update the in-memory cache as well
         print("Settings updated successfully.")
         return True
     except Exception as e:

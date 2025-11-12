@@ -1828,7 +1828,6 @@ export class PluginModalStepper {
       'none': 'No Authentication',
       'api_key': 'API Key',
       'bearer': 'Bearer Token',
-      'basic': 'Basic Authentication',
       'oauth2': 'OAuth2',
       'windows': 'Windows Authentication',
       'sql': 'SQL Authentication',
@@ -2521,7 +2520,7 @@ export class PluginModalStepper {
     // Normalize type for filename
     const safeType = this.getSafeType(type);
     // Choose filename pattern
-    const schemaFile = `${safeType}_plugin.additional_settings.schema.json`
+    const schemaFile = `${safeType}_plugin.additional_settings.schema.json`;
       
     const schemaPath = `/static/json/schemas/${schemaFile}`;
 

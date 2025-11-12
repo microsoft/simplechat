@@ -14,7 +14,7 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
-from functions_keyvault import keyvault_agent_save_helper, store_secret_in_key_vault, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 
 
@@ -48,6 +48,7 @@ def ensure_default_global_agent_exists():
                 ),
                 "actions_to_load": [],
                 "other_settings": {},
+                "max_completion_tokens": 4096
             }
             save_global_agent(default_agent)
             log_event(
@@ -101,6 +102,9 @@ def get_global_agents():
         ))
         # Mask or replace sensitive keys for UI display
         agents = [keyvault_agent_get_helper(agent, agent.get('id', ''), scope="global") for agent in agents]
+        for agent in agents:
+            if agent.get('max_completion_tokens') is None:
+                agent['max_completion_tokens'] = -1
         return agents
     except Exception as e:
         log_event(
@@ -129,6 +133,8 @@ def get_global_agent(agent_id):
             partition_key=agent_id
         )
         agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
+        if agent.get('max_completion_tokens') is None:
+            agent['max_completion_tokens'] = -1
         print(f"Found global agent: {agent_id}")
         return agent
     except Exception as e:
@@ -169,6 +175,8 @@ def save_global_agent(agent_data):
         
         # Use the new helper to store sensitive agent keys in Key Vault
         agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
+        if agent_data.get('max_completion_tokens') is None:
+            agent_data['max_completion_tokens'] = -1  # Default value
 
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
         log_event(

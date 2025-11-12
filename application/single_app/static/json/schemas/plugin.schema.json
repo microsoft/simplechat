@@ -41,7 +41,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"],
+              "enum": ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"],
               "description": "Auth type must be 'key', 'user', 'identity', 'servicePrincipal', 'connection_string', 'basic', or 'username_password'"
             },
             "key": {
@@ -59,6 +59,7 @@
           },
           "additionalProperties": false,
           "allOf": [
+            { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
             { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },
             { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["type", "identity"] } },
             { "if": { "properties": { "type": { "const": "user" } } }, "then": { "required": ["type"] } },

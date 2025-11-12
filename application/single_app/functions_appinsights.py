@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 from azure.monitor.opentelemetry import configure_azure_monitor
+import app_settings_cache
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -44,9 +45,11 @@ def log_event(
         exceptionTraceback (Any, optional): If set to True, includes exception traceback.
     """
     try:
-        # Limit message to 32767 characters
-        if message and isinstance(message, str) and len(message) > 32767:
-            message = message[:32767]
+        try:
+            cache = app_settings_cache.get_settings_cache() or None
+        except Exception as e:
+            print(f"[Log] Could not retrieve settings cache: {e}")
+            cache = None
 
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger
         logger = get_appinsights_logger()
@@ -64,6 +67,8 @@ def log_event(
         # For ERROR level logs with exceptionTraceback=True, always log as exception
         if level >= logging.ERROR and exceptionTraceback:
             if logger and hasattr(logger, 'exception'):
+                if cache and cache.get('enable_debug_logging', False):
+                    print(f"DEBUG: [ERROR][Log] {message} -- {extra if extra else 'No Extra Dimensions'}")
                 # Use logger.exception() for better exception capture in Application Insights
                 logger.exception(message, extra=extra, stacklevel=stacklevel, stack_info=includeStack, exc_info=True)
                 return
@@ -72,8 +77,10 @@ def log_event(
                 exc_info_to_use = True
 
         # Format message with extra properties for structured logging
-        
-        print(f"[Log] {message} -- {extra}")  # Debug print to console
+
+        #TODO: Find a way to cache get_settings() globally (and update it when changed) to enable debug printing. Cannot use debug_print due to circular import
+        if cache and cache.get('enable_debug_logging', False):
+            print(f"DEBUG: [Log] {message} -- {extra if extra else 'No Extra Dimensions'}")  # Debug print to console
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
             logger.log(

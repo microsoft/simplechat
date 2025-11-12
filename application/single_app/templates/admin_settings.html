@@ -1332,6 +1332,7 @@
                     <div class="mb-3">
                         <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
                         <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
                         <input type="text" class="form-control" id="azure_apim_gpt_deployment"
                             name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
                     </div>
@@ -2913,7 +2914,15 @@
                     Configure Security Settings.
                 </p>
                 <div class="card p-3 mb-3" id="keyvault-section">
-                    <h5><i class="bi bi-safe me-2"></i>Key Vault</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
                     <p class="text-muted">
                         Configure Key Vault settings.
                     </p>
@@ -2975,6 +2984,9 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">

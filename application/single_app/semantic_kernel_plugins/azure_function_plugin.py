@@ -62,7 +62,7 @@ class AzureFunctionPlugin(BasePlugin):
         url = self.endpoint
         headers = {}
         if self.auth_type == 'identity':
-            token = self.credential.get_token("https://management.azure.com/.default").token
+            token = self.credential.get_token("{resource_manager}/.default").token
             headers["Authorization"] = f"Bearer {token}"
         elif self.auth_type == 'key':
             if '?' in url:
@@ -79,7 +79,7 @@ class AzureFunctionPlugin(BasePlugin):
         url = self.endpoint
         headers = {}
         if self.auth_type == 'identity':
-            token = self.credential.get_token("https://management.azure.com/.default").token
+            token = self.credential.get_token("{resource_manager}/.default").token
             headers["Authorization"] = f"Bearer {token}"
         elif self.auth_type == 'key':
             if '?' in url:

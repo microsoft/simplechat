@@ -16,9 +16,11 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, plugin_function_logger, auto_wrap_plugin_functions
 from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
+from functions_debug import debug_print
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
 from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
+from app_settings_cache import get_settings_cache
 
 class LoggedPluginLoader:
     """Enhanced plugin loader that automatically adds invocation logging."""
@@ -119,7 +121,7 @@ class LoggedPluginLoader:
         #    return self._create_sql_plugin(manifest)
         else:
             try:
-                debug_print("[Logged Plugin Loader] Attempting to discover plugin type:", plugin_type)
+                debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
                 discovered_plugins = discover_plugins()
                 plugin_type = manifest.get('type')
                 name = manifest.get('name')
@@ -127,7 +129,7 @@ class LoggedPluginLoader:
                 # Normalize for matching
                 def normalize(s):
                     return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
-                debug_print("[Logged Plugin Loader] Normalizing plugin type for matching:", plugin_type)
+                debug_print(f"[Logged Plugin Loader] Normalizing plugin type for matching: {plugin_type}")
                 normalized_type = normalize(plugin_type)
                 debug_print(f"[Logged Plugin Loader] Normalized plugin type: {normalized_type}")
                 matched_class = None
@@ -136,8 +138,8 @@ class LoggedPluginLoader:
                     print("[Logged Plugin Loader] Checking plugin class:", class_name, "normalized:", normalized_class)
                     if normalized_type == normalized_class or normalized_type in normalized_class:
                         matched_class = cls
+                        debug_print(f"[Logged Plugin Loader] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
                         break
-                debug_print(f"[Logged Plugin Loader] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
                 if matched_class:
                     try:
                         plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
