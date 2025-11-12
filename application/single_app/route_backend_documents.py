@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
+from utils_cache import invalidate_personal_search_cache
 import os
 import requests
 from flask import current_app
@@ -198,6 +199,10 @@ def register_route_backend_documents(app):
         # 4) Return immediately to the user with doc IDs and any errors
         response_status = 200 if processed_docs and not upload_errors else 207 # Multi-Status if partial success/errors
         if not processed_docs and upload_errors: response_status = 400 # Bad Request if all failed
+
+        # Invalidate search cache for this user since documents were added
+        if processed_docs:
+            invalidate_personal_search_cache(user_id)
 
         # NOTE: For workspace uploads, we do NOT create conversations or chat messages.
         # Files uploaded to workspaces are for document storage/management, not for immediate chat interaction.
@@ -484,6 +489,10 @@ def register_route_backend_documents(app):
         try:
             delete_document(user_id, document_id)
             delete_document_chunks(document_id)
+            
+            # Invalidate search cache since document was deleted
+            invalidate_personal_search_cache(user_id)
+            
             return jsonify({'message': 'Document deleted successfully'}), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
@@ -630,6 +639,9 @@ def register_route_backend_documents(app):
             # Share the document
             success = share_document_with_user(document_id, user_id, target_user_id)
             if success:
+                # Invalidate cache for both owner and target user
+                invalidate_personal_search_cache(user_id)
+                invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document shared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to share document'}), 500
@@ -663,6 +675,9 @@ def register_route_backend_documents(app):
             # Unshare the document
             success = unshare_document_from_user(document_id, user_id, target_user_id)
             if success:
+                # Invalidate cache for both owner and target user
+                invalidate_personal_search_cache(user_id)
+                invalidate_personal_search_cache(target_user_id)
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
@@ -781,6 +796,8 @@ def register_route_backend_documents(app):
             # Remove user from shared_user_ids (pass user_id as both requester and target for self-removal)
             success = unshare_document_from_user(document_id, user_id, user_id)
             if success:
+                # Invalidate cache for user who removed themselves
+                invalidate_personal_search_cache(user_id)
                 return jsonify({'message': 'Successfully removed from shared document'}), 200
             else:
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
@@ -841,6 +858,11 @@ def register_route_backend_documents(app):
                                 print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
                 except Exception as e:
                     print(f"Warning: Failed to update chunks for document {document_id}: {e}")
+            
+            # Invalidate cache for user who approved (their search results changed)
+            if updated:
+                invalidate_personal_search_cache(user_id)
+            
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500

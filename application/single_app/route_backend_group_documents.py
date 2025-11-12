@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from utils_cache import invalidate_group_search_cache
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -120,6 +121,10 @@ def register_route_backend_group_documents(app):
         response_status = 200 if processed_docs and not upload_errors else 207
         if not processed_docs and upload_errors:
             response_status = 400
+
+        # Invalidate group search cache since documents were added
+        if processed_docs:
+            invalidate_group_search_cache(active_group_id)
 
         return jsonify({
             'message': f'Processed {len(processed_docs)} file(s). Check status periodically.',
@@ -425,6 +430,10 @@ def register_route_backend_group_documents(app):
         try:
             delete_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
             delete_document_chunks(document_id=document_id, group_id=active_group_id)
+            
+            # Invalidate group search cache since document was deleted
+            invalidate_group_search_cache(active_group_id)
+            
             return jsonify({'message': 'Group document deleted successfully'}), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
@@ -614,6 +623,9 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     shared_group_ids=new_shared_group_ids
                 )
+                # Invalidate cache for the group that approved
+                invalidate_group_search_cache(active_group_id)
+            
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
@@ -681,6 +693,10 @@ def register_route_backend_group_documents(app):
                     shared_group_ids=shared_group_ids
                 )
                 
+                # Invalidate cache for both groups
+                invalidate_group_search_cache(active_group_id)
+                invalidate_group_search_cache(target_group_id)
+                
             return jsonify({
                 'message': 'Document shared successfully',
                 'document_id': document_id,
@@ -746,6 +762,10 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     shared_group_ids=shared_group_ids
                 )
+                
+                # Invalidate cache for both groups
+                invalidate_group_search_cache(active_group_id)
+                invalidate_group_search_cache(target_group_id)
                 
             return jsonify({
                 'message': 'Document sharing removed successfully',

@@ -91,6 +91,7 @@ SESSION_TYPE = 'filesystem'
 VERSION = "0.233.153"
 
 
+
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Security Headers Configuration
@@ -379,6 +380,13 @@ cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
     partition_key=PartitionKey(path="/scope_id")
+)
+
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
+    partition_key=PartitionKey(path="/user_id")
+    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 def ensure_custom_logo_file_exists(app, settings):
