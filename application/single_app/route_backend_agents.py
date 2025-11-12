@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 from semantic_kernel_loader import get_agent_orchestration_types
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
+from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
@@ -33,10 +34,6 @@ def generate_agent_id():
 @login_required
 def get_user_agents():
     user_id = get_current_user_id()
-    
-    # Import the new personal agents functions
-    from functions_personal_agents import get_personal_agents, ensure_migration_complete
-    
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
     
@@ -53,7 +50,6 @@ def get_user_agents():
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if per_user and merge_global:
         # Import and get global agents from container
-        from functions_global_agents import get_global_agents
         global_agents = get_global_agents()
         # Mark global agents
         for agent in global_agents:
@@ -87,10 +83,6 @@ def set_user_agents():
     user_id = get_current_user_id()
     agents = request.json if isinstance(request.json, list) else []
     settings = get_settings()
-
-    # Import the new personal agents functions
-    from functions_personal_agents import save_personal_agent, delete_personal_agent, get_personal_agents
-    
     # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
     if not settings.get('allow_user_custom_agent_endpoints', False):
         for agent in agents:
@@ -151,10 +143,6 @@ def set_user_agents():
 @login_required
 def delete_user_agent(agent_name):
     user_id = get_current_user_id()
-    
-    # Import the new personal agents functions
-    from functions_personal_agents import get_personal_agents, delete_personal_agent
-    
     # Get current agents from personal_agents container
     agents = get_personal_agents(user_id)
     agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
@@ -236,7 +224,6 @@ def set_selected_agent():
             return jsonify({'error': 'Agent name is required.'}), 400
 
         # Import and get global agents from container
-        from functions_global_agents import get_global_agents
         agents = get_global_agents()
         
         # Check that the agent exists
@@ -266,8 +253,6 @@ def set_selected_agent():
 def list_agents():
     try:
         # Use new global agents container
-        from functions_global_agents import get_global_agents
-        
         agents = get_global_agents()
         
         # Ensure each agent has an actions_to_load field
@@ -400,8 +385,6 @@ def update_agent_setting(setting_name):
 @admin_required
 def edit_agent(agent_name):
     try:
-        from functions_global_agents import get_global_agents, save_global_agent
-        
         agents = get_global_agents()
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         updated_agent['is_global'] = True
@@ -465,8 +448,6 @@ def edit_agent(agent_name):
 @admin_required
 def delete_agent(agent_name):
     try:
-        from functions_global_agents import get_global_agents, delete_global_agent
-        
         agents = get_global_agents()
         
         # Find the agent to delete
@@ -550,9 +531,7 @@ def orchestration_settings():
             log_event(f"Error updating orchestration settings: {e}", level=logging.ERROR, exceptionTraceback=True)
             return jsonify({'error': 'Failed to update orchestration settings.'}), 500
 
-def get_global_agent_settings(include_admin_extras=False):
-    from functions_global_agents import get_global_agents
-    
+def get_global_agent_settings(include_admin_extras=False):    
     settings = get_settings()
     agents = get_global_agents()
     

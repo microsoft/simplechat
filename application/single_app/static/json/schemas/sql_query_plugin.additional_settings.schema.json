@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SQL Query Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "connection_string__Secret": {
+      "type": "string",
+      "description": "Database connection string. Required if server/database not provided."
+    },
+    "database_type": {
+      "type": "string",
+      "enum": ["sqlserver", "postgresql", "mysql", "sqlite", "azure_sql", "azuresql"],
+      "description": "Type of database engine."
+    },
+    "server": {
+      "type": "string",
+      "description": "Database server hostname or IP."
+    },
+    "database": {
+      "type": "string",
+      "description": "Database name or path."
+    },
+    "username": {
+      "type": "string",
+      "description": "Username for authentication."
+    },
+    "password__Secret": {
+      "type": "string",
+      "description": "Password for authentication."
+    },
+    "driver": {
+      "type": "string",
+      "description": "ODBC or DB driver name."
+    },
+    "read_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "If true, restricts queries to read-only operations."
+    },
+    "max_rows": {
+      "type": "integer",
+      "default": 1000,
+      "minimum": 1,
+      "description": "Maximum number of rows returned by a query."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "description": "Query timeout in seconds."
+    }
+  },
+  "required": ["database_type", "database"],
+  "additionalProperties": false
+}

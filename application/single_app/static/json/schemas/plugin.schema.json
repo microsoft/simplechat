@@ -41,21 +41,34 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["key", "identity", "user", "servicePrincipal"],
-              "description": "Auth type must be 'key', 'user', 'identity', or 'servicePrincipal'"
+              "enum": ["NoAuth", "key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"],
+              "description": "Auth type must be 'key', 'user', 'identity', 'servicePrincipal', 'connection_string', 'basic', or 'username_password'"
             },
             "key": {
-              "type": "string"
+              "type": "string",
+              "description": "The secret value for the plugin should be stored here, such as a SQL connection string, a password for a service principal or username/password combination"
             },
             "identity": {
-              "type": "string"
+              "type": "string",
+              "description": "This could be the Id of an (managed) identity, a user name, or similar to pair with the key, in most situations"
             },
             "tenantId": {
-              "type": "string"
+              "type": "string",
+              "description": "The Azure AD tenant ID used with Service Principal authentication"
             }
           },
-          "required": ["type"],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "allOf": [
+            { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
+            { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },
+            { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["type", "identity"] } },
+            { "if": { "properties": { "type": { "const": "user" } } }, "then": { "required": ["type"] } },
+            { "if": { "properties": { "type": { "const": "servicePrincipal" } } }, "then": { "required": ["type", "tenantId", "identity", "key"] } },
+            { "if": { "properties": { "type": { "const": "connection_string" } } }, "then": { "required": ["type", "key"] } },
+            { "if": { "properties": { "type": { "const": "basic" } } }, "then": { "required": ["type", "key", "identity"] } },
+            { "if": { "properties": { "type": { "const": "username_password" } } }, "then": { "required": ["type", "key", "identity"] } },
+            { "required": ["type"] }
+          ]
         },
         "metadata": {
           "type": "object",
@@ -64,7 +77,7 @@
         },
         "additionalFields": {
           "type": "object",
-          "description": "Arbitrary additional fields",
+          "description": "Additional fields for plugin configuration based on plugin type. See plugin documentation for details. Any fields named __Secret (double underscore) will be stored in key vault if the feature is enabled.",
           "additionalProperties": true
         }
       },

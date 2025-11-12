@@ -22,6 +22,7 @@ export class AgentModalStepper {
     const prevBtn = document.getElementById('agent-modal-prev');
     const saveBtn = document.getElementById('agent-modal-save-btn');
     const skipBtn = document.getElementById('agent-modal-skip');
+    const powerUserToggle = document.getElementById('agent-power-user-toggle');
     
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.nextStep());
@@ -34,6 +35,9 @@ export class AgentModalStepper {
     }
     if (skipBtn) {
       skipBtn.addEventListener('click', () => this.skipToEnd());
+    }
+    if (powerUserToggle) {
+      powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
     }
     
     // Set up display name to generated name conversion
@@ -50,6 +54,14 @@ export class AgentModalStepper {
         const generatedName = this.generateAgentName(displayName);
         generatedNameInput.value = generatedName;
       });
+    }
+  }
+
+  togglePowerUserMode(isEnabled) {
+    console.log('Toggling power user mode:', isEnabled);
+    const powerUserSection = document.getElementById('agent-power-user-settings');
+    if (powerUserSection) {
+      powerUserSection.classList.toggle('d-none', !isEnabled);
     }
   }
 
@@ -204,6 +216,19 @@ export class AgentModalStepper {
       agentsCommon.setAgentModalFields(agent);
     }
 
+    // any agent advanced settings
+    if (this.currentAgent 
+        && this.currentAgent.max_completion_tokens != -1) {
+      const powerUserToggle = document.getElementById('agent-power-user-toggle');
+      if (powerUserToggle) {
+        powerUserToggle.checked = true; // true/false from your agent data
+        const agentPowerUserSettings = document.getElementById('agent-power-user-settings');
+        if (agentPowerUserSettings) {
+          agentPowerUserSettings.classList.remove('d-none');
+        }
+      }
+    }
+
     // Show/hide custom connection fields as needed
     if (customConnection) {
       // Find the custom fields and global model group containers
@@ -249,9 +274,32 @@ export class AgentModalStepper {
     }
   }
 
-  skipToEnd() {
+  async skipToEnd() {
     // Skip to the summary step (step 6)
-    this.goToStep(this.maxSteps);
+    //if (this.actionsToSelect != null && this.actionsToSelect.length > 0) {
+    //  this.setSelectedActions(this.actionsToSelect);
+    //}
+    const skipBtn = document.getElementById('agent-modal-skip');
+    const originalText = skipBtn.innerHTML;
+    if (skipBtn) {
+      skipBtn.disabled = true;
+      skipBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Skipping...`;
+    }
+    try {
+      await this.loadAvailableActions();
+      this.goToStep(this.maxSteps);
+    } catch (error) {
+      console.error('Error loading actions:', error);
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    } finally {
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    }
   }
 
   goToStep(stepNumber) {
@@ -965,7 +1013,7 @@ export class AgentModalStepper {
       
       // Selected actions
       const currentActions = this.getSelectedActionIds();
-      const originalActions = this.originalAgent.actions || [];
+      const originalActions = this.originalAgent.actions_to_load || [];
       
       // Compare fields
       if (currentDisplayName !== (this.originalAgent.display_name || '')) {
@@ -1165,12 +1213,22 @@ export class AgentModalStepper {
       }
       
       // Use appropriate endpoint and save method based on context
-      if (this.isAdmin) {
-        // Admin context - save to global agents
-        await this.saveGlobalAgent(agentData);
-      } else {
-        // User context - save to personal agents
-        await this.savePersonalAgent(agentData);
+      let saveBtn = document.getElementById('agent-modal-save-btn');
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+      saveBtn.disabled = true;
+      try {
+        if (this.isAdmin) {
+          // Admin context - save to global agents
+          await this.saveGlobalAgent(agentData);
+        } else {
+          // User context - save to personal agents
+          await this.savePersonalAgent(agentData);
+        }
+      //No catch to allow outer catch to handle errors
+      } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
       }
       
     } catch (error) {
@@ -1193,7 +1251,8 @@ export class AgentModalStepper {
       instructions: document.getElementById('agent-instructions')?.value || '',
       model: document.getElementById('agent-global-model-select')?.value || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
-      other_settings: document.getElementById('agent-additional-settings')?.value || '{}'
+      other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
+      max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null
     };
     
     // Handle model and deployment configuration

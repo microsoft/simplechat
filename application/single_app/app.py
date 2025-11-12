@@ -5,12 +5,12 @@ import pickle
 import json
 import os
 
+import app_settings_cache
+from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
 
-from azure.monitor.opentelemetry import configure_azure_monitor
-
-from config import *
+#from azure.monitor.opentelemetry import configure_azure_monitor
 
 from functions_authentication import *
 from functions_content import *
@@ -59,7 +59,7 @@ from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='/static', static_folder='static')
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
@@ -104,8 +104,6 @@ from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
-
-configure_azure_monitor()
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -162,7 +160,10 @@ def configure_sessions(settings):
 def before_first_request():
     print("Initializing application...")
     settings = get_settings()
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
     print(f"DEBUG:Application settings: {settings}")
+    print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {app_settings_cache.get_settings_cache()}")
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -244,7 +245,6 @@ def before_first_request():
 
     # Unified session setup
     configure_sessions(settings)
-
 
 @app.context_processor
 def inject_settings():
@@ -457,13 +457,19 @@ register_route_external_health(app)
 
 if __name__ == '__main__':
     settings = get_settings()
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
     initialize_clients(settings)
 
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
+        # use_reloader=False prevents too_many_retries errors with static files
+        # Disable excessive logging for static file requests in development
+        werkzeug_logger = logging.getLogger('werkzeug')
+        werkzeug_logger.setLevel(logging.ERROR)
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))
