@@ -1,0 +1,18 @@
+{
+  "RoleName": "CosmosDBCustomDataWriter",
+  "Type": "CustomRole",
+  "AssignableScopes": [
+    "/subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.DocumentDB/databaseAccounts/simplechatwest-cosmos2"
+  ],
+  "Permissions": [
+    {
+      "DataActions": [
+        "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/*",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/*",
+        "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/*"
+      ],
+      "NotDataActions": []
+    }
+  ]
+}

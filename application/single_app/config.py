@@ -181,12 +181,15 @@ else:
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    # Default audience/resource identifier for Azure Cognitive Search in public cloud
+    search_resource_manager = "https://search.azure.com"
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
 
-# Initialize Azure Cosmos DB client
+# Initialize Azure Cosmos DB client 
+## changed to managed identity
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity

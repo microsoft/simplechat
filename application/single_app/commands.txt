@@ -1,0 +1,29 @@
+az role assignment create --assignee 2df50c3c-d7cd-4f02-8b25-b3cdbaa3b564 --role "Cosmos DB Account Reader Role" --scope /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.DocumentDB/databaseAccounts/simplechatwest-cosmos2
+
+az role assignment create --assignee 2df50c3c-d7cd-4f02-8b25-b3cdbaa3b564 --role "Cosmos DB Built-in Data Contributor" --scope /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.DocumentDB/databaseAccounts/simplechatwest-cosmos2/databases/
+
+
+az resource update --ids /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.DocumentDB/databaseAccounts/simplechatwest-cosmos2 --set properties.disableLocalAuth=false
+
+
+#az role assignment create --assignee 2df50c3c-d7cd-4f02-8b25-b3cdbaa3b564 --role "Cosmos DB Built-in Data Contributor" --scope /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.DocumentDB/databaseAccounts/simplechatwest-cosmos2/databases/SimpleChat
+
+az cosmosdb sql role definition create --account-name simplechatwest-cosmos2 --resource-group SimpleChatWestRG --body @cosmosdb-readmetadata-role.json
+
+
+az cosmosdb sql role assignment create --account-name simplechatwest-cosmos2 --resource-group SimpleChatWestRG --role-definition-name "CosmosDBCustomDataContributor" --scope "/" --principal-id c06a3756-b6e4-4531-a2ab-bb4f6d7e951e
+
+az cosmosdb sql role definition list --account-name simplechatwest-cosmos2 --resource-group SimpleChatWestRG
+
+az cosmosdb sql role definition create --account-name simplechatwest-cosmos2 --resource-group SimpleChatWestRG --body @cosmosdb-data-writer-role.json
+
+az cosmosdb sql role assignment create  --account-name simplechatwest-cosmos2  --resource-group SimpleChatWestRG  --role-definition-name "CosmosDBCustomDataWriter"  --scope "/"  --principal-id 2df50c3c-d7cd-4f02-8b25-b3cdbaa3b564
+
+az cosmosdb sql database list --account-name simplechatwest-cosmos2 --resource-group SimpleChatWestRG
+
+az cosmosdb sql database create  --account-name simplechatwest-cosmos2  --resource-group SimpleChatWestRG  --name testdb
+
+# 2️⃣ Assign the role at the storage account scope
+az role assignment create --role "Storage Blob Data Contributor" --assignee c06a3756-b6e4-4531-a2ab-bb4f6d7e951e --scope /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.Storage/storageAccounts/simplechatweststorage
+
+az role assignment list   --assignee c06a3756-b6e4-4531-a2ab-bb4f6d7e951e   --scope /subscriptions/57ddfff2-1477-479b-8e05-9a5f170fe5db/resourceGroups/SimpleChatWestRG/providers/Microsoft.Storage/storageAccounts/simplechatweststorage   --output table

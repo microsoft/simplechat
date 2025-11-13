@@ -102,6 +102,82 @@ def find_group_by_id(group_id):
     except exceptions.CosmosResourceNotFoundError:
         return None
 
+
+def find_group_by_name(name):
+    """Find a group document by its name (case-insensitive). Returns first match or None."""
+    try:
+        query = "SELECT TOP 1 * FROM c WHERE LOWER(c.name) = @name"
+        params = [{"name": "@name", "value": name.lower()}]
+        results = list(cosmos_groups_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+        return results[0] if results else None
+    except Exception as e:
+        print(f"Error finding group by name '{name}': {e}")
+        return None
+
+
+def create_group_with_id(name, description, group_id):
+    """Create a group with a specific ID. Similar to create_group but allows specifying the id.
+    The current user will be the owner as with create_group.
+    """
+    user_info = get_current_user_info()
+    if not user_info:
+        raise Exception("No user in session")
+
+    now_str = datetime.utcnow().isoformat()
+
+    group_doc = {
+        "id": group_id,
+        "name": name,
+        "description": description,
+        "owner":
+            {
+                "id": user_info["userId"],
+                "email": user_info["email"],
+                "displayName": user_info["displayName"]
+            },
+        "admins": [],
+        "documentManagers": [],
+        "users": [
+            {
+                "userId": user_info["userId"],
+                "email": user_info["email"],
+                "displayName": user_info["displayName"]
+            }
+        ],
+        "pendingUsers": [],
+        "createdDate": now_str,
+        "modifiedDate": now_str
+    }
+    cosmos_groups_container.create_item(group_doc)
+    return group_doc
+
+
+def get_or_create_bookstack_group():
+    """Locate a canonical BookStack group. If missing, create one with id 'bookstack-documents'.
+    Returns the group document.
+    """
+    BOOKSTACK_GROUP_ID = "bookstack-documents"
+    # Try by id first
+    group = find_group_by_id(BOOKSTACK_GROUP_ID)
+    if group:
+        return group
+
+    # Try by name (legacy or earlier created groups)
+    group = find_group_by_name("BookStack") or find_group_by_name("bookstack")
+    if group:
+        return group
+
+    # Create a new group with the fixed id
+    try:
+        return create_group_with_id(name="BookStack", description="Auto-created BookStack documents group", group_id=BOOKSTACK_GROUP_ID)
+    except Exception as e:
+        print(f"Failed to create BookStack group: {e}")
+        return None
+
 def update_active_group_for_user(group_id):
     user_id = get_current_user_id()
     new_settings = {

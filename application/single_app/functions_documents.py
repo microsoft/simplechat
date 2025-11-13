@@ -6,6 +6,23 @@ from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
+from functions_group import get_or_create_bookstack_group
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+import tempfile
+import uuid
+import shutil
+import re
+
+def sanitize_search_key(key):
+    """
+    Sanitize a string to be a valid Azure AI Search document key.
+    Keys can only contain letters, digits, underscore (_), dash (-), or equal sign (=).
+    Replace periods and other invalid characters with underscores.
+    """
+    # Replace periods and other invalid characters with underscores
+    sanitized = re.sub(r'[^a-zA-Z0-9_\-=]', '_', key)
+    return sanitized
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -256,7 +273,9 @@ def save_video_chunk(
             debug_print(f"[VIDEO CHUNK] Document version: {version}")
 
             # Use integer seconds to build a safe document key
-            chunk_id = f"{document_id}_{seconds}"
+            # Sanitize document_id to ensure chunk_id is valid for Azure Search
+            sanitized_doc_id = sanitize_search_key(document_id)
+            chunk_id = f"{sanitized_doc_id}_{seconds}"
             debug_print(f"[VIDEO CHUNK] Generated chunk ID: {chunk_id}")
 
             chunk = {
@@ -1076,7 +1095,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
 
     # Build chunk document
     try:
-        chunk_id = f"{document_id}_{page_number}"
+        # Sanitize document_id to ensure chunk_id is valid for Azure Search
+        sanitized_doc_id = sanitize_search_key(document_id)
+        chunk_id = f"{sanitized_doc_id}_{page_number}"
         chunk_keywords = []
         chunk_summary = ""
         author = []
@@ -4272,7 +4293,127 @@ def get_documents_shared_with_group(group_id):
                 latest_documents[file_name] = doc
                 
         return list(latest_documents.values())
-        
     except Exception as e:
         print(f"Error getting documents shared with group {group_id}: {e}")
         return []
+
+
+def create_bookstack_document_metadata(blob_name, blob_properties, user_id, group_id=None, public_workspace_id=None):
+    """
+    Create a lightweight document metadata entry in the appropriate Cosmos container
+    for a BookStack blob if one does not already exist.
+    Returns the document_id string.
+    """
+    # Use a reproducible id based on blob name to avoid duplicates
+    safe_id = f"bookstack-{blob_name}"
+    document_id = safe_id
+
+    file_name = blob_name
+    # Use upload_date from blob_properties if available
+    upload_date = None
+    try:
+        if hasattr(blob_properties, 'last_modified') and blob_properties.last_modified:
+            upload_date = blob_properties.last_modified.strftime('%Y-%m-%dT%H:%M:%SZ')
+    except Exception:
+        upload_date = None
+
+    # Check if document already exists
+    try:
+        # Reuse create_document semantics: call create_document which will increment version when exists
+        create_document(
+            file_name=file_name,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            user_id=user_id,
+            document_id=document_id,
+            num_file_chunks=0,
+            status="Queued for BookStack processing"
+        )
+    except Exception as e:
+        # Log but continue — create_document may raise if metadata malformed
+        print(f"Warning: create_bookstack_document_metadata create_document failed for {file_name}: {e}")
+
+    return document_id
+
+
+def process_bookstack_documents_background(user_id, group_id=None, public_workspace_id=None):
+    """
+    Background job to enumerate BookStack blobs and index them into the RAG flow.
+    Downloads each blob to a temp file and calls process_document_upload_background()
+    which already handles chunking, embedding, and indexing via save_chunks().
+    """
+    # Ensure we have a canonical BookStack group when running without an explicit group.
+    # This will create the BookStack group if it does not exist and return its doc.
+    if not group_id and not public_workspace_id:
+        try:
+            bookstack_group = get_or_create_bookstack_group()
+            if bookstack_group:
+                group_id = bookstack_group.get("id")
+        except Exception as e:
+            print(f"Error ensuring BookStack group exists: {e}")
+    # Configuration - mirror what route currently uses
+    BOOKSTACK_CONTAINER = "bookstack-documents"
+    STORAGE_ACCOUNT_URL = "https://simplechatweststorage.blob.core.windows.net"
+
+    try:
+        credential = DefaultAzureCredential()
+        blob_service_client = BlobServiceClient(account_url=STORAGE_ACCOUNT_URL, credential=credential)
+        container_client = blob_service_client.get_container_client(BOOKSTACK_CONTAINER)
+    except Exception as e:
+        print(f"Error connecting to BookStack blob storage: {e}")
+        return 0
+
+    processed_count = 0
+    for blob in container_client.list_blobs():
+        try:
+            # Create metadata record (id derived from blob name)
+            document_id = create_bookstack_document_metadata(blob.name, blob, user_id, group_id=group_id, public_workspace_id=public_workspace_id)
+
+            # Download blob to temp file
+            suffix = os.path.splitext(blob.name)[1] or '.pdf'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                tmp_path = tmp_file.name
+            try:
+                # Stream download into temp file
+                downloader = container_client.download_blob(blob.name)
+                with open(tmp_path, 'wb') as f:
+                    downloader.readinto(f)
+            except Exception:
+                # fallback to readall
+                try:
+                    data = container_client.download_blob(blob.name).readall()
+                    with open(tmp_path, 'wb') as f:
+                        f.write(data)
+                except Exception as e:
+                    print(f"Failed to download blob {blob.name}: {e}")
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                    continue
+
+            # Call existing processing function which handles chunking/saving/indexing
+            try:
+                total_saved = process_document_upload_background(
+                    document_id=document_id,
+                    user_id=user_id,
+                    temp_file_path=tmp_path,
+                    original_filename=blob.name,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id
+                )
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing BookStack document {blob.name}: {e}")
+
+            # Clean up temp file
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"Unexpected error iterating BookStack blob {getattr(blob, 'name', '<unknown>')}: {e}")
+
+    print(f"BookStack sync complete. Processed {processed_count} blob(s).")
+    return processed_count
+        

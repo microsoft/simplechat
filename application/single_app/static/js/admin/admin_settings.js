@@ -1969,6 +1969,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -1999,6 +2000,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -2049,6 +2051,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -2099,6 +2102,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -2147,6 +2151,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -2192,6 +2197,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
@@ -2238,6 +2244,7 @@ function setupTestButtons() {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();

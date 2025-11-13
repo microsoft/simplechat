@@ -35,12 +35,13 @@ def register_route_backend_models(app):
         if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
+            scopes = [resource_manager + "/.default"]
 
             client = CognitiveServicesManagementClient(
                 credential=credential,
                 subscription_id=subscription_id,
                 base_url=resource_manager,
-                credential_scopes=credential_scopes
+                credential_scopes=scopes
             )
         else:
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)
@@ -97,12 +98,13 @@ def register_route_backend_models(app):
         if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
+            scopes = [resource_manager + "/.default"]
 
             client = CognitiveServicesManagementClient(
                 credential=credential,
                 subscription_id=subscription_id,
                 base_url=resource_manager,
-                credential_scopes=credential_scopes
+                credential_scopes=scopes
             )
         else:
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)
@@ -157,12 +159,13 @@ def register_route_backend_models(app):
         if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
             
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
+            scopes = [resource_manager + "/.default"]
 
             client = CognitiveServicesManagementClient(
                 credential=credential,
                 subscription_id=subscription_id,
                 base_url=resource_manager,
-                credential_scopes=credential_scopes
+                credential_scopes=scopes
             )
         else:
             credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)

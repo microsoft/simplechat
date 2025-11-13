@@ -5,8 +5,14 @@ from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from functions_documents import process_bookstack_documents_background
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+#--------------------------new imports----------------------
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+import datetime
+
 
 def register_route_backend_group_documents(app):
     """
@@ -262,6 +268,103 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             print(f"Error executing legacy query: {e}")
 
+        # --- BookStack integration: only show synced documents in dedicated BookStack group ---
+        # We only append BookStack blobs when the user's active group is the BookStack group.
+        # This keeps BookStack docs out of other active groups' document lists.
+        try:
+            BOOKSTACK_GROUP_ID = "bookstack-documents"
+            # Only list and append BookStack blobs when the active group is the BookStack group
+            if active_group_id == BOOKSTACK_GROUP_ID:
+                BOOKSTACK_CONTAINER = "bookstack-documents"
+                STORAGE_ACCOUNT_URL = "https://simplechatweststorage.blob.core.windows.net"
+                credential = DefaultAzureCredential()
+                blob_service_client = BlobServiceClient(account_url=STORAGE_ACCOUNT_URL, credential=credential)
+                container_client = blob_service_client.get_container_client(BOOKSTACK_CONTAINER)
+
+                # Query Cosmos for existing BookStack metadata IDs for this group.
+                try:
+                    existing_q = """
+                        SELECT c.id
+                        FROM c
+                        WHERE STARTSWITH(c.id, @prefix)
+                          AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
+                    """
+                    existing_params = [
+                        {"name": "@prefix", "value": "bookstack-"},
+                        {"name": "@group_id", "value": BOOKSTACK_GROUP_ID}
+                    ]
+                    existing_items = list(cosmos_group_documents_container.query_items(
+                        query=existing_q,
+                        parameters=existing_params,
+                        enable_cross_partition_query=True
+                    ))
+                    existing_ids = set([item['id'] for item in existing_items if 'id' in item])
+                except Exception as e:
+                    print(f"Error querying existing BookStack metadata: {e}")
+                    existing_ids = set()
+
+                bookstack_docs = []
+                unprocessed_blobs = []
+                for blob in container_client.list_blobs():
+                    safe_id = f"bookstack-{blob.name}"
+                    # Check if this blob has been processed into Cosmos
+                    if safe_id not in existing_ids:
+                        # Track unprocessed blobs to auto-queue them
+                        unprocessed_blobs.append(blob.name)
+                        # Show unprocessed blob with "Pending" status so user knows it exists
+                        bookstack_docs.append({
+                            "id": safe_id,
+                            "file_name": blob.name,
+                            "title": blob.name.replace("_", " ").replace(".pdf", ""),
+                            "group_id": BOOKSTACK_GROUP_ID,
+                            "source": "bookstack",
+                            "url": f"{STORAGE_ACCOUNT_URL}/{BOOKSTACK_CONTAINER}/{blob.name}",
+                            "document_classification": "BookStack",
+                            "status": "Pending Import",
+                            "percentage_complete": 0,
+                            "uploaded_at": blob.last_modified.isoformat() if hasattr(blob, "last_modified") else datetime.datetime.utcnow().isoformat(),
+                            "size": blob.size,
+                        })
+                        continue
+
+                    # Build metadata that looks like Cosmos documents for display
+                    bookstack_docs.append({
+                        "id": safe_id,
+                        "file_name": blob.name,
+                        "title": blob.name.replace("_", " ").replace(".pdf", ""),
+                        "group_id": BOOKSTACK_GROUP_ID,
+                        "source": "bookstack",
+                        "url": f"{STORAGE_ACCOUNT_URL}/{BOOKSTACK_CONTAINER}/{blob.name}",
+                        "document_classification": "BookStack",
+                        "status": "Complete",
+                        "percentage_complete": 100,
+                        "uploaded_at": blob.last_modified.isoformat() if hasattr(blob, "last_modified") else datetime.datetime.utcnow().isoformat(),
+                        "size": blob.size,
+                    })
+
+                # Append BookStack docs to the Cosmos query results
+                docs.extend(bookstack_docs)
+                total_count += len(bookstack_docs)
+                
+                # Auto-trigger processing for unprocessed blobs (queue in background)
+                if unprocessed_blobs:
+                    print(f"📥 Auto-queueing processing for {len(unprocessed_blobs)} unprocessed BookStack blobs")
+                    try:
+                        future = current_app.extensions['executor'].submit_stored(
+                            f"bookstack_auto_sync_{BOOKSTACK_GROUP_ID}",
+                            process_bookstack_documents_background,
+                            user_id=user_id,
+                            group_id=BOOKSTACK_GROUP_ID
+                        )
+                    except Exception as sync_error:
+                        print(f"⚠️ Failed to auto-queue BookStack sync: {sync_error}")
+            else:
+                # Not the BookStack group — do not include BookStack blobs here.
+                pass
+        except Exception as e:
+            print(f"⚠️ Failed to list BookStack documents: {e}")
+
+
         # --- 5) Return results ---
         return jsonify({
             "documents": docs,
@@ -503,6 +606,125 @@ def register_route_backend_group_documents(app):
             }), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+        
+    @app.route('/api/group_documents/sync-bookstack', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_sync_bookstack_documents():
+        """
+        Trigger a background job to sync BookStack blobs into the document processing pipeline.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        # Ensure the canonical BookStack group exists (create if missing) and use it as the target group
+        try:
+            bookstack_group = get_or_create_bookstack_group()
+            if not bookstack_group:
+                return jsonify({'error': 'Failed to find or create BookStack group'}), 500
+            bookstack_group_id = bookstack_group.get('id')
+        except Exception as e:
+            return jsonify({'error': f'Failed to ensure BookStack group: {str(e)}'}), 500
+
+        # Check user's role in the BookStack group
+        role = get_user_role_in_group(bookstack_group, user_id)
+        if role not in ["Owner", "Admin", "DocumentManager"]:
+            return jsonify({'error': 'You do not have permission to sync BookStack documents'}), 403
+
+        # Queue the BookStack sync job. It will list blobs, download and process them into the BookStack group.
+        try:
+            future = current_app.extensions['executor'].submit_stored(
+                f"bookstack_sync_{bookstack_group_id}",
+                process_bookstack_documents_background,
+                user_id=user_id,
+                group_id=bookstack_group_id
+            )
+            return jsonify({'message': 'BookStack sync queued', 'task_id': f"bookstack_sync_{bookstack_group_id}"}), 200
+        except Exception as e:
+            return jsonify({'error': f'Failed to queue BookStack sync: {str(e)}'}), 500
+
+    @app.route('/api/groups/ensure-bookstack', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_ensure_bookstack_group():
+        """Ensure the canonical BookStack group exists and return its document.
+        Useful for creating the group and confirming membership/visibility.
+        """
+        try:
+            group = get_or_create_bookstack_group()
+            if not group:
+                return jsonify({'error': 'Failed to create BookStack group'}), 500
+            return jsonify({'group': group}), 200
+        except Exception as e:
+            return jsonify({'error': f'Error ensuring BookStack group: {str(e)}'}), 500
+
+    @app.route('/api/groups/bookstack/unprocessed', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_list_bookstack_unprocessed():
+        """Return two lists: processed (have Cosmos metadata) and unprocessed blobs in the BookStack container.
+        Useful to diagnose why the BookStack group shows no PDFs.
+        """
+        try:
+            bookstack_group = get_or_create_bookstack_group()
+            if not bookstack_group:
+                return jsonify({'error': 'BookStack group not available'}), 500
+            bookstack_group_id = bookstack_group.get('id')
+        except Exception as e:
+            return jsonify({'error': f'Failed to locate/create BookStack group: {str(e)}'}), 500
+
+        BOOKSTACK_CONTAINER = "bookstack-documents"
+        STORAGE_ACCOUNT_URL = "https://simplechatweststorage.blob.core.windows.net"
+
+        try:
+            credential = DefaultAzureCredential()
+            blob_service_client = BlobServiceClient(account_url=STORAGE_ACCOUNT_URL, credential=credential)
+            container_client = blob_service_client.get_container_client(BOOKSTACK_CONTAINER)
+        except Exception as e:
+            return jsonify({'error': f'Failed to connect to BookStack blob storage: {str(e)}'}), 500
+
+        # Fetch all blob names
+        blob_names = [b.name for b in container_client.list_blobs()]
+
+        # Fetch existing Cosmos ids for bookstack group
+        try:
+            existing_q = """
+                SELECT c.id
+                FROM c
+                WHERE STARTSWITH(c.id, @prefix)
+                  AND (c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id))
+            """
+            existing_params = [
+                {"name": "@prefix", "value": "bookstack-"},
+                {"name": "@group_id", "value": bookstack_group_id}
+            ]
+            existing_items = list(cosmos_group_documents_container.query_items(
+                query=existing_q,
+                parameters=existing_params,
+                enable_cross_partition_query=True
+            ))
+            existing_ids = set([item['id'] for item in existing_items if 'id' in item])
+        except Exception as e:
+            return jsonify({'error': f'Failed to query Cosmos for BookStack metadata: {str(e)}'}), 500
+
+        processed = []
+        unprocessed = []
+        for name in blob_names:
+            safe_id = f"bookstack-{name}"
+            if safe_id in existing_ids:
+                processed.append({'blob_name': name, 'id': safe_id})
+            else:
+                unprocessed.append({'blob_name': name, 'id': safe_id, 'url': f"{STORAGE_ACCOUNT_URL}/{BOOKSTACK_CONTAINER}/{name}"})
+
+        return jsonify({'processed': processed, 'unprocessed': unprocessed, 'total_blobs': len(blob_names)}), 200
+    
             
     @app.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
