@@ -554,8 +554,13 @@ def update_user_settings(user_id, settings_to_update):
             first_user_agent = doc['settings']['agents'][0]
             if first_user_agent:
                 doc['settings']['selected_agent'] = {
+                    'id': first_user_agent.get('id'),
                     'name': first_user_agent['name'],
+                    'display_name': first_user_agent.get('display_name', first_user_agent['name']),
                     'is_global': False,
+                    'is_group': False,
+                    'group_id': None,
+                    'group_name': None,
                 }
             else:
                 settings = get_settings()
@@ -567,24 +572,44 @@ def update_user_settings(user_id, settings_to_update):
                         if global_agents:
                             first_global_agent = global_agents[0]
                             doc['settings']['selected_agent'] = {
+                                'id': first_global_agent.get('id'),
                                 'name': first_global_agent['name'],
+                                'display_name': first_global_agent.get('display_name', first_global_agent['name']),
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                         else:
                             doc['settings']['selected_agent'] = {
+                                'id': None,
                                 'name': 'default_agent',
+                                'display_name': 'default_agent',
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                     except Exception:
                         # Fallback if container access fails
                         doc['settings']['selected_agent'] = {
+                            'id': None,
                             'name': 'default_agent',
+                            'display_name': 'default_agent',
                             'is_global': True,
+                            'is_group': False,
+                            'group_id': None,
+                            'group_name': None,
                         }
                 else:
                     doc['settings']['selected_agent'] = {
+                        'id': None,
                         'name': 'researcher',
+                        'display_name': 'researcher',
                         'is_global': False,
+                        'is_group': False,
+                        'group_id': None,
+                        'group_name': None,
                     }
 
         if doc['settings']['agents'] is not None and len(doc['settings']['agents']) > 0:

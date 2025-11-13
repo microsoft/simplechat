@@ -31,6 +31,9 @@ from flask import g
 from functions_keyvault import validate_secret_name_dynamic, retrieve_secret_from_key_vault, retrieve_secret_from_key_vault_by_full_name, SecretReturnType
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
+from functions_group_agents import get_group_agent, get_group_agents
+from functions_group_actions import get_group_actions
+from functions_group import require_active_group
 from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -100,6 +103,7 @@ def resolve_agent_config(agent, settings):
     debug_print(f"[SK Loader] resolve_agent_config called for agent: {agent.get('name')}")
     debug_print(f"[SK Loader] Agent config: {agent}")
     debug_print(f"[SK Loader] Agent is_global flag: {agent.get('is_global')}")
+    debug_print(f"[SK Loader] Agent is_group flag: {agent.get('is_group')}")
 
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -112,9 +116,18 @@ def resolve_agent_config(agent, settings):
     per_user_enabled = settings.get('per_user_semantic_kernel', False)
     allow_user_custom_agent_endpoints = settings.get('allow_user_custom_agent_endpoints', False)
     allow_group_custom_agent_endpoints = settings.get('allow_group_custom_agent_endpoints', False)
+    is_group_agent = agent.get("is_group", False)
+    is_global_agent = agent.get("is_global", False)
+
+    if is_group_agent:
+        allow_custom_agent_endpoints = allow_group_custom_agent_endpoints
+    elif is_global_agent:
+        allow_custom_agent_endpoints = False
+    else:
+        allow_custom_agent_endpoints = allow_user_custom_agent_endpoints
 
     debug_print(f"[SK Loader] user_apim_enabled: {user_apim_enabled}, global_apim_enabled: {global_apim_enabled}, per_user_enabled: {per_user_enabled}")
-    debug_print(f"[SK Loader] allow_user_custom_agent_endpoints: {allow_user_custom_agent_endpoints}, allow_group_custom_agent_endpoints: {allow_group_custom_agent_endpoints}")
+    debug_print(f"[SK Loader] allow_user_custom_agent_endpoints: {allow_user_custom_agent_endpoints}, allow_group_custom_agent_endpoints: {allow_group_custom_agent_endpoints}, allow_custom_agent_endpoints_resolved: {allow_custom_agent_endpoints}")
     debug_print(f"[SK Loader] Max completion tokens from agent: {agent.get('max_completion_tokens')}")
 
     def resolve_secret_value_if_needed(value, scope_value, source, scope):
@@ -238,6 +251,9 @@ def resolve_agent_config(agent, settings):
                 "id": agent.get("id", ""),
                 "default_agent": agent.get("default_agent", False),
                 "is_global": agent.get("is_global", False),
+                "is_group": agent.get("is_group", False),
+                "group_id": agent.get("group_id"),
+                "group_name": agent.get("group_name"),
                 "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),
                 "max_completion_tokens": agent.get("max_completion_tokens", -1)
             }
@@ -249,22 +265,24 @@ def resolve_agent_config(agent, settings):
     g_apim = get_global_apim()
     u_gpt = get_user_gpt()
     g_gpt = get_global_gpt()
+    can_use_agent_endpoints = allow_custom_agent_endpoints
+    user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
     # 1. User APIM enabled and any user APIM values set: use user APIM (merge with global APIM if needed)
-    if user_apim_enabled and any_filled(*u_apim) and allow_user_custom_agent_endpoints:
+    if user_apim_allowed and any_filled(*u_apim):
         debug_print(f"[SK Loader] Using user APIM with global fallback")
         merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
         endpoint, key, deployment, api_version = merged
     # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
-    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim) and allow_group_custom_agent_endpoints:
+    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
         debug_print(f"[SK Loader] Using global APIM (user APIM enabled but not present)")
         endpoint, key, deployment, api_version = g_apim
     # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
-    elif all_filled(*u_gpt) and allow_user_custom_agent_endpoints:
+    elif all_filled(*u_gpt) and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (all fields filled)")
         endpoint, key, deployment, api_version = u_gpt
     # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
-    elif any_filled(*u_gpt) and not global_apim_enabled and allow_user_custom_agent_endpoints:
+    elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
         debug_print(f"[SK Loader] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
         endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
     # 5. Global APIM enabled and present: use global APIM
@@ -290,6 +308,9 @@ def resolve_agent_config(agent, settings):
         "id": agent.get("id", ""),
         "default_agent": agent.get("default_agent", False),  # [Deprecated, use 'selected_agent' or 'global_selected_agent' in agent config]
         "is_global": agent.get("is_global", False),  # Ensure we have this field
+        "is_group": agent.get("is_group", False),
+        "group_id": agent.get("group_id"),
+        "group_name": agent.get("group_name"),
         "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),  # Use this to check if APIM is enabled for the agent
         "max_completion_tokens": agent.get("max_completion_tokens", -1) # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
     }
@@ -450,7 +471,7 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
-def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -459,6 +480,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         plugin_names: List of plugin names to load (from agent's actions_to_load)
         mode_label: 'per-user' or 'global' for logging
         user_id: User ID for per-user mode
+        group_id: Active group identifier when loading group-scoped plugins
     """
     if not plugin_names:
         debug_print(f"[SK Loader] No plugin names provided to load_agent_specific_plugins")
@@ -471,7 +493,18 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         # Create logged plugin loader for enhanced logging
         logged_loader = create_logged_plugin_loader(kernel)
         
-        if mode_label == "per-user":
+        if mode_label == "group":
+            if not group_id:
+                debug_print(f"[SK Loader] Warning: Group mode requested without group_id. Skipping plugin load.")
+                all_plugin_manifests = []
+            else:
+                all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} group plugin manifests for group {group_id}")
+                if merge_global:
+                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                    all_plugin_manifests.extend(global_plugins)
+                    debug_print(f"[SK Loader] Merged global plugins for group mode. Total manifests: {len(all_plugin_manifests)}")
+        elif mode_label == "per-user":
             if user_id:
                 all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
                 if merge_global:
@@ -484,7 +517,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            all_plugin_manifests = get_global_plugins(return_type=SecretReturnType.NAME)
+            all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
@@ -559,7 +592,15 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         # Fallback to original method
         try:
             # Get plugin manifests again for fallback
-            if mode_label == "per-user":
+            if mode_label == "group":
+                if group_id:
+                    all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                    if merge_global:
+                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                        all_plugin_manifests.extend(global_plugins)
+                else:
+                    all_plugin_manifests = []
+            elif mode_label == "per-user":
                 if user_id:
                     all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
                     if merge_global:
@@ -757,12 +798,27 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         # Load agent-specific plugins into the kernel before creating the agent
         if agent_config.get("actions_to_load"):
             print(f"[SK Loader] Loading agent-specific plugins: {agent_config['actions_to_load']}")
-            # Determine plugin source based on agent's global status, not overall mode
+            # Determine plugin source based on agent scope
             agent_is_global = agent_config.get("is_global", False)
-            plugin_mode = "global" if agent_is_global else mode_label
-            user_id = get_current_user_id() if not agent_is_global else None
-            print(f"[SK Loader] Agent is_global: {agent_is_global}, using plugin_mode: {plugin_mode}")
-            load_agent_specific_plugins(kernel, agent_config["actions_to_load"], settings, plugin_mode, user_id=user_id)
+            agent_is_group = agent_config.get("is_group", False)
+            if agent_is_global:
+                plugin_mode = "global"
+            elif agent_is_group:
+                plugin_mode = "group"
+            else:
+                plugin_mode = mode_label
+
+            resolved_user_id = None if agent_is_global else get_current_user_id()
+            group_id = agent_config.get("group_id") if agent_is_group else None
+            print(f"[SK Loader] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
+            load_agent_specific_plugins(
+                kernel,
+                agent_config["actions_to_load"],
+                settings,
+                plugin_mode,
+                user_id=resolved_user_id,
+                group_id=group_id,
+            )
 
         try:
             kwargs = {
@@ -1066,12 +1122,66 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_agents_migration_complete(user_id)
     agents_cfg = get_personal_agents(user_id)
-    
+
     print(f"[SK Loader] User settings found {len(agents_cfg)} agents for user '{user_id}'")
-    
+
     # Always mark user agents as is_global: False
     for agent in agents_cfg:
         agent['is_global'] = False
+
+    # Append selected group agent (if any) to the candidate list so downstream selection logic can resolve it
+    selected_agent_data = selected_agent if isinstance(selected_agent, dict) else {}
+    selected_agent_is_group = selected_agent_data.get('is_group', False)
+    if selected_agent_is_group:
+        resolved_group_id = selected_agent_data.get('group_id')
+        try:
+            active_group_id = require_active_group(user_id)
+            if not resolved_group_id:
+                resolved_group_id = active_group_id
+            elif resolved_group_id != active_group_id:
+                debug_print(
+                    f"[SK Loader] Selected group agent references group {resolved_group_id}, active group is {active_group_id}."
+                )
+        except ValueError as err:
+            debug_print(f"[SK Loader] No active group available while loading group agent: {err}")
+            if not resolved_group_id:
+                log_event(
+                    "[SK Loader] Group agent selected but no active group in settings.",
+                    level=logging.WARNING
+                )
+
+        if resolved_group_id:
+            agent_identifier = selected_agent_data.get('id') or selected_agent_data.get('name')
+            group_agent_cfg = None
+            if agent_identifier:
+                group_agent_cfg = get_group_agent(resolved_group_id, agent_identifier)
+            if not group_agent_cfg:
+                # Fallback: search by name across group agents if ID lookup failed
+                for candidate in get_group_agents(resolved_group_id):
+                    if candidate.get('name') == selected_agent_data.get('name'):
+                        group_agent_cfg = candidate
+                        break
+
+            if group_agent_cfg:
+                group_agent_cfg['is_global'] = False
+                group_agent_cfg['is_group'] = True
+                group_agent_cfg.setdefault('group_id', resolved_group_id)
+                group_agent_cfg['group_name'] = selected_agent_data.get('group_name')
+                agents_cfg.append(group_agent_cfg)
+                log_event(
+                    f"[SK Loader] Added group agent '{group_agent_cfg.get('name')}' from group {resolved_group_id} to candidate list.",
+                    level=logging.INFO
+                )
+            else:
+                log_event(
+                    f"[SK Loader] Selected group agent '{selected_agent_data.get('name')}' not found for group {resolved_group_id}.",
+                    level=logging.WARNING
+                )
+        else:
+            log_event(
+                "[SK Loader] Unable to resolve group ID for selected group agent; skipping group agent load.",
+                level=logging.WARNING
+            )
 
     # PATCH: Merge global agents if enabled
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
@@ -1092,9 +1202,11 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             key = f"global_{agent['name']}"
             all_agents[key] = agent
             
-        # Add personal agents with 'personal_' prefix  
+        # Add personal and group agents with scoped prefixes
         for agent in agents_cfg:
-            key = f"personal_{agent['name']}"
+            prefix = "group" if agent.get('is_group') else "personal"
+            scoped_name = agent.get('name') or agent.get('id') or 'unnamed'
+            key = f"{prefix}_{scoped_name}"
             all_agents[key] = agent
             
         agents_cfg = list(all_agents.values())

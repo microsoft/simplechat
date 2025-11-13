@@ -18,6 +18,15 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 
 from functions_global_actions import *
 from functions_personal_actions import *
+from functions_group import require_active_group, assert_group_role
+from functions_group_actions import (
+    get_group_actions,
+    get_group_action,
+    save_group_action,
+    delete_group_action,
+    validate_group_action_payload,
+)
+from functions_keyvault import SecretReturnType
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
@@ -352,6 +361,171 @@ def delete_user_plugin(plugin_name):
     
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
     return jsonify({'success': True})
+
+
+# === GROUP ACTION ENDPOINTS ===
+
+@bpap.route('/api/group/plugins', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_actions_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    actions = get_group_actions(active_group, return_type=SecretReturnType.TRIGGER)
+    return jsonify({'actions': actions}), 200
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
+    if not action:
+        return jsonify({'error': 'Action not found'}), 404
+    return jsonify(action), 200
+
+
+@bpap.route('/api/group/plugins', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def create_group_action_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        validate_group_action_payload(payload, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    for key in ('group_id', 'last_updated', 'user_id'):
+        payload.pop(key, None)
+
+    try:
+        saved = save_group_action(active_group, payload)
+    except Exception as exc:
+        current_app.logger.error('Failed to save group action: %s', exc)
+        return jsonify({'error': 'Unable to save action'}), 500
+
+    return jsonify(saved), 201
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def update_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
+    if not existing:
+        return jsonify({'error': 'Action not found'}), 404
+
+    updates = request.get_json(silent=True) or {}
+    for key in ('id', 'group_id', 'last_updated', 'user_id'):
+        updates.pop(key, None)
+
+    try:
+        validate_group_action_payload(updates, partial=True)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    merged = dict(existing)
+    merged.update(updates)
+    merged['id'] = existing.get('id', action_id)
+
+    try:
+        validate_group_action_payload(merged, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
+        saved = save_group_action(active_group, merged)
+    except Exception as exc:
+        current_app.logger.error('Failed to update group action %s: %s', action_id, exc)
+        return jsonify({'error': 'Unable to update action'}), 500
+
+    return jsonify(saved), 200
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def delete_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    try:
+        removed = delete_group_action(active_group, action_id)
+    except Exception as exc:
+        current_app.logger.error('Failed to delete group action %s: %s', action_id, exc)
+        return jsonify({'error': 'Unable to delete action'}), 500
+
+    if not removed:
+        return jsonify({'error': 'Action not found'}), 404
+    return jsonify({'message': 'Action deleted'}), 200
 
 @bpap.route('/api/user/plugins/types', methods=['GET'])
 @swagger_route(security=get_auth_security())

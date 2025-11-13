@@ -40,6 +40,7 @@ def ensure_default_global_agent_exists():
                 "azure_agent_apim_gpt_api_version": "",
                 "enable_agent_gpt_apim": False,
                 "is_global": True,
+                "is_group": False,
                 "instructions": (
                     "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\n"
                     "You must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\n"
@@ -105,6 +106,8 @@ def get_global_agents():
         for agent in agents:
             if agent.get('max_completion_tokens') is None:
                 agent['max_completion_tokens'] = -1
+            agent.setdefault('is_global', True)
+            agent.setdefault('is_group', False)
         return agents
     except Exception as e:
         log_event(
@@ -135,6 +138,8 @@ def get_global_agent(agent_id):
         agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
         if agent.get('max_completion_tokens') is None:
             agent['max_completion_tokens'] = -1
+        agent.setdefault('is_global', True)
+        agent.setdefault('is_group', False)
         print(f"Found global agent: {agent_id}")
         return agent
     except Exception as e:
@@ -165,6 +170,7 @@ def save_global_agent(agent_data):
             agent_data['id'] = str(uuid.uuid4())
         # Add metadata
         agent_data['is_global'] = True
+        agent_data['is_group'] = False
         agent_data['created_at'] = datetime.utcnow().isoformat()
         agent_data['updated_at'] = datetime.utcnow().isoformat()
         log_event(

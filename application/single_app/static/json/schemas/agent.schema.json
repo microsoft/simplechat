@@ -66,6 +66,11 @@
           "description": "True if this agent is a global agent; required for agent selection and UI badging.",
           "default": false
         },
+        "is_group": {
+          "type": "boolean",
+          "description": "True if this agent is a group agent; required for agent selection and UI badging.",
+          "default": false
+        },
         "instructions": {
           "type": "string"
         },
@@ -89,6 +94,7 @@
         "display_name",
         "description",
         "is_global",
+        "is_group",
         "instructions",
         "actions_to_load",
         "other_settings",
