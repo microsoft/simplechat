@@ -8,11 +8,7 @@ from azure.storage.blob import BlobServiceClient
 # --------------------------
 # Configuration
 # --------------------------
-BOOKSTACK_URL = "http://bookstack.local/api"
-BOOKSTACK_TOKEN_ID = "gEOTQFrD6wvetg1xVX1epQ0KfpVB1XYG"
-BOOKSTACK_TOKEN_SECRET = "ckyye2nwabLrnFZnPbt1fadz0OC8hGlv"
-STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=simplechatweststorage;AccountKey=SBhYm5ojMBhmLbeVGgl43yE+vS2oNE16zHFe+bsnUTVKLT7g0d22r/UWnXYSqFHzOcmvt3ipXTQK+AStnAahqQ==;EndpointSuffix=core.windows.net"
-CONTAINER_NAME = "bookstack-documents"
+
 # --------------------------
 # Initialize Azure Blob Storage
 # --------------------------
