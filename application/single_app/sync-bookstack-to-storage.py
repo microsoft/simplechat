@@ -3,27 +3,30 @@
 import requests
 from azure.storage.blob import BlobServiceClient
 import os
+from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 # --------------------------
 # Configuration
 # --------------------------
 
+load_dotenv()
+BOOKSTACK_URL = os.environ.get("BOOKSTACK_URL")
+BOOKSTACK_TOKEN_ID = os.environ.get("BOOKSTACK_TOKEN_ID")
+BOOKSTACK_TOKEN_SECRET = os.environ.get("BOOKSTACK_TOKEN_SECRET")
+STORAGE_CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+CONTAINER_NAME = os.environ.get("AZURE_BLOB_CONTAINER")
+STORAGE_ACCOUNT_URL = os.environ.get("STORAGE_ACCOUNT_URL")
 # --------------------------
 # Initialize Azure Blob Storage
 # --------------------------
 
 from azure.identity import AzureCliCredential
 from azure.storage.blob import BlobServiceClient
-# credential = DefaultAzureCredential()
-# account_url = "https://simplechatweststorage.blob.core.windows.net"
-# blob_service_client = BlobServiceClient(account_url, credential=credential)
-# from azure.identity import AzureCliCredential
-# from azure.storage.blob import BlobServiceClient
 
 credential = AzureCliCredential()
 blob_service_client = BlobServiceClient(
-    account_url="https://simplechatweststorage.blob.core.windows.net",
+    account_url=STORAGE_ACCOUNT_URL,
     credential=credential
 )
 
