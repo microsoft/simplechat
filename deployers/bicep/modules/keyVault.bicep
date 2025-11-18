@@ -11,17 +11,17 @@ param enableDiagLogging bool
 param logAnalyticsId string
 
 @description('Enable enterprise app authentication')
-param enableEnterpriseApp bool = false
+param enableEnterpriseApp bool 
 
 @description('Enterprise app client ID - used for documentation')
-param enterpriseAppClientId string = ''
+param enterpriseAppClientId string 
 
 @description('Enterprise app client secret to store in Key Vault')
 @secure()
-param enterpriseAppClientSecret string = ''
+param enterpriseAppClientSecret string 
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = {
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -66,7 +66,9 @@ resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
   scope: kv
   properties: {
     workspaceId: logAnalyticsId
+    #disable-next-line BCP318 // expect one value to be null
     logs: diagnosticConfigs.outputs.standardLogCategories
+    #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
   }
 }
@@ -84,4 +86,4 @@ resource enterpriseAppSecret 'Microsoft.KeyVault/vaults/secrets@2024-11-01' = if
 output keyVaultId string = kv.id
 output keyVaultName string = kv.name
 output keyVaultUri string = kv.properties.vaultUri
-output enterpriseAppClientSecretUri string = enableEnterpriseApp && !empty(enterpriseAppClientSecret) ? '${kv.properties.vaultUri}secrets/enterprise-app-client-secret' : ''
+output enterpriseAppClientSecretUri string = enableEnterpriseApp ? '${kv.properties.vaultUri}secrets/enterprise-app-client-secret' : ''

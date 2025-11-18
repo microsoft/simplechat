@@ -11,7 +11,7 @@ param enableDiagLogging bool
 param logAnalyticsId string
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = {
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
   name: 'diagnosticConfigs'
 }
 
@@ -53,6 +53,7 @@ resource storageDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pr
   properties: {
     workspaceId: logAnalyticsId
     logs: [] // Storage account main resource doesn't have logs
+    #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.transactionMetricsCategories
   }
 }
@@ -67,7 +68,9 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
   scope: blobService
   properties: {
     workspaceId: logAnalyticsId
+    #disable-next-line BCP318 // expect one value to be null
     logs: diagnosticConfigs.outputs.standardLogCategories
+    #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.transactionMetricsCategories
   }
 }

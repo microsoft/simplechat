@@ -9,7 +9,7 @@ param enableDiagLogging bool
 param logAnalyticsId string
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = {
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -42,6 +42,7 @@ resource appServicePlanDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-0
   properties: {
     workspaceId: logAnalyticsId
     logs: [] // App Service Plans typically don't have logs
+    #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
   }
 }

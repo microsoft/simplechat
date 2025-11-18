@@ -10,7 +10,7 @@ param enableDiagLogging bool
 param logAnalyticsId string
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = {
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -49,7 +49,9 @@ resource acrDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previe
   scope: acr
   properties: {
     workspaceId: logAnalyticsId
+    #disable-next-line BCP318 // expect one value to be null
     logs: diagnosticConfigs.outputs.standardLogCategories
+    #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
   }
 }

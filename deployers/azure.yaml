@@ -4,9 +4,6 @@ metadata:
 infra:
   provider: bicep
   path: bicep
-  options:
-    parameters:  bicep/params/dev.bicepparam
-
 hooks:
   predeploy:
     posix:
@@ -16,20 +13,22 @@ hooks:
         cd ..
         timestamp="$(date +"%Y%m%d-%H%M%S")"
         echo "Stopping web service prior to deployment..."
-        az webapp stop --name ${SERVICE_WEB_NAME} --resource-group ${AZURE_RESOURCE_GROUP}
+        az webapp stop --name ${var_webService} --resource-group ${var_rgName}
         echo "Building Docker image..."
-        docker build -f application/single_app/Dockerfile -t ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp} .
-        docker tag ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp} ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:latest
+        docker build -f application/single_app/Dockerfile -t ${var_containerRegistry}/${var_imageName}:${timestamp} .
+        docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} ${var_containerRegistry}/${var_imageName}:latest
         echo "Logging in to ACR..."
-        az acr login --name ${AZURE_CONTAINER_REGISTRY_NAME}
+        az acr login --name ${var_acrName}
         echo "Pushing image to ACR..."
-        docker push ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:latest
-        docker push ${AZURE_CONTAINER_REGISTRY_ENDPOINT}/simple-chat:${timestamp}
+        docker push ${var_containerRegistry}/${var_imageName}:latest
+        docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
         echo "Restarting web service..."
-        az webapp start --name ${SERVICE_WEB_NAME} --resource-group ${AZURE_RESOURCE_GROUP}
-
+        az webapp start --name ${var_webService} --resource-group ${var_rgName}
 services:
   web:
     project: ../application/single_app
     language: python
     host: appservice
+    docker:
+      context: ../../
+      dockerfile: application/single_app/Dockerfile

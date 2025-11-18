@@ -6,14 +6,8 @@ param appName string
 @description('The environment name (dev/test/prod)')
 param environment string
 
-@description('Resource tags')
-param tags object
-
 @description('The redirect URI for the application')
 param redirectUri string
-
-@description('Enable enterprise application deployment')
-param enableEnterpriseApp bool = true
 
 @description('Application description')
 param appDescription string = 'Enterprise application for ${appName} ${environment} environment'
@@ -28,6 +22,26 @@ param requiredResourceAccess array = [
     resourceAccess: [
       {
         id: 'e1fe6dd8-ba31-4d61-89e7-88639da4683d' // User.Read
+        type: 'Scope'
+      }
+      {
+        id: '14dad69e-099b-42c9-810b-d002981feec1' // Profile.Read
+        type: 'Scope'
+      }
+      {
+        id: '37f7f235-527c-4136-accd-4a02d197296e' // openid
+        type: 'Scope'
+      }
+      {
+        id: '7427e0e9-2fba-42fe-b0c0-848c9e6a8182' // offline_access
+        type: 'Scope'
+      }
+      {
+        id: '64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0' // email
+        type: 'Scope'
+      }
+      {
+        id: '5f8c59db-677d-491f-a6b8-5f174b11ec1d' // Group.Read.All
         type: 'Scope'
       }
     ]

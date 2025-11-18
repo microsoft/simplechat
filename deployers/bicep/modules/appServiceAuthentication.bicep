@@ -6,12 +6,8 @@ param webAppName string
 @description('Client ID of the Azure AD application')
 param clientId string
 
-@description('Client secret of the Azure AD application (leave empty to use Key Vault reference)')
-@secure()
-param clientSecret string = ''
-
 @description('Key Vault secret URI for client secret (recommended approach)')
-@secure()
+#disable-next-line secure-secrets-in-params   // Doesn't contain a secret
 param clientSecretKeyVaultUri string = ''
 
 @description('Azure AD tenant ID')
@@ -34,9 +30,6 @@ param unauthenticatedClientAction string = 'RedirectToLoginPage'
 
 @description('Token store enabled')
 param tokenStoreEnabled bool = true
-
-@description('Additional login parameters')
-param additionalLoginParams array = []
 
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
@@ -101,15 +94,6 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = if (enableAuthen
         convention: 'NoProxy'
       }
     }
-  }
-}
-
-// Configure app setting for Key Vault reference if using Key Vault for client secret
-resource clientSecretAppSetting 'Microsoft.Web/sites/config@2022-03-01' = if (enableAuthentication && !empty(clientSecretKeyVaultUri)) {
-  name: 'appsettings'
-  parent: webApp
-  properties: {
-    MICROSOFT_PROVIDER_AUTHENTICATION_SECRET: '@Microsoft.KeyVault(SecretUri=${clientSecretKeyVaultUri})'
   }
 }
 
