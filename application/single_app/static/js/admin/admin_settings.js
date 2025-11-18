@@ -2267,6 +2267,34 @@ function setupTestButtons() {
             }
         });
     }
+
+    const testKeyVaultBtn = document.getElementById('test_key_vault_button');
+    if (testKeyVaultBtn) {
+        testKeyVaultBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_key_vault_result');
+            resultDiv.innerHTML = 'Testing Key Vault...';
+            const payload = {
+                test_type: 'key_vault',
+                vault_name: document.getElementById('key_vault_name').value,
+                client_id: document.getElementById('key_vault_identity').value,
+            };
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;
+                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+            }
+        });
+    }
 }
 
 function toggleEnhancedCitation(isEnabled) {

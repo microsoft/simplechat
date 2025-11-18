@@ -2,6 +2,7 @@
 
 from config import *
 from functions_appinsights import log_event
+import app_settings_cache
 
 def get_settings():
     import secrets
@@ -188,6 +189,10 @@ def get_settings():
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        
+        # Search Result Caching
+        'enable_search_result_caching': True,
+        'search_cache_ttl_seconds': 300,
 
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',
@@ -226,7 +231,12 @@ def get_settings():
         "speech_service_endpoint": '',
         "speech_service_location": '',
         "speech_service_locale": "en-US",
-        "speech_service_key": ""
+        "speech_service_key": "",
+        
+        #key vault settings
+        'enable_key_vault_secret_storage': False,
+        'key_vault_name': '',
+        'key_vault_identity': '',
     }
 
     try:
@@ -264,6 +274,7 @@ def update_settings(new_settings):
         settings_item = get_settings()
         settings_item.update(new_settings)
         cosmos_settings_container.upsert_item(settings_item)
+        app_settings_cacheupdate_settings_cache(settings_item) # Update the in-memory cache as well
         print("Settings updated successfully.")
         return True
     except Exception as e:

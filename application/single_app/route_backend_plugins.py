@@ -18,8 +18,9 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 
 from functions_global_actions import *
 from functions_personal_actions import *
+#from functions_personal_actions import delete_personal_action
 
-
+from functions_debug import debug_print
 from json_schema_validation import validate_plugin
 
 def discover_plugin_types():
@@ -109,6 +110,7 @@ def get_plugin_types():
                         safe_manifest = {}
                         
                         # Only add minimal required fields based on plugin type
+                        #TODO: This can be improved by ensuring we have additional fields from the schemas we have not created if needed. 
                         if 'databricks' in module_name.lower():
                             safe_manifest = {
                                 'endpoint': 'https://example.databricks.com',
@@ -151,12 +153,15 @@ def get_plugin_types():
                         try:
                             plugin_instance = obj(safe_manifest)
                         except (TypeError, ValueError, KeyError) as e:
+                            debug_print(f"[RBEP] Failed to instantiate {attr} with safe manifest: {e}")
                             try:
                                 plugin_instance = obj({})
                             except (TypeError, ValueError) as e2:
+                                debug_print(f"[RBEP] Failed to instantiate {attr} with empty manifest: {e2}")
                                 try:
                                     plugin_instance = obj()
                                 except Exception as e3:
+                                    debug_print(f"[RBEP] Failed to instantiate {attr} with no args: {e3}")
                                     instantiation_error = e3
                         except Exception as e:
                             instantiation_error = e
@@ -288,6 +293,7 @@ def set_user_plugins():
             plugin.setdefault('endpoint', f'sql://{plugin_type}')
         elif plugin_type == 'msgraph':
             # MS Graph plugin does not require an endpoint, but schema validation requires one
+            #TODO: Update to support different clouds
             plugin.setdefault('endpoint', 'https://graph.microsoft.com')
         else:
             # For other plugin types, require a real endpoint
@@ -337,9 +343,6 @@ def set_user_plugins():
 @login_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
-    
-    # Import the new personal actions functions
-    from functions_personal_actions import delete_personal_action
     
     # Try to delete from personal_actions container
     deleted = delete_personal_action(user_id, plugin_name)

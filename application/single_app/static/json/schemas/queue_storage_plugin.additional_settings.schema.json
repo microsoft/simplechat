@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Queue Storage Additional Settings",
+  "description": "Additional settings required for Azure Queue Storage plugin.",
+  "type": "object",
+  "properties": {
+    "queue_name": {
+      "type": "string",
+      "title": "Queue Name",
+      "description": "The name of the Azure Storage Queue to use."
+    }
+  },
+  "required": ["queue_name"]
+}

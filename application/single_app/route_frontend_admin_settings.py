@@ -191,6 +191,14 @@ def register_route_frontend_admin_settings(app):
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         
+        # --- Add defaults for key vault
+        if 'enable_key_vault_secret_storage' not in settings:
+            settings['enable_key_vault_secret_storage'] = False
+        if 'key_vault_name' not in settings:
+            settings['key_vault_name'] = ''
+        if 'key_vault_identity' not in settings:
+            settings['key_vault_identity'] = ''
+
         # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
             settings['enable_left_nav_default'] = True
@@ -759,6 +767,10 @@ def register_route_frontend_admin_settings(app):
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
+
+                'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
+                'key_vault_name': form_data.get('key_vault_name', '').strip(),
+                'key_vault_identity': form_data.get('key_vault_identity', ''),
 
                 # Authentication & Redirect Settings
                 'enable_front_door': enable_front_door,

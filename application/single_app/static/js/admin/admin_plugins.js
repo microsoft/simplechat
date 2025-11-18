@@ -55,7 +55,11 @@ function setupSaveHandler(plugin, modal) {
         
         saveBtn.onclick = async (event) => {
             event.preventDefault();
-            
+            const errorDiv = document.getElementById('plugin-modal-error');
+            if (errorDiv) {
+                errorDiv.classList.add('d-none');
+                errorDiv.textContent = '';
+            }
             try {
                 // Get form data from the stepper
                 const formData = window.pluginModalStepper.getFormData();
@@ -67,8 +71,19 @@ function setupSaveHandler(plugin, modal) {
                     return;
                 }
                 
+                const originalText = saveBtn.innerHTML;
+                saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+                saveBtn.disabled = true;
                 // Save the action
-                await savePlugin(formData, plugin);
+                try {
+                    await savePlugin(formData, plugin);
+                } catch (error) {
+                    window.pluginModalStepper.showError(error.message);
+                    return;
+                } finally {
+                    saveBtn.innerHTML = originalText;
+                    saveBtn.disabled = false;
+                }
                 
                 // Close modal and refresh
                 if (modal && typeof modal.hide === 'function') {

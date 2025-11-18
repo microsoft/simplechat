@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Databricks Table Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "warehouse_id": {
+      "type": "string",
+      "description": "Databricks SQL Warehouse ID (string, required)"
+    },
+    "httpPath": {
+      "type": "string",
+      "description": "Databricks SQL Warehouse HTTP Path (string, required)"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Port for Databricks ODBC connection (default 443)",
+      "default": 443
+    },
+    "database": {
+      "type": "string",
+      "description": "Default database/schema to use (optional)"
+    },
+    "table_name": {
+      "type": "string",
+      "description": "Name of the hive table that represents the 'global catalog'"
+    },
+    "query_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": ["warehouse_id", "httpPath"],
+  "additionalProperties": false
+}

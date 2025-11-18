@@ -14,6 +14,8 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_settings import *
 
 
 def ensure_default_global_agent_exists():
@@ -46,6 +48,7 @@ def ensure_default_global_agent_exists():
                 ),
                 "actions_to_load": [],
                 "other_settings": {},
+                "max_completion_tokens": 4096
             }
             save_global_agent(default_agent)
             log_event(
@@ -54,13 +57,27 @@ def ensure_default_global_agent_exists():
                     "agent_name": default_agent["name"]
                 },
             )
-            print("✅ Default global agent created.")
+            print("Default global agent created.")
         else:
             log_event(
                 "At least one global agent already exists.",
                 extra={"existing_agents_count": len(agents)},
             )
-            print("ℹ️ At least one global agent already exists.")
+            print("At least one global agent already exists.")
+
+        settings = get_settings()
+        needs_default = False
+        global_selected = settings.get("global_selected_agent") if settings else None
+        if not isinstance(global_selected, dict):
+            needs_default = True
+        elif global_selected.get("name", "") == "":
+            needs_default = True
+        if settings and needs_default:
+            settings["global_selected_agent"] = {
+                "name": default_agent["name"],
+                "is_global": True
+            }
+            save_settings(settings)
     except Exception as e:
         log_event(
             f"Error ensuring default global agent exists: {e}",
@@ -68,7 +85,7 @@ def ensure_default_global_agent_exists():
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        print(f"❌ Error ensuring default global agent exists: {e}")
+        print(f"Error ensuring default global agent exists: {e}")
         traceback.print_exc()
 
 def get_global_agents():
@@ -83,6 +100,11 @@ def get_global_agents():
             query="SELECT * FROM c",
             enable_cross_partition_query=True
         ))
+        # Mask or replace sensitive keys for UI display
+        agents = [keyvault_agent_get_helper(agent, agent.get('id', ''), scope="global") for agent in agents]
+        for agent in agents:
+            if agent.get('max_completion_tokens') is None:
+                agent['max_completion_tokens'] = -1
         return agents
     except Exception as e:
         log_event(
@@ -90,7 +112,7 @@ def get_global_agents():
             extra={"exception": str(e)},
             exceptionTraceback=True
         )
-        print(f"❌ Error getting global agents: {str(e)}")
+        print(f"Error getting global agents: {str(e)}")
         traceback.print_exc()
         return []
 
@@ -110,7 +132,10 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
-        print(f"✅ Found global agent: {agent_id}")
+        agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
+        if agent.get('max_completion_tokens') is None:
+            agent['max_completion_tokens'] = -1
+        print(f"Found global agent: {agent_id}")
         return agent
     except Exception as e:
         log_event(
@@ -119,7 +144,7 @@ def get_global_agent(agent_id):
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        print(f"❌ Error getting global agent {agent_id}: {str(e)}")
+        print(f"Error getting global agent {agent_id}: {str(e)}")
         return None
 
 
@@ -146,13 +171,19 @@ def save_global_agent(agent_data):
             "Saving global agent.",
             extra={"agent_name": agent_data.get('name', 'Unknown')},
         )
-        print(f"💾 Saving global agent: {agent_data.get('name', 'Unknown')}")
+        print(f"Saving global agent: {agent_data.get('name', 'Unknown')}")
+        
+        # Use the new helper to store sensitive agent keys in Key Vault
+        agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
+        if agent_data.get('max_completion_tokens') is None:
+            agent_data['max_completion_tokens'] = -1  # Default value
+
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
         log_event(
             "Global agent saved successfully.",
             extra={"agent_id": result['id'], "user_id": user_id},
         )
-        print(f"✅ Global agent saved successfully: {result['id']}")
+        print(f"Global agent saved successfully: {result['id']}")
         return result
     except Exception as e:
         log_event(
@@ -161,7 +192,7 @@ def save_global_agent(agent_data):
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        print(f"❌ Error saving global agent: {str(e)}")
+        print(f"Error saving global agent: {str(e)}")
         traceback.print_exc()
         return None
 
@@ -178,7 +209,9 @@ def delete_global_agent(agent_id):
     """
     try:
         user_id = get_current_user_id()
-        print(f"🗑️ Deleting global agent: {agent_id}")
+        print(f"Deleting global agent: {agent_id}")
+        agent_dict = get_global_agent(agent_id)
+        keyvault_agent_delete_helper(agent_dict, agent_id, scope="global")
         cosmos_global_agents_container.delete_item(
             item=agent_id,
             partition_key=agent_id
@@ -187,7 +220,7 @@ def delete_global_agent(agent_id):
             "Global agent deleted successfully.",
             extra={"agent_id": agent_id, "user_id": user_id},
         )
-        print(f"✅ Global agent deleted successfully: {agent_id}")
+        print(f"Global agent deleted successfully: {agent_id}")
         return True
     except Exception as e:
         log_event(
@@ -196,6 +229,6 @@ def delete_global_agent(agent_id):
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        print(f"❌ Error deleting global agent {agent_id}: {str(e)}")
+        print(f"Error deleting global agent {agent_id}: {str(e)}")
         traceback.print_exc()
         return False

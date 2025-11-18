@@ -947,6 +947,11 @@ a.citation-link:hover {
   text-decoration: underline;
 }
 
+[data-bs-theme="dark"] .message-text a {
+  color: #ffeb3b;
+  text-decoration: underline;
+}
+
 .message-text a:hover {
   color: #0a58ca;
   text-decoration: none;
