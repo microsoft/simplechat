@@ -316,7 +316,7 @@ def resolve_agent_config(agent, settings):
         "group_name": agent.get("group_name"),
         "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),  # Use this to check if APIM is enabled for the agent
         "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
-        "agent_type": agent_type,
+        "agent_type": agent_type or "local",
     }
 
     print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")

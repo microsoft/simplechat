@@ -381,6 +381,13 @@ cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/scope_id")
 )
 
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
+    partition_key=PartitionKey(path="/user_id")
+    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
+)
+
 def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
