@@ -54,7 +54,7 @@ nav.navbar.fixed-top + #sidebar-nav {
 /* Account for classification banner when present */
 body.has-classification-banner nav.navbar + #sidebar-nav {
   top: 98px !important;
-  height: calc(100vh - 106px);
+  height: calc(100vh - 98px);
 }
 
 /* Floating expand button positioning when classification banner is present */

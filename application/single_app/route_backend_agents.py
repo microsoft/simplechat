@@ -17,7 +17,6 @@ from functions_group_agents import (
     delete_group_agent,
     validate_group_agent_payload,
 )
-from functions_keyvault import SecretReturnType
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
