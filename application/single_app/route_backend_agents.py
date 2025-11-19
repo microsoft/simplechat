@@ -53,6 +53,7 @@ def get_user_agents():
     for agent in agents:
         agent['is_global'] = False
         agent['is_group'] = False
+        agent.setdefault('agent_type', 'local')
 
     # Check global/merge toggles
     settings = get_settings()
@@ -65,6 +66,7 @@ def get_user_agents():
         for agent in global_agents:
             agent['is_global'] = True
             agent['is_group'] = False
+            agent.setdefault('agent_type', 'local')
         
         # Merge agents using ID as key to avoid name conflicts
         # This allows both personal and global agents with same name to coexist

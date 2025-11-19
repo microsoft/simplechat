@@ -141,9 +141,10 @@ function renderPluginsTable(list) {
     const tr = document.createElement("tr");
     const displayName = plugin.displayName || plugin.display_name || plugin.name || "";
     const description = plugin.description || "No description available.";
+    const isGlobal = Boolean(plugin.is_global);
 
     let actionsHtml = "<span class=\"text-muted small\">—</span>";
-    if (canManage) {
+    if (canManage && !isGlobal) {
       actionsHtml = `
         <div class="d-flex gap-1">
           <button type="button" class="btn btn-sm btn-outline-secondary edit-group-plugin-btn" data-plugin-id="${escapeHtml(plugin.id || plugin.name || "")}">
@@ -153,10 +154,16 @@ function renderPluginsTable(list) {
             <i class="bi bi-trash"></i>
           </button>
         </div>`;
+    } else if (canManage && isGlobal) {
+      actionsHtml = "<span class=\"text-muted small\">Managed globally</span>";
     }
 
+    const titleHtml = isGlobal
+      ? `${escapeHtml(displayName)} <span class="badge bg-info text-dark ms-1" style="font-size: 0.65rem;">global</span>`
+      : escapeHtml(displayName);
+
     tr.innerHTML = `
-      <td><strong title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</strong></td>
+      <td><strong title="${escapeHtml(displayName)}">${titleHtml}</strong></td>
       <td class="text-muted small">${escapeHtml(description)}</td>
       <td>${actionsHtml}</td>`;
 
@@ -198,7 +205,8 @@ async function fetchGroupPlugins() {
     plugins = (payload.actions || []).map((action) => ({
       ...action,
       displayName: action.displayName || action.display_name || action.name || "",
-      description: action.description || ""
+      description: action.description || "",
+      is_global: Boolean(action.is_global)
     }));
     filteredPlugins = plugins.slice();
 
@@ -223,6 +231,11 @@ async function openPluginModal(pluginId = null) {
 
   let plugin = null;
   if (pluginId) {
+    const cached = plugins.find((item) => item.id === pluginId || item.name === pluginId);
+    if (cached?.is_global) {
+      showToast("Global actions are read-only and managed by administrators.", "info");
+      return;
+    }
     try {
       const response = await fetch(`/api/group/plugins/${encodeURIComponent(pluginId)}`);
       const payload = await response.json().catch(() => ({}));
@@ -312,6 +325,9 @@ async function saveGroupPlugin(pluginManifest, existingPlugin) {
     displayName: pluginManifest.displayName || pluginManifest.display_name || pluginManifest.name || ""
   };
 
+  delete payload.is_global;
+  delete payload.scope;
+
   const hasId = Boolean(existingPlugin?.id || payload.id);
   if (!payload.id && existingPlugin?.id) {
     payload.id = existingPlugin.id;
@@ -339,6 +355,12 @@ async function deleteGroupPlugin(pluginId) {
     return;
   }
   if (!pluginId) return;
+
+  const cached = plugins.find((item) => item.id === pluginId || item.name === pluginId);
+  if (cached?.is_global) {
+    showToast("Global actions cannot be deleted from a group workspace.", "info");
+    return;
+  }
   if (!confirm("Delete this group action?")) return;
 
   try {

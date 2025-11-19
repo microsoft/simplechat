@@ -104,6 +104,8 @@ def resolve_agent_config(agent, settings):
     debug_print(f"[SK Loader] Agent config: {agent}")
     debug_print(f"[SK Loader] Agent is_global flag: {agent.get('is_global')}")
     debug_print(f"[SK Loader] Agent is_group flag: {agent.get('is_group')}")
+    agent_type = (agent.get('agent_type') or 'local').lower()
+    agent['agent_type'] = agent_type
 
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
@@ -255,7 +257,8 @@ def resolve_agent_config(agent, settings):
                 "group_id": agent.get("group_id"),
                 "group_name": agent.get("group_name"),
                 "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),
-                "max_completion_tokens": agent.get("max_completion_tokens", -1)
+                "max_completion_tokens": agent.get("max_completion_tokens", -1),
+                "agent_type": agent_type or "local"
             }
         except Exception as e:
             log_event(f"[SK Loader] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
@@ -312,7 +315,8 @@ def resolve_agent_config(agent, settings):
         "group_id": agent.get("group_id"),
         "group_name": agent.get("group_name"),
         "enable_agent_gpt_apim": agent.get("enable_agent_gpt_apim", False),  # Use this to check if APIM is enabled for the agent
-        "max_completion_tokens": agent.get("max_completion_tokens", -1) # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
+        "max_completion_tokens": agent.get("max_completion_tokens", -1),  # -1 meant use model default determined by the service, 35-trubo is 4096, 4o is 16384, 4.1 is at least 32768
+        "agent_type": agent_type,
     }
 
     print(f"[SK Loader] Final resolved config for {agent.get('name')}: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}")
@@ -713,6 +717,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         context_obj.redis_client = redis_client
     agent_objs = {}
     agent_config = resolve_agent_config(agent_cfg, settings)
+    agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
     apim_enabled = settings.get("enable_gpt_apim", False)
@@ -832,7 +837,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "default_agent": agent_config.get("default_agent", False),
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
-                "api_version": agent_config["api_version"]
+                "api_version": agent_config["api_version"],
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -845,7 +850,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                     "aoai_endpoint": agent_config["endpoint"],
                     "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
                     "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"]
+                    "agent_name": agent_config["name"],
+                    "max_completion_tokens": agent_config.get("max_completion_tokens", -1),
+                    "agent_type": agent_type,
                 },
                 level=logging.INFO
             )
@@ -1365,7 +1372,17 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     debug_print(f"[SK Loader] User {user_id} Agent azure_deployment: {agent_cfg.get('azure_deployment', 'NOT SET')}")
     
     print(f"[SK Loader] User {user_id} Loading agent: {agent_cfg.get('name')}")
-    kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+    agent_type = (agent_cfg.get('agent_type') or 'local').lower()
+    agent_cfg['agent_type'] = agent_type
+    if agent_type == 'local':
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
+    else:
+        log_event(
+            f"[SK Loader] Unsupported agent_type '{agent_type}' for agent '{agent_cfg.get('name')}'. Defaulting to local path.",
+            level=logging.WARNING,
+            extra={'agent_type': agent_type, 'agent_name': agent_cfg.get('name')}
+        )
+        kernel, agent_objs = load_single_agent_for_kernel(kernel, agent_cfg, settings, g, redis_client=redis_client, mode_label="per-user")
     print(f"[SK Loader] User {user_id} Agent loading completed. Agent objects: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} items")
     return kernel, agent_objs
 
@@ -1669,7 +1686,17 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 
         if global_selected_agent_cfg:
             log_event(f"[SK Loader] Using global_selected_agent: {global_selected_agent_cfg.get('name')}", level=logging.INFO)
-            kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+            agent_type = (global_selected_agent_cfg.get('agent_type') or 'local').lower()
+            global_selected_agent_cfg['agent_type'] = agent_type
+            if agent_type == 'local':
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
+            else:
+                log_event(
+                    f"[SK Loader] Unsupported agent_type '{agent_type}' for global agent '{global_selected_agent_cfg.get('name')}'. Defaulting to local path.",
+                    level=logging.WARNING,
+                    extra={'agent_type': agent_type, 'agent_name': global_selected_agent_cfg.get('name')}
+                )
+                kernel, agent_objs = load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins, redis_client=None, mode_label="global")
             log_event(f"[SK Loader] load_single_agent_for_kernel returned agent_objs: {type(agent_objs)} with {len(agent_objs) if agent_objs else 0} agents", level=logging.INFO)
         else:
             log_event("[SK Loader] No global_selected_agent found. Proceeding in kernel-only mode.", level=logging.WARNING)

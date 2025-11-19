@@ -203,4 +203,7 @@ def _clean_action(
         scope="group",
         return_type=return_type,
     )
+    cleaned.setdefault("is_global", False)
+    cleaned.setdefault("is_group", True)
+    cleaned.setdefault("scope", "group")
     return cleaned

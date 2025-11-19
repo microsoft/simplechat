@@ -387,7 +387,18 @@ def get_group_actions_route():
         return jsonify({'error': str(exc)}), 403
 
     actions = get_group_actions(active_group, return_type=SecretReturnType.TRIGGER)
-    return jsonify({'actions': actions}), 200
+
+    settings = get_settings()
+    merge_global = bool(settings.get('merge_global_semantic_kernel_with_workspace', False)) if settings else False
+
+    if merge_global:
+        global_actions = get_global_actions(return_type=SecretReturnType.TRIGGER)
+        merged_actions = _merge_group_and_global_actions(actions, global_actions)
+    else:
+        merged_actions = [_normalize_group_action(action) for action in actions]
+        merged_actions.sort(key=lambda item: (item.get('displayName') or item.get('display_name') or item.get('name') or '').lower())
+
+    return jsonify({'actions': merged_actions}), 200
 
 
 @bpap.route('/api/group/plugins/<action_id>', methods=['GET'])
@@ -440,7 +451,10 @@ def create_group_action_route():
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
-    for key in ('group_id', 'last_updated', 'user_id'):
+    if payload.get('is_global'):
+        return jsonify({'error': 'Global actions are managed centrally and cannot be created within a group.'}), 400
+
+    for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         payload.pop(key, None)
 
     try:
@@ -474,7 +488,10 @@ def update_group_action_route(action_id):
         return jsonify({'error': 'Action not found'}), 404
 
     updates = request.get_json(silent=True) or {}
-    for key in ('id', 'group_id', 'last_updated', 'user_id'):
+    if updates.get('is_global'):
+        return jsonify({'error': 'Global actions cannot be modified within a group.'}), 400
+
+    for key in ('id', 'group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
         updates.pop(key, None)
 
     try:
@@ -484,6 +501,8 @@ def update_group_action_route(action_id):
 
     merged = dict(existing)
     merged.update(updates)
+    merged['is_global'] = False
+    merged['is_group'] = True
     merged['id'] = existing.get('id', action_id)
 
     try:
@@ -798,3 +817,44 @@ def list_dynamic_plugins():
     """
     plugins = get_all_plugin_metadata()
     return jsonify(plugins)
+
+# Helper functions for group/global action merging
+def _normalize_group_action(action: dict) -> dict:
+    normalized = dict(action)
+    normalized['is_global'] = False
+    normalized['is_group'] = True
+    normalized.setdefault('scope', 'group')
+    return normalized
+
+
+def _normalize_global_action(action: dict) -> dict:
+    normalized = dict(action)
+    normalized['is_global'] = True
+    normalized['is_group'] = False
+    normalized.setdefault('scope', 'global')
+    return normalized
+
+
+def _merge_group_and_global_actions(group_actions, global_actions):
+    normalized_actions = []
+    seen_names = set()
+
+    for action in group_actions:
+        normalized = _normalize_group_action(action)
+        action_name = (normalized.get('name') or '').lower()
+        if action_name:
+            seen_names.add(action_name)
+        normalized_actions.append(normalized)
+
+    for action in global_actions:
+        normalized = _normalize_global_action(action)
+        action_name = (normalized.get('name') or '').lower()
+        if action_name and action_name in seen_names:
+            continue
+        normalized_actions.append(normalized)
+
+    normalized_actions.sort(key=lambda item: (item.get('displayName') or item.get('display_name') or item.get('name') or '').lower())
+    return normalized_actions
+
+
+

@@ -71,6 +71,11 @@
           "description": "True if this agent is a group agent; required for agent selection and UI badging.",
           "default": false
         },
+        "agent_type": {
+          "type": "string",
+          "enum": ["local", "aifoundry", "copilot"],
+          "description": "Type of agent that needs to be instantiated."
+        },
         "instructions": {
           "type": "string"
         },
@@ -98,7 +103,8 @@
         "instructions",
         "actions_to_load",
         "other_settings",
-        "max_completion_tokens"
+        "max_completion_tokens",
+        "agent_type"
       ],
       "title": "Agent"
     }

@@ -1788,6 +1788,7 @@ def register_route_backend_chats(app):
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
+                    selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item
                 )

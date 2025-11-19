@@ -3,8 +3,9 @@
 from config import *
 from functions_appinsights import log_event
 import app_settings_cache
+import inspect
 
-def get_settings():
+def get_settings(use_cosmos=False):
     import secrets
     default_settings = {
         # External health check
@@ -237,10 +238,44 @@ def get_settings():
 
     try:
         # Attempt to read the existing doc
-        settings_item = cosmos_settings_container.read_item(
-            item="app_settings",
-            partition_key="app_settings"
-        )
+        if use_cosmos:
+            settings_item = cosmos_settings_container.read_item(
+                item="app_settings",
+                partition_key="app_settings"
+            )
+        else:
+            settings_item = None
+
+            cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
+            if callable(cache_accessor):
+                try:
+                    settings_item = cache_accessor()
+                except Exception:
+                    settings_item = None
+
+            if not settings_item:
+                settings_item = cosmos_settings_container.read_item(
+                    item="app_settings",
+                    partition_key="app_settings"
+                )
+
+                frame = inspect.currentframe()
+                caller = frame.f_back  # the function that called *this* code
+
+                if caller is not None:
+                    code = caller.f_code
+                    caller_file = code.co_filename
+                    caller_line = caller.f_lineno
+                    caller_func = code.co_name
+                    print(
+                        "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
+                        f"Called from {caller_file}:{caller_line} in {caller_func}()."
+                    )
+                else:
+                    print(
+                        "Warning: Failed to get settings from cache, "
+                        "read from Cosmos DB instead. (no caller frame)"
+                    )
         #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
@@ -270,7 +305,9 @@ def update_settings(new_settings):
         settings_item = get_settings()
         settings_item.update(new_settings)
         cosmos_settings_container.upsert_item(settings_item)
-        app_settings_cacheupdate_settings_cache(settings_item) # Update the in-memory cache as well
+        cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+        if callable(cache_updater):
+            cache_updater(settings_item)
         print("Settings updated successfully.")
         return True
     except Exception as e:

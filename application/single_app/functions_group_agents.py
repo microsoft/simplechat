@@ -81,6 +81,7 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any
     payload.setdefault("other_settings", {})
     payload.setdefault("max_completion_tokens", -1)
     payload.setdefault("enable_agent_gpt_apim", False)
+    payload.setdefault("agent_type", "local")
 
     # Ensure optional Azure fields exist
     payload.setdefault("azure_openai_gpt_endpoint", "")
@@ -194,4 +195,5 @@ def _clean_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
         cleaned["max_completion_tokens"] = -1
     cleaned.setdefault("is_global", False)
     cleaned.setdefault("is_group", True)
+    cleaned.setdefault("agent_type", "local")
     return cleaned

@@ -98,7 +98,8 @@ export function getAgentModalFields(opts = {}) {
 		instructions: root.getElementById('agent-instructions').value.trim(),
 		max_completion_tokens: parseInt(root.getElementById('agent-max-completion-tokens').value.trim()) || null,
 		actions_to_load: actions_to_load,
-		other_settings: additionalSettings
+		other_settings: additionalSettings,
+		agent_type: (opts.agent && opts.agent.agent_type) || 'local'
 	};
 }
 /**
@@ -533,6 +534,16 @@ export function populateAgentSelect(selectEl, agents, selectedAgentObj) {
 		console.log(`DEBUG: Agent ${index}: name="${agent.name}", is_global=${agent.is_global}, is_group=${agent.is_group}, display_name="${agent.display_name}"`);
 	});
 	
+	const getDisplayLabel = (agent) => (agent.display_name || agent.displayName || agent.name || '').trim();
+	const displayLabelCounts = agents.reduce((acc, agent) => {
+		const label = getDisplayLabel(agent).toLowerCase();
+		if (!label) {
+			return acc;
+		}
+		acc[label] = (acc[label] || 0) + 1;
+		return acc;
+	}, {});
+
 	let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
 	const selectedAgentId = typeof selectedAgentObj === 'object' ? (selectedAgentObj.id || selectedAgentObj.agent_id) : null;
 	const selectedAgentIsGlobal = typeof selectedAgentObj === 'object' ? !!selectedAgentObj.is_global : false;
@@ -546,8 +557,17 @@ export function populateAgentSelect(selectEl, agents, selectedAgentObj) {
 		const contextPrefix = agent.is_group ? 'group' : (agent.is_global ? 'global' : 'personal');
 		opt.value = `${contextPrefix}_${agentId}`;
 		const groupName = agent.group_name || agent.groupName || '';
-		const labelSuffix = agent.is_group ? ` (Group${groupName ? `: ${groupName}` : ''})` : (agent.is_global ? ' (Global)' : '');
-		const displayLabel = agent.display_name || agent.displayName || agent.name || '';
+		const displayLabel = getDisplayLabel(agent);
+		const labelKey = displayLabel.toLowerCase();
+		const hasDuplicateLabel = labelKey && displayLabelCounts[labelKey] > 1;
+		let labelSuffix = '';
+		if (agent.is_group) {
+			if (hasDuplicateLabel) {
+				labelSuffix = ` (Group${groupName ? `: ${groupName}` : ''})`;
+			}
+		} else if (agent.is_global) {
+			labelSuffix = ' (Global)';
+		}
 		opt.textContent = `${displayLabel}${labelSuffix}`;
 		opt.dataset.name = agent.name || '';
 		opt.dataset.displayName = displayLabel;

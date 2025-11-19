@@ -167,7 +167,8 @@ function overrideAgentStepper(stepper) {
       const normalized = actions.map((action) => ({
         ...action,
         display_name: action.display_name || action.displayName || action.name || "",
-        description: action.description || ""
+        description: action.description || "",
+        is_global: Boolean(action.is_global)
       }));
 
       normalized.sort((a, b) => {
