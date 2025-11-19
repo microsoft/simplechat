@@ -32,11 +32,10 @@ resource newOpenAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   properties: {
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false
+    customSubDomainName: toLower('${appName}-${environment}-openai')
   }
   tags: tags
 }
-
-// todo: add role assignment as required
 
 // configure diagnostic settings for OpenAI Resource if required
 resource openAIDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging)  {

@@ -32,6 +32,7 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   properties: {
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false
+    customSubDomainName: toLower('${appName}-${environment}-speech')
   }
   tags: tags
 }
@@ -63,3 +64,4 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
   }
 }
 
+output speechServiceName string = speechService.name
