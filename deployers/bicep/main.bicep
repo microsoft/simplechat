@@ -464,6 +464,27 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
 }
 
 //=========================================================
+// Resource to Configure Enterprise App Permissions
+//=========================================================
+module enterpriseAppPermissions 'modules/enterpriseAppPermissions.bicep' = if (enableEnterpriseApp) {
+  name: 'enterpriseAppPermissions'
+  scope: rg
+  params: {
+    webAppName: appService.outputs.name
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    #disable-next-line BCP318 // expect one value to be null
+    openAIName: useExistingOpenAISvc ? '' : openAI_create.outputs.openAIName
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    searchServiceName: searchService.outputs.searchServiceName
+  }
+}
+
+
+//=========================================================
 // Outputs for deployment of container image
 //=========================================================
 
