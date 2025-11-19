@@ -28,8 +28,32 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
     accessTier: 'Hot'
     allowBlobPublicAccess: false
     allowSharedKeyAccess: true
+    isHnsEnabled: true
   }
   tags: tags
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  name: 'default'
+  parent: storageAccount
+}
+
+// create user-documents container
+resource userDocumentsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: 'user-documents'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// create group-documents container
+resource groupDocumentsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: 'group-documents'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
 }
 
 // grant the managed identity access to the storage account as a blob data contributor
@@ -58,11 +82,6 @@ resource storageDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pr
   }
 }
 
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
-  name: 'default'
-  parent: storageAccount
-}
-
 resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${storageAccount.name}-blob-diagnostics')
   scope: blobService
@@ -75,3 +94,4 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
   }
 }
 
+output name string = storageAccount.name
