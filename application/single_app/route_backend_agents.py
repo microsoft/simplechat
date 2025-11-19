@@ -4,11 +4,19 @@ import re
 import uuid
 import logging
 import builtins
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from semantic_kernel_loader import get_agent_orchestration_types
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
+from functions_group import require_active_group, assert_group_role
+from functions_group_agents import (
+    get_group_agents,
+    get_group_agent,
+    save_group_agent,
+    delete_group_agent,
+    validate_group_agent_payload,
+)
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
@@ -43,6 +51,8 @@ def get_user_agents():
     # Always mark user agents as is_global: False
     for agent in agents:
         agent['is_global'] = False
+        agent['is_group'] = False
+        agent.setdefault('agent_type', 'local')
 
     # Check global/merge toggles
     settings = get_settings()
@@ -54,6 +64,8 @@ def get_user_agents():
         # Mark global agents
         for agent in global_agents:
             agent['is_global'] = True
+            agent['is_group'] = False
+            agent.setdefault('agent_type', 'local')
         
         # Merge agents using ID as key to avoid name conflicts
         # This allows both personal and global agents with same name to coexist
@@ -99,6 +111,7 @@ def set_user_agents():
         if agent.get('is_global', False):
             continue  # Skip global agents
         agent['is_global'] = False  # Ensure user agents are not global
+        agent['is_group'] = False
         # --- Require at least one deployment field ---
         #if not (agent.get('azure_openai_gpt_deployment') or agent.get('azure_agent_apim_gpt_deployment')):
         #    return jsonify({'error': f'Agent "{agent.get("name", "(unnamed)")}" must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
@@ -169,6 +182,171 @@ def delete_user_agent(agent_name):
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 
+
+# === GROUP AGENT ENDPOINTS ===
+
+@bpa.route('/api/group/agents', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_agents_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agents = get_group_agents(active_group)
+    return jsonify({'agents': agents}), 200
+
+
+@bpa.route('/api/group/agents/<agent_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_agent_route(agent_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agent = get_group_agent(active_group, agent_id)
+    if not agent:
+        return jsonify({'error': 'Agent not found'}), 404
+    return jsonify(agent), 200
+
+
+@bpa.route('/api/group/agents', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def create_group_agent_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        validate_group_agent_payload(payload, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    for key in ('group_id', 'last_updated', 'is_global', 'is_group'):
+        payload.pop(key, None)
+
+    try:
+        saved = save_group_agent(active_group, payload)
+    except Exception as exc:
+        current_app.logger.error('Failed to save group agent: %s', exc)
+        return jsonify({'error': 'Unable to save agent'}), 500
+
+    return jsonify(saved), 201
+
+
+@bpa.route('/api/group/agents/<agent_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def update_group_agent_route(agent_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    existing = get_group_agent(active_group, agent_id)
+    if not existing:
+        return jsonify({'error': 'Agent not found'}), 404
+
+    updates = request.get_json(silent=True) or {}
+    for key in ('id', 'group_id', 'last_updated', 'is_global', 'is_group'):
+        updates.pop(key, None)
+
+    try:
+        validate_group_agent_payload(updates, partial=True)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    merged = dict(existing)
+    merged.update(updates)
+    merged['id'] = agent_id
+
+    try:
+        validate_group_agent_payload(merged, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
+        saved = save_group_agent(active_group, merged)
+    except Exception as exc:
+        current_app.logger.error('Failed to update group agent %s: %s', agent_id, exc)
+        return jsonify({'error': 'Unable to update agent'}), 500
+
+    return jsonify(saved), 200
+
+
+@bpa.route('/api/group/agents/<agent_id>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def delete_group_agent_route(agent_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    try:
+        removed = delete_group_agent(active_group, agent_id)
+    except Exception as exc:
+        current_app.logger.error('Failed to delete group agent %s: %s', agent_id, exc)
+        return jsonify({'error': 'Unable to delete agent'}), 500
+
+    if not removed:
+        return jsonify({'error': 'Agent not found'}), 404
+    return jsonify({'message': 'Agent deleted'}), 200
+
 # User endpoint to set selected agent (new model, not legacy default_agent)
 @bpa.route('/api/user/settings/selected_agent', methods=['POST'])
 @swagger_route(
@@ -183,9 +361,17 @@ def set_user_selected_agent():
         return jsonify({'error': 'selected_agent is required.'}), 400
     user_settings = get_user_settings(user_id)
     settings_to_update = user_settings.get('settings', {})
+    agent_name = (selected_agent.get('name') or '').strip()
+    if not agent_name:
+        return jsonify({'error': 'selected_agent.name is required.'}), 400
     agent = {
-        "name": selected_agent.get('name'),
-        "is_global": selected_agent.get('is_global', False)
+        "id": selected_agent.get('id'),
+        "name": agent_name,
+        "display_name": selected_agent.get('display_name'),
+        "is_global": selected_agent.get('is_global', False),
+        "is_group": selected_agent.get('is_group', False),
+        "group_id": selected_agent.get('group_id'),
+        "group_name": selected_agent.get('group_name')
     }
     settings_to_update['selected_agent'] = agent
     update_user_settings(user_id, settings_to_update)
@@ -233,7 +419,7 @@ def set_selected_agent():
 
         # Set global_selected_agent field only
         settings = get_settings()
-        settings['global_selected_agent'] = { 'name': agent_name, 'is_global': True }
+        settings['global_selected_agent'] = { 'name': agent_name, 'is_global': True, 'is_group': False }
         update_settings(settings)
         log_event("Global selected agent set", extra={"action": "set-global-selected", "agent_name": agent_name, "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
@@ -261,6 +447,7 @@ def list_agents():
                 agent['actions_to_load'] = []
             # Mark as global agents
             agent['is_global'] = True
+            agent['is_group'] = False
         
         log_event("List agents", extra={"action": "list", "user": str(get_current_user_id())})
         return jsonify(agents)
@@ -279,6 +466,7 @@ def add_agent():
         agents = get_global_agents()
         new_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         new_agent['is_global'] = True
+        new_agent['is_group'] = False
         validation_error = validate_agent(new_agent)
         if validation_error:
             log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": new_agent, "error": validation_error})
@@ -388,6 +576,7 @@ def edit_agent(agent_name):
         agents = get_global_agents()
         updated_agent = request.json.copy() if hasattr(request.json, 'copy') else dict(request.json)
         updated_agent['is_global'] = True
+        updated_agent['is_group'] = False
         validation_error = validate_agent(updated_agent)
         if validation_error:
             log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": updated_agent, "error": validation_error})

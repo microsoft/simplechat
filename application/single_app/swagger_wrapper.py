@@ -775,7 +775,7 @@ def register_swagger_routes(app: Flask):
     from functions_settings import get_settings
     
     # Check if swagger is enabled in settings
-    settings = get_settings()
+    settings = get_settings(use_cosmos=True)
     if not settings.get('enable_swagger', True):  # Default to True if setting not found
         print("Swagger documentation is disabled in admin settings.")
         return

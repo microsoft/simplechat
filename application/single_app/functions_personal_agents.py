@@ -46,6 +46,9 @@ def get_personal_agents(user_id):
             cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
             if cleaned_agent.get('max_completion_tokens') is None:
                 cleaned_agent['max_completion_tokens'] = -1
+            cleaned_agent.setdefault('is_global', False)
+            cleaned_agent.setdefault('is_group', False)
+            cleaned_agent.setdefault('agent_type', 'local')
             cleaned_agents.append(cleaned_agent)
         return cleaned_agents
         
@@ -78,6 +81,9 @@ def get_personal_agent(user_id, agent_id):
         # Ensure max_completion_tokens field exists
         if cleaned_agent.get('max_completion_tokens') is None:
             cleaned_agent['max_completion_tokens'] = -1
+        cleaned_agent.setdefault('is_global', False)
+        cleaned_agent.setdefault('is_group', False)
+        cleaned_agent.setdefault('agent_type', 'local')
         return cleaned_agent
     except exceptions.CosmosResourceNotFoundError:
         current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
@@ -119,7 +125,9 @@ def save_personal_agent(user_id, agent_data):
         agent_data.setdefault('enable_agent_gpt_apim', False)
         agent_data.setdefault('actions_to_load', [])
         agent_data.setdefault('other_settings', {})
-        agent_data.setdefault('is_global', False)
+        agent_data['is_global'] = False
+        agent_data['is_group'] = False
+        agent_data.setdefault('agent_type', 'local')
         
         # Store sensitive keys in Key Vault if enabled
         agent_data = keyvault_agent_save_helper(agent_data, agent_data.get('id', ''), scope="user")
@@ -128,6 +136,9 @@ def save_personal_agent(user_id, agent_data):
         result = cosmos_personal_agents_container.upsert_item(body=agent_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
+        cleaned_result.setdefault('is_global', False)
+        cleaned_result.setdefault('is_group', False)
+        cleaned_result.setdefault('agent_type', 'local')
         return cleaned_result
         
     except Exception as e:

@@ -159,7 +159,7 @@ def configure_sessions(settings):
 @app.before_first_request
 def before_first_request():
     print("Initializing application...")
-    settings = get_settings()
+    settings = get_settings(use_cosmos=True)
     app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
     app_settings_cache.update_settings_cache(settings)
     print(f"DEBUG:Application settings: {settings}")
@@ -456,7 +456,7 @@ register_route_backend_public_prompts(app)
 register_route_external_health(app)
 
 if __name__ == '__main__':
-    settings = get_settings()
+    settings = get_settings(use_cosmos=True)
     app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
     app_settings_cache.update_settings_cache(settings)
     initialize_clients(settings)

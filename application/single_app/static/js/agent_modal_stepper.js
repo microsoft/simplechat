@@ -1143,6 +1143,7 @@ export class AgentModalStepper {
     try {
       // Get agent data from form
       const agentData = this.getAgentFormData();
+      agentData.agent_type = (this.originalAgent?.agent_type) || agentData.agent_type || 'local';
       
       // Validate required fields
       if (!agentData.display_name || !agentData.name) {
@@ -1195,23 +1196,6 @@ export class AgentModalStepper {
         }
       });
       
-      // Validate with schema if available
-      try {
-        if (!window.validateAgent) {
-          window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
-        }
-        const valid = window.validateAgent(agentData);
-        if (!valid) {
-          let errorMsg = 'Validation error: Invalid agent data.';
-          if (window.validateAgent.errors && window.validateAgent.errors.length) {
-            errorMsg += '\n' + window.validateAgent.errors.map(e => `${e.instancePath} ${e.message}`).join('\n');
-          }
-          throw new Error(errorMsg);
-        }
-      } catch (e) {
-        console.warn('Schema validation failed:', e.message);
-      }
-      
       // Use appropriate endpoint and save method based on context
       let saveBtn = document.getElementById('agent-modal-save-btn');
       const originalText = saveBtn.innerHTML;
@@ -1252,7 +1236,8 @@ export class AgentModalStepper {
       model: document.getElementById('agent-global-model-select')?.value || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
       other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
-      max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null
+      max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
+      agent_type: 'local'
     };
     
     // Handle model and deployment configuration
