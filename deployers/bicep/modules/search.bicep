@@ -23,7 +23,7 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
     name: 'basic'
   }
   properties: {
-    hostingMode: 'default'
+    hostingMode: 'Default'
     publicNetworkAccess: 'Enabled'
     replicaCount: 1
     partitionCount: 1
