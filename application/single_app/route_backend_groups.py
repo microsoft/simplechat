@@ -132,6 +132,7 @@ def register_route_backend_groups(app):
     @login_required
     @user_required
     @create_group_role_required
+    @enabled_required("enable_group_creation")
     @enabled_required("enable_group_workspaces")
     def api_create_group():
         """

@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from typing import Iterable
 
 
 def create_group(name, description):
@@ -126,6 +127,32 @@ def get_user_role_in_group(group_doc, user_id):
                 return "User"
 
     return None
+
+
+def require_active_group(user_id: str) -> str:
+    """Return the active group id for a user or raise ValueError if missing."""
+    settings = get_user_settings(user_id)
+    active_group_id = settings.get("settings", {}).get("activeGroupOid")
+    if not active_group_id:
+        raise ValueError("No active group selected")
+    return active_group_id
+
+
+def assert_group_role(user_id: str, group_id: str, allowed_roles: Iterable[str] = ("Owner", "Admin")) -> str:
+    """Ensure the user holds one of the allowed roles for the group."""
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        raise LookupError("Group not found")
+
+    role = get_user_role_in_group(group_doc, user_id)
+    if not role:
+        raise PermissionError("User is not a member of this group")
+
+    allowed = {r.lower() for r in allowed_roles}
+    if role.lower() not in allowed:
+        raise PermissionError("Insufficient permissions for this group")
+
+    return role
 
 
 def map_group_list_for_frontend(groups, current_user_id):

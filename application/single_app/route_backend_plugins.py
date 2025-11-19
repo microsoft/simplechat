@@ -18,6 +18,15 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 
 from functions_global_actions import *
 from functions_personal_actions import *
+from functions_group import require_active_group, assert_group_role
+from functions_group_actions import (
+    get_group_actions,
+    get_group_action,
+    save_group_action,
+    delete_group_action,
+    validate_group_action_payload,
+)
+from functions_keyvault import SecretReturnType
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
@@ -353,6 +362,190 @@ def delete_user_plugin(plugin_name):
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
     return jsonify({'success': True})
 
+
+# === GROUP ACTION ENDPOINTS ===
+
+@bpap.route('/api/group/plugins', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_actions_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    actions = get_group_actions(active_group, return_type=SecretReturnType.TRIGGER)
+
+    settings = get_settings()
+    merge_global = bool(settings.get('merge_global_semantic_kernel_with_workspace', False)) if settings else False
+
+    if merge_global:
+        global_actions = get_global_actions(return_type=SecretReturnType.TRIGGER)
+        merged_actions = _merge_group_and_global_actions(actions, global_actions)
+    else:
+        merged_actions = [_normalize_group_action(action) for action in actions]
+        merged_actions.sort(key=lambda item: (item.get('displayName') or item.get('display_name') or item.get('name') or '').lower())
+
+    return jsonify({'actions': merged_actions}), 200
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(
+            user_id,
+            active_group,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
+    if not action:
+        return jsonify({'error': 'Action not found'}), 404
+    return jsonify(action), 200
+
+
+@bpap.route('/api/group/plugins', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def create_group_action_route():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        validate_group_action_payload(payload, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    if payload.get('is_global'):
+        return jsonify({'error': 'Global actions are managed centrally and cannot be created within a group.'}), 400
+
+    for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
+        payload.pop(key, None)
+
+    try:
+        saved = save_group_action(active_group, payload)
+    except Exception as exc:
+        current_app.logger.error('Failed to save group action: %s', exc)
+        return jsonify({'error': 'Unable to save action'}), 500
+
+    return jsonify(saved), 201
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def update_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
+    if not existing:
+        return jsonify({'error': 'Action not found'}), 404
+
+    updates = request.get_json(silent=True) or {}
+    if updates.get('is_global'):
+        return jsonify({'error': 'Global actions cannot be modified within a group.'}), 400
+
+    for key in ('id', 'group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
+        updates.pop(key, None)
+
+    try:
+        validate_group_action_payload(updates, partial=True)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    merged = dict(existing)
+    merged.update(updates)
+    merged['is_global'] = False
+    merged['is_group'] = True
+    merged['id'] = existing.get('id', action_id)
+
+    try:
+        validate_group_action_payload(merged, partial=False)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
+        saved = save_group_action(active_group, merged)
+    except Exception as exc:
+        current_app.logger.error('Failed to update group action %s: %s', action_id, exc)
+        return jsonify({'error': 'Unable to update action'}), 500
+
+    return jsonify(saved), 200
+
+
+@bpap.route('/api/group/plugins/<action_id>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def delete_group_action_route(action_id):
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        assert_group_role(user_id, active_group)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    try:
+        removed = delete_group_action(active_group, action_id)
+    except Exception as exc:
+        current_app.logger.error('Failed to delete group action %s: %s', action_id, exc)
+        return jsonify({'error': 'Unable to delete action'}), 500
+
+    if not removed:
+        return jsonify({'error': 'Action not found'}), 404
+    return jsonify({'message': 'Action deleted'}), 200
+
 @bpap.route('/api/user/plugins/types', methods=['GET'])
 @swagger_route(security=get_auth_security())
 @login_required
@@ -624,3 +817,44 @@ def list_dynamic_plugins():
     """
     plugins = get_all_plugin_metadata()
     return jsonify(plugins)
+
+# Helper functions for group/global action merging
+def _normalize_group_action(action: dict) -> dict:
+    normalized = dict(action)
+    normalized['is_global'] = False
+    normalized['is_group'] = True
+    normalized.setdefault('scope', 'group')
+    return normalized
+
+
+def _normalize_global_action(action: dict) -> dict:
+    normalized = dict(action)
+    normalized['is_global'] = True
+    normalized['is_group'] = False
+    normalized.setdefault('scope', 'global')
+    return normalized
+
+
+def _merge_group_and_global_actions(group_actions, global_actions):
+    normalized_actions = []
+    seen_names = set()
+
+    for action in group_actions:
+        normalized = _normalize_group_action(action)
+        action_name = (normalized.get('name') or '').lower()
+        if action_name:
+            seen_names.add(action_name)
+        normalized_actions.append(normalized)
+
+    for action in global_actions:
+        normalized = _normalize_global_action(action)
+        action_name = (normalized.get('name') or '').lower()
+        if action_name and action_name in seen_names:
+            continue
+        normalized_actions.append(normalized)
+
+    normalized_actions.sort(key=lambda item: (item.get('displayName') or item.get('display_name') or item.get('name') or '').lower())
+    return normalized_actions
+
+
+

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chart.js Test</title>
+</head>
+<body>
+    <div id="test-result" style="padding: 20px; font-family: Arial, sans-serif;">
+        <h2>Chart.js Loading Test</h2>
+        <p id="status">Testing...</p>
+        <canvas id="test-chart" width="400" height="200"></canvas>
+    </div>
+
+    <script src="chart.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const statusElement = document.getElementById('status');
+            
+            if (typeof Chart !== 'undefined') {
+                statusElement.innerHTML = '✅ Chart.js loaded successfully!<br>Version: ' + Chart.version;
+                statusElement.style.color = 'green';
+                
+                // Try to create a simple chart to verify functionality
+                try {
+                    const ctx = document.getElementById('test-chart').getContext('2d');
+                    new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May'],
+                            datasets: [{
+                                label: 'Test Data',
+                                data: [12, 19, 3, 5, 2],
+                                borderColor: '#007bff',
+                                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                                fill: false
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                }
+                            }
+                        }
+                    });
+                    statusElement.innerHTML += '<br>✅ Chart rendering works correctly!';
+                } catch (error) {
+                    statusElement.innerHTML += '<br>❌ Chart rendering failed: ' + error.message;
+                    statusElement.style.color = 'red';
+                }
+            } else {
+                statusElement.innerHTML = '❌ Chart.js failed to load';
+                statusElement.style.color = 'red';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -47,8 +47,7 @@ def log_event(
     try:
         try:
             cache = app_settings_cache.get_settings_cache() or None
-        except Exception as e:
-            print(f"[Log] Could not retrieve settings cache: {e}")
+        except Exception:
             cache = None
 
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger

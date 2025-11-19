@@ -53,6 +53,7 @@ def register_route_frontend_chats(app):
     )
     @login_required
     @user_required
+    @file_upload_required
     def upload_file():
         settings = get_settings()
         user_id = get_current_user_id()

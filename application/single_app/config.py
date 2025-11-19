@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.233.155"
+VERSION = "0.233.166"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -379,6 +379,13 @@ cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
     partition_key=PartitionKey(path="/scope_id")
+)
+
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
+    partition_key=PartitionKey(path="/user_id")
+    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 def ensure_custom_logo_file_exists(app, settings):
@@ -674,11 +681,11 @@ def initialize_clients(settings):
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
-                                print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
+                                print(f"[DEBUG]: Container '{container_name}' does not exist. Creating...")
                                 container_client.create_container()
-                                print(f"DEBUG: Container '{container_name}' created successfully.")
+                                print(f"[DEBUG]: Container '{container_name}' created successfully.")
                             else:
-                                print(f"DEBUG: Container '{container_name}' already exists.")
+                                print(f"[DEBUG]: Container '{container_name}' already exists.")
                         except Exception as container_error:
                             print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:

@@ -58,11 +58,6 @@
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
         </li>
-        {% if app_settings.enable_workflow and app_settings.enable_enhanced_citations %}
-        <li class="nav-item">
-          <a class="nav-link" href="{{ url_for('workflow') }}">Workflow</a>
-        </li>
-        {% endif %}
         
         <!-- External Links -->
         {% if app_settings.enable_external_links and app_settings.external_links %}
@@ -173,6 +168,11 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
             </li>
+            {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+            </li>
+            {% endif %}
             {% if app_settings.enable_content_safety %}
               {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
               <li>

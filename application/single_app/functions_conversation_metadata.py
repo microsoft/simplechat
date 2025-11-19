@@ -45,7 +45,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                                 document_scope=None, selected_document_id=None, model_deployment=None,
                                 hybrid_search_enabled=False, 
                                 image_gen_enabled=False, selected_documents=None, 
-                                selected_agent=None, search_results=None, web_search_results=None,
+                                selected_agent=None, selected_agent_details=None, search_results=None, web_search_results=None,
                                 conversation_item=None, additional_participants=None):
     """
     Collect comprehensive metadata for a conversation based on the user's interaction.
@@ -65,6 +65,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
         search_results: Results from hybrid search
         conversation_item: Existing conversation item to update
         additional_participants: List of additional user IDs to include as participants
+        selected_agent_details: Detailed agent metadata (is_group, group_id, group_name)
         
     Returns:
         dict: Updated conversation metadata
@@ -86,6 +87,25 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
     if 'strict' not in conversation_item:
         conversation_item['strict'] = False
     
+    # Prepare agent-derived group context (used when agent is a group and no documents were used)
+    agent_primary_context = None
+    agent_primary_context_active = False
+    if selected_agent_details and selected_agent_details.get('is_group'):
+        group_id = selected_agent_details.get('group_id')
+        group_name = selected_agent_details.get('group_name')
+
+        if group_id:
+            if not group_name:
+                group_info = find_group_by_id(group_id)
+                if group_info:
+                    group_name = group_info.get('name')
+            agent_primary_context = {
+                "type": "primary",
+                "scope": "group",
+                "id": group_id,
+                "name": group_name or "Unknown Group"
+            }
+
     # Process documents from search results first to determine primary context
     document_map = {}  # Map of document_id -> {scope, chunks, classification}
     workspace_used = None  # Track the first workspace used (becomes primary context)
@@ -144,19 +164,30 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             "id": scope_id,
             "name": context_name
         }
-    # If no documents were used, we don't set a primary context yet
-    # This allows us to track conversations that only use model knowledge
+    # If no documents were used, fall back to agent-based primary context
+    if not primary_context and agent_primary_context:
+        primary_context = agent_primary_context
+        agent_primary_context_active = True
     
     # Update or add primary context only if we don't already have one
     existing_primary = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
     if primary_context:
         if existing_primary:
-            # Primary context already exists - check if this is the same workspace
+            # Primary context already exists - determine how to handle the new context
             if (existing_primary.get('scope') == primary_context.get('scope') and 
                 existing_primary.get('id') == primary_context.get('id')):
                 # Same workspace - update existing primary context (e.g., refresh name)
                 existing_primary.update(primary_context)
                 debug_print(f"Updated existing primary context: {existing_primary}")
+            elif agent_primary_context_active:
+                # Promote the group agent context to become the new primary context
+                existing_primary.update({
+                    "scope": primary_context.get('scope'),
+                    "id": primary_context.get('id'),
+                    "name": primary_context.get('name')
+                })
+                debug_print(f"Replaced existing primary context with agent group context: {existing_primary}")
+                primary_context = None
             else:
                 # Different workspace - this should become a secondary context
                 debug_print(f"Primary context already exists ({existing_primary.get('scope')}:{existing_primary.get('id')}), "f"treating new workspace ({primary_context.get('scope')}:{primary_context.get('id')}) as secondary")

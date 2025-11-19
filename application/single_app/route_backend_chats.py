@@ -21,6 +21,7 @@ from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_activity_logging import log_chat_activity
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -302,7 +303,7 @@ def register_route_backend_chats(app):
                             cosmos_container = cosmos_group_documents_container
                         elif document_scope == 'public':
                             cosmos_container = cosmos_public_documents_container
-                        else:
+                        elif document_scope == 'personal':
                             cosmos_container = cosmos_user_documents_container
                         
                         doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
@@ -364,7 +365,11 @@ def register_route_backend_chats(app):
                         user_metadata['agent_selection'] = {
                             'selected_agent': selected_agent_info.get('name'),
                             'agent_display_name': selected_agent_info.get('display_name'),
-                            'is_global': selected_agent_info.get('is_global', False)
+                            'is_global': selected_agent_info.get('is_global', False),
+                            'is_group': selected_agent_info.get('is_group', False),
+                            'group_id': selected_agent_info.get('group_id'),
+                            'group_name': selected_agent_info.get('group_name'),
+                            'agent_id': selected_agent_info.get('id')
                         }
                 except Exception as e:
                     print(f"Error retrieving agent details: {e}")
@@ -385,7 +390,11 @@ def register_route_backend_chats(app):
                 user_metadata['agent_selection'] = {
                     'selected_agent': agent_info.get('name'),
                     'agent_display_name': agent_info.get('display_name'),
-                    'is_global': agent_info.get('is_global', False)
+                    'is_global': agent_info.get('is_global', False),
+                    'is_group': agent_info.get('is_group', False),
+                    'group_id': agent_info.get('group_id'),
+                    'group_name': agent_info.get('group_name'),
+                    'agent_id': agent_info.get('id')
                 }
             
             # Model selection information
@@ -419,6 +428,22 @@ def register_route_backend_chats(app):
             # Note: Message-level chat_type will be updated after document search
             
             cosmos_messages_container.upsert_item(user_message_doc)
+            
+            # Log chat activity for real-time tracking
+            try:
+                log_chat_activity(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_type='user_message',
+                    message_length=len(user_message) if user_message else 0,
+                    has_document_search=hybrid_search_enabled,
+                    has_image_generation=image_gen_enabled,
+                    document_scope=document_scope,
+                    chat_context=actual_chat_type
+                )
+            except Exception as e:
+                # Don't let activity logging errors interrupt chat flow
+                print(f"Activity logging error: {e}")
 
             # Set conversation title if it's still the default
             if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
@@ -1780,6 +1805,7 @@ def register_route_backend_chats(app):
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
+                    selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item
                 )

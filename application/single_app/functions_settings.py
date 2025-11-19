@@ -3,8 +3,9 @@
 from config import *
 from functions_appinsights import log_event
 import app_settings_cache
+import inspect
 
-def get_settings():
+def get_settings(use_cosmos=False):
     import secrets
     default_settings = {
         # External health check
@@ -41,6 +42,8 @@ def get_settings():
         'allow_group_custom_agent_endpoints': False,
         'allow_group_plugins': False,
         'id': 'app_settings',
+        # Control Center settings
+        'control_center_last_refresh': None,  # Timestamp of last data refresh
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
@@ -119,6 +122,7 @@ def get_settings():
         # Workspaces
         'enable_user_workspace': True,
         'enable_group_workspaces': True,
+        'enable_group_creation': True,
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
@@ -170,6 +174,7 @@ def get_settings():
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'require_member_of_safety_violation_admin': False,
+        'require_member_of_control_center_admin': False,
         'content_safety_endpoint': '',
         'content_safety_key': '',
         'content_safety_authentication_type': 'key',
@@ -189,6 +194,10 @@ def get_settings():
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        
+        # Search Result Caching
+        'enable_search_result_caching': True,
+        'search_cache_ttl_seconds': 300,
 
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',
@@ -237,10 +246,44 @@ def get_settings():
 
     try:
         # Attempt to read the existing doc
-        settings_item = cosmos_settings_container.read_item(
-            item="app_settings",
-            partition_key="app_settings"
-        )
+        if use_cosmos:
+            settings_item = cosmos_settings_container.read_item(
+                item="app_settings",
+                partition_key="app_settings"
+            )
+        else:
+            settings_item = None
+
+            cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
+            if callable(cache_accessor):
+                try:
+                    settings_item = cache_accessor()
+                except Exception:
+                    settings_item = None
+
+            if not settings_item:
+                settings_item = cosmos_settings_container.read_item(
+                    item="app_settings",
+                    partition_key="app_settings"
+                )
+
+                frame = inspect.currentframe()
+                caller = frame.f_back  # the function that called *this* code
+
+                if caller is not None:
+                    code = caller.f_code
+                    caller_file = code.co_filename
+                    caller_line = caller.f_lineno
+                    caller_func = code.co_name
+                    print(
+                        "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
+                        f"Called from {caller_file}:{caller_line} in {caller_func}()."
+                    )
+                else:
+                    print(
+                        "Warning: Failed to get settings from cache, "
+                        "read from Cosmos DB instead. (no caller frame)"
+                    )
         #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
@@ -270,7 +313,9 @@ def update_settings(new_settings):
         settings_item = get_settings()
         settings_item.update(new_settings)
         cosmos_settings_container.upsert_item(settings_item)
-        app_settings_cacheupdate_settings_cache(settings_item) # Update the in-memory cache as well
+        cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+        if callable(cache_updater):
+            cache_updater(settings_item)
         print("Settings updated successfully.")
         return True
     except Exception as e:
@@ -554,8 +599,13 @@ def update_user_settings(user_id, settings_to_update):
             first_user_agent = doc['settings']['agents'][0]
             if first_user_agent:
                 doc['settings']['selected_agent'] = {
+                    'id': first_user_agent.get('id'),
                     'name': first_user_agent['name'],
+                    'display_name': first_user_agent.get('display_name', first_user_agent['name']),
                     'is_global': False,
+                    'is_group': False,
+                    'group_id': None,
+                    'group_name': None,
                 }
             else:
                 settings = get_settings()
@@ -567,24 +617,44 @@ def update_user_settings(user_id, settings_to_update):
                         if global_agents:
                             first_global_agent = global_agents[0]
                             doc['settings']['selected_agent'] = {
+                                'id': first_global_agent.get('id'),
                                 'name': first_global_agent['name'],
+                                'display_name': first_global_agent.get('display_name', first_global_agent['name']),
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                         else:
                             doc['settings']['selected_agent'] = {
+                                'id': None,
                                 'name': 'default_agent',
+                                'display_name': 'default_agent',
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                     except Exception:
                         # Fallback if container access fails
                         doc['settings']['selected_agent'] = {
+                            'id': None,
                             'name': 'default_agent',
+                            'display_name': 'default_agent',
                             'is_global': True,
+                            'is_group': False,
+                            'group_id': None,
+                            'group_name': None,
                         }
                 else:
                     doc['settings']['selected_agent'] = {
+                        'id': None,
                         'name': 'researcher',
+                        'display_name': 'researcher',
                         'is_global': False,
+                        'is_group': False,
+                        'group_id': None,
+                        'group_name': None,
                     }
 
         if doc['settings']['agents'] is not None and len(doc['settings']['agents']) > 0:
