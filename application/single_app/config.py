@@ -681,11 +681,11 @@ def initialize_clients(settings):
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
-                                print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
+                                print(f"[DEBUG]: Container '{container_name}' does not exist. Creating...")
                                 container_client.create_container()
-                                print(f"DEBUG: Container '{container_name}' created successfully.")
+                                print(f"[DEBUG]: Container '{container_name}' created successfully.")
                             else:
-                                print(f"DEBUG: Container '{container_name}' already exists.")
+                                print(f"[DEBUG]: Container '{container_name}' already exists.")
                         except Exception as container_error:
                             print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:

@@ -13,6 +13,7 @@ def debug_print(message):
         cache = get_settings_cache()
         if cache and cache.get('enable_debug_logging', False):
             print(f"DEBUG: {message}")
+
     except Exception:
         # If there's any error getting settings, don't print debug messages
         # This prevents crashes in case of configuration issues

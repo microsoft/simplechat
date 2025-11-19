@@ -59,7 +59,7 @@ blob_name = get_blob_name(raw_doc, workspace_type)
 ### 3. Enhanced Debug Logging
 Added comprehensive logging to track workspace detection:
 ```python
-print(f"DEBUG: Using workspace_type: {workspace_type}, container: {container_name}, blob_name: {blob_name}")
+debug_debug_print(f"[DEBUG]:: Using workspace_type: {workspace_type}, container: {container_name}, blob_name: {blob_name}")
 ```
 
 ## Code Changes Summary

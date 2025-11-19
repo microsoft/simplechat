@@ -16,48 +16,10 @@ from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name
+from functions_debug import debug_print
 
 def register_enhanced_citations_routes(app):
     """Register enhanced citations routes"""
-    
-    @app.route("/api/workflow/pdf", methods=["GET"])
-    @login_required
-    @user_required
-    @enabled_required("enable_enhanced_citations")
-    def get_workflow_pdf():
-        """
-        Serve PDF file content specifically for workflow iframe embedding
-        This endpoint sets headers that explicitly allow iframe embedding
-        """
-        doc_id = request.args.get("doc_id")
-        if not doc_id:
-            return jsonify({"error": "doc_id is required"}), 400
-
-        print(f"DEBUG: Workflow PDF request - doc_id: {doc_id}")
-
-        user_id = get_current_user_id()
-        if not user_id:
-            return jsonify({"error": "User not authenticated"}), 401
-
-        try:
-            # Get document metadata
-            doc_response, status_code = get_document(user_id, doc_id)
-            if status_code != 200:
-                return doc_response, status_code
-
-            raw_doc = doc_response.get_json()
-            
-            # Check if it's a PDF file
-            file_name = raw_doc['file_name']
-            if not file_name.lower().endswith('.pdf'):
-                return jsonify({"error": "Document is not a PDF"}), 400
-
-            # Serve the complete PDF with headers that allow iframe embedding
-            return serve_workflow_pdf_content(raw_doc)
-
-        except Exception as e:
-            print(f"Error serving workflow PDF: {e}")
-            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -193,7 +155,7 @@ def register_enhanced_citations_routes(app):
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
-        print(f"DEBUG: Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
+        debug_print(f"[DEBUG]:: Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
 
         user_id = get_current_user_id()
         if not user_id:
@@ -377,7 +339,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         page_number: Current page number
         show_all: If True, show all pages instead of just ±1 pages around current
     """
-    print(f"DEBUG: serve_enhanced_citation_pdf_content called with show_all: {show_all}")
+    debug_print(f"[DEBUG]:: serve_enhanced_citation_pdf_content called with show_all: {show_all}")
     
     import io
     import uuid
@@ -473,9 +435,9 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 'Accept-Ranges': 'bytes'
             }
             
-            # When show_all is True (workflow usage), allow iframe embedding
+            # When show_all is True, allow iframe embedding
             if show_all:
-                print(f"DEBUG: Setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"[DEBUG]:: Setting CSP headers for iframe embedding (show_all={show_all})")
                 headers['Content-Security-Policy'] = (
                     "default-src 'self'; "
                     "frame-ancestors 'self'; "  # Allow embedding in same origin
@@ -483,7 +445,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 )
                 headers['X-Frame-Options'] = 'SAMEORIGIN'  # Allow same-origin framing
             else:
-                print(f"DEBUG: NOT setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"[DEBUG]:: NOT setting CSP headers for iframe embedding (show_all={show_all})")
             
             response = Response(
                 extracted_content,
@@ -499,67 +461,4 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         
     except Exception as e:
         print(f"Error serving PDF citation content: {e}")
-        raise Exception(f"Failed to load PDF content: {str(e)}")
-
-
-def serve_workflow_pdf_content(raw_doc):
-    """
-    Serve complete PDF content for workflow iframe embedding
-    This function serves the entire PDF with headers that allow iframe embedding
-    """
-    print(f"DEBUG: serve_workflow_pdf_content called for file: {raw_doc.get('file_name', 'unknown')}")
-    
-    import io
-    import tempfile
-    import fitz  # PyMuPDF
-    
-    # Determine workspace type and container using existing logic
-    workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-    blob_name = get_blob_name(raw_doc, workspace_type)
-    
-    print(f"DEBUG: Using workspace_type: {workspace_type}, container: {container_name}, blob_name: {blob_name}")
-    print(f"DEBUG: Available CLIENTS keys: {list(CLIENTS.keys())}")
-    
-    # Get blob storage client (same as other functions)
-    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-    if not blob_service_client:
-        raise Exception("Blob storage client not available")
-    
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    try:
-        # Download blob content directly
-        print(f"DEBUG: Attempting to download blob: {blob_name} from container: {container_name}")
-        blob_client = container_client.get_blob_client(blob_name)
-        print(f"DEBUG: Got blob client, downloading content...")
-        blob_data = blob_client.download_blob()
-        content = blob_data.readall()
-        print(f"DEBUG: Successfully downloaded {len(content)} bytes")
-        
-        # Return the complete PDF with iframe-friendly headers
-        headers = {
-            'Content-Length': str(len(content)),
-            'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
-            'Content-Disposition': f'inline; filename="{raw_doc["file_name"]}"',
-            'Accept-Ranges': 'bytes',
-            # Explicitly allow iframe embedding
-            'Content-Security-Policy': (
-                "default-src 'self'; "
-                "frame-ancestors 'self'; "  # Allow embedding in same origin
-                "object-src 'none';"
-            ),
-            'X-Frame-Options': 'SAMEORIGIN'  # Allow same-origin framing
-        }
-        
-        print(f"DEBUG: Returning PDF with iframe-friendly headers")
-        
-        response = Response(
-            content,
-            content_type='application/pdf',
-            headers=headers
-        )
-        return response
-        
-    except Exception as e:
-        print(f"Error serving workflow PDF content: {e}")
         raise Exception(f"Failed to load PDF content: {str(e)}")

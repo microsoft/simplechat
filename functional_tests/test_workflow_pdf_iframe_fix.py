@@ -119,10 +119,10 @@ def test_debug_logging_added():
             content = f.read()
         
         debug_patterns = [
-            'print(f"DEBUG: Enhanced citations PDF request',
-            'print(f"DEBUG: serve_enhanced_citation_pdf_content',
-            'print(f"DEBUG: Setting CSP headers for iframe embedding',
-            'print(f"DEBUG: serve_workflow_pdf_content',
+            'debug_debug_print(f"[DEBUG]:: Enhanced citations PDF request',
+            'debug_debug_print(f"[DEBUG]:: serve_enhanced_citation_pdf_content',
+            'debug_debug_print(f"[DEBUG]:: Setting CSP headers for iframe embedding',
+            'debug_debug_print(f"[DEBUG]:: serve_workflow_pdf_content',
         ]
         
         missing_debug = []

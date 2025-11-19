@@ -5,10 +5,12 @@ from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
 from utils_cache import invalidate_personal_search_cache
+from functions_activity_logging import log_document_upload
 import os
 import requests
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
 
 def register_route_backend_documents(app):
     @app.route('/api/get_file_content', methods=['POST'])
@@ -102,6 +104,7 @@ def register_route_backend_documents(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @file_upload_required
     @enabled_required("enable_user_workspace")
     def api_user_upload_document():
         user_id = get_current_user_id()
@@ -189,6 +192,28 @@ def register_route_backend_documents(app):
                 )
 
                 processed_docs.append({'document_id': parent_document_id, 'filename': original_filename})
+                
+                # Log document upload activity
+                try:
+                    # Get file size from the original file object before it's processed
+                    file_size = 0
+                    try:
+                        file.seek(0, 2)  # Seek to end
+                        file_size = file.tell()
+                        file.seek(0)  # Reset to beginning
+                    except:
+                        file_size = 0
+                        
+                    log_document_upload(
+                        user_id=user_id,
+                        container_type='personal',
+                        document_id=parent_document_id,
+                        file_size=file_size,
+                        file_type=file_ext
+                    )
+                except Exception as log_error:
+                    # Don't let activity logging errors interrupt upload flow
+                    print(f"Activity logging error for document upload: {log_error}")
 
             except Exception as e:
                 upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
@@ -309,8 +334,8 @@ def register_route_backend_documents(app):
         # --- 3) First query: get total count based on filters ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            # print(f"DEBUG Count Query: {count_query_str}") # Optional Debugging
-            # print(f"DEBUG Count Params: {query_params}")    # Optional Debugging
+            # debug_print(f"[DEBUG]: Count Query: {count_query_str}") # Optional Debugging
+            # debug_print(f"[DEBUG]: Count Params: {query_params}")    # Optional Debugging
             count_items = list(cosmos_user_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -334,8 +359,8 @@ def register_route_backend_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
-            # print(f"DEBUG Data Query: {data_query_str}") # Optional Debugging
-            # print(f"DEBUG Data Params: {query_params}")    # Optional Debugging
+            # debug_print(f"[DEBUG]: Data Query: {data_query_str}") # Optional Debugging
+            # debug_print(f"[DEBUG]: Data Params: {query_params}")    # Optional Debugging
             docs = list(cosmos_user_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,

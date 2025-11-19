@@ -6,6 +6,7 @@ from functions_settings import *
 from functions_group import *
 from functions_documents import *
 from utils_cache import invalidate_group_search_cache
+from functions_activity_logging import log_document_upload
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 

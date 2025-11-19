@@ -18,6 +18,7 @@ from functions_documents import *
 from functions_search import *
 from functions_settings import *
 from functions_appinsights import *
+from functions_activity_logging import *
 
 import threading
 import time
@@ -26,9 +27,9 @@ from datetime import datetime
 from route_frontend_authentication import *
 from route_frontend_profile import *
 from route_frontend_admin_settings import *
+from route_frontend_control_center import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
-from route_frontend_workflow import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
@@ -48,6 +49,7 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_control_center import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
@@ -58,6 +60,7 @@ from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
+from functions_debug import debug_print
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 
@@ -164,6 +167,7 @@ def before_first_request():
     app_settings_cache.update_settings_cache(settings)
     print(f"DEBUG:Application settings: {settings}")
     print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {app_settings_cache.get_settings_cache()}")
+
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -195,7 +199,7 @@ def before_first_request():
                             turnoff_time = None
                     
                     if turnoff_time and current_time >= turnoff_time:
-                        print(f"Debug logging timer expired at {turnoff_time}. Disabling debug logging.")
+                        debug_print(f"[DEBUG]: logging timer expired at {turnoff_time}. Disabling debug logging.")
                         settings['enable_debug_logging'] = False
                         settings['debug_logging_timer_enabled'] = False
                         settings['debug_logging_turnoff_time'] = None
@@ -382,11 +386,11 @@ register_route_frontend_profile(app)
 # ------------------- Admin Settings Routes --------------
 register_route_frontend_admin_settings(app)
 
+# ------------------- Control Center Routes --------------
+register_route_frontend_control_center(app)
+
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
-
-# ------------------- Workflow Routes --------------------
-register_route_frontend_workflow(app)
 
 # ------------------- Conversations Routes ---------------
 register_route_frontend_conversations(app)
@@ -443,6 +447,9 @@ register_route_backend_prompts(app)
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
 
+# ------------------- API Control Center Routes ---------
+register_route_backend_control_center(app)
+
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)
 
@@ -470,6 +477,7 @@ if __name__ == '__main__':
         werkzeug_logger = logging.getLogger('werkzeug')
         werkzeug_logger.setLevel(logging.ERROR)
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
+
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))

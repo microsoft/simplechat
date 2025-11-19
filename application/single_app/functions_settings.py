@@ -42,6 +42,8 @@ def get_settings(use_cosmos=False):
         'allow_group_custom_agent_endpoints': False,
         'allow_group_plugins': False,
         'id': 'app_settings',
+        # Control Center settings
+        'control_center_last_refresh': None,  # Timestamp of last data refresh
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
@@ -120,6 +122,7 @@ def get_settings(use_cosmos=False):
         # Workspaces
         'enable_user_workspace': True,
         'enable_group_workspaces': True,
+        'enable_group_creation': True,
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
@@ -171,6 +174,7 @@ def get_settings(use_cosmos=False):
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'require_member_of_safety_violation_admin': False,
+        'require_member_of_control_center_admin': False,
         'content_safety_endpoint': '',
         'content_safety_key': '',
         'content_safety_authentication_type': 'key',

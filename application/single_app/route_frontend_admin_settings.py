@@ -36,6 +36,8 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_create_public_workspace'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
+        if 'require_member_of_control_center_admin' not in settings:
+            settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
         # --- End NEW Default Checks ---
@@ -62,43 +64,6 @@ def register_route_frontend_admin_settings(app):
             settings['external_links'] = [
                 {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
                 {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
-            ]
-
-        # Ensure PII Analysis fields exist with defaults if missing in DB
-        if 'enable_pii_analysis' not in settings:
-            settings['enable_pii_analysis'] = False
-        if 'pii_analysis_patterns' not in settings or not isinstance(settings.get('pii_analysis_patterns'), list):
-            settings['pii_analysis_patterns'] = [
-                {
-                    "pattern_type": "SSN", 
-                    "description": "Social Security Numbers", 
-                    "severity": "High",
-                    "regex": r"\b\d{3}[\s\-]*\d{2}[\s\-]*\d{4}\b"
-                },
-                {
-                    "pattern_type": "Email", 
-                    "description": "Email Addresses", 
-                    "severity": "Medium",
-                    "regex": r"\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+\s*\.\s*[A-Z|a-z]{2,}\b"
-                },
-                {
-                    "pattern_type": "Phone", 
-                    "description": "Phone Numbers", 
-                    "severity": "Medium",
-                    "regex": r"\b\(?\d{3}\)?[\s\-\.]*\d{3}[\s\-\.]*\d{4}\b"
-                },
-                {
-                    "pattern_type": "Credit Card", 
-                    "description": "Credit Card Numbers", 
-                    "severity": "High",
-                    "regex": r"\b4\d{3}[\s\-]*\d{4}[\s\-]*\d{4}[\s\-]*\d{4}\b"
-                },
-                {
-                    "pattern_type": "Address", 
-                    "description": "Street Addresses", 
-                    "severity": "Low",
-                    "regex": r"\b\d{1,5}\s+[A-Za-z][A-Za-z\s]*(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr)\b"
-                }
             ]
 
         # --- End Refined Default Checks ---
@@ -292,6 +257,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
+            require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
             # --- Handle Document Classification Toggle ---
@@ -372,15 +338,6 @@ def register_route_frontend_admin_settings(app):
             if enable_enhanced_citations and not (office_docs_storage_account_blob_endpoint or office_docs_storage_account_url):
                 flash("Enhanced Citations cannot be enabled without providing a connection string or blob service endpoint. Feature has been disabled.", "danger")
                 enable_enhanced_citations = False
-
-            # Workflow...
-            enable_workflow = form_data.get('enable_workflow') == 'on'
-            workflow_default_summary_model = form_data.get('workflow_default_summary_model', '').strip()
-            
-            # Validate that if workflow is enabled, enhanced citations must also be enabled
-            if enable_workflow and not enable_enhanced_citations:
-                flash("Workflow cannot be enabled without Enhanced Citations being enabled. Feature has been disabled.", "danger")
-                enable_workflow = False
 
             # Model JSON Parsing (Your existing logic is fine)
             gpt_model_json = form_data.get('gpt_model_json', '')
@@ -513,93 +470,6 @@ def register_route_frontend_admin_settings(app):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
 
-            # --- Handle PII Analysis Toggle ---
-            enable_pii_analysis = form_data.get('enable_pii_analysis') == 'on'
-
-            # --- Check for PII Pattern Reset ---
-            reset_pii_patterns = form_data.get('reset_pii_patterns') == 'on'
-            
-            if reset_pii_patterns:
-                # Reset to updated default patterns
-                parsed_pii_patterns = [
-                    {
-                        "pattern_type": "SSN", 
-                        "description": "Social Security Numbers", 
-                        "severity": "High",
-                        "regex": r"\b\d{3}[\s\-]*\d{2}[\s\-]*\d{4}\b"
-                    },
-                    {
-                        "pattern_type": "Email", 
-                        "description": "Email Addresses", 
-                        "severity": "Medium",
-                        "regex": r"\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+\s*\.\s*[A-Z|a-z]{2,}\b"
-                    },
-                    {
-                        "pattern_type": "Phone", 
-                        "description": "Phone Numbers", 
-                        "severity": "Medium",
-                        "regex": r"\b\(?\d{3}\)?[\s\-\.]*\d{3}[\s\-\.]*\d{4}\b"
-                    },
-                    {
-                        "pattern_type": "Credit Card", 
-                        "description": "Credit Card Numbers", 
-                        "severity": "High",
-                        "regex": r"\b4\d{3}[\s\-]*\d{4}[\s\-]*\d{4}[\s\-]*\d{4}\b"
-                    },
-                    {
-                        "pattern_type": "Address", 
-                        "description": "Street Addresses", 
-                        "severity": "Low",
-                        "regex": r"\b\d{1,5}\s+[A-Za-z][A-Za-z\s]*(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr)\b"
-                    }
-                ]
-                flash('PII patterns have been reset to default values with enhanced formatting support.', 'success')
-            else:
-                # --- Handle PII Analysis Patterns JSON ---
-                pii_analysis_patterns_json = form_data.get("pii_analysis_patterns_json", "[]")
-                parsed_pii_patterns = []
-                try:
-                    parsed_pii_patterns_raw = json.loads(pii_analysis_patterns_json)
-                    # Validation
-                    if isinstance(parsed_pii_patterns_raw, list) and all(
-                        isinstance(item, dict) and
-                        'pattern_type' in item and isinstance(item['pattern_type'], str) and item['pattern_type'].strip() and
-                        'description' in item and isinstance(item['description'], str) and
-                        'severity' in item and item['severity'] in ['Low', 'Medium', 'High'] and
-                        'regex' in item and isinstance(item['regex'], str)  # Add regex validation
-                        for item in parsed_pii_patterns_raw
-                    ):
-                        # Sanitize/clean data and validate regex patterns
-                        for item in parsed_pii_patterns_raw:
-                            pattern_data = {
-                                'pattern_type': item['pattern_type'].strip(),
-                                'description': item['description'].strip(),
-                                'severity': item['severity'],
-                                'regex': item['regex'].strip()
-                            }
-                            
-                            # Validate regex pattern if not empty
-                            if pattern_data['regex']:
-                                try:
-                                    import re
-                                    re.compile(pattern_data['regex'])  # Test if regex is valid
-                                except re.error as e:
-                                    print(f"Invalid regex pattern for {pattern_data['pattern_type']}: {e}")
-                                    flash(f'Invalid regex pattern for {pattern_data["pattern_type"]}: {e}. Pattern skipped.', 'warning')
-                                    continue
-                            
-                            parsed_pii_patterns.append(pattern_data)
-                        
-                        print(f"Successfully parsed {len(parsed_pii_patterns)} PII analysis patterns.")
-                    else:
-                        raise ValueError("Invalid format: Expected a list of objects with 'pattern_type', 'description', 'severity', and 'regex' keys.")
-
-                except (json.JSONDecodeError, ValueError) as e:
-                    print(f"Error processing pii_analysis_patterns_json: {e}")
-                    flash(f'Error processing PII analysis patterns: {e}. Changes for patterns not saved.', 'danger')
-                    # Keep existing patterns from the database instead of overwriting with bad data
-                    parsed_pii_patterns = settings.get('pii_analysis_patterns', [])
-
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -680,6 +550,7 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
+                'enable_group_creation': form_data.get('enable_group_creation') == 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
@@ -723,10 +594,6 @@ def register_route_frontend_admin_settings(app):
                 'audio_files_authentication_type': form_data.get('audio_files_authentication_type', 'key'),
                 'audio_files_key': form_data.get('audio_files_key', '').strip(),
 
-                # Workflow
-                'enable_workflow': enable_workflow,
-                'workflow_default_summary_model': workflow_default_summary_model,
-
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
@@ -737,10 +604,6 @@ def register_route_frontend_admin_settings(app):
                 'azure_apim_content_safety_subscription_key': form_data.get('azure_apim_content_safety_subscription_key', '').strip(),
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
-
-                # *** PII Analysis ***
-                'enable_pii_analysis': enable_pii_analysis,
-                'pii_analysis_patterns': parsed_pii_patterns,
 
                 # Feedback & Archiving
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
@@ -804,6 +667,8 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+
+                'require_member_of_control_center_admin': require_member_of_control_center_admin
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---

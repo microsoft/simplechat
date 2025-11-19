@@ -20,10 +20,11 @@ def register_route_frontend_groups(app):
         user = session.get('user', {})
         settings = get_settings()
         require_member_of_create_group = settings.get("require_member_of_create_group", False)
+        enable_group_creation = settings.get("enable_group_creation", True)
         
         # Check if user can create groups
-        can_create_groups = True
-        if require_member_of_create_group:
+        can_create_groups = enable_group_creation  # First check if group creation is enabled system-wide
+        if can_create_groups and require_member_of_create_group:
             can_create_groups = 'roles' in user and 'CreateGroups' in user['roles']
         
         return render_template("my_groups.html", can_create_groups=can_create_groups)

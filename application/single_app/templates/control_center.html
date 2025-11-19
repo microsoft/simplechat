@@ -1,0 +1,2443 @@
+{% extends "base.html" %}
+{% block title %}
+    Control Center - {{ app_settings.app_title }}
+{% endblock %}
+
+{% block head %}
+    <style>
+        .control-center-stats .stat-card {
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        }
+        .control-center-stats .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .stat-card.clickable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.02);
+            border: 1px solid rgba(var(--bs-primary-rgb), 0.2);
+        }
+        
+        .stat-card.clickable:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        /* Add pointer cursor and transition for better UX */
+        .stat-card.clickable {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card.clickable::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(var(--bs-primary-rgb), 0.1), transparent);
+            transition: left 0.5s;
+        }
+        
+        .stat-card.clickable:hover::before {
+            left: 100%;
+        }
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--bs-primary);
+        }
+        .stat-change {
+            font-size: 0.875rem;
+        }
+        .stat-change.positive {
+            color: var(--bs-success);
+        }
+        .stat-change.negative {
+            color: var(--bs-danger);
+        }
+        .alert-item {
+            border-left: 4px solid;
+            background: rgba(var(--bs-warning-rgb), 0.1);
+            border-left-color: var(--bs-warning);
+        }
+        .alert-item.danger {
+            background: rgba(var(--bs-danger-rgb), 0.1);
+            border-left-color: var(--bs-danger);
+        }
+        .user-table th {
+            font-weight: 600;
+            background-color: var(--bs-light);
+        }
+        
+        /* Dark mode support for table headers */
+        [data-bs-theme="dark"] .user-table th {
+            background-color: var(--bs-dark);
+            color: var(--bs-light);
+            border-color: var(--bs-border-color);
+        }
+        
+        /* Sortable table headers */
+        .user-table th.sortable {
+            cursor: pointer;
+            position: relative;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+        
+        .user-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        [data-bs-theme="dark"] .user-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.2);
+        }
+        
+        .user-table th.sortable::after {
+            content: '';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border: 4px solid transparent;
+            border-bottom: 4px solid #6c757d;
+            opacity: 0.3;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        
+        .user-table th.sortable:hover::after {
+            opacity: 0.6;
+        }
+        
+        .user-table th.sortable.sort-asc::after {
+            border-bottom: 4px solid var(--bs-primary);
+            border-top: none;
+            opacity: 1;
+        }
+        
+        .user-table th.sortable.sort-desc::after {
+            border-top: 4px solid var(--bs-primary);
+            border-bottom: none;
+            opacity: 1;
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        /* Group Management Table Styles */
+        .group-table th {
+            font-weight: 600;
+            background-color: var(--bs-light);
+        }
+        
+        /* Dark mode support for group table headers */
+        [data-bs-theme="dark"] .group-table th {
+            background-color: var(--bs-dark);
+            color: var(--bs-light);
+            border-color: var(--bs-border-color);
+        }
+        
+        /* Sortable group table headers */
+        .group-table th.sortable {
+            cursor: pointer;
+            position: relative;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+        
+        .group-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        [data-bs-theme="dark"] .group-table th.sortable:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.2);
+        }
+        
+        .group-table th.sortable::after {
+            content: '';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border: 4px solid transparent;
+            border-bottom: 4px solid #6c757d;
+            opacity: 0.3;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        
+        .group-table th.sortable:hover::after {
+            opacity: 0.6;
+        }
+        
+        .group-table th.sortable.sort-asc::after {
+            border-bottom: 4px solid var(--bs-primary);
+            border-top: none;
+            opacity: 1;
+        }
+        
+        .group-table th.sortable.sort-desc::after {
+            border-top: 4px solid var(--bs-primary);
+            border-bottom: none;
+            opacity: 1;
+            transform: translateY(-50%) rotate(180deg);
+        }
+        
+        /* Group status badges */
+        .group-status-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+        }
+        
+        .group-status-active {
+            background-color: var(--bs-success);
+            color: white;
+        }
+        
+        .group-status-locked {
+            background-color: var(--bs-warning);
+            color: black;
+        }
+        
+        .group-status-upload-disabled {
+            background-color: var(--bs-info);
+            color: white;
+        }
+        
+        .group-status-inactive {
+            background-color: var(--bs-secondary);
+            color: white;
+        }
+        
+        /* Group ownership badge */
+        .ownership-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 0.25rem;
+            background-color: var(--bs-primary);
+            color: white;
+        }
+        
+        /* Member count styling */
+        .member-count {
+            color: var(--bs-info);
+            font-weight: 500;
+        }
+        
+        /* Document count styling */
+        .document-count {
+            color: var(--bs-success);
+            font-weight: 500;
+        }
+        
+        /* Activity indicators */
+        .activity-indicator {
+            font-size: 0.875rem;
+        }
+        
+        .activity-recent {
+            color: var(--bs-success);
+        }
+        
+        .activity-moderate {
+            color: var(--bs-warning);
+        }
+        
+        .activity-old {
+            color: var(--bs-danger);
+        }
+        
+        .activity-never {
+            color: var(--bs-secondary);
+        }
+        .access-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .access-allow {
+            background-color: var(--bs-success);
+            color: white;
+        }
+        .access-deny {
+            background-color: var(--bs-danger);
+            color: white;
+        }
+        .access-temporary {
+            background-color: var(--bs-warning);
+            color: black;
+        }
+        .pagination-controls {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        /* Floating Save Button */
+        .floating-save-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 50px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+        
+        .floating-save-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .floating-save-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Ensure the button is visible above other content */
+        .floating-save-btn {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .floating-save-btn {
+                bottom: 15px;
+                right: 15px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: 140px;
+            }
+        }
+        
+        /* Activity Trends Legend */
+        .activity-legend {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        
+        /* Activity Trends Chart Styling */
+        #activityTrendsChartContainer {
+            position: relative;
+        }
+        
+        .activity-chart {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        #loginsChart, #chatsChart, #documentsChart {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2>Control Center</h2>
+            <p class="text-muted mb-1">Manage users and their workspaces, groups and their workspaces, and public workspaces.</p>
+        </div>
+        <div class="text-end">
+            <div class="mb-2">
+                <small class="text-muted" id="lastRefreshInfo">
+                    <i class="bi bi-clock-history me-1"></i>
+                    Data last refreshed: <span id="lastRefreshTime">Loading...</span>
+                </small>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="refreshDataBtn" onclick="refreshControlCenterData()">
+                <i class="bi bi-arrow-clockwise me-1"></i>
+                <span id="refreshBtnText">Refresh Data</span>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Hide tabs when left navigation is enabled -->
+    {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
+    {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
+    <ul class="nav nav-tabs" id="controlCenterTab" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard"
+                type="button" role="tab" aria-controls="dashboard" aria-selected="true">
+                <i class="bi bi-speedometer2 me-2"></i>Dashboard
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users"
+                type="button" role="tab" aria-controls="users" aria-selected="false">
+                <i class="bi bi-people me-2"></i>User Management
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="groups-tab" data-bs-toggle="tab" data-bs-target="#groups"
+                type="button" role="tab" aria-controls="groups" aria-selected="false">
+                <i class="bi bi-collection me-2"></i>Group Management
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces"
+                type="button" role="tab" aria-controls="workspaces" aria-selected="false">
+                <i class="bi bi-folder2-open me-2"></i>Public Workspaces
+            </button>
+        </li>
+    </ul>
+    {% endif %}
+
+    <div class="tab-content mt-3" id="controlCenterTabContent" style="padding-bottom:80px;">
+        <!-- Dashboard Tab -->
+        <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+                            <!-- System Summary Cards -->
+                            <div class="row mb-4 control-center-stats">
+                                <div class="col-md-4 mb-3">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" 
+                                         title="Click to view User Management" role="button" tabindex="0" 
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('users-tab')"
+                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalUsers">{{ statistics.total_users or 0 }}</div>
+                                                    <div class="text-muted small">Total Users</div>
+                                                    <div class="stat-change positive mt-1">
+                                                        <small class="text-success">{{ statistics.active_users_30_days or 0 }} unique users logged in last 30 days</small>
+                                                    </div>
+                                                </div>
+                                                <div class="text-primary">
+                                                    <i class="bi bi-people-fill" style="font-size: 2rem;" aria-hidden="true"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4 mb-3">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" 
+                                         title="Click to view Group Management" role="button" tabindex="0"
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('groups-tab')"
+                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalGroups">{{ statistics.total_groups or 0 }}</div>
+                                                    <div class="text-muted small">Total Groups</div>
+                                                    <div class="stat-change">
+                                                        <small class="text-info">{{ statistics.locked_groups or 0 }} created last 30 days</small>
+                                                    </div>
+                                                </div>
+                                                <div class="text-info">
+                                                    <i class="bi bi-collection-fill" style="font-size: 2rem;" aria-hidden="true"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4 mb-3">
+                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" 
+                                         title="Click to view Public Workspaces Management" role="button" tabindex="0"
+                                         onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('workspaces-tab')"
+                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <div class="stat-number" id="totalWorkspaces">{{ statistics.total_public_workspaces or 0 }}</div>
+                                                    <div class="text-muted small">Public Workspaces</div>
+                                                    <div class="stat-change">
+                                                        <small class="text-success">{{ statistics.hidden_workspaces or 0 }} created last 30 days</small>
+                                                    </div>
+                                                </div>
+                                                <div class="text-success">
+                                                    <i class="bi bi-folder2-open" style="font-size: 2rem;" aria-hidden="true"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                            
+                            <!-- Key Alerts Section -->
+                            {% if statistics.alerts %}
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="card-title mb-0">
+                                                <i class="bi bi-exclamation-triangle me-2"></i>Key Alerts
+                                            </h5>
+                                        </div>
+                                        <div class="card-body">
+                                            {% for alert in statistics.alerts %}
+                                            <div class="alert-item p-3 mb-3 rounded {{ 'danger' if alert.type == 'danger' else '' }}">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <i class="bi bi-{{ 'exclamation-triangle-fill' if alert.type == 'danger' else 'info-circle-fill' }} me-2"></i>
+                                                        {{ alert.message }}
+                                                    </div>
+                                                    <button class="btn btn-sm btn-outline-primary" data-action="{{ alert.action }}">
+                                                        {{ alert.action }}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Activity Trends Charts -->
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="d-flex justify-content-between align-items-center flex-wrap">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-graph-up me-2"></i>Activity Trends
+                                        </h5>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <!-- Date Range Buttons -->
+                                            <div class="btn-group" role="group">
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-7days">7 Days</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm active" id="trend-30days">30 Days</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-90days">90 Days</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="trend-custom" data-bs-toggle="collapse" data-bs-target="#customDateRange" aria-expanded="false">
+                                                    <i class="bi bi-calendar3"></i> Custom
+                                                </button>
+                                            </div>
+                                            <!-- Export Button -->
+                                            <button type="button" class="btn btn-outline-primary btn-sm" id="exportActivityTrends" data-bs-toggle="modal" data-bs-target="#exportModal">
+                                                <i class="bi bi-download"></i> Export
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Custom Date Range Picker (Collapsible) -->
+                                    <div class="collapse mt-3" id="customDateRange">
+                                        <div class="card card-body py-2">
+                                            <div class="row align-items-center">
+                                                <div class="col-md-4">
+                                                    <label for="startDate" class="form-label small">Start Date:</label>
+                                                    <input type="date" class="form-control form-control-sm" id="startDate">
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label for="endDate" class="form-label small">End Date:</label>
+                                                    <input type="date" class="form-control form-control-sm" id="endDate">
+                                                </div>
+                                                <div class="col-md-4 d-flex align-items-end">
+                                                    <button type="button" class="btn btn-primary btn-sm" id="applyCustomRange">
+                                                        <i class="bi bi-check2"></i> Apply
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Logins Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-box-arrow-in-right me-2 text-warning"></i>Logins
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="loginsChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Chats Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-chat-dots me-2 text-primary"></i>Chats
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="chatsChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Documents Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-file-earmark-text me-2 text-success"></i>Documents
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="documentsChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- User Management Tab -->
+                        <div class="tab-pane fade" id="users" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-people-fill me-2"></i>User Management
+                                </h5>
+                            </div>
+
+                            <!-- User Management Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="userSearchInput" placeholder="Search users by name or email...">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="accessFilterSelect">
+                                        <option value="all">All Users</option>
+                                        <option value="allow">Allowed Access</option>
+                                        <option value="deny">Denied Access</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk
+                                        </button>
+                                        <button type="button" class="btn btn-outline-success" id="exportUsersBtn" title="Export users as CSV">
+                                            <i class="bi bi-download me-1"></i>Export
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshUsersBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>Reload
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Users Table -->
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover user-table" id="usersTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 50px;">
+                                                        <input type="checkbox" class="form-check-input" id="selectAllUsers">
+                                                    </th>
+                                                    <th class="sortable" data-sort="user" style="padding-right: 25px;">User</th>
+                                                    <th class="sortable" data-sort="access" style="padding-right: 25px;">Access Status</th>
+                                                    <th class="sortable" data-sort="fileUpload" style="padding-right: 25px;">File Upload Status</th>
+                                                    <th class="sortable" data-sort="lastLogin" style="padding-right: 25px;">Login Activity</th>
+                                                    <th class="sortable" data-sort="conversations" style="padding-right: 25px;">Conversations</th>
+                                                    <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="usersTableBody">
+                                                <tr>
+                                                    <td colspan="8" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading users...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="usersPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Users pagination">
+                                            <ul class="pagination mb-0" id="usersPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Group Management Tab -->
+                        <div class="tab-pane fade" id="groups" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-collection-fill me-2"></i>Group Management
+                                </h5>
+                            </div>
+
+                            <!-- Global Group Settings -->
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="card-title mb-0">
+                                                <i class="bi bi-gear-fill me-2"></i>Global Group Settings
+                                            </h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row align-items-center">
+                                                <div class="col-md-8">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="disableGroupCreation" {% if not settings.enable_group_creation %}checked{% endif %}>
+                                                        <label class="form-check-label" for="disableGroupCreation">
+                                                            <strong>Disable Group Creation</strong>
+                                                            <br><small class="text-muted">Prevent users from creating new groups system-wide</small>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4 text-end">
+                                                    <button type="button" class="btn btn-primary" id="saveGlobalGroupSettings">
+                                                        <i class="bi bi-check-lg me-1"></i>Save Settings
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Group Management Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="groupSearchInput" placeholder="Search groups by name or owner...">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="groupStatusFilterSelect">
+                                        <option value="all">All Groups</option>
+                                        <option value="active">Active Groups</option>
+                                        <option value="locked">Locked Groups</option>
+                                        <option value="upload_disabled">Upload Disabled</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkGroupActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk
+                                        </button>
+                                        <button type="button" class="btn btn-outline-success" id="exportGroupsBtn" title="Export groups as CSV">
+                                            <i class="bi bi-download me-1"></i>Export
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshGroupsBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>Refresh
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Groups Table -->
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover group-table" id="groupsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 50px;">
+                                                        <input type="checkbox" class="form-check-input" id="selectAllGroups">
+                                                    </th>
+                                                    <th class="sortable" data-sort="name" style="padding-right: 25px;">Group Name</th>
+                                                    <th class="sortable" data-sort="owner" style="padding-right: 25px;">Owner</th>
+                                                    <th class="sortable" data-sort="members" style="padding-right: 25px;">Members</th>
+                                                    <th class="sortable" data-sort="status" style="padding-right: 25px;">Status</th>
+                                                    <th class="sortable" data-sort="documents" style="padding-right: 25px;">Documents</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="groupsTableBody">
+                                                <tr>
+                                                    <td colspan="7" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading groups...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="groupsPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Groups pagination">
+                                            <ul class="pagination mb-0" id="groupsPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Public Workspace Management Tab -->
+                        <div class="tab-pane fade" id="workspaces" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h5 class="mb-0">
+                    <i class="bi bi-folder2-open me-2"></i>Public Workspace Management
+                </h5>
+            </div>                            <!-- Filters -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text">
+                                            <i class="bi bi-search"></i>
+                                        </span>
+                                        <input type="text" 
+                                               class="form-control" 
+                                               id="publicWorkspaceSearchInput" 
+                                               placeholder="Search workspaces by name or description..."
+                                               onkeyup="controlCenter.searchPublicWorkspaces(this.value)">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="publicWorkspaceStatusFilter" onchange="controlCenter.filterPublicWorkspacesByStatus(this.value)">
+                                        <option value="all">All Statuses</option>
+                                        <option value="active">Active</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="btn-group w-100" role="group">
+                                        <button type="button" class="btn btn-primary" id="bulkPublicWorkspaceActionBtn" disabled>
+                                            <i class="bi bi-gear-fill me-1"></i>Bulk
+                                        </button>
+                                        <button type="button" class="btn btn-outline-success" id="exportPublicWorkspacesBtn" title="Export public workspaces as CSV">
+                                            <i class="bi bi-download me-1"></i>Export
+                                        </button>
+                                        <button type="button" class="btn btn-outline-primary" id="refreshPublicWorkspacesBtn">
+                                            <i class="bi bi-arrow-clockwise"></i>Refresh
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="text-muted small mt-2">
+                                        <span id="publicWorkspaceCount">Loading...</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Public Workspaces Table -->
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle" id="publicWorkspacesTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 50px;">
+                                                <input type="checkbox" class="form-check-input" id="selectAllPublicWorkspaces">
+                                            </th>
+                                            <th>Workspace Name</th>
+                                            <th>Owner</th>
+                                            <th>Members</th>
+                                            <th>Status</th>
+                                            <th>Documents</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="publicWorkspacesTableBody">
+                                        <tr>
+                                            <td colspan="7" class="text-center py-4">
+                                                <div class="spinner-border text-primary" role="status">
+                                                    <span class="visually-hidden">Loading...</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Pagination -->
+                            <nav aria-label="Public workspaces pagination" id="publicWorkspacesPagination" style="display: none;">
+                                <ul class="pagination justify-content-center">
+                                    <!-- Pagination buttons will be inserted here -->
+                                </ul>
+                            </nav>
+
+                            <!-- No Results Message -->
+                            <div id="noPublicWorkspacesMessage" style="display: none;">
+                                <div class="text-center py-5">
+                                    <i class="bi bi-folder2-open text-muted" style="font-size: 3rem;"></i>
+                                    <h6 class="text-muted mt-3">No Public Workspaces Found</h6>
+                                    <p class="text-muted small">No public workspaces match your current search criteria.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- User Management Modal -->
+    <div class="modal fade" id="userManagementModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-person-gear me-2"></i>Manage User
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- User Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">User Information</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>Name:</strong> <span id="modalUserName">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Email:</strong> <span id="modalUserEmail">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Documents:</strong> <span id="modalUserDocuments">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Last Activity:</strong> <span id="modalUserLastActivity">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Access Control Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Access Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Access Status</label>
+                                        <select class="form-select" id="accessStatusSelect">
+                                            <option value="allow">Allow Access</option>
+                                            <option value="deny">Deny Access Permanently</option>
+                                            <option value="deny_until">Deny Access Until...</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="accessDateTimeGroup" style="display: none;">
+                                        <label class="form-label">Restore Access On</label>
+                                        <input type="datetime-local" class="form-control" id="accessDateTime">
+                                        <div class="form-text">User will automatically regain access at this date and time.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- File Upload Control Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">File Upload Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">File Upload Status</label>
+                                        <select class="form-select" id="fileUploadStatusSelect">
+                                            <option value="allow">Allow File Uploads</option>
+                                            <option value="deny">Deny File Uploads Permanently</option>
+                                            <option value="deny_until">Deny File Uploads Until...</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="fileUploadDateTimeGroup" style="display: none;">
+                                        <label class="form-label">Restore File Uploads On</label>
+                                        <input type="datetime-local" class="form-control" id="fileUploadDateTime">
+                                        <div class="form-text">User will automatically regain file upload permissions at this date and time.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveUserChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bulk Action Modal -->
+    <div class="modal fade" id="bulkActionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-gear-fill me-2"></i>Bulk User Action
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Action Type</label>
+                        <select class="form-select" id="bulkActionType">
+                            <option value="">Select action...</option>
+                            <option value="access">Update Access Control</option>
+                            <option value="file_uploads">Update File Upload Permissions</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3" id="bulkActionSettings" style="display: none;">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="bulkStatusSelect">
+                            <option value="allow">Allow</option>
+                            <option value="deny">Deny Permanently</option>
+                            <option value="deny_until">Deny Until...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3" id="bulkDateTimeGroup" style="display: none;">
+                        <label class="form-label">Restore On</label>
+                        <input type="datetime-local" class="form-control" id="bulkDateTime">
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This action will be applied to <strong id="selectedUserCount">0</strong> selected user(s).
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="executeBulkActionBtn">
+                        <i class="bi bi-gear-fill me-1"></i>Execute Action
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Export Activity Trends Modal -->
+    <div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exportModalLabel">
+                        <i class="bi bi-download me-2"></i>Export Activity Trends
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-4">
+                        <h6 class="mb-3">Select Charts to Export:</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="logins" id="exportLogins" checked>
+                            <label class="form-check-label" for="exportLogins">
+                                <i class="bi bi-box-arrow-in-right me-2 text-warning"></i>Logins
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="chats" id="exportChats" checked>
+                            <label class="form-check-label" for="exportChats">
+                                <i class="bi bi-chat-dots me-2 text-primary"></i>Chats
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="personal_documents" id="exportPersonalDocuments" checked>
+                            <label class="form-check-label" for="exportPersonalDocuments">
+                                <i class="bi bi-file-earmark-person me-2" style="color: #90EE90;"></i>Personal Documents
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="group_documents" id="exportGroupDocuments" checked>
+                            <label class="form-check-label" for="exportGroupDocuments">
+                                <i class="bi bi-file-earmark-text me-2" style="color: #228B22;"></i>Group Documents
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="public_documents" id="exportPublicDocuments" checked>
+                            <label class="form-check-label" for="exportPublicDocuments">
+                                <i class="bi bi-globe me-2" style="color: #006400;"></i>Public Documents
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <h6 class="mb-3">Select Time Window:</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="exportTimeWindow" value="7" id="export7days">
+                            <label class="form-check-label" for="export7days">Last 7 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="exportTimeWindow" value="30" id="export30days" checked>
+                            <label class="form-check-label" for="export30days">Last 30 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="exportTimeWindow" value="90" id="export90days">
+                            <label class="form-check-label" for="export90days">Last 90 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="exportTimeWindow" value="custom" id="exportCustom">
+                            <label class="form-check-label" for="exportCustom">Custom Range</label>
+                        </div>
+                        
+                        <!-- Custom Date Range for Export -->
+                        <div class="mt-3" id="exportCustomDateRange" style="display: none;">
+                            <div class="row">
+                                <div class="col-6">
+                                    <label for="exportStartDate" class="form-label small">Start Date:</label>
+                                    <input type="date" class="form-control form-control-sm" id="exportStartDate">
+                                </div>
+                                <div class="col-6">
+                                    <label for="exportEndDate" class="form-label small">End Date:</label>
+                                    <input type="date" class="form-control form-control-sm" id="exportEndDate">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Raw detailed data will be exported as CSV format with separate sections for each chart type:
+                        <ul class="mb-0 mt-2" style="font-size: 0.9em;">
+                            <li><strong>Logins:</strong> Display name, email, user ID, login time</li>
+                            <li><strong>Chats:</strong> Display name, email, user ID, chat ID, title, message count, total size, created date</li>
+                            <li><strong>Personal Documents:</strong> Display name, email, user ID, personal document details, sizes, upload date</li>
+                        <li><strong>Group Documents:</strong> Display name, email, user ID, group document details, sizes, upload date</li>
+                            <li><strong>Public Documents:</strong> Display name, email, user ID, public document details, sizes, upload date</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="executeExportBtn">
+                        <i class="bi bi-download me-1"></i>Export CSV
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Chat with Activity Trends Modal -->
+    <div class="modal fade" id="chatModal" tabindex="-1" aria-labelledby="chatModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="chatModalLabel">
+                        <i class="bi bi-chat-dots me-2"></i>Start Chat with Activity Trends
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-4">
+                        <h6 class="mb-3">Select Charts to Include:</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="logins" id="chatLogins" checked>
+                            <label class="form-check-label" for="chatLogins">
+                                <i class="bi bi-box-arrow-in-right me-2 text-warning"></i>Logins
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="chats" id="chatChats" checked>
+                            <label class="form-check-label" for="chatChats">
+                                <i class="bi bi-chat-dots me-2 text-primary"></i>Chats
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="documents" id="chatDocuments" checked>
+                            <label class="form-check-label" for="chatDocuments">
+                                <i class="bi bi-file-earmark-text me-2 text-success"></i>Documents
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <h6 class="mb-3">Select Time Window:</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="chatTimeWindow" value="7" id="chat7days">
+                            <label class="form-check-label" for="chat7days">Last 7 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="chatTimeWindow" value="30" id="chat30days" checked>
+                            <label class="form-check-label" for="chat30days">Last 30 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="chatTimeWindow" value="90" id="chat90days">
+                            <label class="form-check-label" for="chat90days">Last 90 Days</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="chatTimeWindow" value="custom" id="chatCustom">
+                            <label class="form-check-label" for="chatCustom">Custom Range</label>
+                        </div>
+                        
+                        <!-- Custom Date Range for Chat -->
+                        <div class="mt-3" id="chatCustomDateRange" style="display: none;">
+                            <div class="row">
+                                <div class="col-6">
+                                    <label for="chatStartDate" class="form-label small">Start Date:</label>
+                                    <input type="date" class="form-control form-control-sm" id="chatStartDate">
+                                </div>
+                                <div class="col-6">
+                                    <label for="chatEndDate" class="form-label small">End Date:</label>
+                                    <input type="date" class="form-control form-control-sm" id="chatEndDate">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This will create a new conversation titled "Activity Trends" with the selected data as a CSV file message that you can analyze with AI.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" id="executeChatBtn">
+                        <i class="bi bi-chat-dots me-1"></i>Start Chat
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Management Modal -->
+    <div class="modal fade" id="groupManagementModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-collection-fill me-2"></i>Manage Group
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Group Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Information</h6>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>Name:</strong> <span id="modalGroupName">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Owner:</strong> <span id="modalGroupOwner">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Members:</strong> <span id="modalGroupMembers">-</span>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <strong>Documents:</strong> <span id="modalGroupDocuments">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
+                                            <strong>Created:</strong> <span id="modalGroupCreated">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Group Status Control -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Status Control</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Group Status</label>
+                                        <select class="form-select" id="groupStatusSelect">
+                                            <option value="active">Active</option>
+                                            <option value="locked">Locked (Read-only)</option>
+                                            <option value="upload_disabled">Upload Disabled</option>
+                                            <option value="inactive">Inactive</option>
+                                        </select>
+                                        <div class="form-text">Locked groups prevent members from adding users or files. Upload disabled prevents new file uploads only.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Group Ownership -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Group Ownership</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Transfer Ownership</label>
+                                        <select class="form-select" id="groupOwnershipSelect">
+                                            <option value="">Keep current owner</option>
+                                            <option value="admin">Take Administrator Ownership</option>
+                                            <option value="transfer">Transfer to Another User</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3" id="transferUserGroup" style="display: none;">
+                                        <label class="form-label">New Owner Email</label>
+                                        <input type="email" class="form-control" id="groupNewOwnerEmail" placeholder="Enter user email">
+                                        <div class="form-text">User must be a member of the group to become owner.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Member Management -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold">Member Management</h6>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-info w-100" id="manageMembersBtn" data-bs-toggle="modal" data-bs-target="#groupMembersModal">
+                                                <i class="bi bi-people me-2"></i>View & Manage Members
+                                            </button>
+                                            <small class="text-muted">Add/remove members and assign roles</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn" data-bs-toggle="modal" data-bs-target="#groupActivityModal">
+                                                <i class="bi bi-activity me-2"></i>View Group Activity
+                                            </button>
+                                            <small class="text-muted">See detailed group activity timeline</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dangerous Actions -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="fw-bold text-danger">Dangerous Actions</h6>
+                            <div class="card border-danger">
+                                <div class="card-body">
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>
+                                        These actions cannot be undone. Please proceed with caution.
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-outline-danger w-100" id="deleteDocumentsBtn">
+                                                <i class="bi bi-trash me-2"></i>Delete All Documents
+                                            </button>
+                                            <small class="text-muted">Remove all files but keep group structure</small>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <button type="button" class="btn btn-danger w-100" id="deleteGroupBtn">
+                                                <i class="bi bi-trash-fill me-2"></i>Delete Entire Group
+                                            </button>
+                                            <small class="text-muted">Permanently delete group and all content</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveGroupChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bulk Group Action Modal -->
+    <div class="modal fade" id="bulkGroupActionModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-gear-fill me-2"></i>Bulk Group Action
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Action Type</label>
+                        <select class="form-select" id="bulkGroupActionType">
+                            <option value="">Select action...</option>
+                            <option value="lock">Lock Groups</option>
+                            <option value="unlock">Unlock Groups</option>
+                            <option value="disable_upload">Disable File Uploads</option>
+                            <option value="enable_upload">Enable File Uploads</option>
+                            <option value="take_ownership">Take Ownership</option>
+                            <option value="delete_documents">Delete All Documents</option>
+                        </select>
+                    </div>
+                    
+                    <div class="alert alert-warning" id="bulkGroupWarning" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong id="bulkGroupWarningText"></strong>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This action will be applied to <strong id="selectedGroupCount">0</strong> selected group(s).
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="executeBulkGroupActionBtn">
+                        <i class="bi bi-gear-fill me-1"></i>Execute Action
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Activity Modal -->
+    <div class="modal fade" id="groupActivityModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-activity me-2"></i>Group Activity Timeline
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 id="activityGroupName">Group Activity</h6>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <select class="form-select form-select-sm" id="activityTimeRange">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="all">All time</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="timeline-container" style="max-height: 400px; overflow-y: auto;">
+                        <div id="activityTimeline">
+                            <!-- Activity timeline will be populated here -->
+                            <div class="text-center py-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <div class="mt-2">Loading activity...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" id="exportActivityBtn">
+                        <i class="bi bi-download me-1"></i>Export Activity
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Members Management Modal -->
+    <div class="modal fade" id="groupMembersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-people me-2"></i>Manage Group Members
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 id="membersGroupName">Group Members</h6>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button type="button" class="btn btn-primary btn-sm" id="addMemberBtn">
+                                <i class="bi bi-person-plus me-1"></i>Add Member
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Member</th>
+                                    <th>Role</th>
+                                    <th>Joined</th>
+                                    <th>Last Active</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="groupMembersTableBody">
+                                <!-- Members will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveMemberChangesBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none" style="background: rgba(0,0,0,0.5); z-index: 9999;">
+        <div class="d-flex justify-content-center align-items-center h-100">
+            <div class="bg-white p-4 rounded">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Processing...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Control Center Scripts -->
+<script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
+
+<script>
+// Function to navigate to specific tabs when stat cards are clicked
+function navigateToTab(tabId) {
+    // Check if we're using sidebar navigation by looking at the DOM
+    const tabNavigation = document.getElementById('controlCenterTab');
+    const usingSidebar = !tabNavigation || tabNavigation.style.display === 'none';
+    
+    if (usingSidebar) {
+        // Handle sidebar navigation
+        const targetSection = tabId.replace('-tab', '');
+        
+        // Use the existing ControlCenter sidebar navigation if available
+        if (typeof window.controlCenter !== 'undefined' && window.controlCenter.handleTabChange) {
+            window.controlCenter.handleTabChange(targetSection);
+        } else {
+            // Fallback: directly show the content pane
+            const contentPanes = document.querySelectorAll('.tab-pane');
+            contentPanes.forEach(pane => {
+                pane.classList.remove('show', 'active');
+            });
+            
+            const targetPane = document.getElementById(targetSection);
+            if (targetPane) {
+                targetPane.classList.add('show', 'active');
+            }
+        }
+    } else {
+        // Handle traditional tab navigation
+        const tabButton = document.getElementById(tabId);
+        if (tabButton) {
+            // Use Bootstrap's tab API to show the tab
+            const tab = new bootstrap.Tab(tabButton);
+            tab.show();
+            
+            // Also trigger any existing ControlCenter tab change logic if it exists
+            if (typeof window.controlCenter !== 'undefined' && window.controlCenter.handleTabChange) {
+                window.controlCenter.handleTabChange(tabId.replace('-tab', ''));
+            }
+        }
+    }
+    
+    // Scroll to top of the page for better user experience
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Table sorting functionality
+class TableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'lastLogin' || sortKey === 'conversations' || sortKey === 'documents') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'user':
+                // Extract user name from the cell
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'access':
+            case 'fileUpload':
+                // Extract status from badge
+                const badge = cell.querySelector('.access-badge, .badge');
+                value = badge ? badge.textContent.trim() : cell.textContent.trim();
+                break;
+            case 'lastLogin':
+                // Extract last login date
+                value = cell.textContent.trim();
+                if (value.toLowerCase() === 'never') return '0'; // Sort 'never' to beginning
+                break;
+            case 'conversations':
+                // Extract conversation count
+                const convText = cell.textContent.trim();
+                const convMatch = convText.match(/Total:\s*(\d+)/);
+                value = convMatch ? convMatch[1] : '0';
+                break;
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/Total Docs:\s*(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
+// Group Table Sorter - similar to user table but for groups
+class GroupTableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'members' || sortKey === 'documents') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'name':
+                // Extract group name
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'owner':
+                // Extract owner name
+                value = cell.textContent.trim();
+                break;
+            case 'members':
+                // Extract member count
+                const memberText = cell.textContent.trim();
+                const memberMatch = memberText.match(/(\d+)/);
+                value = memberMatch ? memberMatch[1] : '0';
+                break;
+            case 'status':
+                // Extract status from badge
+                const statusBadge = cell.querySelector('.group-status-badge, .badge');
+                value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
+                break;
+
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
+// Group Management Functions
+const GroupManager = {
+    // Initialize group management functionality
+    init: function() {
+        this.bindEvents();
+        this.loadGroups();
+    },
+
+    // Bind event handlers
+    bindEvents: function() {
+        // Global settings
+        document.getElementById('saveGlobalGroupSettings')?.addEventListener('click', this.saveGlobalSettings);
+        
+        // Search and filter
+        document.getElementById('groupSearchInput')?.addEventListener('input', this.handleSearch);
+        document.getElementById('groupStatusFilterSelect')?.addEventListener('change', this.handleFilter);
+        
+        // Bulk actions
+        document.getElementById('bulkGroupActionBtn')?.addEventListener('click', this.showBulkActionModal);
+        document.getElementById('refreshGroupsBtn')?.addEventListener('click', this.refreshGroups);
+        
+        // Select all checkbox
+        document.getElementById('selectAllGroups')?.addEventListener('change', this.handleSelectAll);
+        
+        // Modal controls
+        document.getElementById('groupOwnershipSelect')?.addEventListener('change', this.handleOwnershipChange);
+        document.getElementById('saveGroupChangesBtn')?.addEventListener('click', this.saveGroupChanges);
+        document.getElementById('deleteDocumentsBtn')?.addEventListener('click', this.deleteDocuments);
+        document.getElementById('deleteGroupBtn')?.addEventListener('click', this.deleteGroup);
+        
+        // Member management modal
+        document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
+    },
+
+    // Load groups data from backend API
+    loadGroups: async function() {
+        const tbody = document.getElementById('groupsTableBody');
+        if (!tbody) return;
+
+        // Show loading state
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <div class="mt-2">Loading groups...</div>
+                </td>
+            </tr>
+        `;
+
+        try {
+            // Get current filter values
+            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
+            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
+
+            // Build API URL with filters
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 100, // Get more groups for now
+                search: searchTerm,
+                status_filter: statusFilter
+            });
+
+            const response = await fetch(`/api/admin/control-center/groups?${params}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.groups && data.groups.length > 0) {
+                tbody.innerHTML = data.groups.map(group => this.createGroupRow(group)).join('');
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-4">
+                            <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
+                            <div class="mt-2">No groups found</div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            // Initialize sorting after data is loaded
+            if (!window.groupTableSorter) {
+                window.groupTableSorter = new GroupTableSorter('groupsTable');
+            }
+
+        } catch (error) {
+            console.error('Error loading groups:', error);
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center py-4 text-danger">
+                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
+                        <div class="mt-2">Error loading groups: ${error.message}</div>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="GroupManager.loadGroups()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+    },
+
+    // Load global group settings from backend (simplified - initial state set in HTML)
+    loadGlobalSettings: async function() {
+        // Initial state is now set directly in HTML template based on backend settings
+        // This function is kept for backward compatibility but no longer needed for initial load
+        console.log('Global group settings initial state set from backend template');
+    },
+
+    // Apply pending global settings when element becomes available (no longer needed)
+    applyPendingGlobalSettings: function() {
+        // This function is kept for backward compatibility but no longer needed
+        // Initial state is now set directly in HTML template
+    },
+
+    // Create group table row from API data
+    createGroupRow: function(group) {
+        const statusClass = `group-status-${(group.status || 'active').replace('_', '-')}`;
+        const statusText = {
+            'active': 'Active',
+            'locked': 'Locked',
+            'upload_disabled': 'Upload Disabled',
+            'inactive': 'Inactive'
+        }[group.status || 'active'] || 'Unknown';
+
+        // Format storage size
+        const formatStorageSize = (sizeBytes) => {
+            if (!sizeBytes || sizeBytes === 0) return '0 B';
+            
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = sizeBytes;
+            let unitIndex = 0;
+            
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            
+            return `${size.toFixed(1)} ${units[unitIndex]}`;
+        };
+
+        // Format date or show "Never"
+        const formatDate = (dateStr) => {
+            if (!dateStr) return 'Never';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString();
+            } catch (e) {
+                return 'Never';
+            }
+        };
+
+        // Get member count - prioritize member_count, fallback to members array length
+        const memberCount = group.member_count || (group.members ? group.members.length : 0);
+
+        return `
+            <tr data-group-id="${group.id}">
+                <td>
+                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
+                </td>
+                <td>
+                    <div class="fw-bold">${group.name || 'Unnamed Group'}</div>
+                </td>
+                <td>
+                    <div>${group.owner_name || group.created_by || 'Unknown'}</div>
+                    <small class="text-muted">${group.owner_email || ''}</small>
+                </td>
+                <td>
+                    ${memberCount} members
+                </td>
+                <td>
+                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
+                </td>
+                <td>
+                    ${window.controlCenter ? window.controlCenter.renderGroupDocumentMetrics(group.activity?.document_metrics) : `<div class="small">${group.document_count || 0} docs</div>`}
+                </td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline-primary" 
+                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
+                        <i class="bi bi-gear me-1"></i>Manage
+                    </button>
+                </td>
+            </tr>
+        `;
+    },
+
+    // Handle search functionality
+    handleSearch: function(event) {
+        const searchTerm = event.target.value.toLowerCase();
+        const rows = document.querySelectorAll('#groupsTableBody tr:not([style*="display: none"])');
+        
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchTerm) ? '' : 'none';
+        });
+    },
+
+    // Handle status filter
+    handleFilter: function(event) {
+        const filterValue = event.target.value;
+        const rows = document.querySelectorAll('#groupsTableBody tr[data-group-id]');
+        
+        rows.forEach(row => {
+            const statusBadge = row.querySelector('.group-status-badge');
+            if (!statusBadge) return;
+            
+            const status = statusBadge.className.includes('active') ? 'active' :
+                          statusBadge.className.includes('locked') ? 'locked' :
+                          statusBadge.className.includes('upload-disabled') ? 'upload_disabled' : 'inactive';
+            
+            row.style.display = (filterValue === 'all' || status === filterValue) ? '' : 'none';
+        });
+    },
+
+    // Handle select all functionality
+    handleSelectAll: function(event) {
+        const checkboxes = document.querySelectorAll('.group-checkbox');
+        checkboxes.forEach(cb => cb.checked = event.target.checked);
+        
+        const bulkButton = document.getElementById('bulkGroupActionBtn');
+        if (bulkButton) {
+            bulkButton.disabled = !event.target.checked;
+        }
+    },
+
+    // Save global settings
+    saveGlobalSettings: async function() {
+        const disableToggle = document.getElementById('disableGroupCreation');
+        const saveButton = document.getElementById('saveGlobalGroupSettings');
+        
+        if (!disableToggle) {
+            alert('Error: Toggle element not found');
+            return;
+        }
+        
+        const disableCreation = disableToggle.checked;
+        
+        try {
+            // Disable button during save
+            saveButton.disabled = true;
+            saveButton.innerHTML = '<i class="bi bi-clock me-1"></i>Saving...';
+            
+            // Convert "disable creation" to "enable creation" (inverted)
+            const enableCreation = !disableCreation;
+            
+            const response = await fetch('/api/admin/agents/settings/enable_group_creation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: enableCreation })
+            });
+            
+            if (response.ok) {
+                alert('Global group settings saved successfully!');
+            } else {
+                const data = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+                alert('Error saving settings: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Error saving global group settings:', error);
+            alert('Error saving settings: ' + error.message);
+        } finally {
+            // Re-enable button
+            saveButton.disabled = false;
+            saveButton.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Settings';
+        }
+    },
+
+    // Manage individual group
+    manageGroup: async function(groupId) {
+        console.log('Managing group:', groupId);
+        
+        try {
+            // Fetch group details from API
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch group details: ${response.statusText}`);
+            }
+            
+            const group = await response.json();
+            
+            // Populate modal with group data
+            document.getElementById('modalGroupName').textContent = group.name || 'Unknown Group';
+            document.getElementById('modalGroupOwner').textContent = `${group.owner_name || group.created_by || 'Unknown'} (${group.owner_email || 'No email'})`;
+            document.getElementById('modalGroupMembers').textContent = `${group.member_count || 0} active members`;
+            document.getElementById('modalGroupDocuments').textContent = `${group.document_count || 0} documents`;
+            
+            // Format dates
+            const formatDate = (dateStr) => {
+                if (!dateStr) return 'Unknown';
+                try {
+                    return new Date(dateStr).toLocaleDateString();
+                } catch (e) {
+                    return 'Unknown';
+                }
+            };
+            
+            document.getElementById('modalGroupCreated').textContent = formatDate(group.created_at);
+
+            
+            // Set group status
+            document.getElementById('groupStatusSelect').value = group.status || 'active';
+            
+            // Store current group ID for saving changes
+            document.getElementById('groupManagementModal').setAttribute('data-group-id', groupId);
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('groupManagementModal'));
+            modal.show();
+            
+        } catch (error) {
+            console.error('Error loading group details:', error);
+            alert(`Error loading group details: ${error.message}`);
+        }
+    },
+
+    // View group details
+    viewGroupDetails: function(groupId) {
+        console.log('Viewing details for group:', groupId);
+        // For now, just use the manage function - could be expanded later
+        this.manageGroup(groupId);
+    },
+
+    // Edit group
+    editGroup: function(groupId) {
+        console.log('Editing group:', groupId);
+        // For now, redirect to manage function - could be expanded later with edit modal
+        this.manageGroup(groupId);
+    },
+
+    // Manage group members
+    manageMembers: function(groupId) {
+        console.log('Managing members for group:', groupId);
+        // First open the group management modal, then open members modal
+        this.manageGroup(groupId).then(() => {
+            // Small delay to let the modal open first
+            setTimeout(() => {
+                this.loadGroupMembers();
+            }, 500);
+        }).catch(error => {
+            console.error('Error managing members:', error);
+        });
+    },
+
+    // Change group status
+    changeStatus: async function(groupId, newStatus) {
+        console.log('Changing status for group:', groupId, 'to:', newStatus);
+        
+        const statusText = {
+            'active': 'Active',
+            'locked': 'Locked',
+            'upload_disabled': 'Upload Disabled',
+            'inactive': 'Inactive'
+        }[newStatus] || newStatus;
+        
+        if (!confirm(`Are you sure you want to change this group's status to "${statusText}"?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+            
+            if (response.ok) {
+                alert(`Group status changed to "${statusText}" successfully!`);
+                this.loadGroups(); // Refresh the groups list
+            } else {
+                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                alert(`Error changing group status: ${error.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error changing group status:', error);
+            alert(`Error changing group status: ${error.message}`);
+        }
+    },
+
+    // Delete group (from dropdown menu)
+    deleteGroup: async function(groupId) {
+        console.log('Deleting group:', groupId);
+        
+        if (!confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                alert('Group deleted successfully!');
+                this.loadGroups(); // Refresh the groups list
+            } else {
+                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                alert(`Error deleting group: ${error.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error deleting group:', error);
+            alert(`Error deleting group: ${error.message}`);
+        }
+    },
+
+    // View group activity
+    viewActivity: function(groupId) {
+        console.log('Viewing activity for group:', groupId);  
+        alert(`Activity view for ${groupId} would open here`);
+    },
+
+    // Show bulk action modal
+    showBulkActionModal: function() {
+        const selectedGroups = document.querySelectorAll('.group-checkbox:checked');
+        if (selectedGroups.length === 0) {
+            alert('Please select groups to perform bulk actions');
+            return;
+        }
+        
+        alert(`Bulk action modal for ${selectedGroups.length} selected groups would open here`);
+    },
+
+    // Refresh groups
+    refreshGroups: function() {
+        const tbody = document.getElementById('groupsTableBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4">Loading groups...</td></tr>';
+            GroupManager.loadGroups();
+        }
+    },
+
+    // Handle ownership change
+    handleOwnershipChange: function(event) {
+        const transferUserGroup = document.getElementById('transferUserGroup');
+        if (event.target.value === 'transfer') {
+            transferUserGroup.style.display = 'block';
+        } else {
+            transferUserGroup.style.display = 'none';
+        }
+    },
+
+    // Save group changes
+    saveGroupChanges: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        const status = document.getElementById('groupStatusSelect').value;
+        const ownership = document.getElementById('groupOwnershipSelect').value;
+        const newOwnerEmail = document.getElementById('groupNewOwnerEmail').value;
+        
+        console.log('Saving changes for group:', groupId, {
+            status,
+            ownership,
+            newOwnerEmail
+        });
+        
+        // Simulate API call
+        setTimeout(() => {
+            alert('Group settings saved successfully!');
+            bootstrap.Modal.getInstance(modal).hide();
+            // Refresh the groups table
+            GroupManager.refreshGroups();
+        }, 500);
+    },
+
+    // Delete documents
+    deleteDocuments: function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        if (confirm('Are you sure you want to delete ALL documents in this group? This action cannot be undone.')) {
+            console.log('Deleting documents for group:', groupId);
+            alert('All documents would be deleted from this group.');
+        }
+    },
+
+    // Delete entire group
+    deleteGroup: async function() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        if (!groupId) {
+            alert('No group selected for deletion');
+            return;
+        }
+        
+        if (confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
+            try {
+                const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('Group deleted successfully!');
+                    bootstrap.Modal.getInstance(modal).hide();
+                    this.loadGroups(); // Refresh the groups list
+                } else {
+                    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    alert(`Error deleting group: ${error.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error deleting group:', error);
+                alert(`Error deleting group: ${error.message}`);
+            }
+        }
+    },
+
+    // Load group members from API
+    async loadGroupMembers() {
+        const modal = document.getElementById('groupManagementModal');
+        const groupId = modal.getAttribute('data-group-id');
+        
+        try {
+            // TODO: Replace with actual API call to fetch group members
+            // const response = await fetch(`/api/admin/groups/${groupId}/members`);
+            // const data = await response.json();
+            // const members = data.members || [];
+            
+            // Placeholder for API implementation
+            const members = [];
+            
+            const groupName = document.getElementById('modalGroupName').textContent;
+            
+            // Populate members modal
+            document.getElementById('membersGroupName').textContent = `${groupName} Members`;
+            
+            const tbody = document.getElementById('groupMembersTableBody');
+            tbody.innerHTML = members.map(member => `
+                <tr>
+                    <td>
+                        <div class="fw-bold">${member.name || 'Unknown User'}</div>
+                        <small class="text-muted">${member.email || 'No email'}</small>
+                    </td>
+                    <td>
+                        <span class="badge ${member.role === 'Owner' ? 'bg-primary' : member.role === 'Admin' ? 'bg-info' : 'bg-secondary'}">${member.role || 'Member'}</span>
+                    </td>
+                    <td>${member.joined || 'Unknown'}</td>
+                    <td>${member.lastActive || 'Never'}</td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-sm btn-outline-primary" title="Change Role">
+                                <i class="bi bi-person-gear"></i>
+                            </button>
+                            ${member.role !== 'Owner' ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Remove Member">
+                                <i class="bi bi-person-dash"></i>
+                            </button>` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+            
+        } catch (error) {
+            console.error('Error loading group members:', error);
+            const tbody = document.getElementById('groupMembersTableBody');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center py-4">
+                        <div class="text-muted">Error loading members. Please try again.</div>
+                    </td>
+                </tr>
+            `;
+        }
+    },
+
+    // Alias for backward compatibility
+    refreshGroups: function() {
+        return this.loadGroups();
+    }
+};
+
+// Initialize table sorting when the page loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait a bit for the control center to load
+    setTimeout(() => {
+        window.tableSorter = new TableSorter('usersTable');
+        window.groupTableSorter = new GroupTableSorter('groupsTable');
+        GroupManager.init();
+    }, 1000);
+});
+</script>
+{% endblock %}
