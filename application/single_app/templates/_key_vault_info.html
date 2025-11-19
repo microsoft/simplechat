@@ -1,0 +1,245 @@
+<!-- Key Vault Configuration Information Modal -->
+<div class="modal fade" id="keyVaultInfoModal" tabindex="-1" aria-labelledby="keyVaultInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="keyVaultInfoModalLabel">
+                    <i class="bi bi-safe me-2"></i>
+                    Azure Key Vault Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>What is Azure Key Vault?</strong> Azure Key Vault is a cloud service that provides secure storage of secrets, keys, and certificates, helping you safeguard cryptographic keys and secrets used by cloud applications and services.
+                </div>
+
+                <!-- Current Configuration Display -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Current Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Key Vault Enabled:</strong>
+                                <span id="modal-kv-enabled" class="badge bg-secondary">{% if settings.enable_key_vault_secret_storage %}Yes{% else %}No{% endif %}</span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Key Vault URL:</strong>
+                                <code id="modal-kv-url">{{ settings.key_vault_name }}</code>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Identity to Access:</strong><br>
+                                <code id="modal-kv-identity">{% if settings.key_vault_identity == "" %}System-Assigned{% else %}{{ settings.key_vault_identity }}{% endif %}</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="key-vault-performance" class="alert alert-info mt-2">
+                    <strong>ℹ️ Note:</strong> Using Key Vault may introduce latency to chat experience when retrieving secrets.
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Our testing indicates the average latency is 50-150ms per secret."></i>
+                </div>
+                <!-- Azure AD Configuration -->
+                <div class="card mb-4 d-none">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-microsoft me-2"></i>Azure AD App Registration</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">You need to update your Azure AD App Registration with the Key Vault URLs:</p>
+                        
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Redirect URIs to Add:</strong></label>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text">OAuth2</span>
+                                <input type="text" class="form-control" id="copy-oauth-uri" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-oauth-uri')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text">Auth Callback</span>
+                                <input type="text" class="form-control" id="copy-auth-callback" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-auth-callback')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Logout URL to Add:</strong></label>
+                            <div class="input-group">
+                                <span class="input-group-text">Logout</span>
+                                <input type="text" class="form-control" id="copy-logout-uri" readonly value="">
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-logout-uri')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <strong>Important:</strong> Make sure to add these URLs to your Azure AD App Registration in the Azure Portal under "Authentication" → "Redirect URIs" and "Front-channel logout URL".
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Vault Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-globe me-2"></i>Azure Key Vault Configuration</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <h6>1. Set Permissions for the Identity</h6>
+                            <p class="small mb-2">In your Key Vault configuration, ensure the identity has the necessary permissions to access the Key Vault:</p>
+                            <p class="small mb-2">The minimum required permissions are:</p>
+                            <div class="row mb-3">
+                                <div class="col-md-6">Legacy Access Policies:
+                                    <ul>
+                                        <li>Secrets
+                                            <ul>
+                                                <li>Get</li>
+                                                <li>Set</li>
+                                            </ul>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div class="col-md-6">RBAC:
+                                    <ul>
+                                        <li>Built-in Role
+                                            <ul>
+                                                <li>Key Vault Secret Officer</li>
+                                            </ul>
+                                        </li>
+                                        <li>Custom Role
+                                            <ul>
+                                                <li>Actions
+                                                    <ul>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/write</li>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/read</li>
+                                                    </ul>
+                                                </li>
+                                            </ul>
+                                            <ul>
+                                                <li>Data Actions
+                                                    <ul>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/getSecret/action</li>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/readMetadata/action</li>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/setSecret/action</li>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/update/action</li>
+                                                        <li>Microsoft.KeyVault/vaults/secrets/delete</li>
+                                                    </ul>
+                                                </li>
+                                            </ul>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="alert alert-warning">
+                                        <strong>Important:</strong> Go to your Key Vault → Access policies → Add the identity with the required permissions
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="alert alert-warning">
+                                        <strong>Important:</strong> Go to your Key Vault → Access Control (IAM) → Add (dropdown) → Select "Add role assignment" → Add the identity with the required role.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <h6>2. Configure Key Vault in the Application</h6>
+                            <p class="small mb-2">In your application settings, ensure the following configurations are set:</p>
+                            <ul>
+                                <li><strong>Enable Key Vault for Agent and Action Secrets:</strong> Set to <code>true</code></li>
+                                <li><strong>Key Vault Name:</strong> Provide the name of your Key Vault (e.g., <code>your-key-vault-name</code>) The vault is assumed to be in the same cloud as the application and currently does not support cross-cloud configurations. This is determined by your AZURE_ENVIRONMENT app service configuration setting.</li>
+                                <li><strong>Key Vault Identity:</strong> Specify the identity used to access the Key Vault (System-Assigned or User-Assigned)</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Troubleshooting -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Troubleshooting</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="accordion" id="troubleshootingAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot1">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse1">
+                                        401 Errors (Authentication Failed)
+                                    </button>
+                                </h2>
+                                <div id="collapse1" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>Verify access method for key vault: RBAC or Legacy Access Policies</li>
+                                            <li>Verify the identity in the Key Vault Id (app service system-assigned if blank) has permissions</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="troubleshoot2">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse2">
+                                        403 Errors (Forbidden or Authorization Failed)
+                                    </button>
+                                </h2>
+                                <div id="collapse2" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
+                                    <div class="accordion-body">
+                                        <ul>
+                                            <li>403 typically means there is a networking issue accessing key vault</li>
+                                            <li>Verify if there are any firewall or virtual network restrictions on the Key Vault</li>
+                                            <li>If using private endpoints, ensure the app service has access to the private endpoint, that it is VNet integrated, and that the DNS resolves correctly (use the terminal in SCM)</li>
+                                            <li>Check that the correct network rules are applied to the Key Vault</li>
+                                            <li>Verify the UDRs (User Defined Routes) are correctly configured between the app service and the Key Vault</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="https://learn.microsoft.com/en-us/azure/key-vault/general/troubleshooting-access-issues" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-book me-2"></i>View Full Documentation
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.value || element.textContent;
+    
+    navigator.clipboard.writeText(text).then(function() {
+        // Show success feedback
+        const button = element.nextElementSibling;
+        if (button) {
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-check"></i>';
+            button.classList.add('btn-success');
+            button.classList.remove('btn-outline-secondary');
+            
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-outline-secondary');
+            }, 2000);
+        }
+    }).catch(function(err) {
+        console.error('Could not copy text: ', err);
+    });
+}
+</script>

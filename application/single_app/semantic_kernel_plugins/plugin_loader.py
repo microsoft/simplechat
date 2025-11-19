@@ -2,6 +2,7 @@ import os
 import importlib.util
 import inspect
 import logging
+from functions_appinsights import log_event
 from typing import Dict, Type, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
 
@@ -30,7 +31,7 @@ def discover_plugins() -> Dict[str, Type[BasePlugin]]:
                         
             except Exception as e:
                 # Log the error but continue with other plugins
-                logging.warning(f"Failed to load plugin module {module_name}: {str(e)}")
+                log_event(f"Failed to load plugin module {module_name}: {str(e)}")
                 continue
                 
     return plugins

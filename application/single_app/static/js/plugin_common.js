@@ -291,30 +291,9 @@ export async function showPluginModal({
   }
 }
 
-// Validate plugin manifest with server-side validation
+// Validate plugin manifest using server-side validation only
 export async function validatePluginManifest(pluginManifest) {
-  try {
-    // Try client-side validation first if available
-    if (!window.validatePlugin) {
-      try {
-        window.validatePlugin = (await import('/static/js/validatePlugin.mjs')).default;
-      } catch (importError) {
-        console.warn('Client-side validation module failed to load, falling back to server-side validation:', importError);
-        // Fallback to server-side validation
-        return await validatePluginManifestServerSide(pluginManifest);
-      }
-    }
-    
-    const result = window.validatePlugin(pluginManifest);
-    if (result === true) {
-      return { valid: true, errors: [] };
-    } else {
-      return { valid: false, errors: result.errors || ['Validation failed'] };
-    }
-  } catch (error) {
-    console.warn('Client-side validation failed, falling back to server-side validation:', error);
-    return await validatePluginManifestServerSide(pluginManifest);
-  }
+  return await validatePluginManifestServerSide(pluginManifest);
 }
 
 // Server-side validation fallback

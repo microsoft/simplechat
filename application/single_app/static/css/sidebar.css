@@ -45,6 +45,18 @@ body.has-classification-banner #sidebar-nav {
   height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
 }
 
+/* Chats top-nav layout: align the fixed sidebar just below the navbar */
+nav.navbar.fixed-top + #sidebar-nav {
+  top: 66px !important;
+  height: calc(100vh - 66px);
+}
+
+/* Account for classification banner when present */
+body.has-classification-banner nav.navbar + #sidebar-nav {
+  top: 98px !important;
+  height: calc(100vh - 98px);
+}
+
 /* Floating expand button positioning when classification banner is present */
 body.has-classification-banner #floating-expand-btn {
   top: calc(0.5rem + 40px) !important; /* Start below the classification banner */

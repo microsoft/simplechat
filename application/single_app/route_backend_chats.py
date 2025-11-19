@@ -365,7 +365,11 @@ def register_route_backend_chats(app):
                         user_metadata['agent_selection'] = {
                             'selected_agent': selected_agent_info.get('name'),
                             'agent_display_name': selected_agent_info.get('display_name'),
-                            'is_global': selected_agent_info.get('is_global', False)
+                            'is_global': selected_agent_info.get('is_global', False),
+                            'is_group': selected_agent_info.get('is_group', False),
+                            'group_id': selected_agent_info.get('group_id'),
+                            'group_name': selected_agent_info.get('group_name'),
+                            'agent_id': selected_agent_info.get('id')
                         }
                 except Exception as e:
                     print(f"Error retrieving agent details: {e}")
@@ -386,7 +390,11 @@ def register_route_backend_chats(app):
                 user_metadata['agent_selection'] = {
                     'selected_agent': agent_info.get('name'),
                     'agent_display_name': agent_info.get('display_name'),
-                    'is_global': agent_info.get('is_global', False)
+                    'is_global': agent_info.get('is_global', False),
+                    'is_group': agent_info.get('is_group', False),
+                    'group_id': agent_info.get('group_id'),
+                    'group_name': agent_info.get('group_name'),
+                    'agent_id': agent_info.get('id')
                 }
             
             # Model selection information
@@ -1345,6 +1353,7 @@ def register_route_backend_chats(app):
             per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+            enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
             redis_client = None
             # --- Semantic Kernel state management (per-user mode) ---
             if enable_semantic_kernel and per_user_semantic_kernel:
@@ -1796,6 +1805,7 @@ def register_route_backend_chats(app):
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
+                    selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item
                 )

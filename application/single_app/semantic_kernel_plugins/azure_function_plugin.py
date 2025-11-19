@@ -7,7 +7,7 @@ from azure.identity import DefaultAzureCredential
 
 class AzureFunctionPlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
-        self.manifest = manifest
+        super().__init__(manifest)
         self.endpoint = manifest.get('endpoint')
         self.key = manifest.get('auth', {}).get('key')
         self.auth_type = manifest.get('auth', {}).get('type', 'key')
@@ -62,7 +62,7 @@ class AzureFunctionPlugin(BasePlugin):
         url = self.endpoint
         headers = {}
         if self.auth_type == 'identity':
-            token = self.credential.get_token("https://management.azure.com/.default").token
+            token = self.credential.get_token("{resource_manager}/.default").token
             headers["Authorization"] = f"Bearer {token}"
         elif self.auth_type == 'key':
             if '?' in url:
@@ -79,7 +79,7 @@ class AzureFunctionPlugin(BasePlugin):
         url = self.endpoint
         headers = {}
         if self.auth_type == 'identity':
-            token = self.credential.get_token("https://management.azure.com/.default").token
+            token = self.credential.get_token("{resource_manager}/.default").token
             headers["Authorization"] = f"Bearer {token}"
         elif self.auth_type == 'key':
             if '?' in url:

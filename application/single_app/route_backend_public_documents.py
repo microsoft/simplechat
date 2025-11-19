@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -95,6 +96,11 @@ def register_route_backend_public_documents(app):
                 if tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
 
         status = 200 if processed and not errors else (207 if processed else 400)
+        
+        # Invalidate public workspace search cache since documents were added
+        if processed:
+            invalidate_public_workspace_search_cache(active_ws)
+        
         return jsonify({
             'message': f'Processed {len(processed)} file(s)',
             'document_ids': [d['id'] for d in processed],
@@ -300,6 +306,10 @@ def register_route_backend_public_documents(app):
         try:
             delete_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
             delete_document_chunks(document_id=doc_id, public_workspace_id=active_ws)
+            
+            # Invalidate public workspace search cache since document was deleted
+            invalidate_public_workspace_search_cache(active_ws)
+            
             return jsonify({'message':'Deleted'}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500

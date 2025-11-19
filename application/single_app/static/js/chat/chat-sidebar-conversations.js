@@ -50,6 +50,19 @@ function createSidebarConversationItem(convo) {
   const convoItem = document.createElement("div");
   convoItem.classList.add("sidebar-conversation-item");
   convoItem.setAttribute("data-conversation-id", convo.id);
+  if (convo.chat_type) {
+    convoItem.setAttribute("data-chat-type", convo.chat_type);
+  }
+  let groupName = null;
+  if (Array.isArray(convo.context)) {
+    const primaryGroupContext = convo.context.find(ctx => ctx.type === "primary" && ctx.scope === "group");
+    if (primaryGroupContext) {
+      groupName = primaryGroupContext.name || null;
+    }
+  }
+  if (groupName) {
+    convoItem.setAttribute("data-group-name", groupName);
+  }
   
   convoItem.innerHTML = `
     <div class="d-flex justify-content-between align-items-center">
@@ -67,6 +80,32 @@ function createSidebarConversationItem(convo) {
       </div>
     </div>
   `;
+
+  const headerRow = convoItem.querySelector(".d-flex.justify-content-between.align-items-center");
+  const dropdownElement = headerRow ? headerRow.querySelector('.conversation-dropdown') : null;
+  const originalTitleElement = headerRow ? headerRow.querySelector('.sidebar-conversation-title') : null;
+
+  if (headerRow && dropdownElement && originalTitleElement) {
+    const titleWrapper = document.createElement('div');
+    titleWrapper.classList.add('sidebar-conversation-header', 'd-flex', 'align-items-center', 'flex-grow-1', 'overflow-hidden', 'gap-2');
+
+    // Ensure the title can truncate correctly within the new wrapper
+    originalTitleElement.classList.add('flex-grow-1', 'text-truncate');
+    originalTitleElement.style.minWidth = '0';
+
+    titleWrapper.appendChild(originalTitleElement);
+
+    const isGroupConversation = (convo.chat_type && convo.chat_type.startsWith('group')) || groupName;
+    if (isGroupConversation) {
+      const badge = document.createElement('span');
+      badge.classList.add('badge', 'bg-info', 'sidebar-conversation-group-badge');
+      badge.textContent = 'group';
+      badge.title = groupName ? `Group conversation: ${groupName}` : 'Group conversation';
+      titleWrapper.appendChild(badge);
+    }
+
+    headerRow.insertBefore(titleWrapper, dropdownElement);
+  }
   
   // Add double-click editing to title
   const titleElement = convoItem.querySelector('.sidebar-conversation-title');

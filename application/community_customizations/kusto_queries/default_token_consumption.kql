@@ -1,0 +1,30 @@
+let base =
+    AppTraces
+    | where Message startswith "[tokens]"
+    | extend 
+        user_id = tostring(Properties.user_id),
+        active_group_id = tostring(Properties.active_group_id),
+        doc_scope = tostring(Properties.doc_scope),
+        total_tokens = toint(Properties.total_tokens),
+        prompt_tokens = toint(Properties.prompt_tokens),
+        completion_tokens = toint(Properties.completion_tokens);
+let per_group =
+    base
+    | summarize
+        sum_total_tokens = sum(total_tokens),
+        sum_prompt_tokens = sum(prompt_tokens),
+        sum_completion_tokens = sum(completion_tokens)
+        by user_id, active_group_id, doc_scope
+    | extend total = sum_total_tokens;
+per_group
+| union (
+    per_group
+    | summarize
+        user_id = "ALL_USERS",
+        active_group_id = "ALL_GROUPS",
+        doc_scope = "ALL_DOCS",
+        sum_total_tokens = sum(sum_total_tokens),
+        sum_prompt_tokens = sum(sum_prompt_tokens),
+        sum_completion_tokens = sum(sum_completion_tokens),
+        total = sum(total)
+)

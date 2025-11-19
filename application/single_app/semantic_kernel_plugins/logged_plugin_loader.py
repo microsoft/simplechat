@@ -13,13 +13,14 @@ from semantic_kernel import Kernel
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.base_plugin import BasePlugin
-from semantic_kernel_plugins.plugin_invocation_logger import (
-    get_plugin_logger, 
-    plugin_function_logger, 
-    auto_wrap_plugin_functions
-)
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, plugin_function_logger, auto_wrap_plugin_functions
+from semantic_kernel_plugins.plugin_loader import discover_plugins
 from functions_appinsights import log_event
-
+from functions_debug import debug_print
+from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
+from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
+from app_settings_cache import get_settings_cache
 
 class LoggedPluginLoader:
     """Enhanced plugin loader that automatically adds invocation logging."""
@@ -48,17 +49,21 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Starting to load plugin: {plugin_name} (type: {plugin_type})")
         
         if not plugin_name:
-            self.logger.error("Plugin manifest missing required 'name' field")
+            log_event(f"[Logged Plugin Loader] Plugin manifest missing required 'name' field", level=logging.ERROR)
             return False
         
         try:
             # Load the plugin instance
+            debug_print(f"[Logged Plugin Loader] Creating plugin instance for {plugin_name} of type {plugin_type}")
             plugin_instance = self._create_plugin_instance(manifest)
+            debug_print(f"[Logged Plugin Loader] Created plugin instance: {plugin_instance}")
             if not plugin_instance:
+                debug_print(f"[Logged Plugin Loader] Failed to create plugin instance for {plugin_name} of type {plugin_type}")
                 return False
             
             # Enable logging if the plugin supports it
             if hasattr(plugin_instance, 'enable_invocation_logging'):
+                debug_print(f"[Logged Plugin Loader] Enabling invocation logging for {plugin_name}")
                 plugin_instance.enable_invocation_logging(True)
             
             # Auto-wrap plugin functions with logging
@@ -76,7 +81,7 @@ class LoggedPluginLoader:
             self._register_plugin_with_kernel(plugin_instance, plugin_name)
             
             log_event(
-                f"[Plugin Loader] Successfully loaded plugin: {plugin_name}",
+                f"[Logged Plugin Loader] Successfully loaded plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -90,7 +95,7 @@ class LoggedPluginLoader:
             
         except Exception as e:
             log_event(
-                f"[Plugin Loader] Failed to load plugin: {plugin_name}",
+                f"[Logged Plugin Loader] Failed to load plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -112,13 +117,40 @@ class LoggedPluginLoader:
             return self._create_openapi_plugin(manifest)
         elif plugin_type == 'python':
             return self._create_python_plugin(manifest)
-        elif plugin_type == 'custom':
-            return self._create_custom_plugin(manifest)
-        elif plugin_type in ['sql_schema', 'sql_query']:
-            return self._create_sql_plugin(manifest)
+        #elif plugin_type in ['sql_schema', 'sql_query']:
+        #    return self._create_sql_plugin(manifest)
         else:
-            self.logger.warning(f"Unknown plugin type: {plugin_type} for plugin: {plugin_name}")
-            return None
+            try:
+                debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
+                discovered_plugins = discover_plugins()
+                plugin_type = manifest.get('type')
+                name = manifest.get('name')
+                description = manifest.get('description', '')
+                # Normalize for matching
+                def normalize(s):
+                    return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
+                debug_print(f"[Logged Plugin Loader] Normalizing plugin type for matching: {plugin_type}")
+                normalized_type = normalize(plugin_type)
+                debug_print(f"[Logged Plugin Loader] Normalized plugin type: {normalized_type}")
+                matched_class = None
+                for class_name, cls in discovered_plugins.items():
+                    normalized_class = normalize(class_name)
+                    print("[Logged Plugin Loader] Checking plugin class:", class_name, "normalized:", normalized_class)
+                    if normalized_type == normalized_class or normalized_type in normalized_class:
+                        matched_class = cls
+                        debug_print(f"[Logged Plugin Loader] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
+                        break
+                if matched_class:
+                    try:
+                        plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
+                        log_event(f"[Logged Plugin Loader] Instanced plugin: {name} (type: {plugin_type})", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                        return plugin
+                    except Exception as e:
+                        log_event(f"[Logged Plugin Loader] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                else:
+                    log_event(f"[Logged Plugin Loader] Unknown plugin type: {plugin_type} for plugin '{name}'", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+            except Exception as e:
+                log_event(f"[Logged Plugin Loader] Error discovering plugin types: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
     
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
@@ -126,9 +158,6 @@ class LoggedPluginLoader:
         log_event(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
         
         try:
-            from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
-            log_event(f"[Logged Plugin Loader] Successfully imported OpenApiPluginFactory", level=logging.DEBUG)
-            
             log_event(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory", 
                      extra={"plugin_name": plugin_name, "manifest": manifest}, 
                      level=logging.DEBUG)
@@ -176,22 +205,14 @@ class LoggedPluginLoader:
             self.logger.error(f"Failed to create Python plugin {class_name} from {module_name}: {e}")
             return None
     
-    def _create_custom_plugin(self, manifest: Dict[str, Any]):
-        """Create a custom plugin instance."""
-        # This is where you'd handle custom plugin types specific to your application
-        self.logger.warning(f"Custom plugin type not yet implemented: {manifest}")
-        return None
-    
     def _create_sql_plugin(self, manifest: Dict[str, Any]):
         """Create a SQL plugin instance."""
         plugin_type = manifest.get('type')
         
         try:
             if plugin_type == 'sql_schema':
-                from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
                 return SQLSchemaPlugin(manifest)
             elif plugin_type == 'sql_query':
-                from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
                 return SQLQueryPlugin(manifest)
             else:
                 self.logger.error(f"Unknown SQL plugin type: {plugin_type}")
@@ -336,7 +357,7 @@ class LoggedPluginLoader:
         total_count = len(results)
         
         log_event(
-            f"[Plugin Loader] Loaded {successful_count}/{total_count} plugins",
+            f"[Logged Plugin Loader] Loaded {successful_count}/{total_count} plugins",
             extra={
                 "successful_plugins": [name for name, success in results.items() if success],
                 "failed_plugins": [name for name, success in results.items() if not success],

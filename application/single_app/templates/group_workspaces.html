@@ -219,6 +219,38 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Group Prompts
       </button>
     </li>
+    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="group-agents-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-agents-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-agents-tab"
+        aria-selected="false"
+      >
+        Group Agents
+      </button>
+    </li>
+    {% endif %}
+    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="group-plugins-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-plugins-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-plugins-tab"
+        aria-selected="false"
+      >
+        Group Actions
+      </button>
+    </li>
+    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -560,6 +592,106 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </div>
     </div>
     <!-- End GROUP PROMPTS TAB -->
+
+    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+    <!-- ============= GROUP AGENTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-agents-tab"
+      role="tabpanel"
+      aria-labelledby="group-agents-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0 d-flex align-items-center gap-2">Group Agents</h5>
+          <button class="btn btn-success btn-sm" id="create-group-agent-btn">New Agent</button>
+        </div>
+        <div id="group-agents-permission-warning" class="alert alert-warning d-none">
+          You do not have permission to manage group agents.
+        </div>
+        <div class="mb-3">
+          <input
+            type="search"
+            class="form-control"
+            id="group-agents-search"
+            placeholder="Search group agents by name or description..."
+          />
+        </div>
+        <table class="table table-striped" id="group-agents-table">
+          <thead>
+            <tr>
+              <th>Display Name</th>
+              <th>Description</th>
+              <th style="width: 160px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="group-agents-table-body">
+            <tr class="table-loading-row">
+              <td colspan="3">
+                <div class="spinner-border spinner-border-sm me-2" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                Select a group to load agents.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="group-agents-error"></div>
+    </div>
+    <!-- End GROUP AGENTS TAB -->
+    {% endif %}
+
+    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+    <!-- ============= GROUP ACTIONS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-plugins-tab"
+      role="tabpanel"
+      aria-labelledby="group-plugins-tab-btn"
+    >
+      <div id="group-plugins-permission-warning" class="alert alert-warning d-none mt-3">
+        You do not have permission to manage group actions.
+      </div>
+      <div id="group-plugins-root" class="mt-3"></div>
+      <template id="group-plugins-table-template">
+        <div class="card p-3 my-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0 d-flex align-items-center gap-2">Group Actions</h5>
+            <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
+          </div>
+          <div class="mb-3">
+            <input
+              type="search"
+              class="form-control"
+              id="group-plugins-search"
+              placeholder="Search group actions by name or description..."
+            />
+          </div>
+          <table class="table table-striped" id="group-plugins-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th style="width: 140px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="group-plugins-table-body">
+              <tr class="table-loading-row">
+                <td colspan="3">
+                  <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Select a group to load actions.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+    <!-- End GROUP ACTIONS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
@@ -729,6 +861,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
+{% if settings.enable_semantic_kernel and (settings.allow_group_agents or settings.allow_group_plugins) %}
+<div>
+  {% include "_agent_modal.html" %}
+  {% include "_plugin_modal.html" %}
+</div>
+{% endif %}
+
 <!-- Group Share Document Modal -->
 <div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -838,6 +977,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </script>
 
 <script>
+  window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
   // --- Filter toggle button logic ---
   document.addEventListener("DOMContentLoaded", function() {
     // Group Documents tab
@@ -907,6 +1047,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let userGroups = [];
   let activeGroupId = null; // Crucial for group context
   let activeGroupName = ""; // Store name for display
+
+  function notifyGroupWorkspaceContext() {
+    window.groupWorkspaceContext = {
+      activeGroupId,
+      activeGroupName,
+      userRole: userRoleInActiveGroup
+    };
+    window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
+      detail: window.groupWorkspaceContext
+    }));
+  }
+
+  notifyGroupWorkspaceContext();
 
   // Document specific state
   let groupDocsCurrentPage = 1;
@@ -1729,6 +1882,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           if (uploadSection) uploadSection.style.display = "none";
           if (uploadHr) uploadHr.style.display = "none";
         }
+
+        notifyGroupWorkspaceContext();
       })
       .catch((err) => {
         console.error("Error fetching groups", err);
@@ -1739,6 +1894,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
         dropdownButton.querySelector(".selected-group-text").textContent = "Error loading groups";
         dropdownItems.innerHTML = '<div class="dropdown-item disabled">Error loading groups</div>';
+        notifyGroupWorkspaceContext();
       })
       .finally(() => {
         // Re-enable controls after fetch completes
@@ -1816,6 +1972,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
       fetchGroupDocuments();
     } else if (targetId === "#prompts-tab") {
       fetchGroupPrompts();
+    } else if (targetId === "#group-agents-tab") {
+      if (window.fetchGroupAgents) {
+        window.fetchGroupAgents();
+      }
+    } else if (targetId === "#group-plugins-tab") {
+      if (window.fetchGroupPlugins) {
+        window.fetchGroupPlugins();
+      }
     }
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
@@ -1845,6 +2009,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (uploadSection)
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
+
+    notifyGroupWorkspaceContext();
   }
 
   /* ===================== GROUP DOCUMENTS ===================== */
@@ -3195,5 +3361,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.fetchGroupPrompts = fetchGroupPrompts;
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
 </script>
+{% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+<script type="module" src="/static/js/agents_common.js"></script>
+<script type="module" src="/static/js/workspace/group_agents.js"></script>
+{% endif %}
+{% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+<script type="module" src="/static/js/plugin_modal_stepper.js"></script>
+<script type="module" src="/static/js/workspace/group_plugins.js"></script>
+{% endif %}
 {% endblock %}
 

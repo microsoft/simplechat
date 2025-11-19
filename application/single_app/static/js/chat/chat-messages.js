@@ -993,11 +993,15 @@ export function actuallySendMessage(finalMessageToSend) {
   const agentSelect = document.getElementById("agent-select");
   if (agentSelectContainer && agentSelectContainer.style.display !== "none" && agentSelect) {
     const selectedAgentOption = agentSelect.options[agentSelect.selectedIndex];
-    if (selectedAgentOption && selectedAgentOption.value) {
+    if (selectedAgentOption) {
       agentInfo = {
-        name: selectedAgentOption.value,
-        display_name: selectedAgentOption.textContent,
-        is_global: selectedAgentOption.textContent.includes("(Global)")
+        id: selectedAgentOption.dataset.agentId || null,
+        name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
+        display_name: selectedAgentOption.dataset.displayName || selectedAgentOption.textContent,
+        is_global: selectedAgentOption.dataset.isGlobal === 'true',
+        is_group: selectedAgentOption.dataset.isGroup === 'true',
+        group_id: selectedAgentOption.dataset.groupId || null,
+        group_name: selectedAgentOption.dataset.groupName || null
       };
     }
   }

@@ -76,9 +76,6 @@ class DatabricksTablePlugin(BasePlugin):
             ]
         }
 
-    def get_functions(self):
-        return ["query_table"]
-
     @kernel_function(
         description="""
             Query the Databricks table using parameterized SQL. Column names are listed in self.columns.

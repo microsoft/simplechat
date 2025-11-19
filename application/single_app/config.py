@@ -88,7 +88,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.230.089"
+VERSION = "0.233.166"
+
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -134,6 +135,7 @@ CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
 
 
 # Azure AD Configuration
@@ -156,9 +158,6 @@ elif AZURE_ENVIRONMENT == "usgovernment":
 else:
     AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
-# Commercial Azure Video Indexer Endpoint
-video_indexer_endpoint = "https://api.videoindexer.ai"
-
 WORD_CHUNK_SIZE = 400
 
 if AZURE_ENVIRONMENT == "usgovernment":
@@ -169,6 +168,7 @@ if AZURE_ENVIRONMENT == "usgovernment":
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
+    KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
 
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
@@ -176,6 +176,7 @@ elif AZURE_ENVIRONMENT == "custom":
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
@@ -183,6 +184,28 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
+    KEY_VAULT_DOMAIN = ".vault.azure.net"
+
+def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
+    """
+    Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
+    
+    Args:
+        redis_hostname (str): The hostname of the Redis cache instance
+        
+    Returns:
+        str: The complete endpoint URL for Redis cache infrastructure token acquisition
+    """
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://{redis_hostname}.cacheinfra.azure.us:10225/appid"
+    elif AZURE_ENVIRONMENT == "custom" and CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE:
+        # For custom environments, allow override via environment variable
+        # Format: https://{hostname}.custom-cache-domain.com:10225/appid
+        return CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE.format(hostname=redis_hostname)
+    else:
+        # Default to Azure Public Cloud
+        return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
+    
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
@@ -358,10 +381,11 @@ cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/scope_id")
 )
 
-cosmos_activity_logs_container_name = "activity_logs"
-cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_activity_logs_container_name,
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
     partition_key=PartitionKey(path="/user_id")
+    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 def ensure_custom_logo_file_exists(app, settings):

@@ -144,13 +144,6 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             }
         )
 
-        log_event("[Logging Agent Request] Agent invoke started", 
-                 extra={
-                     "agent": self.name,
-                     "prompt_preview": [m.content[:30] for m in args[0]] if args else None
-                 }, 
-                 level=logging.DEBUG)
-
         # Store user question context for better tool detection
         if args and args[0] and hasattr(args[0][-1], 'content'):
             self._user_question = args[0][-1].content
@@ -163,12 +156,14 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             initial_message_count = len(args[0]) if args and args[0] else 0
             result = super().invoke(*args, **kwargs)
 
-            log_event("[Logging Agent Request] Result received", 
-                     extra={
-                         "agent": self.name,
-                         "result_type": type(result).__name__
-                     }, 
-                     level=logging.DEBUG)
+            log_event(
+                "[Logging Agent Request] Result received", 
+                extra={
+                    "agent": self.name,
+                    "result_type": type(result).__name__
+                },
+                level=logging.DEBUG
+            )
             
             if hasattr(result, "__aiter__"):
                 # Streaming/async generator response
@@ -180,13 +175,15 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 # Regular coroutine response
                 response = await result
 
-            log_event("[Logging Agent Request] Response received", 
-                     extra={
-                         "agent": self.name,
-                         "response_type": type(response).__name__,
-                         "response_preview": str(response)[:100] if response else None
-                     }, 
-                     level=logging.DEBUG)
+            log_event(
+                "[Logging Agent Request] Response received",
+                extra={
+                    "agent": self.name,
+                    "response_type": type(response).__name__,
+                    "response_preview": str(response)[:100] if response else None
+                },
+                level=logging.DEBUG
+            )
 
             # Store the response for analysis
             self._last_response = response
