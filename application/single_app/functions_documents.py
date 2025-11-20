@@ -373,19 +373,33 @@ def process_video_document(
     
     debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
 
-    # Validate required settings
+    # Validate required settings based on authentication type
+    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
+    debug_print(f"[VIDEO INDEXER] Using authentication type: {auth_type}")
+    
+    # Common required settings for both authentication types
     required_settings = {
         "video_indexer_endpoint": vi_ep,
         "video_indexer_location": vi_loc,
-        "video_indexer_account_id": vi_acc,
-        "video_indexer_resource_group": settings.get("video_indexer_resource_group"),
-        "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
-        "video_indexer_account_name": settings.get("video_indexer_account_name")
+        "video_indexer_account_id": vi_acc
     }
+    
+    if auth_type == "key":
+        # For API key authentication, only need API key in addition to common settings
+        required_settings["video_indexer_api_key"] = settings.get("video_indexer_api_key")
+        debug_print(f"[VIDEO INDEXER] API key authentication requires: endpoint, location, account_id, api_key")
+    else:
+        # For managed identity authentication, need ARM-related settings
+        required_settings.update({
+            "video_indexer_resource_group": settings.get("video_indexer_resource_group"),
+            "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
+            "video_indexer_account_name": settings.get("video_indexer_account_name")
+        })
+        debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
     
     missing_settings = [key for key, value in required_settings.items() if not value]
     if missing_settings:
-        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings: {missing_settings}")
+        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings for {auth_type} authentication: {missing_settings}")
         update_callback(status=f"VIDEO: missing settings - {', '.join(missing_settings)}")
         return 0
 
@@ -405,14 +419,27 @@ def process_video_document(
     # 2) Upload video to Indexer
     try:
         url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos"
-        params = {"accessToken": token, "name": original_filename}
+        
+        auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
+        debug_print(f"[VIDEO INDEXER] Using authentication type: {auth_type}")
+        
+        if auth_type == "key":
+            # Use API key in header
+            headers = {'Ocp-Apim-Subscription-Key': token}
+            params = {"name": original_filename}
+            debug_print(f"[VIDEO INDEXER] Using API key authentication with headers")
+        else:
+            # Use access token in URL parameter
+            headers = {}
+            params = {"accessToken": token, "name": original_filename}
+            debug_print(f"[VIDEO INDEXER] Using managed identity authentication with access token")
         
         debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
         debug_print(f"[VIDEO INDEXER] Upload params: {params}")
         debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
         
         with open(temp_file_path, "rb") as f:
-            resp = requests.post(url, params=params, files={"file": f})
+            resp = requests.post(url, params=params, headers=headers, files={"file": f})
         
         debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
         
@@ -461,10 +488,24 @@ def process_video_document(
         return 0
 
     # 3) Poll until ready
-    index_url = (
-        f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
-        f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
-    )
+    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
+    
+    if auth_type == "key":
+        # Use API key in header for polling
+        index_url = (
+            f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
+            f"?includeInsights=Transcript&includeStreamingUrls=false"
+        )
+        poll_headers = {'Ocp-Apim-Subscription-Key': token}
+        debug_print(f"[VIDEO INDEXER] Using API key authentication for polling")
+    else:
+        # Use access token in URL parameter for polling
+        index_url = (
+            f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
+            f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
+        )
+        poll_headers = {}
+        debug_print(f"[VIDEO INDEXER] Using managed identity authentication for polling")
     
     debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
     debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
@@ -477,7 +518,7 @@ def process_video_document(
         debug_print(f"[VIDEO INDEXER] Polling attempt {poll_count}/{max_polls}")
         
         try:
-            r = requests.get(index_url)
+            r = requests.get(index_url, headers=poll_headers)
             debug_print(f"[VIDEO INDEXER] Poll response status: {r.status_code}")
             
             if r.status_code in (401, 404):
@@ -1650,10 +1691,23 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                     debug_print(f"[VIDEO INDEXER DELETE] Video ID from document metadata: {video_id}")
                     
                     if video_id:
-                        delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
+                        auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
+                        debug_print(f"[VIDEO INDEXER DELETE] Using authentication type: {auth_type}")
+                        
+                        if auth_type == "key":
+                            # Use API key in header
+                            delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}"
+                            delete_headers = {'Ocp-Apim-Subscription-Key': token}
+                            debug_print(f"[VIDEO INDEXER DELETE] Using API key authentication")
+                        else:
+                            # Use access token in URL parameter
+                            delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
+                            delete_headers = {}
+                            debug_print(f"[VIDEO INDEXER DELETE] Using managed identity authentication")
+                            
                         debug_print(f"[VIDEO INDEXER DELETE] Delete URL: {delete_url}")
                         
-                        resp = requests.delete(delete_url, timeout=60)
+                        resp = requests.delete(delete_url, headers=delete_headers, timeout=60)
                         debug_print(f"[VIDEO INDEXER DELETE] Delete response status: {resp.status_code}")
                         
                         if resp.status_code != 200:

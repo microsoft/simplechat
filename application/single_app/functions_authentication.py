@@ -245,15 +245,49 @@ def get_valid_access_token_for_plugins(scopes=None):
     
 def get_video_indexer_account_token(settings, video_id=None):
     """
-    For ARM-based VideoIndexer accounts:
+    Get Video Indexer access token using either API key or managed identity.
+    Supports both authentication methods based on settings configuration.
+    """
+    from functions_debug import debug_print
+    
+    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using {auth_type} for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    
+    if auth_type == "key":
+        return get_video_indexer_api_key_token(settings, video_id)
+    else:
+        return get_video_indexer_managed_identity_token(settings, video_id)
+
+def get_video_indexer_api_key_token(settings, video_id=None):
+    """
+    Get Video Indexer access token using API key authentication.
+    This method directly returns the API key as the access token.
+    """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO INDEXER AUTH] Using API key authentication")
+    
+    api_key = settings.get("video_indexer_api_key", "")
+    if not api_key:
+        debug_print(f"[VIDEO INDEXER AUTH] ERROR: No API key provided")
+        raise ValueError("Video Indexer API key is required for key authentication")
+    
+    debug_print(f"[VIDEO INDEXER AUTH] API key authentication successful (key length: {len(api_key)})")
+    print("[VIDEO] API key authentication completed", flush=True)
+    
+    return api_key
+
+def get_video_indexer_managed_identity_token(settings, video_id=None):
+    """
+    For ARM-based VideoIndexer accounts using managed identity:
     1) Acquire an ARM token with DefaultAzureCredential
     2) POST to the ARM generateAccessToken endpoint
     3) Return the account-level accessToken
     """
     from functions_debug import debug_print
     
-    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
-    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    debug_print(f"[VIDEO INDEXER AUTH] Using managed identity authentication")
     
     # 1) ARM token
     if AZURE_ENVIRONMENT == "usgovernment":

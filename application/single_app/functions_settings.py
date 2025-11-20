@@ -216,6 +216,7 @@ def get_settings():
         'video_indexer_location': '',
         'video_indexer_account_id': '',
         'video_indexer_api_key': '',
+        'video_indexer_authentication_type': 'managed_identity',
         'video_indexer_resource_group': '',
         'video_indexer_subscription_id': '',
         'video_indexer_account_name': '',
