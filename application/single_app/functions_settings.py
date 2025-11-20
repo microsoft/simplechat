@@ -136,6 +136,9 @@ def get_settings():
 
         # Document Classification
         'enable_document_classification': False,
+        'classification_banner_text': "Classification",
+        'classification_banner_text_color': "#ffffff",
+        'classification_banner_color': "#ffc107",
         'document_classification_categories': [
             {"label": "None", "color": "#808080"},
             {"label": "N/A", "color": "#808080"},
