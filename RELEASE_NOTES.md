@@ -12,6 +12,13 @@
     *   **User Experience**: Admins can now access the Plugins modal regardless of navigation style.
     *   (Ref: `admin_plugins.js`, DOM existence checks)
 
+*   **Banner Text Color Accessibility Enhancement**
+    *   Added configurable text color option for the top banner to ensure proper contrast and readability alongside the existing banner background color setting.
+    *   **Accessibility Issue**: Banner text was previously locked to a default color, which could result in poor contrast ratios when admins selected certain background colors, violating WCAG accessibility guidelines.
+    *   **Solution**: Introduced `banner_text_color` setting in Admin Settings alongside `banner_color`, allowing admins to specify both background and foreground colors for optimal readability.
+    *   **Benefits**: Ensures WCAG-compliant contrast ratios, provides full control over banner appearance, improves readability for all users including those with visual impairments.
+    *   (Ref: `admin_settings.html`, `route_frontend_admin_settings.py`, banner color configuration, accessibility compliance)
+
 ### **(v0.229.062)**
 
 #### Bug Fixes
