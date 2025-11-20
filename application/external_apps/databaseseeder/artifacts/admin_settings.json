@@ -131,6 +131,7 @@
     "speech_service_key": "",
     "classification_banner_enabled": true,
     "classification_banner_text": "Classification",
+    "classification_banner_text_color": "#ffffff",
     "classification_banner_color": "#ffc107",
     "enable_dark_mode_default": false,
     "enable_left_nav_default": true,
