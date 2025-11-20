@@ -388,6 +388,12 @@ cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
     # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
+cosmos_activity_logs_container_name = "activity_logs"
+cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_activity_logs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
 def ensure_custom_logo_file_exists(app, settings):
     """
     If custom_logo_base64 or custom_logo_dark_base64 is present in settings, ensure the appropriate
