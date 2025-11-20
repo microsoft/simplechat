@@ -2872,7 +2872,7 @@
             preview.style.background = colorInput.value;
             preview.style.color = textColorInput.value;
         }
-        if (textInput && colorInput && preview) {
+        if (textInput && textColorInput && colorInput && preview) {
             textInput.addEventListener('input', updatePreview);
             colorInput.addEventListener('input', updatePreview);
         }
