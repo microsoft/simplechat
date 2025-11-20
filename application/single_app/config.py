@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.233.166"
+VERSION = "0.234.002"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -101,10 +101,10 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https: blob:; "
-        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "font-src 'self'; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
@@ -386,6 +386,12 @@ cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_search_cache_container_name,
     partition_key=PartitionKey(path="/user_id")
     # No default_ttl - TTL controlled by app logic via admin settings for flexibility
+)
+
+cosmos_activity_logs_container_name = "activity_logs"
+cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_activity_logs_container_name,
+    partition_key=PartitionKey(path="/user_id")
 )
 
 def ensure_custom_logo_file_exists(app, settings):
