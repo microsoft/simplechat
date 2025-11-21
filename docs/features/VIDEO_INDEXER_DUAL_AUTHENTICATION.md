@@ -3,46 +3,64 @@
 ## Feature Overview
 Added comprehensive support for both API key and managed identity authentication methods for Azure Video Indexer integration.
 
-**Implemented in version:** 0.229.064
+**Implemented in version:** 0.229.064  
+**Fixed in version:** 0.229.065
 
 ## Background
 Previously, the Video Indexer integration only supported managed identity authentication despite having API key fields in the admin UI. This feature implements full dual authentication support, allowing users to choose between:
-- **Managed Identity**: Uses Azure ARM token-based authentication
-- **API Key**: Uses subscription key-based authentication
+- **Managed Identity**: Uses Azure ARM token-based authentication, generates access token via ARM API
+- **API Key**: Uses subscription key to generate access token via Video Indexer auth endpoint
 
 ## Technical Implementation
 
 ### 1. Authentication Functions (`functions_authentication.py`)
 - **New Function**: `get_video_indexer_account_token()` - Main entry point that branches based on authentication type
-- **Enhanced Function**: `get_video_indexer_api_key()` - Returns API key from settings
-- **Enhanced Function**: `get_video_indexer_managed_identity_token()` - Handles ARM token acquisition
+- **Enhanced Function**: `get_video_indexer_api_key_token()` - Uses API key to generate access token via Video Indexer auth endpoint
+- **Enhanced Function**: `get_video_indexer_managed_identity_token()` - Handles ARM token acquisition and generates access token via ARM API
 
 #### Authentication Flow
 ```python
 auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
 
 if auth_type == "key":
-    return get_video_indexer_api_key()
+    return get_video_indexer_api_key_token(settings, video_id)
 else:
-    return get_video_indexer_managed_identity_token()
+    return get_video_indexer_managed_identity_token(settings, video_id)
+```
+
+#### API Key Token Generation
+```python
+# Generate access token using API key
+api_url = "https://api.videoindexer.ai"
+auth_url = f"{api_url}/auth/{location}/Accounts/{account_id}/AccessToken"
+headers = {"Ocp-Apim-Subscription-Key": api_key}
+params = {"allowEdit": "true"}
+response = requests.get(auth_url, headers=headers, params=params)
+access_token = response.text.strip('"')
 ```
 
 ### 2. Video Processing Updates (`functions_documents.py`)
-Updated all Video Indexer API calls to use appropriate authentication headers:
+Updated all Video Indexer API calls to use access tokens for authentication:
 
-#### API Key Authentication
-- Uses `Ocp-Apim-Subscription-Key` header
-- Direct API key in header value
+#### Authentication Pattern (Both Methods)
+Both API key and managed identity authentication now return an access token that is used consistently across all Video Indexer API calls:
+- Uses `accessToken` query parameter in all API requests
+- No headers required for authentication after token is generated
+- Token is generated once per operation and reused for upload, polling, and deletion
 
-#### Managed Identity Authentication  
-- Uses `accessToken` query parameter
-- ARM token from managed identity
+#### API Key Flow
+1. API key → Video Indexer auth endpoint → Access token
+2. Access token → Video Indexer API calls (upload, poll, delete)
+
+#### Managed Identity Flow
+1. Managed identity → ARM API → Access token  
+2. Access token → Video Indexer API calls (upload, poll, delete)
 
 #### Affected Operations
-- Video upload and processing
-- Processing status polling
-- Video deletion
-- Video validation
+- Video upload and processing: `?accessToken={token}`
+- Processing status polling: `?accessToken={token}`
+- Video deletion: `?accessToken={token}`
+- Video validation: Uses same access token pattern
 
 ### 3. Admin UI Controls (`admin_settings.html`)
 Added authentication type selector with conditional field visibility:

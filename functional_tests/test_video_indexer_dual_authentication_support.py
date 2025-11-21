@@ -14,30 +14,33 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
 
 def test_video_indexer_authentication_settings():
-    """Test that video indexer authentication type setting is properly configured."""
+    """Test that video indexer authentication type setting is properly configured in default settings."""
     print("🔍 Testing video indexer authentication settings...")
     
     try:
-        # Import the settings module
-        from functions_settings import get_settings
+        # Check the functions_settings.py file directly for default value
+        settings_file_path = os.path.join(
+            'application', 'single_app', 'functions_settings.py'
+        )
         
-        # Get default settings
-        settings = get_settings()
-        if not settings:
-            print("❌ Could not retrieve settings")
+        if not os.path.exists(settings_file_path):
+            print("❌ functions_settings.py not found")
+            return False
+            
+        with open(settings_file_path, 'r', encoding='utf-8') as f:
+            settings_content = f.read()
+        
+        # Check if video_indexer_authentication_type is defined
+        if 'video_indexer_authentication_type' not in settings_content:
+            print("❌ video_indexer_authentication_type not found in default settings file")
             return False
         
-        # Check if video_indexer_authentication_type is included in default settings
-        if 'video_indexer_authentication_type' not in settings:
-            print("❌ video_indexer_authentication_type not found in default settings")
+        # Check that default value is managed_identity
+        if "'video_indexer_authentication_type': 'managed_identity'" not in settings_content:
+            print("❌ Expected default authentication type to be 'managed_identity' in functions_settings.py")
             return False
         
-        # Check default value is managed_identity
-        if settings['video_indexer_authentication_type'] != 'managed_identity':
-            print(f"❌ Expected default authentication type 'managed_identity', got '{settings['video_indexer_authentication_type']}'")
-            return False
-        
-        print("✅ Video indexer authentication type setting verified")
+        print("✅ Video indexer authentication type setting verified in default settings")
         return True
         
     except Exception as e:
@@ -80,10 +83,24 @@ def test_authentication_functions():
             print("❌ Missing authentication type conditional logic")
             return False
         
-        # Check for API key authentication pattern (this is implemented in video processing, not auth functions)
+        # Check for API key authentication pattern - should generate access token
         if 'if auth_type == "key":' not in auth_content:
             print("❌ Missing API key authentication conditional logic")
             return False
+        
+        # Verify API key method generates an access token via API
+        required_api_key_patterns = [
+            '/auth/',
+            '/AccessToken',
+            'Ocp-Apim-Subscription-Key',
+            'requests.get',
+            'allowEdit'
+        ]
+        
+        for pattern in required_api_key_patterns:
+            if pattern not in auth_content:
+                print(f"❌ Missing API key token generation pattern: {pattern}")
+                return False
         
         print("✅ Authentication functions verified")
         return True
@@ -111,24 +128,17 @@ def test_video_processing_authentication_support():
             docs_content = f.read()
         
         # Check for authentication type handling in upload
+        # Both methods now use accessToken parameter
         required_patterns = [
             'auth_type = settings.get("video_indexer_authentication_type"',
-            'if auth_type == "key":',
-            "'Ocp-Apim-Subscription-Key': token",
             '"accessToken": token',
-            'headers=headers',
-            'headers=poll_headers'
+            'get_video_indexer_account_token'
         ]
         
         for pattern in required_patterns:
             if pattern not in docs_content:
                 print(f"❌ Missing pattern in video processing: {pattern}")
                 return False
-        
-        # Check for validation logic update
-        if 'if auth_type == "key":' not in docs_content:
-            print("❌ Missing authentication type validation logic")
-            return False
         
         print("✅ Video processing authentication support verified")
         return True
