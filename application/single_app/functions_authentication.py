@@ -245,38 +245,23 @@ def get_valid_access_token_for_plugins(scopes=None):
     
 def get_video_indexer_account_token(settings, video_id=None):
     """
-    Get Video Indexer access token using either API key or managed identity.
-    Supports both authentication methods based on settings configuration.
+    Get Video Indexer access token using managed identity authentication.
+    
+    This function authenticates with Azure Video Indexer using the App Service's
+    managed identity. The managed identity must have Contributor role on the
+    Video Indexer resource.
+    
+    Authentication flow:
+    1. Acquire ARM access token using DefaultAzureCredential (managed identity)
+    2. Call ARM generateAccessToken API to get Video Indexer access token
+    3. Use Video Indexer access token for all API operations
     """
     from functions_debug import debug_print
     
-    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
-    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using {auth_type} for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using managed identity for video_id: {video_id}")
     debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
     
-    if auth_type == "key":
-        return get_video_indexer_api_key_token(settings, video_id)
-    else:
-        return get_video_indexer_managed_identity_token(settings, video_id)
-
-def get_video_indexer_api_key_token(settings, video_id=None):
-    """
-    Get Video Indexer access token using API key authentication.
-    This method directly returns the API key as the access token.
-    """
-    from functions_debug import debug_print
-    
-    debug_print(f"[VIDEO INDEXER AUTH] Using API key authentication")
-    
-    api_key = settings.get("video_indexer_api_key", "")
-    if not api_key:
-        debug_print(f"[VIDEO INDEXER AUTH] ERROR: No API key provided")
-        raise ValueError("Video Indexer API key is required for key authentication")
-    
-    debug_print(f"[VIDEO INDEXER AUTH] API key authentication successful (key length: {len(api_key)})")
-    print("[VIDEO] API key authentication completed", flush=True)
-    
-    return api_key
+    return get_video_indexer_managed_identity_token(settings, video_id)
 
 def get_video_indexer_managed_identity_token(settings, video_id=None):
     """
