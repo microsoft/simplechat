@@ -49,7 +49,7 @@ def register_route_frontend_group_workspaces(app):
         
         # Build allowed extensions string
         allowed_extensions = [
-            "txt", "pdf", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
+            "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
             "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json",
             "xml", "yaml", "yml", "log"
         ]

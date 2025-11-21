@@ -2871,6 +2871,92 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved
 
+def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """
+    Processes .doc and .docm files using docx2txt library.
+    Note: .docx files still use Document Intelligence for better formatting preservation.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 400  # Consistent with other text-based chunking
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Import docx2txt here to avoid dependency issues if not installed
+        try:
+            import docx2txt
+        except ImportError:
+            raise Exception("docx2txt library is required for .doc and .docm file processing. Install with: pip install docx2txt")
+
+        # Extract text from .doc or .docm file
+        try:
+            text_content = docx2txt.process(temp_file_path)
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        if not text_content or not text_content.strip():
+            raise Exception(f"No text content extracted from {original_filename}")
+
+        # Split into words for chunking
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        # Create chunks of target_words_per_chunk words
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing {original_filename}: {e}")
+
+    return total_chunks_saved
+
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
     is_group = group_id is not None
@@ -3917,7 +4003,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         update_doc_callback(status=f"Processing file {original_filename}, type: {file_ext}")
 
         # --- 1. Dispatch to appropriate handler based on file type ---
-        di_supported_extensions = ('.pdf', '.docx', '.doc', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
+        # Note: .doc and .docm are handled separately by process_doc() using docx2txt
+        di_supported_extensions = ('.pdf', '.docx', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
         tabular_extensions = ('.csv', '.xlsx', '.xls', '.xlsm')
 
         is_group = group_id is not None
@@ -3945,6 +4032,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             total_chunks_saved = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
         elif file_ext == '.log':
             total_chunks_saved = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext in ('.doc', '.docm'):
+            total_chunks_saved = process_doc(**{k: v for k, v in args.items() if k != "file_ext"})
         elif file_ext == '.html':
             total_chunks_saved = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
         elif file_ext == '.md':

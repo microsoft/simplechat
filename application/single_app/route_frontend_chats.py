@@ -121,6 +121,13 @@ def register_route_frontend_chats(app):
         try:
             if file_ext in ['.pdf', '.docx', '.pptx', '.html', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']:
                 extracted_content  = extract_content_with_azure_di(temp_file_path)
+            elif file_ext in ['.doc', '.docm']:
+                # Use docx2txt for .doc and .docm files
+                try:
+                    import docx2txt
+                    extracted_content = docx2txt.process(temp_file_path)
+                except ImportError:
+                    return jsonify({'error': 'docx2txt library required for .doc/.docm files'}), 500
             elif file_ext == '.txt':
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext == '.md':
@@ -429,7 +436,7 @@ def register_route_frontend_chats(app):
 
         # Define supported types for direct viewing/handling
         is_pdf = file_ext == '.pdf'
-        is_word = file_ext in ('.docx', '.doc')
+        is_word = file_ext in ('.docx', '.doc', '.docm')
         is_ppt = file_ext in ('.pptx', '.ppt')
         is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp') # Added more image types
         is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.yaml', '.yml', '.html', '.htm') # Common text-based types
