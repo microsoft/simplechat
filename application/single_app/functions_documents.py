@@ -2696,13 +2696,14 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
     return total_chunks_saved
 
 def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """Processes YAML files using text-based chunking similar to TXT files."""
+    """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
     update_callback(status="Processing YAML file...")
     total_chunks_saved = 0
-    target_words_per_chunk = 400
+    # Character-based chunking for YAML structure preservation
+    max_chunk_size_chars = 4000
 
     if enable_enhanced_citations:
         args = {
@@ -2721,41 +2722,62 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
         upload_to_blob(**args)
 
     try:
-        with open(temp_file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        # Read YAML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading YAML file {original_filename}: {e}")
 
-        words = content.split()
-        num_words = len(words)
-        num_chunks_estimated = math.ceil(num_words / target_words_per_chunk)
-        update_callback(number_of_pages=num_chunks_estimated)
+        # Use RecursiveCharacterTextSplitter with YAML-aware separators
+        # This preserves YAML structure better than simple word splitting
+        yaml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=200,  # Small overlap to maintain context
+            length_function=len,
+            separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
+            is_separator_regex=False
+        )
 
-        for i in range(0, num_words, target_words_per_chunk):
-            chunk_words = words[i : i + target_words_per_chunk]
-            chunk_content = " ".join(chunk_words)
-            chunk_index = (i // target_words_per_chunk) + 1
+        # Split the YAML content
+        final_chunks = yaml_splitter.split_text(yaml_content)
 
-            if chunk_content.strip():
-                update_callback(
-                    current_file_chunk=chunk_index,
-                    status=f"Saving chunk {chunk_index}/{num_chunks_estimated}..."
-                )
-                args = {
-                    "page_text_content": chunk_content,
-                    "page_number": chunk_index,
-                    "file_name": original_filename,
-                    "user_id": user_id,
-                    "document_id": document_id
-                }
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
 
-                if is_public_workspace:
-                    args["public_workspace_id"] = public_workspace_id
-                elif is_group:
-                    args["group_id"] = group_id
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty YAML chunk {idx}/{initial_chunk_count}")
+                continue
 
-                save_chunks(**args)
-                total_chunks_saved += 1
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
 
     except Exception as e:
+        print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
         raise Exception(f"Failed processing YAML file {original_filename}: {e}")
 
     return total_chunks_saved
