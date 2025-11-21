@@ -129,6 +129,9 @@ def register_route_frontend_chats(app):
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
+            elif file_ext in ['.xml', '.yaml', '.yml', '.log']:
+                # Handle XML, YAML, and LOG files as text for inline chat
+                extracted_content  = extract_text_file(temp_file_path)
             elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
@@ -429,7 +432,7 @@ def register_route_frontend_chats(app):
         is_word = file_ext in ('.docx', '.doc')
         is_ppt = file_ext in ('.pptx', '.ppt')
         is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp') # Added more image types
-        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.html', '.htm') # Common text-based types
+        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.yaml', '.yml', '.html', '.htm') # Common text-based types
 
         try:
             # Download the file to the specified location

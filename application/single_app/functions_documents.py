@@ -2608,6 +2608,247 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved
 
+def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing XML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for XML structure preservation
+    max_chunk_size_chars = 4000
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_group:
+            args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read XML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading XML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with XML-aware separators
+        # This preserves XML structure better than simple word splitting
+        xml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=200,  # Small overlap to maintain context
+            length_function=len,
+            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the XML content
+        final_chunks = xml_splitter.split_text(xml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing XML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes YAML files using text-based chunking similar to TXT files."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing YAML file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 400
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        words = content.split()
+        num_words = len(words)
+        num_chunks_estimated = math.ceil(num_words / target_words_per_chunk)
+        update_callback(number_of_pages=num_chunks_estimated)
+
+        for i in range(0, num_words, target_words_per_chunk):
+            chunk_words = words[i : i + target_words_per_chunk]
+            chunk_content = " ".join(chunk_words)
+            chunk_index = (i // target_words_per_chunk) + 1
+
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=chunk_index,
+                    status=f"Saving chunk {chunk_index}/{num_chunks_estimated}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": chunk_index,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing YAML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes LOG files using line-based chunking to maintain log record integrity."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing LOG file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by lines to maintain log record integrity
+        lines = content.splitlines(keepends=True)  # Keep line endings
+        
+        if not lines:
+            raise Exception(f"LOG file {original_filename} is empty")
+
+        # Chunk by accumulating lines until reaching target word count
+        final_chunks = []
+        current_chunk_lines = []
+        current_chunk_word_count = 0
+
+        for line in lines:
+            line_word_count = len(line.split())
+            
+            # If adding this line exceeds target AND we already have content
+            if current_chunk_word_count + line_word_count > target_words_per_chunk and current_chunk_lines:
+                # Finalize current chunk
+                final_chunks.append("".join(current_chunk_lines))
+                # Start new chunk with current line
+                current_chunk_lines = [line]
+                current_chunk_word_count = line_word_count
+            else:
+                # Add line to current chunk
+                current_chunk_lines.append(line)
+                current_chunk_word_count += line_word_count
+
+        # Add the last remaining chunk if it has content
+        if current_chunk_lines:
+            final_chunks.append("".join(current_chunk_lines))
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing LOG file {original_filename}: {e}")
+
+    return total_chunks_saved
+
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
     is_group = group_id is not None
@@ -3676,6 +3917,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
         if file_ext == '.txt':
             total_chunks_saved = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext == '.xml':
+            total_chunks_saved = process_xml(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext in ('.yaml', '.yml'):
+            total_chunks_saved = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext == '.log':
+            total_chunks_saved = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
         elif file_ext == '.html':
             total_chunks_saved = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
         elif file_ext == '.md':
