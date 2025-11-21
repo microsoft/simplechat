@@ -118,6 +118,7 @@ def register_route_frontend_chats(app):
         extracted_content  = ''
         is_table = False 
         vision_analysis = None
+        image_base64_url = None  # For storing base64-encoded images
 
         try:
             # Check if this is an image file
@@ -135,7 +136,23 @@ def register_route_frontend_chats(app):
                 else:
                     extracted_content = str(extracted_content_raw)
                 
-                # NEW: Perform vision analysis for images if enabled
+                # NEW: For images, convert to base64 for inline display
+                if is_image_file:
+                    try:
+                        with open(temp_file_path, 'rb') as img_file:
+                            image_bytes = img_file.read()
+                            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                            
+                            # Detect mime type
+                            mime_type = mimetypes.guess_type(temp_file_path)[0] or 'image/png'
+                            
+                            # Create data URL
+                            image_base64_url = f"data:{mime_type};base64,{base64_image}"
+                            print(f"Converted image to base64: {filename}, size: {len(image_base64_url)} bytes")
+                    except Exception as b64_error:
+                        print(f"Warning: Failed to convert image to base64: {b64_error}")
+                
+                # Perform vision analysis for images if enabled
                 if is_image_file and settings.get('enable_multimodal_vision', False):
                     try:
                         from functions_documents import analyze_image_with_vision_model
@@ -196,22 +213,120 @@ def register_route_frontend_chats(app):
 
         try:
             file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
-            file_message = {
-                'id': file_message_id,
-                'conversation_id': conversation_id,
-                'role': 'file',
-                'filename': filename,
-                'file_content': extracted_content,
-                'is_table': is_table,
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None
-            }
             
-            # Add vision analysis if available
-            if vision_analysis:
-                file_message['vision_analysis'] = vision_analysis
+            # For images with base64 data, store as 'image' role (like system-generated images)
+            if image_base64_url:
+                # Check if image data is too large for a single Cosmos document (2MB limit)
+                # Use 1.5MB as safe limit for base64 content
+                max_content_size = 1500000  # 1.5MB in bytes
+                
+                if len(image_base64_url) > max_content_size:
+                    print(f"Large image detected ({len(image_base64_url)} bytes), splitting across multiple documents")
+                    
+                    # Extract base64 part for splitting
+                    data_url_prefix = image_base64_url.split(',')[0] + ','
+                    base64_content = image_base64_url.split(',')[1]
+                    
+                    # Calculate chunks
+                    chunk_size = max_content_size - len(data_url_prefix) - 200  # Room for JSON overhead
+                    chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
+                    total_chunks = len(chunks)
+                    
+                    print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
+                    
+                    # Create main image document with first chunk
+                    main_image_doc = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'image',
+                        'content': f"{data_url_prefix}{chunks[0]}",
+                        'filename': filename,
+                        'prompt': f"User uploaded: {filename}",
+                        'created_at': datetime.utcnow().isoformat(),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'is_chunked': True,
+                            'total_chunks': total_chunks,
+                            'chunk_index': 0,
+                            'original_size': len(image_base64_url),
+                            'is_user_upload': True
+                        }
+                    }
+                    
+                    # Add vision analysis and extracted text if available
+                    if vision_analysis:
+                        main_image_doc['vision_analysis'] = vision_analysis
+                    if extracted_content:
+                        main_image_doc['extracted_text'] = extracted_content
+                    
+                    cosmos_messages_container.upsert_item(main_image_doc)
+                    
+                    # Create chunk documents
+                    for i in range(1, total_chunks):
+                        chunk_doc = {
+                            'id': f"{file_message_id}_chunk_{i}",
+                            'conversation_id': conversation_id,
+                            'role': 'image_chunk',
+                            'content': chunks[i],
+                            'parent_message_id': file_message_id,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'metadata': {
+                                'is_chunk': True,
+                                'chunk_index': i,
+                                'total_chunks': total_chunks,
+                                'parent_message_id': file_message_id
+                            }
+                        }
+                        cosmos_messages_container.upsert_item(chunk_doc)
+                    
+                    print(f"Created {total_chunks} chunked image documents for {filename}")
+                else:
+                    # Small enough to store in single document
+                    image_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'image',
+                        'content': image_base64_url,
+                        'filename': filename,
+                        'prompt': f"User uploaded: {filename}",
+                        'created_at': datetime.utcnow().isoformat(),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'is_chunked': False,
+                            'original_size': len(image_base64_url),
+                            'is_user_upload': True
+                        }
+                    }
+                    
+                    # Add vision analysis and extracted text if available
+                    if vision_analysis:
+                        image_message['vision_analysis'] = vision_analysis
+                    if extracted_content:
+                        image_message['extracted_text'] = extracted_content
+                    
+                    cosmos_messages_container.upsert_item(image_message)
+                    print(f"Created single image document for {filename}")
+            else:
+                # Non-image file or failed to convert to base64, store as 'file' role
+                file_message = {
+                    'id': file_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'file',
+                    'filename': filename,
+                    'file_content': extracted_content,
+                    'is_table': is_table,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None
+                }
+                
+                # Add vision analysis if available
+                if vision_analysis:
+                    file_message['vision_analysis'] = vision_analysis
 
-            cosmos_messages_container.upsert_item(file_message)
+                cosmos_messages_container.upsert_item(file_message)
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)

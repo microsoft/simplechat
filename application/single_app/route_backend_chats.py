@@ -1286,13 +1286,66 @@ def register_route_backend_chats(app):
                                 'role': 'system', # Represent file as system info
                                 'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
                             })
-                    # elif role == 'image': # If you want to represent image generation prompts/results
-                    #     prompt = message.get('prompt', 'User generated an image.')
-                    #     img_url = message.get('content', '') # URL is in content
-                    #     conversation_history_for_api.append({
-                    #         'role': 'system',
-                    #         'content': f"[Assistant generated an image based on the prompt: '{prompt}'. Image URL: {img_url}]"
-                    #     })
+                    elif role == 'image': # Handle image uploads with extracted text and vision analysis
+                        filename = message.get('filename', 'uploaded_image')
+                        is_user_upload = message.get('metadata', {}).get('is_user_upload', False)
+                        
+                        if is_user_upload:
+                            # This is a user-uploaded image with extracted text and vision analysis
+                            # IMPORTANT: Do NOT include message.get('content') as it contains base64 image data
+                            # which would consume excessive tokens. Only use extracted_text and vision_analysis.
+                            extracted_text = message.get('extracted_text', '')
+                            vision_analysis = message.get('vision_analysis', {})
+                            
+                            # Build comprehensive context from OCR and vision analysis (NO BASE64!)
+                            image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
+                            
+                            if extracted_text:
+                                # Include OCR text from Document Intelligence
+                                extracted_preview = extracted_text[:max_file_content_length_in_history]
+                                if len(extracted_text) > max_file_content_length_in_history:
+                                    extracted_preview += "..."
+                                image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
+                            
+                            if vision_analysis:
+                                # Include AI vision analysis
+                                image_context_parts.append("\n\nAI Vision Analysis:")
+                                
+                                if vision_analysis.get('description'):
+                                    image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
+                                
+                                if vision_analysis.get('objects'):
+                                    objects_str = ', '.join(vision_analysis['objects'])
+                                    image_context_parts.append(f"\nObjects detected: {objects_str}")
+                                
+                                if vision_analysis.get('text'):
+                                    image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
+                                
+                                if vision_analysis.get('contextual_analysis'):
+                                    image_context_parts.append(f"\nContextual analysis: {vision_analysis['contextual_analysis']}")
+                            
+                            image_context_content = ''.join(image_context_parts) + "\n\nUse this image information to answer questions about the uploaded image."
+                            
+                            # Verify we're not accidentally including base64 data
+                            if 'data:image/' in image_context_content or ';base64,' in image_context_content:
+                                print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
+                                # This should never happen, but safety check just in case
+                                image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
+                            
+                            debug_print(f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, context length: {len(image_context_content)} chars")
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': image_context_content
+                            })
+                        else:
+                            # This is a system-generated image (DALL-E, etc.)
+                            # Don't include the image data URL in history either
+                            prompt = message.get('prompt', 'User requested image generation.')
+                            debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': f"[Assistant generated an image based on the prompt: '{prompt}']"
+                            })
 
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
 
