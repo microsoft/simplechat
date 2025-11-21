@@ -793,6 +793,44 @@ def register_route_backend_chats(app):
                                     # Add abstract to retrieved content for the model
                                     abstract_context = f"Document Abstract ({file_name}): {abstract}"
                                     retrieved_texts.append(abstract_context)
+                                
+                                # Create citation for vision analysis if it exists
+                                vision_analysis = metadata.get('vision_analysis')
+                                if vision_analysis:
+                                    vision_citation_id = f"{doc_id}_vision"
+                                    
+                                    # Format vision analysis for citation display
+                                    vision_description = vision_analysis.get('description', '')
+                                    vision_objects = vision_analysis.get('objects', [])
+                                    vision_text = vision_analysis.get('text', '')
+                                    
+                                    vision_content = f"AI Vision Analysis:\n"
+                                    if vision_description:
+                                        vision_content += f"Description: {vision_description}\n"
+                                    if vision_objects:
+                                        vision_content += f"Objects: {', '.join(vision_objects)}\n"
+                                    if vision_text:
+                                        vision_content += f"Text in Image: {vision_text}\n"
+                                    
+                                    vision_citation = {
+                                        "file_name": file_name,
+                                        "citation_id": vision_citation_id,
+                                        "page_number": "AI Vision",  # Special page identifier
+                                        "chunk_id": vision_citation_id,
+                                        "chunk_sequence": 9997,  # High number to sort to end (before keywords/abstract)
+                                        "score": 0.0,  # No relevance score for vision analysis
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "vision",  # Flag this as vision citation
+                                        "metadata_content": vision_content
+                                    }
+                                    hybrid_citations_list.append(vision_citation)
+                                    combined_documents.append(vision_citation)  # Add to combined_documents too
+                                    
+                                    # Add vision analysis to retrieved content for the model
+                                    vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
+                                    retrieved_texts.append(vision_context)
                         
                         # Update the system prompt with the enhanced content including metadata
                         if retrieved_texts:

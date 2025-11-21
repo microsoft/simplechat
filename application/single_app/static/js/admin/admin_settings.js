@@ -2251,6 +2251,66 @@ function setupTestButtons() {
             }
         });
     }
+
+    const testVisionBtn = document.getElementById('test_multimodal_vision_button');
+    if (testVisionBtn) {
+        testVisionBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_multimodal_vision_result');
+            resultDiv.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing Vision Analysis...';
+
+            const visionModel = document.getElementById('multimodal_vision_model').value;
+            
+            if (!visionModel) {
+                resultDiv.innerHTML = '<span class="text-danger">Please select a vision model first</span>';
+                return;
+            }
+
+            const enableApim = document.getElementById('enable_gpt_apim').checked;
+
+            const payload = {
+                test_type: 'multimodal_vision',
+                enable_apim: enableApim,
+                vision_model: visionModel
+            };
+
+            if (enableApim) {
+                payload.apim = {
+                    endpoint: document.getElementById('azure_apim_gpt_endpoint').value,
+                    subscription_key: document.getElementById('azure_apim_gpt_subscription_key').value,
+                    api_version: document.getElementById('azure_apim_gpt_api_version').value,
+                    deployment: visionModel
+                };
+            } else {
+                payload.direct = {
+                    endpoint: document.getElementById('azure_openai_gpt_endpoint').value,
+                    auth_type: document.getElementById('azure_openai_gpt_authentication_type').value,
+                    key: document.getElementById('azure_openai_gpt_key').value,
+                    api_version: document.getElementById('azure_openai_gpt_api_version').value,
+                    deployment: visionModel
+                };
+            }
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.innerHTML = `<div class="alert alert-success mb-0">
+                        <strong><i class="bi bi-check-circle me-1"></i>Success!</strong><br>
+                        ${data.message}<br>
+                        <small class="text-muted">${data.details || ''}</small>
+                    </div>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Error testing Vision Analysis'}</span>`;
+                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Error: ${err.message}</span>`;
+            }
+        });
+    }
 }
 
 function toggleEnhancedCitation(isEnabled) {
@@ -2352,10 +2412,91 @@ if (extractToggle) {
   });
 }
 
+// Multi-Modal Vision UI
+const visionToggle = document.getElementById('enable_multimodal_vision');
+const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
+const visionSelect = document.getElementById('multimodal_vision_model');
+
+function populateVisionModels() {
+  if (!visionSelect) return;
+  
+  // remember previously chosen value
+  const prev = visionSelect.getAttribute('data-prev') || '';
+
+  // clear out old options (except the placeholder)
+  visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
+
+  if (document.getElementById('enable_gpt_apim').checked) {
+    // use comma-separated APIM deployments
+    const text = document.getElementById('azure_apim_gpt_deployment').value || '';
+    text.split(',')
+        .map(s => s.trim())
+        .filter(s => s)
+        .forEach(d => {
+          const opt = new Option(d, d);
+          visionSelect.add(opt);
+        });
+  } else {
+    // use direct GPT selected deployments - filter for vision-capable models
+    (window.gptSelected || []).forEach(m => {
+      // Only include models with vision capabilities
+      // Vision-enabled models per Azure OpenAI docs:
+      // - o-series reasoning models (o1, o3, etc.)
+      // - GPT-5 series
+      // - GPT-4.1 series
+      // - GPT-4.5
+      // - GPT-4o series (gpt-4o, gpt-4o-mini)
+      // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
+      const modelNameLower = (m.modelName || '').toLowerCase();
+      const isVisionCapable = 
+        modelNameLower.includes('vision') ||           // gpt-4-vision, gpt-4-turbo-vision
+        modelNameLower.includes('gpt-4o') ||           // gpt-4o, gpt-4o-mini
+        modelNameLower.includes('gpt-4.1') ||          // gpt-4.1 series
+        modelNameLower.includes('gpt-4.5') ||          // gpt-4.5
+        modelNameLower.includes('gpt-5') ||            // gpt-5 series
+        modelNameLower.match(/^o\d+/) ||               // o1, o3, etc. (o-series)
+        modelNameLower.includes('o1-') ||              // o1-preview, o1-mini
+        modelNameLower.includes('o3-');                // o3-mini, etc.
+      
+      if (isVisionCapable) {
+        const label = `${m.deploymentName} (${m.modelName})`;
+        const opt = new Option(label, m.deploymentName);
+        visionSelect.add(opt);
+      }
+    });
+  }
+
+  // restore previous
+  if (prev) {
+    visionSelect.value = prev;
+  }
+}
+
+if (visionToggle && visionModelDiv) {
+  // show/hide the model dropdown
+  visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
+  visionToggle.addEventListener('change', () => {
+    visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
+    markFormAsModified();
+  });
+}
+
+// Listen for vision model selection changes
+if (visionSelect) {
+  visionSelect.addEventListener('change', () => {
+    // Update data-prev to remember the selection
+    visionSelect.setAttribute('data-prev', visionSelect.value);
+    markFormAsModified();
+  });
+}
+
 // when APIM‐toggle flips, repopulate
 const apimToggle = document.getElementById('enable_gpt_apim');
 if (apimToggle) {
-  apimToggle.addEventListener('change', populateExtractionModels);
+  apimToggle.addEventListener('change', () => {
+    populateExtractionModels();
+    populateVisionModels();
+  });
 }
 
 // on load, stash previous & populate
@@ -2363,6 +2504,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (extractSelect) {
     extractSelect.setAttribute('data-prev', extractSelect.value);
     populateExtractionModels();
+  }
+  if (visionSelect) {
+    visionSelect.setAttribute('data-prev', visionSelect.value);
+    populateVisionModels();
   }
 });
 

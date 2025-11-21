@@ -117,10 +117,54 @@ def register_route_frontend_chats(app):
 
         extracted_content  = ''
         is_table = False 
+        vision_analysis = None
 
         try:
+            # Check if this is an image file
+            is_image_file = file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']
+            
             if file_ext in ['.pdf', '.docx', '.pptx', '.html', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']:
-                extracted_content  = extract_content_with_azure_di(temp_file_path)
+                extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
+                
+                # Convert pages_data list to string
+                if isinstance(extracted_content_raw, list):
+                    extracted_content = "\n\n".join([
+                        f"[Page {page.get('page_number', 'N/A')}]\n{page.get('content', '')}"
+                        for page in extracted_content_raw
+                    ])
+                else:
+                    extracted_content = str(extracted_content_raw)
+                
+                # NEW: Perform vision analysis for images if enabled
+                if is_image_file and settings.get('enable_multimodal_vision', False):
+                    try:
+                        from functions_documents import analyze_image_with_vision_model
+                        
+                        vision_analysis = analyze_image_with_vision_model(
+                            temp_file_path,
+                            user_id,
+                            f"chat_upload_{int(time.time())}",
+                            settings
+                        )
+                        
+                        if vision_analysis:
+                            # Combine DI OCR with vision analysis
+                            vision_description = vision_analysis.get('description', '')
+                            vision_objects = vision_analysis.get('objects', [])
+                            vision_text = vision_analysis.get('text', '')
+                            
+                            extracted_content += f"\n\n=== AI Vision Analysis ===\n"
+                            extracted_content += f"Description: {vision_description}\n"
+                            if vision_objects:
+                                extracted_content += f"Objects detected: {', '.join(vision_objects)}\n"
+                            if vision_text:
+                                extracted_content += f"Text visible in image: {vision_text}\n"
+                            
+                            print(f"Vision analysis added to chat upload: {filename}")
+                    except Exception as vision_error:
+                        print(f"Warning: Vision analysis failed for chat upload: {vision_error}")
+                        # Continue without vision analysis
+                
             elif file_ext in ['.doc', '.docm']:
                 # Use docx2txt for .doc and .docm files
                 try:
@@ -162,6 +206,10 @@ def register_route_frontend_chats(app):
                 'timestamp': datetime.utcnow().isoformat(),
                 'model_deployment_name': None
             }
+            
+            # Add vision analysis if available
+            if vision_analysis:
+                file_message['vision_analysis'] = vision_analysis
 
             cosmos_messages_container.upsert_item(file_message)
 

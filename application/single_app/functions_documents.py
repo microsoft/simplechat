@@ -1514,13 +1514,47 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         chunk_summary = ""
         author = []
         title = ""
+        
+        # Check if this document has vision analysis and append it to chunk_text
+        vision_analysis = metadata.get('vision_analysis')
+        enhanced_chunk_text = page_text_content
+        
+        if vision_analysis:
+            debug_print(f"[SAVE_CHUNKS] Document {document_id} has vision analysis, appending to chunk_text")
+            # Format vision analysis as structured text for better searchability
+            vision_text_parts = []
+            vision_text_parts.append("\n\n=== AI Vision Analysis ===")
+            vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+            
+            if vision_analysis.get('description'):
+                vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+            
+            if vision_analysis.get('objects'):
+                objects_list = vision_analysis['objects']
+                if isinstance(objects_list, list):
+                    vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
+                else:
+                    vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+            
+            if vision_analysis.get('text'):
+                vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+            
+            if vision_analysis.get('analysis'):
+                vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+            
+            vision_text = "\n".join(vision_text_parts)
+            enhanced_chunk_text = page_text_content + vision_text
+            
+            debug_print(f"[SAVE_CHUNKS] Enhanced chunk_text length: {len(enhanced_chunk_text)} (original: {len(page_text_content)}, vision: {len(vision_text)})")
+        else:
+            debug_print(f"[SAVE_CHUNKS] No vision analysis found for document {document_id}")
 
         if is_public_workspace:
             chunk_document = {
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -1541,7 +1575,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -1564,7 +1598,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
                 "id": chunk_id,
                 "document_id": document_id,
                 "chunk_id": str(page_number),
-                "chunk_text": page_text_content,
+                "chunk_text": enhanced_chunk_text,
                 "embedding": embedding,
                 "file_name": file_name,
                 "chunk_keywords": chunk_keywords,
@@ -2949,6 +2983,146 @@ def estimate_word_count(text):
         return 0
     return len(text.split())
 
+def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
+    """
+    Analyze image using GPT-4 Vision or similar multimodal model.
+    
+    Args:
+        image_path: Path to image file
+        user_id: User ID for logging
+        document_id: Document ID for tracking
+        settings: Application settings
+        
+    Returns:
+        dict: {
+            'description': 'AI-generated image description',
+            'objects': ['list', 'of', 'detected', 'objects'],
+            'text': 'any text visible in image',
+            'analysis': 'detailed analysis'
+        } or None if vision analysis is disabled or fails
+    """
+    if not settings.get('enable_multimodal_vision', False):
+        return None
+        
+    try:
+        # Convert image to base64
+        with open(image_path, 'rb') as img_file:
+            image_bytes = img_file.read()
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Determine image mime type
+        mime_type = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        
+        # Get vision model settings
+        vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
+        
+        if not vision_model:
+            print(f"Warning: Multi-modal vision enabled but no model selected")
+            return None
+        
+        # Initialize client (reuse GPT configuration)
+        enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        
+        if enable_gpt_apim:
+            gpt_client = AzureOpenAI(
+                api_version=settings.get('azure_apim_gpt_api_version'),
+                azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                api_key=settings.get('azure_apim_gpt_subscription_key')
+            )
+        else:
+            # Use managed identity or key
+            auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                gpt_client = AzureOpenAI(
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_key=settings.get('azure_openai_gpt_key')
+                )
+        
+        # Create vision prompt
+        print(f"Analyzing image with vision model: {vision_model}")
+        
+        response = gpt_client.chat.completions.create(
+            model=vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": """Analyze this image and provide:
+1. A detailed description of what you see
+2. List any objects, people, or notable elements
+3. Extract any visible text (OCR)
+4. Provide contextual analysis or insights
+
+Format your response as JSON with these keys:
+{
+  "description": "...",
+  "objects": ["...", "..."],
+  "text": "...",
+  "analysis": "..."
+}"""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000
+        )
+        
+        # Parse response
+        content = response.choices[0].message.content
+        
+        debug_print(f"[VISION_ANALYSIS] Raw response for {document_id}: {content[:500]}...")
+        
+        # Try to parse as JSON, fallback to raw text
+        try:
+            # Clean up potential markdown code fences
+            content_cleaned = clean_json_codeFence(content)
+            vision_analysis = json.loads(content_cleaned)
+            debug_print(f"[VISION_ANALYSIS] Parsed JSON successfully for {document_id}")
+        except Exception as parse_error:
+            debug_print(f"[VISION_ANALYSIS] Vision response not valid JSON: {parse_error}")
+            print(f"Vision response not valid JSON, using raw text")
+            vision_analysis = {
+                'description': content,
+                'raw_response': content
+            }
+        
+        # Add model info to analysis
+        vision_analysis['model'] = vision_model
+        
+        debug_print(f"[VISION_ANALYSIS] Complete analysis for {document_id}:")
+        debug_print(f"  Model: {vision_model}")
+        debug_print(f"  Description: {vision_analysis.get('description', 'N/A')[:200]}...")
+        debug_print(f"  Objects: {vision_analysis.get('objects', [])}")
+        debug_print(f"  Text: {vision_analysis.get('text', 'N/A')[:100]}...")
+        
+        print(f"Vision analysis completed for document: {document_id}")
+        return vision_analysis
+        
+    except Exception as e:
+        print(f"Error in vision analysis for {document_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None):
     """Uploads the file to Azure Blob Storage."""
 
@@ -4228,6 +4402,71 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             print(f"Warning: Error extracting final metadata for {document_id}: {str(e)}")
             # Don't fail the whole process, just update status
             update_callback(status=f"Processing complete (metadata extraction warning)")
+
+    # --- Multi-Modal Vision Analysis (for images only) ---
+    if is_image and enable_enhanced_citations:
+        enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
+        if enable_multimodal_vision:
+            try:
+                update_callback(status="Performing AI vision analysis...")
+                
+                vision_analysis = analyze_image_with_vision_model(
+                    temp_file_path,
+                    user_id,
+                    document_id,
+                    settings
+                )
+                
+                if vision_analysis:
+                    print(f"Vision analysis completed for image: {original_filename}")
+                    
+                    # Update document with vision analysis results
+                    update_fields = {
+                        'vision_analysis': vision_analysis,
+                        'vision_description': vision_analysis.get('description', ''),
+                        'vision_objects': vision_analysis.get('objects', []),
+                        'vision_extracted_text': vision_analysis.get('text', ''),
+                        'status': "AI vision analysis completed"
+                    }
+                    update_callback(**update_fields)
+                    
+                    # Save vision analysis as separate blob for citations
+                    vision_json_path = temp_file_path + '_vision.json'
+                    try:
+                        with open(vision_json_path, 'w', encoding='utf-8') as f:
+                            json.dump(vision_analysis, f, indent=2)
+                        
+                        vision_blob_filename = f"{os.path.splitext(original_filename)[0]}_vision_analysis.json"
+                        
+                        upload_blob_args = {
+                            "temp_file_path": vision_json_path,
+                            "user_id": user_id,
+                            "document_id": document_id,
+                            "blob_filename": vision_blob_filename,
+                            "update_callback": update_callback
+                        }
+                        
+                        if is_public_workspace:
+                            upload_blob_args["public_workspace_id"] = public_workspace_id
+                        elif is_group:
+                            upload_blob_args["group_id"] = group_id
+                        
+                        upload_to_blob(**upload_blob_args)
+                        print(f"Vision analysis saved to blob storage: {vision_blob_filename}")
+                        
+                    finally:
+                        if os.path.exists(vision_json_path):
+                            os.remove(vision_json_path)
+                else:
+                    print(f"Vision analysis returned no results for: {original_filename}")
+                    update_callback(status="Vision analysis completed (no results)")
+                    
+            except Exception as e:
+                print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the whole process, just update status
+                update_callback(status=f"Processing complete (vision analysis warning)")
 
     return total_final_chunks_processed
 

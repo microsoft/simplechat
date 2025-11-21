@@ -1906,6 +1906,85 @@
                       </select>
                     </div>
                 </div>
+
+                <!-- Multi-Modal Vision Analysis Section -->
+                <div class="card mb-3 p-3" id="multimodal-vision-section">
+                    <h5>
+                        <i class="bi bi-eye me-2"></i>Multi-Modal Vision Analysis
+                    </h5>
+                    <p class="text-muted">
+                        Enable AI-powered vision analysis for images uploaded to chat or workspace. When enabled alongside Document Intelligence OCR, images will receive both text extraction (OCR) and semantic understanding (vision AI).
+                    </p>
+                    
+                    <div class="alert alert-info mb-3">
+                        <strong><i class="bi bi-info-circle"></i> How it works:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li><strong>Document Intelligence</strong>: Extracts text from images (OCR)</li>
+                            <li><strong>Vision Model</strong>: Provides semantic analysis, object detection, and contextual understanding</li>
+                            <li>Both analyses are combined and available in citations when Enhanced Citations is enabled</li>
+                        </ul>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_multimodal_vision"
+                            name="enable_multimodal_vision"
+                            {% if settings.enable_multimodal_vision %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_multimodal_vision">
+                            Enable Multi-Modal Vision Analysis
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Use GPT-4 Vision or similar models to analyze images for semantic content, objects, and contextual information beyond OCR."></i>
+                    </div>
+                  
+                    <div id="multimodal_vision_model_settings" class="mb-3"
+                         {% if not settings.enable_multimodal_vision %}style="display: none;"{% endif %}>
+                        <label for="multimodal_vision_model" class="form-label">
+                            Vision Model <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select" id="multimodal_vision_model" name="multimodal_vision_model"
+                                data-prev="{{ settings.multimodal_vision_model or '' }}">
+                            <option value="">Select a vision-capable model...</option>
+                            {% if settings.enable_gpt_apim %}
+                                {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
+                                    <option value="{{ d.strip() }}"
+                                        {% if settings.multimodal_vision_model == d.strip() %}selected{% endif %}>
+                                        {{ d.strip() }}
+                                    </option>
+                                {% endfor %}
+                            {% else %}
+                                {% for m in settings.gpt_model.selected %}
+                                    {# Check if model is vision-capable using same logic as JavaScript #}
+                                    {% set model_lower = (m.modelName or '').lower() %}
+                                    {% set is_vision = 
+                                        'vision' in model_lower or
+                                        'gpt-4o' in model_lower or
+                                        'gpt-4.1' in model_lower or
+                                        'gpt-4.5' in model_lower or
+                                        'gpt-5' in model_lower or
+                                        model_lower.startswith('o1') or
+                                        model_lower.startswith('o3') or
+                                        'o1-' in model_lower or
+                                        'o3-' in model_lower
+                                    %}
+                                    {% if is_vision %}
+                                        <option value="{{ m.deploymentName }}"
+                                            {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
+                                            {{ m.deploymentName }} ({{ m.modelName }})
+                                        </option>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision). Only vision-capable models are shown.</div>
+                        
+                        <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
+                            <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
+                        </button>
+                        <div id="test_multimodal_vision_result" class="mt-2"></div>
+                    </div>
+                </div>
                   
 
                 

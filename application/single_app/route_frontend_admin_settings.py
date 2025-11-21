@@ -645,6 +645,10 @@ def register_route_frontend_admin_settings(app):
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
 
+                # Multi-modal vision settings
+                'enable_multimodal_vision': form_data.get('enable_multimodal_vision') == 'on',
+                'multimodal_vision_model': form_data.get('multimodal_vision_model', '').strip(),
+
                 # --- Banner fields ---
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
