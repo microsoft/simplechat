@@ -606,8 +606,10 @@ def register_route_backend_chats(app):
                         "doc_scope": document_scope,
                     }
                     
-                    # Add active_group_id when document scope is 'group' or chat_type is 'group'
-                    if (document_scope == 'group' or chat_type == 'group') and active_group_id:
+                    # Add active_group_id when:
+                    # 1. Document scope is 'group' or chat_type is 'group', OR
+                    # 2. Document scope is 'all' and groups are enabled (so group search can be included)
+                    if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
                         search_args["active_group_id"] = active_group_id
     
                         
