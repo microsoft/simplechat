@@ -8,6 +8,7 @@ param docIntelName string
 param storageAccountName string
 param speechServiceName string
 param searchServiceName string
+param contentSafetyName string
 
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
@@ -44,6 +45,10 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
 
 resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
+}
+
+resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
+  name: contentSafetyName
 }
 
 // grant the webApp access to the key vault
@@ -151,6 +156,20 @@ resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 
+
+// grant the managed identity access to content safety as a Cognitive Services User
+resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (contentSafetyName != '') {
+  name: guid(contentSafety.id, webApp.id, 'content-safety-user')
+  scope: contentSafety
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'

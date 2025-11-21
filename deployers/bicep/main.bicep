@@ -480,6 +480,8 @@ module enterpriseAppPermissions 'modules/enterpriseAppPermissions.bicep' = if (e
     #disable-next-line BCP318 // expect one value to be null
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
     searchServiceName: searchService.outputs.searchServiceName
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
   }
 }
 

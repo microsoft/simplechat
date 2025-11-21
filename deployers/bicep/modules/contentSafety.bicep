@@ -26,6 +26,7 @@ resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   properties: {
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false
+    customSubDomainName: toLower('${appName}-${environment}-contentsafety')
   }
   tags: tags
 }
@@ -56,3 +57,5 @@ resource contentSafetyDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
   }
 }
+
+output contentSafetyName string = contentSafety.name
