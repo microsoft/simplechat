@@ -420,19 +420,10 @@ def process_video_document(
     try:
         url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos"
         
-        auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
-        debug_print(f"[VIDEO INDEXER] Using authentication type: {auth_type}")
-        
-        if auth_type == "key":
-            # Use API key in header
-            headers = {'Ocp-Apim-Subscription-Key': token}
-            params = {"name": original_filename}
-            debug_print(f"[VIDEO INDEXER] Using API key authentication with headers")
-        else:
-            # Use access token in URL parameter
-            headers = {}
-            params = {"accessToken": token, "name": original_filename}
-            debug_print(f"[VIDEO INDEXER] Using managed identity authentication with access token")
+        # Use the access token in the URL parameters
+        headers = {}
+        params = {"accessToken": token, "name": original_filename}
+        debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
         
         debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
         debug_print(f"[VIDEO INDEXER] Upload params: {params}")
@@ -488,24 +479,12 @@ def process_video_document(
         return 0
 
     # 3) Poll until ready
-    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
-    
-    if auth_type == "key":
-        # Use API key in header for polling
-        index_url = (
-            f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
-            f"?includeInsights=Transcript&includeStreamingUrls=false"
-        )
-        poll_headers = {'Ocp-Apim-Subscription-Key': token}
-        debug_print(f"[VIDEO INDEXER] Using API key authentication for polling")
-    else:
-        # Use access token in URL parameter for polling
-        index_url = (
-            f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
-            f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
-        )
-        poll_headers = {}
-        debug_print(f"[VIDEO INDEXER] Using managed identity authentication for polling")
+    index_url = (
+        f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
+        f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
+    )
+    poll_headers = {}
+    debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
     
     debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
     debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
@@ -1691,19 +1670,9 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                     debug_print(f"[VIDEO INDEXER DELETE] Video ID from document metadata: {video_id}")
                     
                     if video_id:
-                        auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
-                        debug_print(f"[VIDEO INDEXER DELETE] Using authentication type: {auth_type}")
-                        
-                        if auth_type == "key":
-                            # Use API key in header
-                            delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}"
-                            delete_headers = {'Ocp-Apim-Subscription-Key': token}
-                            debug_print(f"[VIDEO INDEXER DELETE] Using API key authentication")
-                        else:
-                            # Use access token in URL parameter
-                            delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
-                            delete_headers = {}
-                            debug_print(f"[VIDEO INDEXER DELETE] Using managed identity authentication")
+                        delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
+                        delete_headers = {}
+                        debug_print(f"[VIDEO INDEXER DELETE] Using managed identity access token authentication")
                             
                         debug_print(f"[VIDEO INDEXER DELETE] Delete URL: {delete_url}")
                         
@@ -3147,11 +3116,11 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
             total_chunks_saved = process_single_tabular_sheet(**args)
 
-        elif file_ext in ('.xlsx', '.xls'):
+        elif file_ext in ('.xlsx', '.xls', '.xlsm'):
             # Process Excel (potentially multiple sheets)
             excel_file = pandas.ExcelFile(
                 temp_file_path, 
-                engine='openpyxl' if file_ext == '.xlsx' else 'xlrd'
+                engine='openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
             )
             sheet_names = excel_file.sheet_names
             base_name, ext = os.path.splitext(original_filename)
@@ -3686,7 +3655,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
         # --- 1. Dispatch to appropriate handler based on file type ---
         di_supported_extensions = ('.pdf', '.docx', '.doc', '.pptx', '.ppt', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif')
-        tabular_extensions = ('.csv', '.xlsx', '.xls')
+        tabular_extensions = ('.csv', '.xlsx', '.xls', '.xlsm')
 
         is_group = group_id is not None
 
