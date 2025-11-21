@@ -226,6 +226,64 @@ export function showImagePopup(imageSrc) {
   modal.show();
 }
 
+export function showMetadataModal(metadataType, metadataContent, fileName) {
+  // Create or reuse the metadata modal
+  let modalContainer = document.getElementById("metadata-modal");
+  if (!modalContainer) {
+    modalContainer = document.createElement("div");
+    modalContainer.id = "metadata-modal";
+    modalContainer.classList.add("modal", "fade");
+    modalContainer.tabIndex = -1;
+    modalContainer.setAttribute("aria-hidden", "true");
+
+    modalContainer.innerHTML = `
+      <div class="modal-dialog modal-dialog-scrollable modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="metadata-modal-title">Document Metadata</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2">
+              <strong>File:</strong> <span id="metadata-file-name"></span>
+            </div>
+            <div class="mb-2">
+              <strong>Type:</strong> <span id="metadata-type" class="badge bg-info"></span>
+            </div>
+            <div class="mt-3">
+              <strong>Content:</strong>
+              <div id="metadata-content" class="mt-2 p-3 bg-light rounded" style="white-space: pre-wrap; max-height: 60vh; overflow-y: auto;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modalContainer);
+  }
+
+  // Update modal content
+  const modalTitle = modalContainer.querySelector("#metadata-modal-title");
+  const fileNameEl = modalContainer.querySelector("#metadata-file-name");
+  const metadataTypeEl = modalContainer.querySelector("#metadata-type");
+  const metadataContentEl = modalContainer.querySelector("#metadata-content");
+
+  if (modalTitle) {
+    modalTitle.textContent = `Document Metadata - ${metadataType.charAt(0).toUpperCase() + metadataType.slice(1)}`;
+  }
+  if (fileNameEl) {
+    fileNameEl.textContent = fileName;
+  }
+  if (metadataTypeEl) {
+    metadataTypeEl.textContent = metadataType.charAt(0).toUpperCase() + metadataType.slice(1);
+  }
+  if (metadataContentEl) {
+    metadataContentEl.textContent = metadataContent;
+  }
+
+  const modal = new bootstrap.Modal(modalContainer);
+  modal.show();
+}
+
 export function showAgentCitationModal(toolName, toolArgs, toolResult) {
   // Create or reuse the agent citation modal
   let modalContainer = document.getElementById("agent-citation-modal");
@@ -457,6 +515,18 @@ if (chatboxEl) {
       if (!citationId) {
           console.warn("Citation link/button clicked but data-citation-id is missing.");
           showToast("Cannot process citation: Missing ID.", "warning");
+          return;
+      }
+
+      // Check if this is a metadata citation
+      const isMetadata = target.getAttribute("data-is-metadata") === "true";
+      if (isMetadata) {
+          // Show metadata content directly in a modal
+          const metadataType = target.getAttribute("data-metadata-type");
+          const metadataContent = target.getAttribute("data-metadata-content");
+          const fileName = citationId.split('_')[0]; // Extract filename from citation ID
+          
+          showMetadataModal(metadataType, metadataContent, fileName);
           return;
       }
 

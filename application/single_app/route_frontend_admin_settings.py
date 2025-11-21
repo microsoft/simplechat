@@ -631,11 +631,10 @@ def register_route_frontend_admin_settings(app):
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
                 'video_indexer_location': form_data.get('video_indexer_location', '').strip(),
                 'video_indexer_account_id': form_data.get('video_indexer_account_id', '').strip(),
-                'video_indexer_api_key': form_data.get('video_indexer_api_key', '').strip(),
                 'video_indexer_resource_group': form_data.get('video_indexer_resource_group', '').strip(),
                 'video_indexer_subscription_id': form_data.get('video_indexer_subscription_id', '').strip(),
                 'video_indexer_account_name': form_data.get('video_indexer_account_name', '').strip(),
-                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', '2021-11-10-preview').strip(),
+                'video_indexer_arm_api_version': form_data.get('video_indexer_arm_api_version', '2024-01-01').strip(),
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
@@ -645,6 +644,10 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
+
+                # Multi-modal vision settings
+                'enable_multimodal_vision': form_data.get('enable_multimodal_vision') == 'on',
+                'multimodal_vision_model': form_data.get('multimodal_vision_model', '').strip(),
 
                 # --- Banner fields ---
                 'classification_banner_enabled': classification_banner_enabled,

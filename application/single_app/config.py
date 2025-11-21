@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.063"
+VERSION = "0.229.098"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -121,9 +121,9 @@ CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
 ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'docx', 'xlsx', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
+    'txt', 'pdf', 'doc', 'docm', 'docx', 'xlsx', 'xls', 'xlsm','csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
     'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
-    'dvr-ms', 'wav'
+    'dvr-ms', 'wav', 'xml', 'yaml', 'yml', 'log'
 }
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB

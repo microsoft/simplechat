@@ -606,8 +606,10 @@ def register_route_backend_chats(app):
                         "doc_scope": document_scope,
                     }
                     
-                    # Add active_group_id when document scope is 'group' or chat_type is 'group'
-                    if (document_scope == 'group' or chat_type == 'group') and active_group_id:
+                    # Add active_group_id when:
+                    # 1. Document scope is 'group' or chat_type is 'group', OR
+                    # 2. Document scope is 'all' and groups are enabled (so group search can be included)
+                    if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
                         search_args["active_group_id"] = active_group_id
     
                         
@@ -704,6 +706,151 @@ def register_route_backend_chats(app):
 
                     # Reorder hybrid citations list in descending order based on page_number
                     hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+
+                    # --- NEW: Extract metadata (keywords/abstract) for additional citations ---
+                    # Only if extract_metadata is enabled
+                    if settings.get('enable_extract_meta_data', False):
+                        from functions_documents import get_document_metadata_for_citations
+                        
+                        # Track which documents we've already processed to avoid duplicates
+                        processed_doc_ids = set()
+                        
+                        for doc in search_results:
+                            # Get document ID (from the chunk's document reference)
+                            # AI Search chunks contain references to their parent document
+                            doc_id = doc.get('id', '').split('_')[0] if doc.get('id') else None
+                            
+                            # Skip if we've already processed this document
+                            if not doc_id or doc_id in processed_doc_ids:
+                                continue
+                            
+                            processed_doc_ids.add(doc_id)
+                            
+                            # Determine workspace type from the search result fields
+                            doc_user_id = doc.get('user_id')
+                            doc_group_id = doc.get('group_id')
+                            doc_public_workspace_id = doc.get('public_workspace_id')
+                            
+                            # Query Cosmos for this document's metadata
+                            metadata = get_document_metadata_for_citations(
+                                document_id=doc_id,
+                                user_id=doc_user_id if doc_user_id else None,
+                                group_id=doc_group_id if doc_group_id else None,
+                                public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
+                            )
+                            
+                            # If we have metadata with content, create additional citations
+                            if metadata:
+                                file_name = metadata.get('file_name', 'Unknown')
+                                keywords = metadata.get('keywords', [])
+                                abstract = metadata.get('abstract', '')
+                                
+                                # Create citation for keywords if they exist
+                                if keywords and len(keywords) > 0:
+                                    keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                    keywords_citation_id = f"{doc_id}_keywords"
+                                    
+                                    keywords_citation = {
+                                        "file_name": file_name,
+                                        "citation_id": keywords_citation_id,
+                                        "page_number": "Metadata",  # Special page identifier
+                                        "chunk_id": keywords_citation_id,
+                                        "chunk_sequence": 9999,  # High number to sort to end
+                                        "score": 0.0,  # No relevance score for metadata
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "keywords",  # Flag this as metadata citation
+                                        "metadata_content": keywords_text
+                                    }
+                                    hybrid_citations_list.append(keywords_citation)
+                                    combined_documents.append(keywords_citation)  # Add to combined_documents too
+                                    
+                                    # Add keywords to retrieved content for the model
+                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                    retrieved_texts.append(keywords_context)
+                                
+                                # Create citation for abstract if it exists
+                                if abstract and len(abstract.strip()) > 0:
+                                    abstract_citation_id = f"{doc_id}_abstract"
+                                    
+                                    abstract_citation = {
+                                        "file_name": file_name,
+                                        "citation_id": abstract_citation_id,
+                                        "page_number": "Metadata",  # Special page identifier
+                                        "chunk_id": abstract_citation_id,
+                                        "chunk_sequence": 9998,  # High number to sort to end
+                                        "score": 0.0,  # No relevance score for metadata
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "abstract",  # Flag this as metadata citation
+                                        "metadata_content": abstract
+                                    }
+                                    hybrid_citations_list.append(abstract_citation)
+                                    combined_documents.append(abstract_citation)  # Add to combined_documents too
+                                    
+                                    # Add abstract to retrieved content for the model
+                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                    retrieved_texts.append(abstract_context)
+                                
+                                # Create citation for vision analysis if it exists
+                                vision_analysis = metadata.get('vision_analysis')
+                                if vision_analysis:
+                                    vision_citation_id = f"{doc_id}_vision"
+                                    
+                                    # Format vision analysis for citation display
+                                    vision_description = vision_analysis.get('description', '')
+                                    vision_objects = vision_analysis.get('objects', [])
+                                    vision_text = vision_analysis.get('text', '')
+                                    
+                                    vision_content = f"AI Vision Analysis:\n"
+                                    if vision_description:
+                                        vision_content += f"Description: {vision_description}\n"
+                                    if vision_objects:
+                                        vision_content += f"Objects: {', '.join(vision_objects)}\n"
+                                    if vision_text:
+                                        vision_content += f"Text in Image: {vision_text}\n"
+                                    
+                                    vision_citation = {
+                                        "file_name": file_name,
+                                        "citation_id": vision_citation_id,
+                                        "page_number": "AI Vision",  # Special page identifier
+                                        "chunk_id": vision_citation_id,
+                                        "chunk_sequence": 9997,  # High number to sort to end (before keywords/abstract)
+                                        "score": 0.0,  # No relevance score for vision analysis
+                                        "group_id": doc_group_id,
+                                        "version": doc.get('version', 'N/A'),
+                                        "classification": doc.get('document_classification'),
+                                        "metadata_type": "vision",  # Flag this as vision citation
+                                        "metadata_content": vision_content
+                                    }
+                                    hybrid_citations_list.append(vision_citation)
+                                    combined_documents.append(vision_citation)  # Add to combined_documents too
+                                    
+                                    # Add vision analysis to retrieved content for the model
+                                    vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
+                                    retrieved_texts.append(vision_context)
+                        
+                        # Update the system prompt with the enhanced content including metadata
+                        if retrieved_texts:
+                            retrieved_content = "\n\n".join(retrieved_texts)
+                            system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+
+                                Retrieved Excerpts:
+                                {retrieved_content}
+
+                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
+
+                                Example
+                                User: What is the policy on double dipping?
+                                Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+                                """
+                            # Update the system message with enhanced content and updated documents array
+                            if system_messages_for_augmentation:
+                                system_messages_for_augmentation[-1]['content'] = system_prompt_search
+                                system_messages_for_augmentation[-1]['documents'] = combined_documents
+                    # --- END NEW METADATA CITATIONS ---
 
                     # Update conversation classifications if new ones were found
                     if list(classifications_found) != conversation_item.get('classification', []):
@@ -1139,13 +1286,66 @@ def register_route_backend_chats(app):
                                 'role': 'system', # Represent file as system info
                                 'content': f"[User uploaded a file named '{filename}'. Content preview:\n{display_content}]\nUse this file context if relevant."
                             })
-                    # elif role == 'image': # If you want to represent image generation prompts/results
-                    #     prompt = message.get('prompt', 'User generated an image.')
-                    #     img_url = message.get('content', '') # URL is in content
-                    #     conversation_history_for_api.append({
-                    #         'role': 'system',
-                    #         'content': f"[Assistant generated an image based on the prompt: '{prompt}'. Image URL: {img_url}]"
-                    #     })
+                    elif role == 'image': # Handle image uploads with extracted text and vision analysis
+                        filename = message.get('filename', 'uploaded_image')
+                        is_user_upload = message.get('metadata', {}).get('is_user_upload', False)
+                        
+                        if is_user_upload:
+                            # This is a user-uploaded image with extracted text and vision analysis
+                            # IMPORTANT: Do NOT include message.get('content') as it contains base64 image data
+                            # which would consume excessive tokens. Only use extracted_text and vision_analysis.
+                            extracted_text = message.get('extracted_text', '')
+                            vision_analysis = message.get('vision_analysis', {})
+                            
+                            # Build comprehensive context from OCR and vision analysis (NO BASE64!)
+                            image_context_parts = [f"[User uploaded an image named '{filename}'.]"]
+                            
+                            if extracted_text:
+                                # Include OCR text from Document Intelligence
+                                extracted_preview = extracted_text[:max_file_content_length_in_history]
+                                if len(extracted_text) > max_file_content_length_in_history:
+                                    extracted_preview += "..."
+                                image_context_parts.append(f"\n\nExtracted Text (OCR):\n{extracted_preview}")
+                            
+                            if vision_analysis:
+                                # Include AI vision analysis
+                                image_context_parts.append("\n\nAI Vision Analysis:")
+                                
+                                if vision_analysis.get('description'):
+                                    image_context_parts.append(f"\nDescription: {vision_analysis['description']}")
+                                
+                                if vision_analysis.get('objects'):
+                                    objects_str = ', '.join(vision_analysis['objects'])
+                                    image_context_parts.append(f"\nObjects detected: {objects_str}")
+                                
+                                if vision_analysis.get('text'):
+                                    image_context_parts.append(f"\nText visible in image: {vision_analysis['text']}")
+                                
+                                if vision_analysis.get('contextual_analysis'):
+                                    image_context_parts.append(f"\nContextual analysis: {vision_analysis['contextual_analysis']}")
+                            
+                            image_context_content = ''.join(image_context_parts) + "\n\nUse this image information to answer questions about the uploaded image."
+                            
+                            # Verify we're not accidentally including base64 data
+                            if 'data:image/' in image_context_content or ';base64,' in image_context_content:
+                                print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
+                                # This should never happen, but safety check just in case
+                                image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
+                            
+                            debug_print(f"[IMAGE_CONTEXT] Adding user-uploaded image to history: {filename}, context length: {len(image_context_content)} chars")
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': image_context_content
+                            })
+                        else:
+                            # This is a system-generated image (DALL-E, etc.)
+                            # Don't include the image data URL in history either
+                            prompt = message.get('prompt', 'User requested image generation.')
+                            debug_print(f"[IMAGE_CONTEXT] Adding system-generated image to history: {prompt[:100]}...")
+                            conversation_history_for_api.append({
+                                'role': 'system',
+                                'content': f"[Assistant generated an image based on the prompt: '{prompt}']"
+                            })
 
                     # Ignored roles: 'safety', 'blocked', 'system' (if they are only for augmentation/summary)
 

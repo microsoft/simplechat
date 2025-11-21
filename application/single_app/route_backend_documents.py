@@ -20,11 +20,15 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         conversation_id = data.get('conversation_id')
         file_id = data.get('file_id')
+        
+        debug_print(f"[GET_FILE_CONTENT] Starting - user_id={user_id}, conversation_id={conversation_id}, file_id={file_id}")
 
         if not user_id:
+            debug_print(f"[GET_FILE_CONTENT] ERROR: User not authenticated")
             return jsonify({'error': 'User not authenticated'}), 401
 
         if not conversation_id or not file_id:
+            debug_print(f"[GET_FILE_CONTENT] ERROR: Missing conversation_id or file_id")
             return jsonify({'error': 'Missing conversation_id or id'}), 400
 
         try:
@@ -57,36 +61,52 @@ def register_route_backend_documents(app):
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File not found in conversation")
                 return jsonify({'error': 'File not found in conversation'}), 404
 
+            debug_print(f"[GET_FILE_CONTENT] Found {len(items)} items for file_id={file_id}")
+            debug_print(f"[GET_FILE_CONTENT] First item structure: {json.dumps(items[0], default=str, indent=2)}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File found, processing content: " + str(items))
             items_sorted = sorted(items, key=lambda x: x.get('chunk_index', 0))
 
             filename = items_sorted[0].get('filename', 'Untitled')
             is_table = items_sorted[0].get('is_table', False)
+            debug_print(f"[GET_FILE_CONTENT] Filename: {filename}, is_table: {is_table}")
 
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Combining file content from chunks, filename: " + filename + ", is_table: " + str(is_table))
             combined_parts = []
-            for it in items_sorted:
+            for idx, it in enumerate(items_sorted):
                 fc = it.get('file_content', '')
+                debug_print(f"[GET_FILE_CONTENT] Chunk {idx}: file_content type={type(fc).__name__}, len={len(fc) if hasattr(fc, '__len__') else 'N/A'}")
 
                 if isinstance(fc, list):
+                    debug_print(f"[GET_FILE_CONTENT] Processing list of {len(fc)} items")
                     # If file_content is a list of dicts, join their 'content' fields
                     text_chunks = []
-                    for chunk in fc:
-                        text_chunks.append(chunk.get('content', ''))
+                    for chunk_idx, chunk in enumerate(fc):
+                        debug_print(f"[GET_FILE_CONTENT] List item {chunk_idx} type: {type(chunk).__name__}")
+                        if isinstance(chunk, dict):
+                            text_chunks.append(chunk.get('content', ''))
+                        elif isinstance(chunk, str):
+                            text_chunks.append(chunk)
+                        else:
+                            debug_print(f"[GET_FILE_CONTENT] Unexpected chunk type in list: {type(chunk).__name__}")
                     combined_parts.append("\n".join(text_chunks))
                 elif isinstance(fc, str):
+                    debug_print(f"[GET_FILE_CONTENT] Processing string content")
                     # If it's already a string, just append
                     combined_parts.append(fc)
                 else:
                     # If it's neither a list nor a string, handle as needed (e.g., skip or log)
+                    debug_print(f"[GET_FILE_CONTENT] WARNING: Unexpected file_content type: {type(fc).__name__}, value: {fc}")
                     pass
 
             combined_content = "\n".join(combined_parts)
+            debug_print(f"[GET_FILE_CONTENT] Combined content length: {len(combined_content)}")
 
             if not combined_content:
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Combined file content is empty")
+                debug_print(f"[GET_FILE_CONTENT] ERROR: Combined content is empty")
                 return jsonify({'error': 'File content not found'}), 404
 
+            debug_print(f"[GET_FILE_CONTENT] Successfully returning file content")
             return jsonify({
                 'file_content': combined_content,
                 'filename': filename,
@@ -94,6 +114,8 @@ def register_route_backend_documents(app):
             }), 200
 
         except Exception as e:
+            debug_print(f"[GET_FILE_CONTENT] EXCEPTION: {str(e)}")
+            debug_print(f"[GET_FILE_CONTENT] Traceback: {traceback.format_exc()}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Error retrieving file content: " + str(e))
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     

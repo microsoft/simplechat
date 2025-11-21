@@ -134,6 +134,10 @@ def get_settings():
         'number_of_historical_messages_to_summarize': 10,
         'enable_summarize_content_history_beyond_conversation_history_limit': False,
 
+        # Multi-Modal Vision Analysis
+        'enable_multimodal_vision': False,
+        'multimodal_vision_model': '',
+
         # Document Classification
         'enable_document_classification': False,
         'document_classification_categories': [
@@ -215,11 +219,10 @@ def get_settings():
         'video_indexer_endpoint': video_indexer_endpoint,
         'video_indexer_location': '',
         'video_indexer_account_id': '',
-        'video_indexer_api_key': '',
         'video_indexer_resource_group': '',
         'video_indexer_subscription_id': '',
         'video_indexer_account_name': '',
-        'video_indexer_arm_api_version': '2021-11-10-preview',
+        'video_indexer_arm_api_version': '2024-01-01',
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service
