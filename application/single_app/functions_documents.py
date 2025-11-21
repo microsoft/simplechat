@@ -220,6 +220,8 @@ def save_video_chunk(
 ):
     """
     Saves one 30-second video chunk to the search index, with separate fields for transcript and OCR.
+    Video Indexer insights (keywords, labels, topics, audio effects, emotions, sentiments) are 
+    already appended to page_text_content for searchability.
     The chunk_id is built from document_id and the integer second offset to ensure a valid key.
     """
     from functions_debug import debug_print
@@ -422,7 +424,13 @@ def process_video_document(
         
         # Use the access token in the URL parameters
         headers = {}
-        params = {"accessToken": token, "name": original_filename}
+        # Request comprehensive indexing including audio transcript
+        params = {
+            "accessToken": token, 
+            "name": original_filename,
+            "indexingPreset": "Default",  # Includes video + audio insights
+            "streamingPreset": "NoStreaming"
+        }
         debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
         
         debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
@@ -479,12 +487,14 @@ def process_video_document(
         return 0
 
     # 3) Poll until ready
+    # Don't use includeInsights parameter - it filters what's returned. We want everything.
     index_url = (
         f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{vid}/Index"
-        f"?accessToken={token}&includeInsights=Transcript&includeStreamingUrls=false"
+        f"?accessToken={token}"
     )
     poll_headers = {}
     debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
+    debug_print(f"[VIDEO INDEXER] Requesting full insights (no filtering)")
     
     debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
     debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
@@ -560,14 +570,137 @@ def process_video_document(
 
     # 4) Extract transcript & OCR
     debug_print(f"[VIDEO INDEXER] Starting insights extraction for video ID: {vid}")
+    debug_print(f"[VIDEO INDEXER] Extracting insights from completed video")
     
     insights = info.get("insights", {})
+    if not insights:
+        debug_print(f"[VIDEO INDEXER] ERROR: No insights object in response")
+        debug_print(f"[VIDEO INDEXER] Response info keys: {list(info.keys())}")
+        return 0
+    
+    # Get video duration from insights (primary) or info (fallback)
+    video_duration = insights.get("duration") or info.get("duration", "00:00:00")
+    video_duration_seconds = to_seconds(video_duration) if video_duration else 0
+    debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
+    
+    # Log raw insights JSON for complete visibility (debug only)
+    import json
+    print(f"\n[VIDEO] ===== RAW INSIGHTS JSON =====", flush=True)
+    try:
+        insights_json = json.dumps(insights, indent=2, ensure_ascii=False)
+        # Truncate if too long (show first 10000 chars)
+        if len(insights_json) > 10000:
+            print(f"{insights_json[:10000]}\n... (truncated, total length: {len(insights_json)} chars)", flush=True)
+        else:
+            print(insights_json, flush=True)
+    except Exception as e:
+        print(f"[VIDEO] Could not serialize insights to JSON: {e}", flush=True)
+    print(f"[VIDEO] ===== END RAW INSIGHTS =====\n", flush=True)
+    
+    debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
+    print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
+    
+    # Debug: Show sample structures for all insight types
+    print(f"\n[VIDEO] ===== SAMPLE DATA STRUCTURES =====", flush=True)
+    
+    transcript_data = insights.get("transcript", [])
+    if transcript_data:
+        print(f"[VIDEO] TRANSCRIPT sample: {transcript_data[0]}", flush=True)
+    
+    ocr_data = insights.get("ocr", [])
+    if ocr_data:
+        print(f"[VIDEO] OCR sample: {ocr_data[0]}", flush=True)
+    
+    keywords_data_debug = insights.get("keywords", [])
+    if keywords_data_debug:
+        print(f"[VIDEO] KEYWORDS sample: {keywords_data_debug[0]}", flush=True)
+    
+    labels_data_debug = insights.get("labels", [])
+    if labels_data_debug:
+        debug_print(f"[VIDEO INDEXER] LABELS sample: {labels_data_debug[0]}")
+    
+    topics_data_debug = insights.get("topics", [])
+    if topics_data_debug:
+        debug_print(f"[VIDEO INDEXER] TOPICS sample: {topics_data_debug[0]}")
+    
+    audio_effects_data_debug = insights.get("audioEffects", [])
+    if audio_effects_data_debug:
+        debug_print(f"[VIDEO INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
+    
+    emotions_data_debug = insights.get("emotions", [])
+    if emotions_data_debug:
+        debug_print(f"[VIDEO INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
+    
+    sentiments_data_debug = insights.get("sentiments", [])
+    if sentiments_data_debug:
+        debug_print(f"[VIDEO INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
+    
+    scenes_data_debug = insights.get("scenes", [])
+    if scenes_data_debug:
+        debug_print(f"[VIDEO INDEXER] SCENES sample: {scenes_data_debug[0]}")
+    
+    shots_data_debug = insights.get("shots", [])
+    if shots_data_debug:
+        debug_print(f"[VIDEO INDEXER] SHOTS sample: {shots_data_debug[0]}")
+    
+    faces_data_debug = insights.get("faces", [])
+    if faces_data_debug:
+        debug_print(f"[VIDEO INDEXER] FACES sample: {faces_data_debug[0]}")
+    
+    namedLocations_data_debug = insights.get("namedLocations", [])
+    if namedLocations_data_debug:
+        debug_print(f"[VIDEO INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
+    
+    # Check for other potential label sources
+    brands_data_debug = insights.get("brands", [])
+    if brands_data_debug:
+        debug_print(f"[VIDEO INDEXER] BRANDS sample: {brands_data_debug[0]}")
+    
+    visualContentModeration_debug = insights.get("visualContentModeration", [])
+    if visualContentModeration_debug:
+        debug_print(f"[VIDEO INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
+    
+    # Show total counts for all available insights
+    print(f"[VIDEO] COUNTS:", flush=True)
+    for key in insights.keys():
+        value = insights.get(key, [])
+        if isinstance(value, list):
+            print(f"  {key}: {len(value)} items", flush=True)
+    
+    print(f"[VIDEO] ===== END SAMPLE DATA =====\n", flush=True)
+    
     transcript = insights.get("transcript", [])
     ocr_blocks = insights.get("ocr", [])
+    keywords_data = insights.get("keywords", [])
+    labels_data = insights.get("labels", [])
+    topics_data = insights.get("topics", [])
+    audio_effects_data = insights.get("audioEffects", [])
+    emotions_data = insights.get("emotions", [])
+    sentiments_data = insights.get("sentiments", [])
+    named_people_data = insights.get("namedPeople", [])
+    named_locations_data = insights.get("namedLocations", [])
+    speakers_data = insights.get("speakers", [])
+    detected_objects_data = insights.get("detectedObjects", [])
     
     debug_print(f"[VIDEO INDEXER] Transcript segments found: {len(transcript)}")
     debug_print(f"[VIDEO INDEXER] OCR blocks found: {len(ocr_blocks)}")
+    debug_print(f"[VIDEO INDEXER] Keywords found: {len(keywords_data)}")
+    debug_print(f"[VIDEO INDEXER] Labels found: {len(labels_data)}")
+    debug_print(f"[VIDEO INDEXER] Topics found: {len(topics_data)}")
+    debug_print(f"[VIDEO INDEXER] Audio effects found: {len(audio_effects_data)}")
+    debug_print(f"[VIDEO INDEXER] Emotions found: {len(emotions_data)}")
+    debug_print(f"[VIDEO INDEXER] Sentiments found: {len(sentiments_data)}")
+    debug_print(f"[VIDEO INDEXER] Named people found: {len(named_people_data)}")
+    debug_print(f"[VIDEO INDEXER] Named locations found: {len(named_locations_data)}")
+    debug_print(f"[VIDEO INDEXER] Speakers found: {len(speakers_data)}")
+    debug_print(f"[VIDEO INDEXER] Detected objects found: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
+    
+    if len(transcript) == 0:
+        debug_print(f"[VIDEO INDEXER] WARNING: No transcript data available")
+        debug_print(f"[VIDEO INDEXER] Available insights keys: {list(insights.keys())}")
 
+    # Build context lists for transcript and OCR
     speech_context = [
         {"text": seg["text"].strip(), "start": inst["start"]}
         for seg in transcript if seg.get("text", "").strip()
@@ -578,45 +711,368 @@ def process_video_document(
         for block in ocr_blocks if block.get("text", "").strip()
         for inst in block.get("instances", [])
     ]
+    
+    # Build context lists for additional insights
+    keywords_context = [
+        {"text": kw.get("name", ""), "start": inst["start"]}
+        for kw in keywords_data if kw.get("name", "").strip()
+        for inst in kw.get("instances", [])
+    ]
+    labels_context = [
+        {"text": label.get("name", ""), "start": inst["start"]}
+        for label in labels_data if label.get("name", "").strip()
+        for inst in label.get("instances", [])
+    ]
+    topics_context = [
+        {"text": topic.get("name", ""), "start": inst["start"]}
+        for topic in topics_data if topic.get("name", "").strip()
+        for inst in topic.get("instances", [])
+    ]
+    audio_effects_context = [
+        {"text": ae.get("audioEffectType", ""), "start": inst["start"]}
+        for ae in audio_effects_data if ae.get("audioEffectType", "").strip()
+        for inst in ae.get("instances", [])
+    ]
+    emotions_context = [
+        {"text": emotion.get("type", ""), "start": inst["start"]}
+        for emotion in emotions_data if emotion.get("type", "").strip()
+        for inst in emotion.get("instances", [])
+    ]
+    sentiments_context = [
+        {"text": sentiment.get("sentimentType", ""), "start": inst["start"]}
+        for sentiment in sentiments_data if sentiment.get("sentimentType", "").strip()
+        for inst in sentiment.get("instances", [])
+    ]
+    named_people_context = [
+        {"text": person.get("name", ""), "start": inst["start"]}
+        for person in named_people_data if person.get("name", "").strip()
+        for inst in person.get("instances", [])
+    ]
+    named_locations_context = [
+        {"text": location.get("name", ""), "start": inst["start"]}
+        for location in named_locations_data if location.get("name", "").strip()
+        for inst in location.get("instances", [])
+    ]
+    detected_objects_context = [
+        {"text": obj.get("type", ""), "start": inst["start"]}
+        for obj in detected_objects_data if obj.get("type", "").strip()
+        for inst in obj.get("instances", [])
+    ]
 
     debug_print(f"[VIDEO INDEXER] Speech context items: {len(speech_context)}")
     debug_print(f"[VIDEO INDEXER] OCR context items: {len(ocr_context)}")
+    debug_print(f"[VIDEO INDEXER] Keywords context items: {len(keywords_context)}")
+    debug_print(f"[VIDEO INDEXER] Labels context items: {len(labels_context)}")
+    debug_print(f"[VIDEO INDEXER] Topics context items: {len(topics_context)}")
+    debug_print(f"[VIDEO INDEXER] Audio effects context items: {len(audio_effects_context)}")
+    debug_print(f"[VIDEO INDEXER] Emotions context items: {len(emotions_context)}")
+    debug_print(f"[VIDEO INDEXER] Sentiments context items: {len(sentiments_context)}")
+    debug_print(f"[VIDEO INDEXER] Named people context items: {len(named_people_context)}")
+    debug_print(f"[VIDEO INDEXER] Named locations context items: {len(named_locations_context)}")
+    debug_print(f"[VIDEO INDEXER] Detected objects context items: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
+    
+    if len(speech_context) > 0:
+        debug_print(f"[VIDEO INDEXER] First speech item: {speech_context[0]}")
 
+    # Sort all contexts by timestamp
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
     ocr_context.sort(key=lambda x: to_seconds(x["start"]))
+    keywords_context.sort(key=lambda x: to_seconds(x["start"]))
+    labels_context.sort(key=lambda x: to_seconds(x["start"]))
+    topics_context.sort(key=lambda x: to_seconds(x["start"]))
+    audio_effects_context.sort(key=lambda x: to_seconds(x["start"]))
+    emotions_context.sort(key=lambda x: to_seconds(x["start"]))
+    sentiments_context.sort(key=lambda x: to_seconds(x["start"]))
+    named_people_context.sort(key=lambda x: to_seconds(x["start"]))
+    named_locations_context.sort(key=lambda x: to_seconds(x["start"]))
+    detected_objects_context.sort(key=lambda x: to_seconds(x["start"]))
 
     debug_print(f"[VIDEO INDEXER] Starting 30-second chunk processing")
+    debug_print(f"[VIDEO INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
+    debug_print(f"[VIDEO INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
+    
+    # Check if we have any content at all
+    total_insights = len(speech_context) + len(ocr_context) + len(keywords_context) + len(labels_context) + len(topics_context) + len(audio_effects_context) + len(emotions_context) + len(sentiments_context) + len(named_people_context) + len(named_locations_context) + len(detected_objects_context)
+    
+    if total_insights == 0 and video_duration_seconds == 0:
+        debug_print(f"[VIDEO INDEXER] ERROR: No insights and no duration information available")
+        update_callback(status="VIDEO: no data available")
+        return 0
+    
+    # Use video duration to create time-based chunks, even without speech
+    if video_duration_seconds == 0:
+        debug_print(f"[VIDEO INDEXER] WARNING: No video duration available, estimating from insights")
+        # Estimate duration from the latest timestamp in any insight
+        max_timestamp = 0
+        for context_list in [speech_context, ocr_context, keywords_context, labels_context, topics_context, audio_effects_context, emotions_context, sentiments_context, named_people_context, named_locations_context, detected_objects_context]:
+            if context_list:
+                max_ts = max(to_seconds(item["start"]) for item in context_list)
+                max_timestamp = max(max_timestamp, max_ts)
+        video_duration_seconds = max_timestamp + 30  # Add buffer
+        debug_print(f"[VIDEO INDEXER] Estimated duration: {video_duration_seconds}s")
+    
+    # Create chunks based on time intervals (30 seconds each)
+    num_chunks = int(video_duration_seconds / 30) + (1 if video_duration_seconds % 30 > 0 else 0)
+    debug_print(f"[VIDEO INDEXER] Will create {num_chunks} time-based chunks")
     
     total = 0
     idx_s = 0
     n_s = len(speech_context)
     idx_o = 0
     n_o = len(ocr_context)
+    idx_kw = 0
+    n_kw = len(keywords_context)
+    idx_lbl = 0
+    n_lbl = len(labels_context)
+    idx_top = 0
+    n_top = len(topics_context)
+    idx_ae = 0
+    n_ae = len(audio_effects_context)
+    idx_emo = 0
+    n_emo = len(emotions_context)
+    idx_sent = 0
+    n_sent = len(sentiments_context)
+    idx_people = 0
+    n_people = len(named_people_context)
+    idx_locations = 0
+    n_locations = len(named_locations_context)
+    idx_objects = 0
+    n_objects = len(detected_objects_context)
+    
+    # Process chunks in 30-second intervals based on video duration
+    for chunk_num in range(num_chunks):
+        window_start = chunk_num * 30.0
+        window_end = min((chunk_num + 1) * 30.0, video_duration_seconds)
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
 
-    while idx_s < n_s:
-        window_start = to_seconds(speech_context[idx_s]["start"])
-        window_end = window_start + 30.0
-
+        # Collect speech for this time window
         speech_lines = []
-        while idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) <= window_end:
-            speech_lines.append(speech_context[idx_s]["text"])
+        while idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
+            if to_seconds(speech_context[idx_s]["start"]) >= window_start:
+                speech_lines.append(speech_context[idx_s]["text"])
             idx_s += 1
+            if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) >= window_end:
+                break
+        
+        # Reset idx_s if we went past window_end
+        while idx_s > 0 and idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) >= window_end:
+            idx_s -= 1
+        if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
+            idx_s += 1
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
 
+        # Collect OCR for this time window
         ocr_lines = []
-        while idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) <= window_end:
-            ocr_lines.append(ocr_context[idx_o]["text"])
+        while idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
+            if to_seconds(ocr_context[idx_o]["start"]) >= window_start:
+                ocr_lines.append(ocr_context[idx_o]["text"])
             idx_o += 1
+            if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) >= window_end:
+                break
+        
+        while idx_o > 0 and idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) >= window_end:
+            idx_o -= 1
+        if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
+            idx_o += 1
+        
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
+        
+        # Collect keywords for this time window
+        chunk_keywords = []
+        while idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) < window_end:
+            if to_seconds(keywords_context[idx_kw]["start"]) >= window_start:
+                chunk_keywords.append(keywords_context[idx_kw]["text"])
+            idx_kw += 1
+            if idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) >= window_end:
+                break
+        while idx_kw > 0 and idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) >= window_end:
+            idx_kw -= 1
+        if idx_kw < n_kw and to_seconds(keywords_context[idx_kw]["start"]) < window_end:
+            idx_kw += 1
+        
+        # Collect labels for this time window
+        chunk_labels = []
+        while idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) < window_end:
+            if to_seconds(labels_context[idx_lbl]["start"]) >= window_start:
+                chunk_labels.append(labels_context[idx_lbl]["text"])
+            idx_lbl += 1
+            if idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) >= window_end:
+                break
+        while idx_lbl > 0 and idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) >= window_end:
+            idx_lbl -= 1
+        if idx_lbl < n_lbl and to_seconds(labels_context[idx_lbl]["start"]) < window_end:
+            idx_lbl += 1
+        
+        # Collect topics for this time window
+        chunk_topics = []
+        while idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) < window_end:
+            if to_seconds(topics_context[idx_top]["start"]) >= window_start:
+                chunk_topics.append(topics_context[idx_top]["text"])
+            idx_top += 1
+            if idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) >= window_end:
+                break
+        while idx_top > 0 and idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) >= window_end:
+            idx_top -= 1
+        if idx_top < n_top and to_seconds(topics_context[idx_top]["start"]) < window_end:
+            idx_top += 1
+        
+        # Collect audio effects for this time window
+        chunk_audio_effects = []
+        while idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) < window_end:
+            if to_seconds(audio_effects_context[idx_ae]["start"]) >= window_start:
+                chunk_audio_effects.append(audio_effects_context[idx_ae]["text"])
+            idx_ae += 1
+            if idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) >= window_end:
+                break
+        while idx_ae > 0 and idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) >= window_end:
+            idx_ae -= 1
+        if idx_ae < n_ae and to_seconds(audio_effects_context[idx_ae]["start"]) < window_end:
+            idx_ae += 1
+        
+        # Collect emotions for this time window
+        chunk_emotions = []
+        while idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) < window_end:
+            if to_seconds(emotions_context[idx_emo]["start"]) >= window_start:
+                chunk_emotions.append(emotions_context[idx_emo]["text"])
+            idx_emo += 1
+            if idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) >= window_end:
+                break
+        while idx_emo > 0 and idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) >= window_end:
+            idx_emo -= 1
+        if idx_emo < n_emo and to_seconds(emotions_context[idx_emo]["start"]) < window_end:
+            idx_emo += 1
+        
+        # Collect sentiments for this time window
+        chunk_sentiments = []
+        while idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) < window_end:
+            if to_seconds(sentiments_context[idx_sent]["start"]) >= window_start:
+                chunk_sentiments.append(sentiments_context[idx_sent]["text"])
+            idx_sent += 1
+            if idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) >= window_end:
+                break
+        while idx_sent > 0 and idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) >= window_end:
+            idx_sent -= 1
+        if idx_sent < n_sent and to_seconds(sentiments_context[idx_sent]["start"]) < window_end:
+            idx_sent += 1
+        
+        # Collect named people for this time window
+        chunk_people = []
+        while idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) < window_end:
+            if to_seconds(named_people_context[idx_people]["start"]) >= window_start:
+                chunk_people.append(named_people_context[idx_people]["text"])
+            idx_people += 1
+            if idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) >= window_end:
+                break
+        while idx_people > 0 and idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) >= window_end:
+            idx_people -= 1
+        if idx_people < n_people and to_seconds(named_people_context[idx_people]["start"]) < window_end:
+            idx_people += 1
+        
+        # Collect named locations for this time window
+        chunk_locations = []
+        while idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) < window_end:
+            if to_seconds(named_locations_context[idx_locations]["start"]) >= window_start:
+                chunk_locations.append(named_locations_context[idx_locations]["text"])
+            idx_locations += 1
+            if idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) >= window_end:
+                break
+        while idx_locations > 0 and idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) >= window_end:
+            idx_locations -= 1
+        if idx_locations < n_locations and to_seconds(named_locations_context[idx_locations]["start"]) < window_end:
+            idx_locations += 1
+        
+        # Collect detected objects for this time window
+        chunk_objects = []
+        while idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) < window_end:
+            if to_seconds(detected_objects_context[idx_objects]["start"]) >= window_start:
+                chunk_objects.append(detected_objects_context[idx_objects]["text"])
+            idx_objects += 1
+            if idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) >= window_end:
+                break
+        while idx_objects > 0 and idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) >= window_end:
+            idx_objects -= 1
+        if idx_objects < n_objects and to_seconds(detected_objects_context[idx_objects]["start"]) < window_end:
+            idx_objects += 1
 
-        start_ts = speech_context[total]["start"]
+        # Format timestamp as HH:MM:SS
+        hours = int(window_start // 3600)
+        minutes = int((window_start % 3600) // 60)
+        seconds = int(window_start % 60)
+        start_ts = f"{hours:02d}:{minutes:02d}:{seconds:02d}.000"
+        
         chunk_text = " ".join(speech_lines).strip()
         ocr_text = " ".join(ocr_lines).strip()
-
-        debug_print(f"[VIDEO INDEXER] Processing chunk {total + 1} at timestamp {start_ts}")
-        debug_print(f"[VIDEO INDEXER] Chunk text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
         
-        update_callback(current_file_chunk=total+1, status=f"VIDEO: saving chunk @ {start_ts}")
+        # Build enhanced chunk text with insights appended
+        if chunk_text:
+            # Has speech - append insights to it
+            insight_parts = []
+            if chunk_keywords:
+                insight_parts.append(f"Keywords: {', '.join(chunk_keywords)}")
+            if chunk_labels:
+                insight_parts.append(f"Visual elements: {', '.join(chunk_labels)}")
+            if chunk_topics:
+                insight_parts.append(f"Topics: {', '.join(chunk_topics)}")
+            if chunk_audio_effects:
+                insight_parts.append(f"Audio: {', '.join(chunk_audio_effects)}")
+            if chunk_emotions:
+                insight_parts.append(f"Emotions: {', '.join(chunk_emotions)}")
+            if chunk_sentiments:
+                insight_parts.append(f"Sentiment: {', '.join(chunk_sentiments)}")
+            if chunk_people:
+                insight_parts.append(f"People: {', '.join(chunk_people)}")
+            if chunk_locations:
+                insight_parts.append(f"Locations: {', '.join(chunk_locations)}")
+            if chunk_objects:
+                insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
+            
+            if insight_parts:
+                chunk_text = f"{chunk_text}\n\n{' | '.join(insight_parts)}"
+                debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
+        else:
+            # No speech - build chunk text from other insights
+            insight_parts = []
+            if ocr_text:
+                insight_parts.append(f"Visual text: {ocr_text}")
+            if chunk_keywords:
+                insight_parts.append(f"Keywords: {', '.join(chunk_keywords)}")
+            if chunk_labels:
+                insight_parts.append(f"Visual elements: {', '.join(chunk_labels)}")
+            if chunk_topics:
+                insight_parts.append(f"Topics: {', '.join(chunk_topics)}")
+            if chunk_audio_effects:
+                insight_parts.append(f"Audio: {', '.join(chunk_audio_effects)}")
+            if chunk_emotions:
+                insight_parts.append(f"Emotions: {', '.join(chunk_emotions)}")
+            if chunk_sentiments:
+                insight_parts.append(f"Sentiment: {', '.join(chunk_sentiments)}")
+            if chunk_people:
+                insight_parts.append(f"People: {', '.join(chunk_people)}")
+            if chunk_locations:
+                insight_parts.append(f"Locations: {', '.join(chunk_locations)}")
+            if chunk_objects:
+                insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
+            
+            chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
+        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
+        
+        # Skip truly empty chunks (no content at all)
+        if chunk_text == "[No content detected]" and not any([chunk_keywords, chunk_labels, chunk_topics, chunk_audio_effects, chunk_emotions, chunk_sentiments, chunk_people, chunk_locations, chunk_objects]):
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
+            continue
+        
+        update_callback(current_file_chunk=chunk_num+1, status=f"VIDEO: saving chunk @ {start_ts}")
         
         try:
+            debug_print(f"[VIDEO INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
             save_video_chunk(
                 page_text_content=chunk_text,
                 ocr_chunk_text=ocr_text,
@@ -626,12 +1082,14 @@ def process_video_document(
                 document_id=document_id,
                 group_id=group_id
             )
-            debug_print(f"[VIDEO INDEXER] Chunk {total + 1} saved successfully")
+            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
+            total += 1
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to save chunk {total + 1}: {str(e)}")
-            print(f"[VIDEO] CHUNK SAVE ERROR for chunk {total + 1}: {e}", flush=True)
-            
-        total += 1
+            debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
+            import traceback
+            debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
+    
+    debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
@@ -1143,6 +1601,57 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         print(f"Error uploading chunk document for document {document_id}: {e}")
         raise
 
+def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
+    """
+    Retrieve keywords and abstract from a document for creating metadata citations.
+    Used to enhance search results with additional context from document metadata.
+    
+    Args:
+        document_id: The document's unique identifier
+        user_id: User ID (for personal documents)
+        group_id: Group ID (for group documents) 
+        public_workspace_id: Public workspace ID (for public documents)
+        
+    Returns:
+        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Determine the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    try:
+        # Read the document directly by ID
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Extract keywords and abstract
+        keywords = document_item.get('keywords', [])
+        abstract = document_item.get('abstract', '')
+        
+        # Return only if we have actual content
+        if keywords or abstract:
+            return {
+                'keywords': keywords if keywords else [],
+                'abstract': abstract if abstract else '',
+                'file_name': document_item.get('file_name', 'Unknown')
+            }
+        
+        return None
+        
+    except Exception as e:
+        # Document not found or error reading - return None silently
+        # This is expected for documents without metadata
+        return None
+
 def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -1644,61 +2153,8 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             
         # Get the file name from the document to use for blob deletion
         file_name = document_item.get('file_name')
-        file_ext = os.path.splitext(file_name)[1].lower() if file_name else None
 
-        # First try to delete video from Video Indexer if applicable
-        if file_ext in ('.mp4', '.mov', '.avi', '.mkv', '.flv'):
-            debug_print(f"[VIDEO INDEXER DELETE] Video file detected, attempting Video Indexer deletion for document: {document_id}")
-            try:
-                settings = get_settings()
-                vi_ep = settings.get("video_indexer_endpoint")
-                vi_loc = settings.get("video_indexer_location")
-                vi_acc = settings.get("video_indexer_account_id")
-                
-                debug_print(f"[VIDEO INDEXER DELETE] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
-                
-                if not all([vi_ep, vi_loc, vi_acc]):
-                    debug_print(f"[VIDEO INDEXER DELETE] Missing video indexer configuration, skipping deletion")
-                    print("Missing video indexer configuration; skipping Video Indexer deletion.")
-                else:
-                    debug_print(f"[VIDEO INDEXER DELETE] Acquiring authentication token")
-                    token = get_video_indexer_account_token(settings)
-                    debug_print(f"[VIDEO INDEXER DELETE] Token acquired successfully")
-                    
-                    # You need to store the video ID in the document metadata when uploading
-                    video_id = document_item.get("video_indexer_id")
-                    debug_print(f"[VIDEO INDEXER DELETE] Video ID from document metadata: {video_id}")
-                    
-                    if video_id:
-                        delete_url = f"{vi_ep}/{vi_loc}/Accounts/{vi_acc}/Videos/{video_id}?accessToken={token}"
-                        delete_headers = {}
-                        debug_print(f"[VIDEO INDEXER DELETE] Using managed identity access token authentication")
-                            
-                        debug_print(f"[VIDEO INDEXER DELETE] Delete URL: {delete_url}")
-                        
-                        resp = requests.delete(delete_url, headers=delete_headers, timeout=60)
-                        debug_print(f"[VIDEO INDEXER DELETE] Delete response status: {resp.status_code}")
-                        
-                        if resp.status_code != 200:
-                            debug_print(f"[VIDEO INDEXER DELETE] Delete response text: {resp.text}")
-                            
-                        resp.raise_for_status()
-                        debug_print(f"[VIDEO INDEXER DELETE] Successfully deleted video ID: {video_id}")
-                        print(f"Deleted video from Video Indexer: {video_id}")
-                    else:
-                        debug_print(f"[VIDEO INDEXER DELETE] No video_indexer_id found in document metadata")
-                        print("No video_indexer_id found in document metadata; skipping Video Indexer deletion.")
-            except requests.exceptions.RequestException as e:
-                debug_print(f"[VIDEO INDEXER DELETE] Request error: {str(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    debug_print(f"[VIDEO INDEXER DELETE] Error response status: {e.response.status_code}")
-                    debug_print(f"[VIDEO INDEXER DELETE] Error response text: {e.response.text}")
-                print(f"Error deleting video from Video Indexer: {e}")
-            except Exception as e:
-                debug_print(f"[VIDEO INDEXER DELETE] Unexpected error: {str(e)}")
-                print(f"Error deleting video from Video Indexer: {e}")
-
-        # Second try to delete from blob storage
+        # Delete from blob storage
         try:
             if file_name:
                 delete_from_blob_storage(document_id, user_id, file_name, group_id, public_workspace_id)

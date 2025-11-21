@@ -359,12 +359,21 @@ function createCitationsHtml(
       const displayText = `${escapeHtml(cite.file_name)}, Page ${
         cite.page_number || "N/A"
       }`;
+      
+      // Check if this is a metadata citation
+      const isMetadata = cite.metadata_type ? true : false;
+      const metadataType = cite.metadata_type || '';
+      const metadataContent = cite.metadata_content || '';
+      
       citationsHtml += `
               <a href="#"
-                 class="btn btn-sm citation-button hybrid-citation-link"
+                 class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
+                 data-is-metadata="${isMetadata}"
+                 data-metadata-type="${escapeHtml(metadataType)}"
+                 data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
-                  <i class="bi bi-file-earmark-text me-1"></i>${displayText}
+                  <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
               </a>`;
     });
   }
