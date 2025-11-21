@@ -2646,7 +2646,7 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         # This preserves XML structure better than simple word splitting
         xml_splitter = RecursiveCharacterTextSplitter(
             chunk_size=max_chunk_size_chars,
-            chunk_overlap=200,  # Small overlap to maintain context
+            chunk_overlap=0,
             length_function=len,
             separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
             is_separator_regex=False
@@ -2733,7 +2733,7 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
         # This preserves YAML structure better than simple word splitting
         yaml_splitter = RecursiveCharacterTextSplitter(
             chunk_size=max_chunk_size_chars,
-            chunk_overlap=200,  # Small overlap to maintain context
+            chunk_overlap=0,
             length_function=len,
             separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
             is_separator_regex=False
