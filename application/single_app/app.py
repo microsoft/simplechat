@@ -107,6 +107,8 @@ from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
+from route_external_group_documents import *
+from route_external_public_documents import *
 
 # =================== Session Configuration ===================
 def configure_sessions(settings):
@@ -459,8 +461,11 @@ register_route_backend_public_documents(app)
 # ------------------- API Public Prompts Routes ----------
 register_route_backend_public_prompts(app)
 
-# ------------------- Extenral Health Routes ----------
+# ------------------- External Health Routes ----------
 register_route_external_health(app)
+
+# ------------------- External Group Documents Routes ----------
+register_route_external_group_documents(app)
 
 if __name__ == '__main__':
     settings = get_settings(use_cosmos=True)
