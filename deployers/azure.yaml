@@ -1,0 +1,34 @@
+name: SimpleChat
+metadata:
+  template: custom
+infra:
+  provider: bicep
+  path: bicep
+hooks:
+  predeploy:
+    posix:
+      shell: sh
+      run: |
+        # Build and push Docker image to ACR
+        cd ..
+        timestamp="$(date +"%Y%m%d-%H%M%S")"
+        echo "Stopping web service prior to deployment..."
+        az webapp stop --name ${var_webService} --resource-group ${var_rgName}
+        echo "Building Docker image..."
+        docker build -f application/single_app/Dockerfile -t ${var_containerRegistry}/${var_imageName}:${timestamp} .
+        docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} ${var_containerRegistry}/${var_imageName}:latest
+        echo "Logging in to ACR..."
+        az acr login --name ${var_acrName}
+        echo "Pushing image to ACR..."
+        docker push ${var_containerRegistry}/${var_imageName}:latest
+        docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
+        echo "Restarting web service..."
+        az webapp start --name ${var_webService} --resource-group ${var_rgName}
+services:
+  web:
+    project: ../application/single_app
+    language: python
+    host: appservice
+    docker:
+      context: ../../
+      dockerfile: application/single_app/Dockerfile
