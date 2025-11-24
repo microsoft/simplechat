@@ -359,12 +359,21 @@ function createCitationsHtml(
       const displayText = `${escapeHtml(cite.file_name)}, Page ${
         cite.page_number || "N/A"
       }`;
+
+      // Check if this is a metadata citation
+      const isMetadata = cite.metadata_type ? true : false;
+      const metadataType = cite.metadata_type || '';
+      const metadataContent = cite.metadata_content || '';
+
       citationsHtml += `
               <a href="#"
-                 class="btn btn-sm citation-button hybrid-citation-link"
+                 class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
+                 data-is-metadata="${isMetadata}"
+                 data-metadata-type="${escapeHtml(metadataType)}"
+                 data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
-                  <i class="bi bi-file-earmark-text me-1"></i>${displayText}
+                  <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
               </a>`;
     });
   }
@@ -475,7 +484,15 @@ export function loadMessages(conversationId) {
         } else if (msg.role === "image") {
           // Validate image URL before calling appendMessage
           if (msg.content && msg.content !== 'null' && msg.content.trim() !== '') {
-            appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name);
+            // Debug logging for image message metadata
+            console.log(`[loadMessages] Image message ${msg.id}:`, {
+              hasExtractedText: !!msg.extracted_text,
+              hasVisionAnalysis: !!msg.vision_analysis,
+              isUserUpload: msg.metadata?.is_user_upload,
+              filename: msg.filename
+            });
+            // Pass the full message object for images that may have metadata (uploaded images)
+            appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name, msg);
           } else {
             console.error(`[loadMessages] Invalid image URL for message ${msg.id}: "${msg.content}"`);
             // Show error message instead of broken image
@@ -502,7 +519,8 @@ export function appendMessage(
   webCitations = [],
   agentCitations = [],
   agentDisplayName = null,
-  agentName = null
+  agentName = null,
+  fullMessageObject = null
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -764,15 +782,45 @@ export function appendMessage(
       } else {
         senderLabel = "Image";
       }
-      
-      avatarImg = "/static/images/ai-avatar.png"; // Or a specific image icon
-      avatarAltText = "Generated Image";
+
+      // Check if this is a user-uploaded image with metadata
+      const isUserUpload = fullMessageObject?.metadata?.is_user_upload || false;
+      const hasExtractedText = fullMessageObject?.extracted_text || false;
+      const hasVisionAnalysis = fullMessageObject?.vision_analysis || false;
+
+      // Use agent display name if available, otherwise show AI with model
+      if (isUserUpload) {
+        senderLabel = "Uploaded Image";
+      } else if (agentDisplayName) {
+        senderLabel = agentDisplayName;
+      } else if (modelName) {
+        senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+      } else {
+        senderLabel = "Image";
+      }
+
+      avatarImg = isUserUpload ? "/static/images/user-avatar.png" : "/static/images/ai-avatar.png";
+      avatarAltText = isUserUpload ? "Uploaded Image" : "Generated Image";
       
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
-        messageContentHtml = `<img src="${messageContent}" alt="Generated Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
+        messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
+
+        // Add info button for uploaded images with extracted text or vision analysis
+        if (isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
+          const infoContainerId = `image-info-${messageId || Date.now()}`;
+          messageContentHtml += `
+            <div class="mt-2">
+              <button class="btn btn-sm btn-outline-secondary image-info-btn" data-message-id="${messageId}" title="View extracted text & analysis" aria-expanded="false" aria-controls="${infoContainerId}">
+                <i class="bi bi-info-circle"></i> View Text
+              </button>
+            </div>
+            <div class="image-info-container mt-2 pt-2 border-top" id="${infoContainerId}" style="display: none;">
+              <div class="image-info-content">Loading image information...</div>
+            </div>`;
+        }
       } else {
-        messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to generate image - invalid response from image service</div>`;
+        messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
       }
     } else if (sender === "safety") {
       messageClass = "safety-message";
@@ -858,6 +906,17 @@ export function appendMessage(
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
     }
+
+    // Add event listener for image info button (uploaded images)
+    if (sender === "image" && fullMessageObject?.metadata?.is_user_upload) {
+      const imageInfoBtn = messageDiv.querySelector('.image-info-btn');
+      if (imageInfoBtn) {
+        imageInfoBtn.addEventListener('click', () => {
+          toggleImageInfo(messageDiv, messageId, fullMessageObject);
+        });
+      }
+    }
+
     scrollChatToBottom();
   } // End of the large 'else' block for non-AI messages
 }
@@ -1551,6 +1610,28 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
         container.innerHTML = formatMetadataForDrawer(data);
+        
+        // Attach event listeners to View Text buttons
+        const viewTextButtons = container.querySelectorAll('.view-text-btn');
+        viewTextButtons.forEach(btn => {
+          btn.addEventListener('click', function() {
+            const imageId = this.getAttribute('data-image-id');
+            const collapseElement = document.getElementById(`${imageId}-info`);
+            
+            if (collapseElement) {
+              const bsCollapse = new bootstrap.Collapse(collapseElement, {
+                toggle: true
+              });
+              
+              // Update button text
+              if (collapseElement.classList.contains('show')) {
+                this.innerHTML = '<i class="bi bi-eye me-1"></i>View Text';
+              } else {
+                this.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Text';
+              }
+            }
+          });
+        });
       }
     })
     .catch(error => {
@@ -1777,6 +1858,62 @@ function formatMetadataForDrawer(metadata) {
     content += '</div>';
   }
   
+  // Uploaded Images Section
+  if (metadata.uploaded_images && metadata.uploaded_images.length > 0) {
+    content += '<div class="metadata-section mb-3">';
+    content += '<h6 class="metadata-title mb-2">Uploaded Image</h6>';
+    
+    metadata.uploaded_images.forEach((image, index) => {
+      const imageId = `image-${messageId || Date.now()}-${index}`;
+      content += `<div class="metadata-item">`;
+      content += `<div class="card">`;
+      content += `<img src="${escapeHtml(image.url)}" alt="Uploaded Image" class="card-img-top" style="max-width: 100%; height: auto;" />`;
+      content += `<div class="card-body">`;
+      content += `<div class="d-flex justify-content-between align-items-center">`;
+      content += `<small class="text-muted">Filename: ${escapeHtml(image.filename || 'Unknown')}</small>`;
+      
+      // Add View Text button if OCR or vision data exists
+      if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
+        content += `<button class="btn btn-sm btn-outline-primary view-text-btn" 
+                      data-image-id="${imageId}" 
+                      title="View extracted text">
+                      <i class="bi bi-eye me-1"></i>View Text
+                    </button>`;
+      }
+      
+      content += `</div>`; // End d-flex
+      
+      // Add collapsible drawer for OCR and vision analysis
+      if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
+        content += `<div class="collapse mt-2" id="${imageId}-info">`;
+        
+        if (image.ocr_text && image.ocr_text.trim()) {
+          content += `<div class="border-top pt-2 mt-2">`;
+          content += `<strong class="text-muted"><i class="bi bi-file-text me-1"></i>Extracted Text (OCR):</strong>`;
+          content += `<div class="mt-1 p-2 bg-light rounded small" style="max-height: 200px; overflow-y: auto;">`;
+          content += `<pre class="mb-0" style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(image.ocr_text)}</pre>`;
+          content += `</div></div>`;
+        }
+        
+        if (image.vision_analysis && image.vision_analysis.trim()) {
+          content += `<div class="border-top pt-2 mt-2">`;
+          content += `<strong class="text-muted"><i class="bi bi-info-circle me-1"></i>AI Vision Analysis:</strong>`;
+          content += `<div class="mt-1 p-2 bg-light rounded small">`;
+          content += `<div>${escapeHtml(image.vision_analysis)}</div>`;
+          content += `</div></div>`;
+        }
+        
+        content += `</div>`; // End collapse
+      }
+      
+      content += `</div>`; // End card-body
+      content += `</div>`; // End card
+      content += `</div>`; // End metadata-item
+    });
+    
+    content += '</div>';
+  }
+  
   // Chat Context Section
   if (metadata.chat_context) {
     content += '<div class="metadata-section mb-3">';
@@ -1845,4 +1982,124 @@ if (modelSelect) {
     console.log(`Saving preferred model: ${selectedModel}`);
     saveUserSetting({ 'preferredModelDeployment': selectedModel });
   });
+}
+
+/**
+ * Toggle the image info drawer for uploaded images
+ * Shows extracted text (OCR) and vision analysis
+ */
+function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
+  const toggleBtn = messageDiv.querySelector('.image-info-btn');
+  const targetId = toggleBtn.getAttribute('aria-controls');
+  const infoContainer = messageDiv.querySelector(`#${targetId}`);
+
+  if (!infoContainer) {
+    console.error(`Image info container not found for targetId: ${targetId}`);
+    return;
+  }
+
+  const isExpanded = infoContainer.style.display !== "none";
+
+  // Store current scroll position to maintain user's view
+  const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
+
+  if (isExpanded) {
+    // Hide the info
+    infoContainer.style.display = "none";
+    toggleBtn.setAttribute("aria-expanded", false);
+    toggleBtn.title = "View extracted text & analysis";
+    toggleBtn.innerHTML = '<i class="bi bi-info-circle"></i> View Text';
+  } else {
+    // Show the info
+    infoContainer.style.display = "block";
+    toggleBtn.setAttribute("aria-expanded", true);
+    toggleBtn.title = "Hide extracted text & analysis";
+    toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i> Hide Text';
+
+    // Load image info if not already loaded
+    const contentDiv = infoContainer.querySelector('.image-info-content');
+    if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.innerHTML.includes('Loading image information...'))) {
+      loadImageInfo(fullMessageObject, contentDiv);
+    }
+  }
+
+  // Restore scroll position after DOM changes
+  setTimeout(() => {
+    if (document.getElementById('chat-messages-container')) {
+      document.getElementById('chat-messages-container').scrollTop = currentScrollTop;
+    } else {
+      window.scrollTo(0, currentScrollTop);
+    }
+  }, 10);
+}
+
+/**
+ * Load image extracted text and vision analysis into the info drawer
+ */
+function loadImageInfo(fullMessageObject, container) {
+  const extractedText = fullMessageObject?.extracted_text || '';
+  const visionAnalysis = fullMessageObject?.vision_analysis || null;
+  const filename = fullMessageObject?.filename || 'Image';
+
+  let content = '<div class="image-info-content">';
+
+  // Filename
+  content += `<div class="mb-3"><strong><i class="bi bi-file-earmark-image me-1"></i>Filename:</strong> ${escapeHtml(filename)}</div>`;
+
+  // Extracted Text (OCR from Document Intelligence)
+  if (extractedText && extractedText.trim()) {
+    content += '<div class="mb-3">';
+    content += '<strong><i class="bi bi-file-text me-1"></i>Extracted Text (OCR):</strong>';
+    content += '<div class="mt-2 p-2 bg-light border rounded" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.9em;">';
+    content += escapeHtml(extractedText);
+    content += '</div></div>';
+  }
+
+  // Vision Analysis (AI-generated description, objects, text)
+  if (visionAnalysis) {
+    content += '<div class="mb-3">';
+    content += '<strong><i class="bi bi-eye me-1"></i>AI Vision Analysis:</strong>';
+
+    // Model name can be either 'model' or 'model_name'
+    const modelName = visionAnalysis.model || visionAnalysis.model_name;
+    if (modelName) {
+      content += `<div class="mt-1 text-muted" style="font-size: 0.85em;">Model: ${escapeHtml(modelName)}</div>`;
+    }
+
+    if (visionAnalysis.description) {
+      content += '<div class="mt-2"><strong>Description:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
+      content += escapeHtml(visionAnalysis.description);
+      content += '</div></div>';
+    }
+
+    if (visionAnalysis.objects && Array.isArray(visionAnalysis.objects) && visionAnalysis.objects.length > 0) {
+      content += '<div class="mt-2"><strong>Objects Detected:</strong><div class="p-2 bg-light border rounded">';
+      content += visionAnalysis.objects.map(obj => `<span class="badge bg-secondary me-1">${escapeHtml(obj)}</span>`).join('');
+      content += '</div></div>';
+    }
+
+    if (visionAnalysis.text && visionAnalysis.text.trim()) {
+      content += '<div class="mt-2"><strong>Text Visible in Image:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
+      content += escapeHtml(visionAnalysis.text);
+      content += '</div></div>';
+    }
+
+    // Contextual analysis can be either 'analysis' or 'contextual_analysis'
+    const analysis = visionAnalysis.analysis || visionAnalysis.contextual_analysis;
+    if (analysis && analysis.trim()) {
+      content += '<div class="mt-2"><strong>Contextual Analysis:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
+      content += escapeHtml(analysis);
+      content += '</div></div>';
+    }
+
+    content += '</div>';
+  }
+
+  content += '</div>';
+
+  if (!extractedText && !visionAnalysis) {
+    content = '<div class="text-muted">No extracted text or analysis available for this image.</div>';
+  }
+
+  container.innerHTML = content;
 }

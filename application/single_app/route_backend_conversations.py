@@ -73,6 +73,12 @@ def register_route_backend_conversations(app):
                     debug_print(f"Reassembling chunked image {image_id} with {total_chunks} chunks")
                     debug_print(f"Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
                     
+                    # Preserve extracted_text and vision_analysis from main message
+                    extracted_text = message.get('extracted_text')
+                    vision_analysis = message.get('vision_analysis')
+                    
+                    debug_print(f"Image has extracted_text: {bool(extracted_text)}, vision_analysis: {bool(vision_analysis)}")
+                    
                     # Start with the content from the main message (chunk 0)
                     complete_content = message.get('content', '')
                     debug_print(f"Main message content length: {len(complete_content)} bytes")
@@ -105,6 +111,13 @@ def register_route_backend_conversations(app):
                     else:
                         # Small enough to embed directly
                         message['content'] = complete_content
+                    
+                    # IMPORTANT: Preserve extracted_text and vision_analysis in the final message
+                    # These fields are needed by the frontend to display the info drawer
+                    if extracted_text:
+                        message['extracted_text'] = extracted_text
+                    if vision_analysis:
+                        message['vision_analysis'] = vision_analysis
             
             return jsonify({'messages': messages})
         except CosmosResourceNotFoundError:
