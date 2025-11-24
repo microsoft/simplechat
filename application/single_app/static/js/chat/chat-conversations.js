@@ -24,12 +24,56 @@ let selectionModeTimer = null; // Timer for auto-hiding checkboxes
 let showHiddenConversations = false; // Track if hidden conversations should be shown
 let allConversations = []; // Store all conversations for client-side filtering
 let isLoadingConversations = false; // Prevent concurrent loads
+let showQuickSearch = false; // Track if quick search input is visible
+let quickSearchTerm = ""; // Current search term
 
 // Clear selected conversations when loading the page
 document.addEventListener('DOMContentLoaded', () => {
   selectedConversations.clear();
   if (deleteSelectedBtn) {
     deleteSelectedBtn.style.display = "none";
+  }
+  
+  // Set up quick search event listeners
+  const searchBtn = document.getElementById('sidebar-search-btn');
+  const searchInput = document.getElementById('sidebar-search-input');
+  const searchClearBtn = document.getElementById('sidebar-search-clear');
+  const searchExpandBtn = document.getElementById('sidebar-search-expand');
+  
+  if (searchBtn) {
+    searchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleQuickSearch();
+    });
+  }
+  
+  if (searchInput) {
+    searchInput.addEventListener('keyup', (e) => {
+      quickSearchTerm = e.target.value;
+      loadConversations();
+    });
+    
+    // Prevent conversation toggle when clicking in input
+    searchInput.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+  
+  if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearQuickSearch();
+    });
+  }
+  
+  if (searchExpandBtn) {
+    searchExpandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Open advanced search modal (will be implemented in chat-search-modal.js)
+      if (window.chatSearchModal && window.chatSearchModal.openAdvancedSearchModal) {
+        window.chatSearchModal.openAdvancedSearchModal();
+      }
+    });
   }
 });
 
@@ -134,6 +178,58 @@ function resetSelectionModeTimer() {
   }, 5000);
 }
 
+// Quick search functions
+function toggleQuickSearch() {
+  const searchContainer = document.getElementById('sidebar-search-container');
+  const searchInput = document.getElementById('sidebar-search-input');
+  const conversationsSection = document.getElementById('conversations-section');
+  const conversationsCaret = document.getElementById('conversations-caret');
+  
+  if (!searchContainer) return;
+  
+  showQuickSearch = !showQuickSearch;
+  
+  if (showQuickSearch) {
+    searchContainer.style.display = 'block';
+    // Expand conversations section if collapsed
+    if (conversationsSection) {
+      const listContainer = document.getElementById('conversations-list-container');
+      if (listContainer && listContainer.style.display === 'none') {
+        listContainer.style.display = 'block';
+        if (conversationsCaret) {
+          conversationsCaret.classList.add('rotate-180');
+        }
+      }
+    }
+    // Focus on search input
+    setTimeout(() => searchInput && searchInput.focus(), 100);
+  } else {
+    searchContainer.style.display = 'none';
+    clearQuickSearch();
+  }
+}
+
+function applyQuickSearchFilter(conversations) {
+  if (!quickSearchTerm || quickSearchTerm.trim() === '') {
+    return conversations;
+  }
+  
+  const searchLower = quickSearchTerm.toLowerCase().trim();
+  return conversations.filter(convo => {
+    const titleLower = (convo.title || '').toLowerCase();
+    return titleLower.includes(searchLower);
+  });
+}
+
+function clearQuickSearch() {
+  quickSearchTerm = '';
+  const searchInput = document.getElementById('sidebar-search-input');
+  if (searchInput) {
+    searchInput.value = '';
+  }
+  loadConversations();
+}
+
 export function loadConversations() {
   if (!conversationsList) return;
   
@@ -177,11 +273,14 @@ export function loadConversations() {
       });
       
       // Filter conversations based on show/hide mode and selection mode
-      const filteredConversations = sortedConversations.filter(convo => {
+      let filteredConversations = sortedConversations.filter(convo => {
         const isHidden = convo.is_hidden || false;
         // Show hidden conversations if toggle is on OR if we're in selection mode
         return !isHidden || showHiddenConversations || selectionModeActive;
       });
+      
+      // Apply quick search filter
+      filteredConversations = applyQuickSearchFilter(filteredConversations);
       
       if (filteredConversations.length === 0) {
         conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations. Click the eye icon to show hidden conversations.</div>';
@@ -675,19 +774,20 @@ export async function selectConversation(conversationId) {
         if (metadata.is_pinned) {
           const pinIcon = document.createElement("i");
           pinIcon.classList.add("bi", "bi-pin-angle", "me-2");
+          pinIcon.title = "Pinned";
           currentConversationTitleEl.appendChild(pinIcon);
+        }
+        
+        // Add hidden icon if hidden
+        if (metadata.is_hidden) {
+          const hiddenIcon = document.createElement("i");
+          hiddenIcon.classList.add("bi", "bi-eye-slash", "me-2", "text-muted");
+          hiddenIcon.title = "Hidden";
+          currentConversationTitleEl.appendChild(hiddenIcon);
         }
         
         // Add title text
         currentConversationTitleEl.appendChild(document.createTextNode(conversationTitle));
-        
-        // Add hidden badge if hidden
-        if (metadata.is_hidden) {
-          const hiddenBadge = document.createElement("span");
-          hiddenBadge.classList.add("badge", "bg-secondary", "ms-2");
-          hiddenBadge.textContent = "Hidden";
-          currentConversationTitleEl.appendChild(hiddenBadge);
-        }
       }
       
       console.log(`selectConversation: Fetched metadata for ${conversationId}:`, metadata);
@@ -1248,6 +1348,51 @@ if (hideSelectedBtn) {
   hideSelectedBtn.addEventListener("click", bulkHideConversations);
 }
 
+// Helper function to set show hidden conversations state and return a promise
+export function setShowHiddenConversations(value) {
+  showHiddenConversations = value;
+  
+  // If enabling hidden conversations and the list is already loaded, just re-render
+  if (value && allConversations.length > 0) {
+    // Re-filter and render without fetching
+    const sortedConversations = [...allConversations].sort((a, b) => {
+      const aPinned = a.is_pinned || false;
+      const bPinned = b.is_pinned || false;
+      if (aPinned !== bPinned) return bPinned ? 1 : -1;
+      const aDate = new Date(a.last_updated);
+      const bDate = new Date(b.last_updated);
+      return bDate - aDate;
+    });
+    
+    let filteredConversations = sortedConversations.filter(convo => {
+      const isHidden = convo.is_hidden || false;
+      return !isHidden || showHiddenConversations || selectionModeActive;
+    });
+    
+    filteredConversations = applyQuickSearchFilter(filteredConversations);
+    
+    if (conversationsList) {
+      conversationsList.innerHTML = "";
+      if (filteredConversations.length === 0) {
+        conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations.</div>';
+      } else {
+        filteredConversations.forEach(convo => {
+          conversationsList.appendChild(createConversationItem(convo));
+        });
+      }
+    }
+    
+    updateHiddenToggleButton();
+    
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+  } else {
+    // Otherwise do a full reload
+    loadConversations();
+  }
+}
+
 // Expose functions globally for sidebar integration
 window.chatConversations = {
   selectConversation,
@@ -1263,6 +1408,8 @@ window.chatConversations = {
   isSelectionModeActive: () => selectionModeActive,
   getSelectedConversations: () => Array.from(selectedConversations),
   getCurrentConversationId: () => currentConversationId,
+  getQuickSearchTerm: () => quickSearchTerm,
+  setShowHiddenConversations,
   updateConversationHeader: (conversationId, newTitle) => {
     // Update header if this is the currently active conversation
     if (currentConversationId === conversationId) {

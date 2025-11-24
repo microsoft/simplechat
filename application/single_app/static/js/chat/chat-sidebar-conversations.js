@@ -49,12 +49,24 @@ export function loadSidebarConversations() {
       });
       
       // Filter conversations based on show/hide hidden setting
-      const visibleConversations = sortedConversations.filter(convo => {
+      let visibleConversations = sortedConversations.filter(convo => {
         const isHidden = convo.is_hidden || false;
         // Show hidden conversations if toggle is on OR if we're in selection mode
         const isSelectionMode = window.chatConversations && window.chatConversations.isSelectionModeActive && window.chatConversations.isSelectionModeActive();
         return !isHidden || sidebarShowHiddenConversations || isSelectionMode;
       });
+      
+      // Apply quick search filter if active
+      if (window.chatConversations && window.chatConversations.getQuickSearchTerm) {
+        const searchTerm = window.chatConversations.getQuickSearchTerm();
+        if (searchTerm && searchTerm.trim() !== '') {
+          const searchLower = searchTerm.toLowerCase().trim();
+          visibleConversations = visibleConversations.filter(convo => {
+            const titleLower = (convo.title || '').toLowerCase();
+            return titleLower.includes(searchLower);
+          });
+        }
+      }
       
       visibleConversations.forEach(convo => {
         sidebarConversationsList.appendChild(createSidebarConversationItem(convo));
@@ -195,11 +207,24 @@ function createSidebarConversationItem(convo) {
       return;
     }
     
-    // Normal mode: select the conversation
-    setActiveConversation(convo.id);
-    // Call selectConversation from chat-conversations.js through global reference
-    if (window.chatConversations && window.chatConversations.selectConversation) {
-      window.chatConversations.selectConversation(convo.id);
+    // If this conversation is hidden, ensure the main conversation list also shows hidden conversations
+    if (convo.is_hidden && window.chatConversations && window.chatConversations.setShowHiddenConversations) {
+      window.chatConversations.setShowHiddenConversations(true);
+      
+      // Wait a moment for the DOM to update before selecting
+      setTimeout(() => {
+        setActiveConversation(convo.id);
+        if (window.chatConversations && window.chatConversations.selectConversation) {
+          window.chatConversations.selectConversation(convo.id);
+        }
+      }, 50);
+    } else {
+      // Normal mode: select the conversation immediately
+      setActiveConversation(convo.id);
+      // Call selectConversation from chat-conversations.js through global reference
+      if (window.chatConversations && window.chatConversations.selectConversation) {
+        window.chatConversations.selectConversation(convo.id);
+      }
     }
   });
   
@@ -431,6 +456,7 @@ export function setSidebarSelectionMode(isActive) {
   const sidebarPinBtn = document.getElementById('sidebar-pin-selected-btn');
   const sidebarHideBtn = document.getElementById('sidebar-hide-selected-btn');
   const sidebarSettingsBtn = document.getElementById('sidebar-conversations-settings-btn');
+  const sidebarSearchBtn = document.getElementById('sidebar-search-btn');
   
   sidebarItems.forEach(item => {
     if (isActive) {
@@ -447,9 +473,12 @@ export function setSidebarSelectionMode(isActive) {
       conversationsToggle.style.fontWeight = '600';
       conversationsActions.style.display = 'flex !important';
       conversationsActions.style.setProperty('display', 'flex', 'important');
-      // Hide the gear button in selection mode
+      // Hide the search and eye buttons in selection mode
       if (sidebarSettingsBtn) {
         sidebarSettingsBtn.style.display = 'none';
+      }
+      if (sidebarSearchBtn) {
+        sidebarSearchBtn.style.display = 'none';
       }
       // Add a selection indicator button
       let indicator = conversationsToggle.querySelector('.selection-indicator');
@@ -494,9 +523,12 @@ export function setSidebarSelectionMode(isActive) {
       if (sidebarHideBtn) {
         sidebarHideBtn.style.display = 'none';
       }
-      // Show the gear button again when exiting selection mode
+      // Show the search and eye buttons again when exiting selection mode
       if (sidebarSettingsBtn) {
         sidebarSettingsBtn.style.display = 'inline-block';
+      }
+      if (sidebarSearchBtn) {
+        sidebarSearchBtn.style.display = 'inline-block';
       }
       // Remove selection indicator
       const indicator = conversationsToggle.querySelector('.selection-indicator');
@@ -751,17 +783,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const icon = sidebarSettingsBtn.querySelector('i');
         if (icon) {
           if (sidebarShowHiddenConversations) {
-            icon.classList.remove('bi-gear');
-            icon.classList.add('bi-gear-fill');
+            icon.classList.remove('bi-eye');
+            icon.classList.add('bi-eye-fill');
             sidebarSettingsBtn.classList.remove('text-muted');
             sidebarSettingsBtn.classList.add('text-primary');
             sidebarSettingsBtn.title = 'Showing hidden conversations (click to hide)';
           } else {
-            icon.classList.remove('bi-gear-fill');
-            icon.classList.add('bi-gear');
+            icon.classList.remove('bi-eye-fill');
+            icon.classList.add('bi-eye');
             sidebarSettingsBtn.classList.remove('text-primary');
             sidebarSettingsBtn.classList.add('text-muted');
-            sidebarSettingsBtn.title = 'Conversation settings';
+            sidebarSettingsBtn.title = 'Show/Hide hidden conversations';
           }
         }
         
