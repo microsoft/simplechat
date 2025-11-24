@@ -375,33 +375,21 @@ def process_video_document(
     
     debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
 
-    # Validate required settings based on authentication type
-    auth_type = settings.get("video_indexer_authentication_type", "managed_identity")
-    debug_print(f"[VIDEO INDEXER] Using authentication type: {auth_type}")
-    
-    # Common required settings for both authentication types
+    # Validate required settings for managed identity authentication
     required_settings = {
         "video_indexer_endpoint": vi_ep,
         "video_indexer_location": vi_loc,
-        "video_indexer_account_id": vi_acc
+        "video_indexer_account_id": vi_acc,
+        "video_indexer_resource_group": settings.get("video_indexer_resource_group"),
+        "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
+        "video_indexer_account_name": settings.get("video_indexer_account_name")
     }
     
-    if auth_type == "key":
-        # For API key authentication, only need API key in addition to common settings
-        required_settings["video_indexer_api_key"] = settings.get("video_indexer_api_key")
-        debug_print(f"[VIDEO INDEXER] API key authentication requires: endpoint, location, account_id, api_key")
-    else:
-        # For managed identity authentication, need ARM-related settings
-        required_settings.update({
-            "video_indexer_resource_group": settings.get("video_indexer_resource_group"),
-            "video_indexer_subscription_id": settings.get("video_indexer_subscription_id"),
-            "video_indexer_account_name": settings.get("video_indexer_account_name")
-        })
-        debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
+    debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
     
     missing_settings = [key for key, value in required_settings.items() if not value]
     if missing_settings:
-        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings for {auth_type} authentication: {missing_settings}")
+        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings: {missing_settings}")
         update_callback(status=f"VIDEO: missing settings - {', '.join(missing_settings)}")
         return 0
 
@@ -4292,6 +4280,45 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         except Exception as e:
             raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
 
+        # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
+        if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
+            enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
+            if enable_multimodal_vision:
+                try:
+                    update_callback(status="Performing AI vision analysis...")
+                    
+                    vision_analysis = analyze_image_with_vision_model(
+                        chunk_path,
+                        user_id,
+                        document_id,
+                        settings
+                    )
+                    
+                    if vision_analysis:
+                        print(f"Vision analysis completed for image: {chunk_effective_filename}")
+                        
+                        # Update document with vision analysis results BEFORE saving chunks
+                        # This allows save_chunks() to append vision data to chunk_text for AI Search
+                        update_fields = {
+                            'vision_analysis': vision_analysis,
+                            'vision_description': vision_analysis.get('description', ''),
+                            'vision_objects': vision_analysis.get('objects', []),
+                            'vision_extracted_text': vision_analysis.get('text', ''),
+                            'status': "AI vision analysis completed"
+                        }
+                        update_callback(**update_fields)
+                        print(f"Vision analysis saved to document metadata and will be appended to chunk_text for AI Search indexing")
+                    else:
+                        print(f"Vision analysis returned no results for: {chunk_effective_filename}")
+                        update_callback(status="Vision analysis completed (no results)")
+                        
+                except Exception as e:
+                    print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Don't fail the whole process, just update status
+                    update_callback(status=f"Processing continues (vision analysis warning)")
+
         # Content Chunking Strategy (Word needs specific handling)
         final_chunks_to_save = []
         if is_word:
@@ -4403,70 +4430,8 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             # Don't fail the whole process, just update status
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    # --- Multi-Modal Vision Analysis (for images only) ---
-    if is_image and enable_enhanced_citations:
-        enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
-        if enable_multimodal_vision:
-            try:
-                update_callback(status="Performing AI vision analysis...")
-                
-                vision_analysis = analyze_image_with_vision_model(
-                    temp_file_path,
-                    user_id,
-                    document_id,
-                    settings
-                )
-                
-                if vision_analysis:
-                    print(f"Vision analysis completed for image: {original_filename}")
-                    
-                    # Update document with vision analysis results
-                    update_fields = {
-                        'vision_analysis': vision_analysis,
-                        'vision_description': vision_analysis.get('description', ''),
-                        'vision_objects': vision_analysis.get('objects', []),
-                        'vision_extracted_text': vision_analysis.get('text', ''),
-                        'status': "AI vision analysis completed"
-                    }
-                    update_callback(**update_fields)
-                    
-                    # Save vision analysis as separate blob for citations
-                    vision_json_path = temp_file_path + '_vision.json'
-                    try:
-                        with open(vision_json_path, 'w', encoding='utf-8') as f:
-                            json.dump(vision_analysis, f, indent=2)
-                        
-                        vision_blob_filename = f"{os.path.splitext(original_filename)[0]}_vision_analysis.json"
-                        
-                        upload_blob_args = {
-                            "temp_file_path": vision_json_path,
-                            "user_id": user_id,
-                            "document_id": document_id,
-                            "blob_filename": vision_blob_filename,
-                            "update_callback": update_callback
-                        }
-                        
-                        if is_public_workspace:
-                            upload_blob_args["public_workspace_id"] = public_workspace_id
-                        elif is_group:
-                            upload_blob_args["group_id"] = group_id
-                        
-                        upload_to_blob(**upload_blob_args)
-                        print(f"Vision analysis saved to blob storage: {vision_blob_filename}")
-                        
-                    finally:
-                        if os.path.exists(vision_json_path):
-                            os.remove(vision_json_path)
-                else:
-                    print(f"Vision analysis returned no results for: {original_filename}")
-                    update_callback(status="Vision analysis completed (no results)")
-                    
-            except Exception as e:
-                print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                # Don't fail the whole process, just update status
-                update_callback(status=f"Processing complete (vision analysis warning)")
+    # Note: Vision analysis now happens BEFORE save_chunks (moved earlier in the flow)
+    # This ensures vision_analysis is available in metadata when chunks are being saved
 
     return total_final_chunks_processed
 
