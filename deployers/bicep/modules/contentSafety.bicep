@@ -59,3 +59,4 @@ resource contentSafetyDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 }
 
 output contentSafetyName string = contentSafety.name
+output contentSafetyEndpoint string = contentSafety.properties.endpoint

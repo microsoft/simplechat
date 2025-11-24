@@ -36,5 +36,7 @@ dependsOn: [
 output openAIName string = existingOpenAI.name
 output openAIResourceGroup string = resourceGroup().name
 
+output openAIEndpoint string = existingOpenAI.properties.endpoint
+
 
 

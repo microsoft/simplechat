@@ -59,3 +59,4 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 }
 
 output searchServiceName string = searchService.name
+output searchServiceEndpoint string = searchService.properties.endpoint

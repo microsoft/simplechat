@@ -60,3 +60,4 @@ resource docIntelDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
 
 output documentIntelligenceServiceName string = docIntel.name
 output diagnosticLoggingEnabled bool = enableDiagLogging
+output documentIntelligenceServiceEndpoint string = docIntel.properties.endpoint

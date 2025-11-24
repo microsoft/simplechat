@@ -95,3 +95,4 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
 }
 
 output name string = storageAccount.name
+output endpoint string = storageAccount.properties.primaryEndpoints.blob

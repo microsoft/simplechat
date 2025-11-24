@@ -79,6 +79,9 @@ dependsOn: [
 
 output openAIName string = newOpenAI.name
 output openAIResourceGroup string = resourceGroup().name
+output openAIEndpoint string = newOpenAI.properties.endpoint
+output openAIGptModel string = aiModel_gpt4o.outputs.modelName
+output openAITextEmbeddingModel string = aiModel_textEmbedding.outputs.modelName
 
 
 

@@ -485,7 +485,6 @@ module enterpriseAppPermissions 'modules/enterpriseAppPermissions.bicep' = if (e
   }
 }
 
-
 //=========================================================
 // Outputs for deployment of container image
 //=========================================================
@@ -497,4 +496,14 @@ output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0
 output var_imageTag string = split(imageName, ':')[1] 
 output var_specialImage bool = contains(imageName, ':') ? split(imageName, ':')[1] != 'latest' : false
 output var_webService string = appService.outputs.name
+
 output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
+output var_openAIEndpoint string = useExistingOpenAISvc ? openAI_existing.outputs.openAIEndpoint : openAI_create.outputs.openAIEndpoint
+output var_openAIResourceGroup string = useExistingOpenAISvc ? existingOpenAIResourceGroupName : openAI_create.outputs.openAIResourceGroup
+output var_openAIGPTModel string = useExistingOpenAISvc ? '' : openAI_create.outputs.openAIGptModel
+output var_openAITextEmbeddingModel string = useExistingOpenAISvc ? '' : openAI_create.outputs.openAITextEmbeddingModel
+output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+
+output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
+output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
