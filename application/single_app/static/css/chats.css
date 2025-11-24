@@ -1449,3 +1449,47 @@ ol {
 [data-bs-theme="dark"] .message-text table caption {
   color: #adb5bd;
 }
+
+/* Search highlight styles */
+mark.search-highlight {
+  background-color: #ffff00;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+[data-bs-theme="dark"] mark.search-highlight {
+  background-color: #ffc107;
+  color: #000;
+}
+
+/* Message pulse animation for search results */
+@keyframes messagePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px 5px rgba(13, 110, 253, 0.6);
+  }
+}
+
+.message-pulse {
+  animation: messagePulse 1s ease-in-out 2;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-bs-theme="dark"] .message-pulse {
+  animation: messagePulseDark 1s ease-in-out 2;
+}
+
+@keyframes messagePulseDark {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(13, 202, 240, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px 5px rgba(13, 202, 240, 0.6);
+  }
+}
