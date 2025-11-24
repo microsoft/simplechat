@@ -6,6 +6,7 @@ on:
     branches:
     - nadoyle
     - feature/group-agents-actions
+    - feature/aifoundryagents
 
   workflow_dispatch:
 
