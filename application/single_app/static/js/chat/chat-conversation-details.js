@@ -43,9 +43,10 @@ export async function showConversationDetails(conversationId) {
     
     const metadata = await response.json();
     
-    // Update modal title with conversation title
+    // Update modal title with conversation title and pin icon
+    const pinIcon = metadata.is_pinned ? '<i class="bi bi-pin-angle me-2"></i>' : '';
     modalTitle.innerHTML = `
-      <i class="bi bi-info-circle me-2"></i>
+      ${pinIcon}<i class="bi bi-info-circle me-2"></i>
       ${metadata.title || 'Conversation Details'}
     `;
     
@@ -73,7 +74,7 @@ export async function showConversationDetails(conversationId) {
  * @returns {string} HTML string
  */
 function renderConversationMetadata(metadata, conversationId) {
-  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal' } = metadata;
+  const { context = [], tags = [], strict = false, classification = [], last_updated, chat_type = 'personal', is_pinned = false, is_hidden = false } = metadata;
   
   // Organize tags by category
   const tagsByCategory = {
@@ -117,6 +118,9 @@ function renderConversationMetadata(metadata, conversationId) {
               </div>
               <div class="col-sm-6">
                 <strong>Classifications:</strong> ${formatClassifications(classification)}
+              </div>
+              <div class="col-sm-6">
+                <strong>Status:</strong> ${is_pinned ? '<span class="badge bg-primary"><i class="bi bi-pin-angle me-1"></i>Pinned</span>' : ''} ${is_hidden ? '<span class="badge bg-secondary ms-1">Hidden</span>' : ''}${!is_pinned && !is_hidden ? '<span class="text-muted">Normal</span>' : ''}
               </div>
             </div>
           </div>

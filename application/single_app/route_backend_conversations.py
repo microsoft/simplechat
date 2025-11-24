@@ -284,7 +284,9 @@ def register_route_backend_conversations(app):
             'title': 'New Conversation',
             'context': [],
             'tags': [],
-            'strict': False
+            'strict': False,
+            'is_pinned': False,
+            'is_hidden': False
         }
         cosmos_conversations_container.upsert_item(conversation_item)
 
@@ -478,6 +480,206 @@ def register_route_backend_conversations(app):
             "failed_ids": failed_ids
         }), 200
 
+    @app.route('/api/conversations/<conversation_id>/pin', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def toggle_conversation_pin(conversation_id):
+        """
+        Toggle the pinned status of a conversation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Toggle the pinned status
+            current_pinned = conversation_item.get('is_pinned', False)
+            conversation_item['is_pinned'] = not current_pinned
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Update in Cosmos DB
+            cosmos_conversations_container.upsert_item(conversation_item)
+            
+            return jsonify({
+                'success': True,
+                'is_pinned': conversation_item['is_pinned']
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error toggling conversation pin: {e}")
+            return jsonify({'error': 'Failed to toggle pin status'}), 500
+    
+    @app.route('/api/conversations/<conversation_id>/hide', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def toggle_conversation_hide(conversation_id):
+        """
+        Toggle the hidden status of a conversation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Toggle the hidden status
+            current_hidden = conversation_item.get('is_hidden', False)
+            conversation_item['is_hidden'] = not current_hidden
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Update in Cosmos DB
+            cosmos_conversations_container.upsert_item(conversation_item)
+            
+            return jsonify({
+                'success': True,
+                'is_hidden': conversation_item['is_hidden']
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error toggling conversation hide: {e}")
+            return jsonify({'error': 'Failed to toggle hide status'}), 500
+
+    @app.route('/api/conversations/bulk-pin', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def bulk_pin_conversations():
+        """
+        Pin or unpin multiple conversations at once.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        pin_action = data.get('action', 'pin')  # 'pin' or 'unpin'
+        
+        if not conversation_ids:
+            return jsonify({'error': 'No conversation IDs provided'}), 400
+        
+        if pin_action not in ['pin', 'unpin']:
+            return jsonify({'error': 'Invalid action. Must be "pin" or "unpin"'}), 400
+        
+        success_count = 0
+        failed_ids = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+                
+                # Check if the conversation belongs to the current user
+                if conversation_item.get('user_id') != user_id:
+                    failed_ids.append(conversation_id)
+                    continue
+                
+                # Set pin status
+                conversation_item['is_pinned'] = (pin_action == 'pin')
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                
+                # Update in Cosmos DB
+                cosmos_conversations_container.upsert_item(conversation_item)
+                success_count += 1
+                
+            except CosmosResourceNotFoundError:
+                failed_ids.append(conversation_id)
+            except Exception as e:
+                print(f"Error updating conversation {conversation_id}: {str(e)}")
+                failed_ids.append(conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "updated_count": success_count,
+            "failed_ids": failed_ids,
+            "action": pin_action
+        }), 200
+
+    @app.route('/api/conversations/bulk-hide', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def bulk_hide_conversations():
+        """
+        Hide or unhide multiple conversations at once.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        hide_action = data.get('action', 'hide')  # 'hide' or 'unhide'
+        
+        if not conversation_ids:
+            return jsonify({'error': 'No conversation IDs provided'}), 400
+        
+        if hide_action not in ['hide', 'unhide']:
+            return jsonify({'error': 'Invalid action. Must be "hide" or "unhide"'}), 400
+        
+        success_count = 0
+        failed_ids = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+                
+                # Check if the conversation belongs to the current user
+                if conversation_item.get('user_id') != user_id:
+                    failed_ids.append(conversation_id)
+                    continue
+                
+                # Set hide status
+                conversation_item['is_hidden'] = (hide_action == 'hide')
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                
+                # Update in Cosmos DB
+                cosmos_conversations_container.upsert_item(conversation_item)
+                success_count += 1
+                
+            except CosmosResourceNotFoundError:
+                failed_ids.append(conversation_id)
+            except Exception as e:
+                print(f"Error updating conversation {conversation_id}: {str(e)}")
+                failed_ids.append(conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "updated_count": success_count,
+            "failed_ids": failed_ids,
+            "action": hide_action
+        }), 200
+
     @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -510,7 +712,9 @@ def register_route_backend_conversations(app):
                 "classification": conversation_item.get('classification', []),
                 "context": conversation_item.get('context', []),
                 "tags": conversation_item.get('tags', []),
-                "strict": conversation_item.get('strict', False)
+                "strict": conversation_item.get('strict', False),
+                "is_pinned": conversation_item.get('is_pinned', False),
+                "is_hidden": conversation_item.get('is_hidden', False)
             }), 200
             
         except CosmosResourceNotFoundError:

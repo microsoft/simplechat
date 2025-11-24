@@ -548,10 +548,21 @@
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
         </div>
-        <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
-          <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
-            <i class="bi bi-trash-fill"></i>
+        <div class="d-flex align-items-center">
+          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Conversation settings">
+            <i class="bi bi-gear" style="font-size: 0.9em;"></i>
           </button>
+          <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+            <button id="sidebar-pin-selected-btn" class="btn btn-sm btn-outline-primary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Pin selected conversations">
+              <i class="bi bi-pin-angle"></i>
+            </button>
+            <button id="sidebar-hide-selected-btn" class="btn btn-sm btn-outline-secondary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Hide selected conversations">
+              <i class="bi bi-eye-slash"></i>
+            </button>
+            <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
+              <i class="bi bi-trash-fill"></i>
+            </button>
+          </div>
         </div>
       </div>
       <div id="conversations-list-container" class="px-2">
