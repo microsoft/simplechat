@@ -1,0 +1,3 @@
+# requirements.txt
+azure-identity>=1.15.0
+azure-cosmos>=4.5.0

@@ -497,3 +497,4 @@ output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0
 output var_imageTag string = split(imageName, ':')[1] 
 output var_specialImage bool = contains(imageName, ':') ? split(imageName, ':')[1] != 'latest' : false
 output var_webService string = appService.outputs.name
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri

@@ -5,6 +5,21 @@ infra:
   provider: bicep
   path: bicep
 hooks:
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        # Set up variables
+        export var_cosmosDb_uri=${var_cosmosDb_uri}
+        export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
+        export var_rgName=${var_rgName}
+
+        # Execute post-configuration script
+        python3 -m pip install --user -r ./bicep/requirements.txt
+        #chmod +x ./bicep/postconfig.py
+        python3 ./bicep/postconfig.py
+
+
   predeploy:
     posix:
       shell: sh

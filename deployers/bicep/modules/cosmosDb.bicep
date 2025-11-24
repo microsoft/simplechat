@@ -108,3 +108,4 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 }
 
 output cosmosDbName string = cosmosDb.name
+output cosmosDbUri string = cosmosDb.properties.documentEndpoint
