@@ -622,7 +622,13 @@
                         </div>
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h4>Global  Agents</h4>
-                            <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#add-agent-btn">
+                                    <i class="bi bi-magic"></i>
+                                    Agent Templates
+                                </button>
+                                <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            </div>
                         </div>
                         <div class="mb-3 d-flex align-items-center">
                             {% if settings.orchestration_type == "default_agent" %}

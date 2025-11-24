@@ -2,8 +2,14 @@
 <div class="modal fade" id="agentModal" tabindex="-1" aria-labelledby="agentModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="agentModalLabel">Add Agent</h5>
+      <div class="modal-header flex-wrap gap-2 align-items-center justify-content-between">
+        <div class="d-flex align-items-center gap-2">
+          <h5 class="modal-title mb-0" id="agentModalLabel">Add Agent</h5>
+          <button type="button" class="btn btn-sm btn-outline-info" id="agent-config-guide-btn">
+            <i class="bi bi-journal-text me-1"></i>
+            Configuration Guide
+          </button>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       
@@ -48,7 +54,7 @@
           </div>
           <div class="mb-3">
             <label for="agent-description" class="form-label">Description <span class="text-danger" title="Required">*</span></label>
-            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear agent description enables the orchestrator (default agent) to select the right agent for the task, essential for precise, efficient delegation."></i>
+            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear description helps teammates know exactly when to launch this agent during manual routing."></i>
             <textarea class="form-control" id="agent-description" rows="3" placeholder="Describe what this agent does and when to use it..."></textarea>
           </div>
           <!-- Hidden field to store generated name -->
@@ -274,7 +280,8 @@
               <div class="form-text">
                 Specify the maximum number of tokens the model can generate in a single response. 
                 Set to -1 to use the model's default limit.
-                Note: Setting this value too high may lead to increased latency or higher costs.
+                Setting a higher cap only allows the model to generate longer answers—it does not force the extra tokens.
+                Use this control mainly to keep answers concise or to shorten responses for sensitive channels.
               </div>
             </div>
           </div>
@@ -802,3 +809,39 @@
   box-shadow: 0 0 0 0.2rem rgba(134, 183, 254, 0.25);
 }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const agentModalEl = document.getElementById('agentModal');
+  const agentConfigModalEl = document.getElementById('agentConfigInfoModal');
+  const agentConfigButton = document.getElementById('agent-config-guide-btn');
+
+  if (!window.bootstrap || !agentModalEl || !agentConfigModalEl || !agentConfigButton) {
+    return;
+  }
+
+  const agentModal = bootstrap.Modal.getOrCreateInstance(agentModalEl);
+  const agentConfigModal = bootstrap.Modal.getOrCreateInstance(agentConfigModalEl);
+  let returnToAgentModal = false;
+
+  agentConfigButton.addEventListener('click', function () {
+    if (agentModalEl.classList.contains('show')) {
+      returnToAgentModal = true;
+      agentModal.hide();
+    } else {
+      returnToAgentModal = false;
+    }
+    agentConfigModal.show();
+  });
+
+  agentConfigModalEl.addEventListener('hidden.bs.modal', function () {
+    if (returnToAgentModal) {
+      agentModal.show();
+      returnToAgentModal = false;
+    }
+  });
+});
+</script>
+
+{% include '_agent_config_info.html' %}
+{% include '_agent_examples_modal.html' %}

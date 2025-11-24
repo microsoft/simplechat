@@ -1,0 +1,185 @@
+{% from '_agent_examples.html' import agent_examples %}
+<div class="modal fade" id="agentExamplesModal" tabindex="-1" aria-labelledby="agentExamplesModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="agentExamplesModalLabel">
+          <i class="bi bi-stars me-2"></i>
+          Agent Example Templates
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info d-flex align-items-start gap-2">
+          <i class="bi bi-lightning-charge"></i>
+          <div>
+            <strong>Jump-start a new agent.</strong> Pick a template below and we'll pre-fill the agent builder with its display name, description, instructions, and optional advanced settings.
+          </div>
+        </div>
+        {{ agent_examples('agentExamplesAccordion', False, True) }}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+        <script>
+        (function () {
+          function initAgentExamplesModal() {
+            if (!window.bootstrap) {
+              return;
+            }
+
+            const agentExamplesModalEl = document.getElementById('agentExamplesModal');
+            if (!agentExamplesModalEl) {
+              return;
+            }
+
+            const agentExamplesModal = bootstrap.Modal.getOrCreateInstance(agentExamplesModalEl);
+            let activeTriggerButton = null;
+            let pendingExamplePayload = null;
+
+            agentExamplesModalEl.addEventListener('show.bs.modal', function (event) {
+              activeTriggerButton = event.relatedTarget || null;
+              pendingExamplePayload = null;
+            });
+
+            agentExamplesModalEl.addEventListener('hidden.bs.modal', function () {
+              if (!pendingExamplePayload) {
+                activeTriggerButton = null;
+              }
+            });
+
+            agentExamplesModalEl.addEventListener('click', function (event) {
+              const createBtn = event.target.closest('.agent-example-create-btn');
+              if (!createBtn) {
+                return;
+              }
+
+              const payloadAttr = createBtn.getAttribute('data-agent-example');
+              if (!payloadAttr) {
+                return;
+              }
+
+              try {
+                pendingExamplePayload = JSON.parse(payloadAttr);
+              } catch (error) {
+                console.error('Failed to parse agent example payload:', error);
+                pendingExamplePayload = null;
+                return;
+              }
+
+              agentExamplesModal.hide();
+              openAgentModalFromTemplate();
+            });
+
+            function openAgentModalFromTemplate() {
+              if (!pendingExamplePayload) {
+                return;
+              }
+
+              const agentModalEl = document.getElementById('agentModal');
+              if (!agentModalEl) {
+                console.warn('Agent modal is not available for template injection.');
+                pendingExamplePayload = null;
+                return;
+              }
+
+              const agentModalInstance = bootstrap.Modal.getOrCreateInstance(agentModalEl);
+              const applyPayloadWhenReady = function () {
+                applyExamplePayload(pendingExamplePayload);
+                pendingExamplePayload = null;
+              };
+
+              if (agentModalEl.classList.contains('show')) {
+                applyPayloadWhenReady();
+                return;
+              }
+
+              const onShown = function () {
+                agentModalEl.removeEventListener('shown.bs.modal', onShown);
+                applyPayloadWhenReady();
+              };
+
+              agentModalEl.addEventListener('shown.bs.modal', onShown);
+
+              if (!launchAgentModal(agentModalInstance)) {
+                agentModalEl.removeEventListener('shown.bs.modal', onShown);
+                pendingExamplePayload = null;
+              }
+            }
+
+            function launchAgentModal(agentModalInstance) {
+              const manualTriggerSelector = getManualTriggerSelector();
+              if (manualTriggerSelector) {
+                const manualTrigger = document.querySelector(manualTriggerSelector);
+                if (manualTrigger) {
+                  manualTrigger.click();
+                  return true;
+                }
+              }
+
+              if (window.agentModalStepper && typeof window.agentModalStepper.showModal === 'function') {
+                window.agentModalStepper.showModal();
+                return true;
+              }
+
+              if (agentModalInstance) {
+                agentModalInstance.show();
+                return true;
+              }
+
+              console.warn('Unable to open agent modal for template application.');
+              return false;
+            }
+
+            function getManualTriggerSelector() {
+              if (!activeTriggerButton) {
+                return '';
+              }
+              const selector = activeTriggerButton.getAttribute('data-trigger-button');
+              return selector || '';
+            }
+
+            function applyExamplePayload(payload) {
+              const displayNameInput = document.getElementById('agent-display-name');
+              const descriptionInput = document.getElementById('agent-description');
+              const instructionsInput = document.getElementById('agent-instructions');
+              const additionalSettingsInput = document.getElementById('agent-additional-settings');
+
+              if (displayNameInput && payload.display_name !== undefined) {
+                displayNameInput.value = payload.display_name;
+                displayNameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                displayNameInput.focus();
+              }
+
+              if (descriptionInput && payload.description !== undefined) {
+                descriptionInput.value = payload.description;
+                descriptionInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (instructionsInput && payload.instructions !== undefined) {
+                instructionsInput.value = payload.instructions;
+                instructionsInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (additionalSettingsInput && payload.additional_settings !== undefined) {
+                additionalSettingsInput.value = payload.additional_settings;
+                additionalSettingsInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (window.agentModalStepper && typeof window.agentModalStepper.goToStep === 'function') {
+                window.agentModalStepper.goToStep(1);
+              }
+            }
+          }
+
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAgentExamplesModal, { once: true });
+          } else {
+            initAgentExamplesModal();
+          }
+        })();
+        </script>
