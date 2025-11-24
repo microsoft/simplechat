@@ -1,5 +1,5 @@
 ---
-applyTo: '**'
+applyTo: '**/*.py'
 ---
 
 # Python Language Guide
