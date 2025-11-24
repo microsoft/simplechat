@@ -459,7 +459,7 @@ export function loadMessages(conversationId) {
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
         console.log(`[loadMessages Loop] Role: ${msg.role}`);
         if (msg.role === "user") {
-          appendMessage("You", msg.content, null, msg.id);
+          appendMessage("You", msg.content, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "assistant") {
           console.log(`  [loadMessages Loop] Full Assistant msg object:`, JSON.stringify(msg)); // Stringify to see exact keys
           console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}, msg.agent_citations exists=${'agent_citations' in msg}`);
@@ -479,8 +479,9 @@ export function loadMessages(conversationId) {
           const arg9 = msg.agent_display_name; // Get agent display name
           const arg10 = msg.agent_name; // Get agent name
           console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}, agent_display: ${arg9}`);
+          console.log(`  [loadMessages Loop] Message metadata:`, msg.metadata);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, msg); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
           appendMessage("File", msg);
@@ -600,6 +601,18 @@ export function appendMessage(
     // --- Footer Content (Copy, Feedback, Citations) ---
     const feedbackHtml = renderFeedbackIcons(messageId, currentConversationId);
     const hiddenTextId = `copy-md-${messageId || Date.now()}`;
+    
+    // Check if message is masked
+    const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+    const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+    const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+    
+    const maskButtonHtml = `
+            <button class="mask-btn me-2" data-message-id="${messageId}" title="${maskTitle}">
+                <i class="bi ${maskIcon}"></i>
+            </button>
+        `;
+    
     const copyButtonHtml = `
             <button class="copy-btn me-2" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
                 <i class="bi bi-copy"></i>
@@ -608,7 +621,7 @@ export function appendMessage(
       withInlineCitations
     )}</textarea>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center">${copyButtonHtml}${feedbackHtml}</div>`;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center">${maskButtonHtml}${copyButtonHtml}${feedbackHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -699,8 +712,30 @@ export function appendMessage(
       if (window.Prism) Prism.highlightElement(block);
     });
 
+    // Apply masked state if message has masking
+    if (fullMessageObject?.metadata) {
+      console.log('Applying masked state for AI message:', messageId, fullMessageObject.metadata);
+      applyMaskedState(messageDiv, fullMessageObject.metadata);
+    } else {
+      console.log('No metadata found for AI message:', messageId, 'fullMessageObject:', fullMessageObject);
+    }
+
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
+    
+    const maskBtn = messageDiv.querySelector(".mask-btn");
+    if (maskBtn) {
+      // Update tooltip dynamically on hover
+      maskBtn.addEventListener("mouseenter", () => {
+        updateMaskButtonTooltip(maskBtn, messageDiv);
+      });
+      
+      // Handle mask button click
+      maskBtn.addEventListener("click", () => {
+        handleMaskButtonClick(messageDiv, messageId, messageContent);
+      });
+    }
+    
     const copyBtn = messageDiv.querySelector(".copy-btn");
     copyBtn?.addEventListener("click", () => {
       /* ... copy logic ... */
@@ -874,11 +909,20 @@ export function appendMessage(
     let metadataContainerHtml = "";
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+      
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
-          <button class="btn btn-sm btn-outline-secondary copy-user-btn" data-message-id="${messageId}" title="Copy message">
-            <i class="bi bi-copy"></i>
-          </button>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary copy-user-btn" data-message-id="${messageId}" title="Copy message">
+              <i class="bi bi-copy"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary mask-btn" data-message-id="${messageId}" title="${maskTitle}">
+              <i class="bi ${maskIcon}"></i>
+            </button>
+          </div>
           <button class="btn btn-sm btn-outline-secondary metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
             <i class="bi bi-info-circle"></i>
           </button>
@@ -920,6 +964,14 @@ export function appendMessage(
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
+      
+      // Apply masked state if message has masking
+      if (fullMessageObject?.metadata) {
+        console.log('Applying masked state for user message:', messageId, fullMessageObject.metadata);
+        applyMaskedState(messageDiv, fullMessageObject.metadata);
+      } else {
+        console.log('No metadata found for user message:', messageId, 'fullMessageObject:', fullMessageObject);
+      }
     }
 
     // Add event listener for image info button (uploaded images)
@@ -1480,6 +1532,7 @@ function updateUserMessageId(tempId, realId) {
 function attachUserMessageEventListeners(messageDiv, messageId, messageContent) {
   const copyBtn = messageDiv.querySelector(".copy-user-btn");
   const metadataToggleBtn = messageDiv.querySelector(".metadata-toggle-btn");
+  const maskBtn = messageDiv.querySelector(".mask-btn");
   
   if (copyBtn) {
     copyBtn.addEventListener("click", () => {
@@ -1502,6 +1555,18 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
       toggleUserMessageMetadata(messageDiv, messageId);
+    });
+  }
+  
+  if (maskBtn) {
+    // Update tooltip dynamically on hover
+    maskBtn.addEventListener("mouseenter", () => {
+      updateMaskButtonTooltip(maskBtn, messageDiv);
+    });
+    
+    // Handle mask button click
+    maskBtn.addEventListener("click", () => {
+      handleMaskButtonClick(messageDiv, messageId, messageContent);
     });
   }
 }
@@ -2218,6 +2283,341 @@ export function scrollToMessageSmooth(messageId) {
   setTimeout(() => {
     messageElement.classList.remove('message-pulse');
   }, 2000);
+}
+
+// ============= Message Masking Functions =============
+
+/**
+ * Apply masked state to a message when loading from database
+ */
+function applyMaskedState(messageDiv, metadata) {
+  if (!metadata) return;
+  
+  const messageText = messageDiv.querySelector('.message-text');
+  const messageFooter = messageDiv.querySelector('.message-footer');
+  
+  if (!messageText) return;
+  
+  // Check if entire message is masked
+  if (metadata.masked) {
+    messageDiv.classList.add('fully-masked');
+    
+    // Add exclusion badge to footer if not already present
+    if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
+      const badge = document.createElement('div');
+      badge.className = 'message-exclusion-badge text-warning small';
+      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Excluded from conversation';
+      messageFooter.appendChild(badge);
+    }
+    return;
+  }
+  
+  // Apply masked ranges if they exist
+  if (metadata.masked_ranges && metadata.masked_ranges.length > 0) {
+    const content = messageText.textContent;
+    let htmlContent = '';
+    let lastIndex = 0;
+    
+    // Sort masked ranges by start position
+    const sortedRanges = [...metadata.masked_ranges].sort((a, b) => a.start - b.start);
+    
+    // Build HTML with masked spans
+    sortedRanges.forEach(range => {
+      // Add text before masked range
+      if (range.start > lastIndex) {
+        htmlContent += escapeHtml(content.substring(lastIndex, range.start));
+      }
+      
+      // Add masked span
+      const maskedText = escapeHtml(content.substring(range.start, range.end));
+      const timestamp = new Date(range.timestamp).toLocaleDateString();
+      htmlContent += `<span class="masked-content" data-mask-id="${range.id}" data-user-id="${range.user_id}" data-display-name="${range.display_name}" title="Masked by ${range.display_name} on ${timestamp}">${maskedText}</span>`;
+      
+      lastIndex = range.end;
+    });
+    
+    // Add remaining text after last masked range
+    if (lastIndex < content.length) {
+      htmlContent += escapeHtml(content.substring(lastIndex));
+    }
+    
+    // Update message text with masked content
+    messageText.innerHTML = htmlContent;
+  }
+}
+
+/**
+ * Update mask button tooltip based on current selection and mask state
+ */
+function updateMaskButtonTooltip(maskBtn, messageDiv) {
+  const messageBubble = messageDiv.querySelector('.message-bubble');
+  if (!messageBubble) return;
+  
+  // Check if there's a text selection within this message
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.toString().trim().length > 0;
+  
+  // Verify selection is within this message bubble
+  let selectionInMessage = false;
+  if (hasSelection && selection.anchorNode) {
+    selectionInMessage = messageBubble.contains(selection.anchorNode);
+  }
+  
+  // Check current mask state
+  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
+  
+  // Update tooltip based on state
+  if (isMasked) {
+    maskBtn.title = 'Unmask all masked content';
+  } else if (selectionInMessage) {
+    maskBtn.title = 'Mask selected content';
+  } else {
+    maskBtn.title = 'Mask entire message';
+  }
+}
+
+/**
+ * Handle mask button click - masks entire message or selected content
+ */
+function handleMaskButtonClick(messageDiv, messageId, messageContent) {
+  const messageBubble = messageDiv.querySelector('.message-bubble');
+  const messageText = messageDiv.querySelector('.message-text');
+  const maskBtn = messageDiv.querySelector('.mask-btn');
+  
+  if (!messageBubble || !messageText || !maskBtn) {
+    console.error('Required elements not found for masking');
+    return;
+  }
+  
+  // Check if message is currently masked
+  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
+  
+  if (isMasked) {
+    // Unmask all
+    unmaskMessage(messageDiv, messageId, maskBtn);
+    return;
+  }
+  
+  // Check for text selection within message
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.toString().trim().length > 0;
+  
+  let selectionInMessage = false;
+  if (hasSelection && selection.anchorNode) {
+    selectionInMessage = messageBubble.contains(selection.anchorNode);
+  }
+  
+  if (selectionInMessage) {
+    // Mask selection
+    maskSelection(messageDiv, messageId, selection, messageText, maskBtn);
+  } else {
+    // Mask entire message
+    maskEntireMessage(messageDiv, messageId, maskBtn);
+  }
+}
+
+/**
+ * Mask the entire message
+ */
+function maskEntireMessage(messageDiv, messageId, maskBtn) {
+  console.log(`Masking entire message: ${messageId}`);
+  
+  // Get user info
+  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
+  const userId = window.currentUser?.id || 'unknown';
+  
+  console.log('Mask entire message - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
+  
+  const payload = {
+    action: 'mask_all',
+    user_id: userId,
+    display_name: userDisplayName
+  };
+  
+  console.log('Mask entire message - Sending payload:', payload);
+  
+  // Call API to mask message
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload)
+  })
+  .then(response => {
+    console.log('Mask entire message - Response status:', response.status);
+    if (!response.ok) {
+      return response.json().then(err => {
+        console.error('Mask entire message - Error response:', err);
+        throw new Error(err.error || 'Failed to mask message');
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Mask entire message - Success response:', data);
+    if (data.success) {
+      // Add fully-masked class and exclusion badge
+      messageDiv.classList.add('fully-masked');
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-front';
+      maskBtn.title = 'Unmask all masked content';
+      
+      // Add exclusion badge to footer if not already present
+      const messageFooter = messageDiv.querySelector('.message-footer');
+      if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'message-exclusion-badge text-warning small';
+        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Excluded from conversation';
+        messageFooter.appendChild(badge);
+      }
+      
+      showToast('Message masked successfully', 'success');
+    } else {
+      showToast('Failed to mask message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error masking message:', error);
+    showToast('Error masking message', 'error');
+  });
+}
+
+/**
+ * Mask selected text content
+ */
+function maskSelection(messageDiv, messageId, selection, messageText, maskBtn) {
+  const selectedText = selection.toString().trim();
+  console.log(`Masking selection in message: ${messageId}`);
+  
+  // Get the range and calculate character offsets
+  const range = selection.getRangeAt(0);
+  const preSelectionRange = range.cloneRange();
+  preSelectionRange.selectNodeContents(messageText);
+  preSelectionRange.setEnd(range.startContainer, range.startOffset);
+  const start = preSelectionRange.toString().length;
+  const end = start + selectedText.length;
+  
+  // Get user info
+  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
+  const userId = window.currentUser?.id || 'unknown';
+  
+  console.log('Mask selection - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
+  console.log('Mask selection - Range:', { start, end, selectedText });
+  
+  const payload = {
+    action: 'mask_selection',
+    selection: {
+      start: start,
+      end: end,
+      text: selectedText
+    },
+    user_id: userId,
+    display_name: userDisplayName
+  };
+  
+  console.log('Mask selection - Sending payload:', payload);
+  
+  // Call API to mask selection
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload)
+  })
+  .then(response => {
+    console.log('Mask selection - Response status:', response.status);
+    if (!response.ok) {
+      return response.json().then(err => {
+        console.error('Mask selection - Error response:', err);
+        throw new Error(err.error || 'Failed to mask selection');
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Mask selection - Success response:', data);
+    if (data.success) {
+      // Wrap selected text with masked span
+      const maskId = data.masked_ranges[data.masked_ranges.length - 1].id;
+      const span = document.createElement('span');
+      span.className = 'masked-content';
+      span.setAttribute('data-mask-id', maskId);
+      span.setAttribute('data-user-id', userId);
+      span.setAttribute('data-display-name', userDisplayName);
+      span.title = `Masked by ${userDisplayName}`;
+      
+      range.surroundContents(span);
+      selection.removeAllRanges();
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-front';
+      maskBtn.title = 'Unmask all masked content';
+      
+      showToast('Selection masked successfully', 'success');
+    } else {
+      showToast('Failed to mask selection', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error masking selection:', error);
+    showToast('Error masking selection', 'error');
+  });
+}
+
+/**
+ * Unmask all masked content in a message
+ */
+function unmaskMessage(messageDiv, messageId, maskBtn) {
+  console.log(`Unmasking message: ${messageId}`);
+  
+  // Call API to unmask
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'unmask_all'
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      // Remove fully-masked class
+      messageDiv.classList.remove('fully-masked');
+      
+      // Remove all masked-content spans
+      const maskedSpans = messageDiv.querySelectorAll('.masked-content');
+      maskedSpans.forEach(span => {
+        const text = document.createTextNode(span.textContent);
+        span.parentNode.replaceChild(text, span);
+      });
+      
+      // Remove exclusion badge
+      const badge = messageDiv.querySelector('.message-exclusion-badge');
+      if (badge) {
+        badge.remove();
+      }
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-back';
+      maskBtn.title = 'Mask entire message';
+      
+      showToast('Message unmasked successfully', 'success');
+    } else {
+      showToast('Failed to unmask message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error unmasking message:', error);
+    showToast('Error unmasking message', 'error');
+  });
 }
 
 // Expose functions globally

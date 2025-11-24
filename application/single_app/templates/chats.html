@@ -635,6 +635,12 @@
         window.classification_categories = [];
     }
 
+    // Current user information for message masking
+    window.currentUser = {
+        id: "{{ user_id }}",
+        display_name: "{{ user_display_name }}"
+    };
+
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;
     let currentLayout = 'split'; // Default layout

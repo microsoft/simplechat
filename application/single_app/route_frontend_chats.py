@@ -35,6 +35,10 @@ def register_route_frontend_chats(app):
 
         if not user_id:
             return redirect(url_for('login'))
+        
+        # Get user display name from user settings
+        user_display_name = user_settings.get('display_name', '')
+        
         return render_template(
             'chats.html',
             settings=public_settings,
@@ -45,6 +49,8 @@ def register_route_frontend_chats(app):
             enable_document_classification=enable_document_classification,
             document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
+            user_id=user_id,
+            user_display_name=user_display_name,
         )
     
     @app.route('/upload', methods=['POST'])
