@@ -681,7 +681,9 @@ export function appendMessage(
       console.log(">>> Will generate and include citation elements.");
       const citationsContainerId = `citations-${messageId || Date.now()}`;
       citationToggleHtml = `<div class="citation-toggle-container"><button class="btn btn-sm btn-outline-secondary citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button></div>`;
-      citationContentContainerHtml = `<div class="citations-container mt-2 pt-2 border-top" id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
+      // citationsButtonsHtml already contains a <div class="citations-container"> wrapper
+      // Just add ID and display style by wrapping minimally
+      citationContentContainerHtml = `<div id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
     } else {
       console.log(">>> Will NOT generate citation elements.");
     }
