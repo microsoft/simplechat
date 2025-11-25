@@ -1,11 +1,11 @@
 from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 import os
 
 credential = DefaultAzureCredential()
 token = credential.get_token("https://cosmos.azure.com/.default")
 
-#endpoint = "https://bicepchat-demo-cosmos.documents.azure.com:443/"
 cosmosEndpoint = os.getenv("var_cosmosDb_uri")
 client = CosmosClient(cosmosEndpoint, credential=credential)
 
@@ -15,10 +15,21 @@ container_name = "settings"
 database = client.get_database_client(database_name)
 container = database.get_container_client(container_name)
 
-# 3. Read the existing item by ID and partition key
+# Read the existing item by ID and partition key
 item_id = "app_settings"
 partition_key = "app_settings"  # Use the actual partition key value for this item
-item = container.read_item(item=item_id, partition_key=partition_key)
+try:
+    item = container.read_item(item=item_id, partition_key=partition_key)
+    print(f"Found existing app_setting document")
+except CosmosResourceNotFoundError:
+    print(f"app_setting document not found.")
+    item = {
+        "id": item_id,
+        "partition_key": partition_key
+    }
+
+# Get values from environment variables
+var_enableEnterpriseApp = os.getenv("var_enableEnterpriseApp") # expected to be true or false... will determine if key based or managed identity is used
 
 var_openAIEndpoint=os.getenv("var_openAIEndpoint")
 var_openAIResourceGroup=os.getenv("var_openAIResourceGroup")
@@ -35,7 +46,11 @@ var_documentIntelligenceServiceEndpoint = os.getenv("var_documentIntelligenceSer
 item["enable_external_healthcheck"] = True
 
 item["azure_openai_gpt_endpoint"] = var_openAIEndpoint
-item["azure_openai_gpt_authentication_type"] = "managed_identity"
+
+if var_contentSafetyEndpoint and var_contentSafetyEndpoint.strip():
+    item["azure_openai_gpt_authentication_type"] = "managed_identity"
+else:
+    item["azure_openai_gpt_authentication_type"] = "key"
 item["azure_openai_gpt_subscription_id"] = var_subscriptionId
 item["azure_openai_gpt_resource_group"] = var_openAIResourceGroup
 item["gpt_model"] = {

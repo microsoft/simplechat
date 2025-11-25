@@ -10,9 +10,13 @@ hooks:
       shell: sh
       run: |
         # Set up variables
+
+        export var_configureApplication=${var_configureApplication}
         export var_cosmosDb_uri=${var_cosmosDb_uri}
         export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
         export var_rgName=${var_rgName}
+        export var_enableEnterpriseApp=${var_enableEnterpriseApp}
+
         export var_openAIEndpoint=${var_openAIEndpoint}
         export var_openAIResourceGroup=${var_openAIResourceGroup}
         export var_openAIGPTModel=${var_openAIGPTModel}
@@ -22,10 +26,14 @@ hooks:
         export var_searchServiceEndpoint=${var_searchServiceEndpoint}
         export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
 
-        # Execute post-configuration script
-        python3 -m pip install --user -r ./bicep/requirements.txt
-        #chmod +x ./bicep/postconfig.py
-        python3 ./bicep/postconfig.py
+        # Execute post-configuration script if enabled
+        if [ "${var_configureApplication}" = "true" ]; then
+            echo "Running post-deployment configuration..."
+            python3 -m pip install --user -r ./bicep/requirements.txt
+            python3 ./bicep/postconfig.py
+        else
+            echo "Skipping post-deployment configuration (var_configureApplication is not true)"
+        fi
 
 
   predeploy:

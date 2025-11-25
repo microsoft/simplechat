@@ -44,8 +44,8 @@ param enableDiagLogging bool
 
 @description('''Enable enterprise application (Azure AD App Registration) configuration.
 - Enables SSO, conditional access, and centralized identity management
-- Default is true''')
-param enableEnterpriseApp bool = true
+''')
+param enableEnterpriseApp bool
 
 @description('''Azure AD Application Client ID for enterprise authentication.
 - Required if enableEnterpriseApp is true
@@ -111,6 +111,10 @@ param imageName string
   'Return403'
 ])
 param unauthenticatedClientAction string = 'RedirectToLoginPage'
+
+@description('''Excute post deployment configuration script to pre-populate application with required settings and secrets.
+''')
+param configureApplication bool
 
 //=========================================================
 // variable declarations for the main deployment 
@@ -507,3 +511,5 @@ output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
 output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
 output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
+output var_configureApplication bool = configureApplication
+output var_enableEnterpriseApp bool = enableEnterpriseApp
