@@ -1094,15 +1094,23 @@
                             value="{{ settings.classification_banner_text }}">
                     </div>
                     <div class="mb-2">
+                        <label for="classification_banner_text_color" class="form-label">Banner Text Color</label>
+                        <input type="color" class="form-control form-control-color" id="classification_banner_text_color" name="classification_banner_text_color"
+                            value="{{ settings.classification_banner_text_color or '#ffffff' }}" style="width: 3rem; height: 2rem;">
+                    </div>
+                    <div class="mb-2">
                         <label for="classification_banner_color" class="form-label">Banner Color</label>
                         <input type="color" class="form-control form-control-color" id="classification_banner_color" name="classification_banner_color"
                             value="{{ settings.classification_banner_color or '#ffc107' }}" style="width: 3rem; height: 2rem;">
                     </div>
                     <div class="mb-2">
-                        <span id="classification-banner-preview"
-                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
-                            {{ settings.classification_banner_text or 'Banner Preview' }}
-                        </span>
+                        <label class="form-label">Preview</label>
+                        <div>
+                            <span id="classification-banner-preview"
+                                  style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:{{ settings.classification_banner_text_color or '#ffffff' }}; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                                {{ settings.classification_banner_text or 'Banner Preview' }}
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -2945,14 +2953,15 @@
     // Live preview for banner in admin
     document.addEventListener('DOMContentLoaded', function() {
         const textInput = document.getElementById('classification_banner_text');
+        const textColorInput = document.getElementById('classification_banner_text_color');
         const colorInput = document.getElementById('classification_banner_color');
         const preview = document.getElementById('classification-banner-preview');
         function updatePreview() {
             preview.textContent = textInput.value || 'Banner Preview';
             preview.style.background = colorInput.value;
-            preview.style.color = '#fff'; // Always white text for preview
+            preview.style.color = textColorInput.value;
         }
-        if (textInput && colorInput && preview) {
+        if (textInput && textColorInput && colorInput && preview) {
             textInput.addEventListener('input', updatePreview);
             colorInput.addEventListener('input', updatePreview);
         }

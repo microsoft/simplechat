@@ -152,6 +152,8 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'
         
         # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
@@ -354,6 +356,7 @@ def register_route_frontend_admin_settings(app):
             # --- Extract banner fields from form_data ---
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
 
             # --- Application Insights Logging Toggle ---
@@ -652,6 +655,7 @@ def register_route_frontend_admin_settings(app):
                 # --- Banner fields ---
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
+                'classification_banner_text_color': classification_banner_text_color,
                 'classification_banner_color': classification_banner_color,
             }
             
