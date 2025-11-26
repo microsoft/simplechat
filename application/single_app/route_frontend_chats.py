@@ -117,10 +117,78 @@ def register_route_frontend_chats(app):
 
         extracted_content  = ''
         is_table = False 
+        vision_analysis = None
+        image_base64_url = None  # For storing base64-encoded images
 
         try:
+            # Check if this is an image file
+            is_image_file = file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']
+            
             if file_ext in ['.pdf', '.docx', '.pptx', '.html', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif']:
-                extracted_content  = extract_content_with_azure_di(temp_file_path)
+                extracted_content_raw  = extract_content_with_azure_di(temp_file_path)
+                
+                # Convert pages_data list to string
+                if isinstance(extracted_content_raw, list):
+                    extracted_content = "\n\n".join([
+                        f"[Page {page.get('page_number', 'N/A')}]\n{page.get('content', '')}"
+                        for page in extracted_content_raw
+                    ])
+                else:
+                    extracted_content = str(extracted_content_raw)
+                
+                # NEW: For images, convert to base64 for inline display
+                if is_image_file:
+                    try:
+                        with open(temp_file_path, 'rb') as img_file:
+                            image_bytes = img_file.read()
+                            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                            
+                            # Detect mime type
+                            mime_type = mimetypes.guess_type(temp_file_path)[0] or 'image/png'
+                            
+                            # Create data URL
+                            image_base64_url = f"data:{mime_type};base64,{base64_image}"
+                            print(f"Converted image to base64: {filename}, size: {len(image_base64_url)} bytes")
+                    except Exception as b64_error:
+                        print(f"Warning: Failed to convert image to base64: {b64_error}")
+                
+                # Perform vision analysis for images if enabled
+                if is_image_file and settings.get('enable_multimodal_vision', False):
+                    try:
+                        from functions_documents import analyze_image_with_vision_model
+                        
+                        vision_analysis = analyze_image_with_vision_model(
+                            temp_file_path,
+                            user_id,
+                            f"chat_upload_{int(time.time())}",
+                            settings
+                        )
+                        
+                        if vision_analysis:
+                            # Combine DI OCR with vision analysis
+                            vision_description = vision_analysis.get('description', '')
+                            vision_objects = vision_analysis.get('objects', [])
+                            vision_text = vision_analysis.get('text', '')
+                            
+                            extracted_content += f"\n\n=== AI Vision Analysis ===\n"
+                            extracted_content += f"Description: {vision_description}\n"
+                            if vision_objects:
+                                extracted_content += f"Objects detected: {', '.join(vision_objects)}\n"
+                            if vision_text:
+                                extracted_content += f"Text visible in image: {vision_text}\n"
+                            
+                            print(f"Vision analysis added to chat upload: {filename}")
+                    except Exception as vision_error:
+                        print(f"Warning: Vision analysis failed for chat upload: {vision_error}")
+                        # Continue without vision analysis
+                
+            elif file_ext in ['.doc', '.docm']:
+                # Use docx2txt for .doc and .docm files
+                try:
+                    import docx2txt
+                    extracted_content = docx2txt.process(temp_file_path)
+                except ImportError:
+                    return jsonify({'error': 'docx2txt library required for .doc/.docm files'}), 500
             elif file_ext == '.txt':
                 extracted_content  = extract_text_file(temp_file_path)
             elif file_ext == '.md':
@@ -129,7 +197,10 @@ def register_route_frontend_chats(app):
                 with open(temp_file_path, 'r', encoding='utf-8') as f:
                     parsed_json = json.load(f)
                     extracted_content  = json.dumps(parsed_json, indent=2)
-            elif file_ext in ['.csv', '.xls', '.xlsx']:
+            elif file_ext in ['.xml', '.yaml', '.yml', '.log']:
+                # Handle XML, YAML, and LOG files as text for inline chat
+                extracted_content  = extract_text_file(temp_file_path)
+            elif file_ext in ['.csv', '.xls', '.xlsx', '.xlsm']:
                 extracted_content = extract_table_file(temp_file_path, file_ext)
                 is_table = True
             else:
@@ -142,18 +213,120 @@ def register_route_frontend_chats(app):
 
         try:
             file_message_id = f"{conversation_id}_file_{int(time.time())}_{random.randint(1000,9999)}"
-            file_message = {
-                'id': file_message_id,
-                'conversation_id': conversation_id,
-                'role': 'file',
-                'filename': filename,
-                'file_content': extracted_content,
-                'is_table': is_table,
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None
-            }
+            
+            # For images with base64 data, store as 'image' role (like system-generated images)
+            if image_base64_url:
+                # Check if image data is too large for a single Cosmos document (2MB limit)
+                # Use 1.5MB as safe limit for base64 content
+                max_content_size = 1500000  # 1.5MB in bytes
+                
+                if len(image_base64_url) > max_content_size:
+                    print(f"Large image detected ({len(image_base64_url)} bytes), splitting across multiple documents")
+                    
+                    # Extract base64 part for splitting
+                    data_url_prefix = image_base64_url.split(',')[0] + ','
+                    base64_content = image_base64_url.split(',')[1]
+                    
+                    # Calculate chunks
+                    chunk_size = max_content_size - len(data_url_prefix) - 200  # Room for JSON overhead
+                    chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
+                    total_chunks = len(chunks)
+                    
+                    print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
+                    
+                    # Create main image document with first chunk
+                    main_image_doc = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'image',
+                        'content': f"{data_url_prefix}{chunks[0]}",
+                        'filename': filename,
+                        'prompt': f"User uploaded: {filename}",
+                        'created_at': datetime.utcnow().isoformat(),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'is_chunked': True,
+                            'total_chunks': total_chunks,
+                            'chunk_index': 0,
+                            'original_size': len(image_base64_url),
+                            'is_user_upload': True
+                        }
+                    }
+                    
+                    # Add vision analysis and extracted text if available
+                    if vision_analysis:
+                        main_image_doc['vision_analysis'] = vision_analysis
+                    if extracted_content:
+                        main_image_doc['extracted_text'] = extracted_content
+                    
+                    cosmos_messages_container.upsert_item(main_image_doc)
+                    
+                    # Create chunk documents
+                    for i in range(1, total_chunks):
+                        chunk_doc = {
+                            'id': f"{file_message_id}_chunk_{i}",
+                            'conversation_id': conversation_id,
+                            'role': 'image_chunk',
+                            'content': chunks[i],
+                            'parent_message_id': file_message_id,
+                            'created_at': datetime.utcnow().isoformat(),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'metadata': {
+                                'is_chunk': True,
+                                'chunk_index': i,
+                                'total_chunks': total_chunks,
+                                'parent_message_id': file_message_id
+                            }
+                        }
+                        cosmos_messages_container.upsert_item(chunk_doc)
+                    
+                    print(f"Created {total_chunks} chunked image documents for {filename}")
+                else:
+                    # Small enough to store in single document
+                    image_message = {
+                        'id': file_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'image',
+                        'content': image_base64_url,
+                        'filename': filename,
+                        'prompt': f"User uploaded: {filename}",
+                        'created_at': datetime.utcnow().isoformat(),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'is_chunked': False,
+                            'original_size': len(image_base64_url),
+                            'is_user_upload': True
+                        }
+                    }
+                    
+                    # Add vision analysis and extracted text if available
+                    if vision_analysis:
+                        image_message['vision_analysis'] = vision_analysis
+                    if extracted_content:
+                        image_message['extracted_text'] = extracted_content
+                    
+                    cosmos_messages_container.upsert_item(image_message)
+                    print(f"Created single image document for {filename}")
+            else:
+                # Non-image file or failed to convert to base64, store as 'file' role
+                file_message = {
+                    'id': file_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'file',
+                    'filename': filename,
+                    'file_content': extracted_content,
+                    'is_table': is_table,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None
+                }
+                
+                # Add vision analysis if available
+                if vision_analysis:
+                    file_message['vision_analysis'] = vision_analysis
 
-            cosmos_messages_container.upsert_item(file_message)
+                cosmos_messages_container.upsert_item(file_message)
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
@@ -426,10 +599,10 @@ def register_route_frontend_chats(app):
 
         # Define supported types for direct viewing/handling
         is_pdf = file_ext == '.pdf'
-        is_word = file_ext in ('.docx', '.doc')
+        is_word = file_ext in ('.docx', '.doc', '.docm')
         is_ppt = file_ext in ('.pptx', '.ppt')
         is_image = file_ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp') # Added more image types
-        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.html', '.htm') # Common text-based types
+        is_text = file_ext in ('.txt', '.md', '.csv', '.json', '.log', '.xml', '.yaml', '.yml', '.html', '.htm') # Common text-based types
 
         try:
             # Download the file to the specified location

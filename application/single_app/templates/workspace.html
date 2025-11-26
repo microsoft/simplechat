@@ -272,7 +272,7 @@
               <div class="upload-area-content">
                 <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
                 <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-                <div class="small text-muted mt-1">Allowed: txt, pdf, docx, xlsx, xls, csv, pptx, html, jpg, jpeg, png, bmp, tiff, tif, heif, md, json{% if enable_video_file_support in [True, 'True', 'true'] %}, mp4, mov, avi, wmv, mkv, webm{% endif %}{% if enable_audio_file_support in [True, 'True', 'true'] %}, mp3, wav, ogg, aac, flac, m4a{% endif %}</div>
+                <div class="small text-muted mt-1">{{ allowed_extensions }}</div>
               </div>
             </div>
             <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>

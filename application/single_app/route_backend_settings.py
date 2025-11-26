@@ -276,6 +276,9 @@ def register_route_backend_settings(app):
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
 
+            elif test_type == 'multimodal_vision':
+                return _test_multimodal_vision_connection(data)
+
             elif test_type == 'chunking_api':
                 # If you have a chunking API test, implement it here.
                 return jsonify({'message': 'Chunking API connection successful'}), 200
@@ -285,6 +288,86 @@ def register_route_backend_settings(app):
 
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+def _test_multimodal_vision_connection(payload):
+    """Test multi-modal vision analysis with a sample image."""
+    enable_apim = payload.get('enable_apim', False)
+    vision_model = payload.get('vision_model')
+    
+    if not vision_model:
+        return jsonify({'error': 'No vision model specified'}), 400
+    
+    # Create a simple test image (1x1 red pixel PNG)
+    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            api_version = apim_data.get('api_version')
+            subscription_key = apim_data.get('subscription_key')
+            
+            gpt_client = AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=subscription_key
+            )
+        else:
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            api_version = direct_data.get('api_version')
+            auth_type = direct_data.get('auth_type', 'key')
+            
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                api_key = direct_data.get('key')
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=api_key
+                )
+        
+        # Test vision analysis with simple prompt
+        response = gpt_client.chat.completions.create(
+            model=vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What color is this image? Just say the color."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{test_image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=50
+        )
+        
+        result = response.choices[0].message.content
+        
+        return jsonify({
+            'message': 'Multi-modal vision connection successful',
+            'details': f'Model responded: {result}'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
     
 def get_index_client() -> SearchIndexClient:
     """

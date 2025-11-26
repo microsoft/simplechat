@@ -17,7 +17,7 @@ Key configuration sections include:
 5. **Workspaces**:
    - Enable/disable **Your Workspace** (personal docs).
    - Enable/disable **My Groups** (group docs). Option to enforce `CreateGroups` RBAC role for creating new groups.
-   - Enable/disable **Multimedia Support** (Video/Audio uploads). Configure **Video Indexer** (Account ID, Location, Key, API Endpoint, Timeout) and **Speech Service** (Endpoint, Region, Key).
+   - Enable/disable **Multimedia Support** (Video/Audio uploads). Configure **Azure Video Indexer** using Managed Identity authentication (Resource Group, Subscription ID, Account Name, Location, Account ID, API Endpoint, ARM API Version, Timeout). Configure **Speech Service** (Endpoint, Region, Key).
    - Enable/disable **Metadata Extraction**. Select the GPT model used for extraction.
    - Enable/disable **Document Classification**. Define classification labels and colors.
 6. **Citations**:

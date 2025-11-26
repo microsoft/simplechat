@@ -245,15 +245,34 @@ def get_valid_access_token_for_plugins(scopes=None):
     
 def get_video_indexer_account_token(settings, video_id=None):
     """
-    For ARM-based VideoIndexer accounts:
+    Get Video Indexer access token using managed identity authentication.
+    
+    This function authenticates with Azure Video Indexer using the App Service's
+    managed identity. The managed identity must have Contributor role on the
+    Video Indexer resource.
+    
+    Authentication flow:
+    1. Acquire ARM access token using DefaultAzureCredential (managed identity)
+    2. Call ARM generateAccessToken API to get Video Indexer access token
+    3. Use Video Indexer access token for all API operations
+    """
+    from functions_debug import debug_print
+    
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using managed identity for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    
+    return get_video_indexer_managed_identity_token(settings, video_id)
+
+def get_video_indexer_managed_identity_token(settings, video_id=None):
+    """
+    For ARM-based VideoIndexer accounts using managed identity:
     1) Acquire an ARM token with DefaultAzureCredential
     2) POST to the ARM generateAccessToken endpoint
     3) Return the account-level accessToken
     """
     from functions_debug import debug_print
     
-    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
-    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    debug_print(f"[VIDEO INDEXER AUTH] Using managed identity authentication")
     
     # 1) ARM token
     if AZURE_ENVIRONMENT == "usgovernment":

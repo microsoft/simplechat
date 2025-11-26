@@ -46,18 +46,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
-            group_results = search_client_group.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=(
-                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved')) and document_id eq '{document_id}'"
-                ),
-                query_type="semantic",
-                semantic_configuration_name="nexus-group-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
-            )
+            # Only search group index if active_group_id is provided
+            if active_group_id:
+                group_results = search_client_group.search(
+                    search_text=query,
+                    vector_queries=[vector_query],
+                    filter=(
+                        f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved')) and document_id eq '{document_id}'"
+                    ),
+                    query_type="semantic",
+                    semantic_configuration_name="nexus-group-index-semantic-configuration",
+                    query_caption="extractive",
+                    query_answer="extractive",
+                    select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                )
+            else:
+                group_results = []
 
             # Get visible public workspace IDs from user settings
             visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
@@ -97,18 +101,22 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
-            group_results = search_client_group.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=(
-                    f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved'))"
-                ),
-                query_type="semantic",
-                semantic_configuration_name="nexus-group-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
-            )
+            # Only search group index if active_group_id is provided
+            if active_group_id:
+                group_results = search_client_group.search(
+                    search_text=query,
+                    vector_queries=[vector_query],
+                    filter=(
+                        f"(group_id eq '{active_group_id}' or shared_group_ids/any(g: g eq '{active_group_id},approved'))"
+                    ),
+                    query_type="semantic",
+                    semantic_configuration_name="nexus-group-index-semantic-configuration",
+                    query_caption="extractive",
+                    query_answer="extractive",
+                    select=["id", "chunk_text", "chunk_id", "file_name", "group_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
+                )
+            else:
+                group_results = []
 
             # Get visible public workspace IDs from user settings
             visible_public_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
