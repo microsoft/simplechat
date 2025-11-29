@@ -5,10 +5,12 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -23,26 +25,13 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
     name: 'basic'
   }
   properties: {
+    #disable-next-line BCP036 // template is incorrect 
     hostingMode: 'default'
     publicNetworkAccess: 'Enabled'
     replicaCount: 1
     partitionCount: 1
   }
   tags: tags
-}
-
-// grant the managed identity access to search service as a search index data contributor
-resource searchContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(searchService.id, managedIdentityId, 'search-contributor')
-  scope: searchService
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 // configure diagnostic settings for search service
@@ -55,6 +44,18 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
     logs: diagnosticConfigs.outputs.standardLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
+  }
+}
+
+//=========================================================
+// store search Service keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module searchServiceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+  name: 'storeSearchServiceSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'search-service-key'
+    secretValue: searchService.listAdminKeys().primaryKey
   }
 }
 

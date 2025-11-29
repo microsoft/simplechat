@@ -29,7 +29,7 @@ except CosmosResourceNotFoundError:
     }
 
 # Get values from environment variables
-var_enableEnterpriseApp = os.getenv("var_enableEnterpriseApp") # expected to be true or false... will determine if key based or managed identity is used
+var_authenticationType = os.getenv("var_authenticationType") # expected to be true or false... will determine if key based or managed identity is used
 
 var_openAIEndpoint=os.getenv("var_openAIEndpoint")
 var_openAIResourceGroup=os.getenv("var_openAIResourceGroup")

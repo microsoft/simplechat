@@ -5,10 +5,12 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
@@ -24,10 +26,7 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     name: 'S0'
   }
   identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentityId}': {}
-    }
+    type: 'SystemAssigned'
   }
   properties: {
     publicNetworkAccess: 'Enabled'
@@ -35,20 +34,6 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     customSubDomainName: toLower('${appName}-${environment}-speech')
   }
   tags: tags
-}
-
-// grant the managed identity access to speech service as a Cognitive Services User
-resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(speechService.id, managedIdentityId, 'speech-service-user')
-  scope: speechService
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'a97b65f3-24c7-4388-baec-2e87135dc908'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 // configure diagnostic settings for speech service
@@ -64,4 +49,17 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
   }
 }
 
+//=========================================================
+// store speech Service keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module speechServiceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+  name: 'storeSpeechServiceSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'speech-service-key'
+    secretValue: speechService.listKeys().key1
+  }
+}
+
 output speechServiceName string = speechService.name
+output speechServiceEndpoint string = speechService.properties.endpoint

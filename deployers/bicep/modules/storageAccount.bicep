@@ -5,10 +5,12 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
@@ -56,20 +58,6 @@ resource groupDocumentsContainer 'Microsoft.Storage/storageAccounts/blobServices
   }
 }
 
-// grant the managed identity access to the storage account as a blob data contributor
-resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, managedIdentityId, 'storage-blob-data-contributor')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // configure diagnostic settings for storage account
 resource storageDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${storageAccount.name}-diagnostics')
@@ -91,6 +79,18 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
     logs: diagnosticConfigs.outputs.standardLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.transactionMetricsCategories
+  }
+}
+
+//=========================================================
+// store storage keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module storageAccountSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+  name: 'storeStorageAccountSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'storage-account-key'
+    secretValue: storageAccount.listKeys().keys[0].value
   }
 }
 

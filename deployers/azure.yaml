@@ -35,7 +35,6 @@ hooks:
             echo "Skipping post-deployment configuration (var_configureApplication is not true)"
         fi
 
-
   predeploy:
     posix:
       shell: sh

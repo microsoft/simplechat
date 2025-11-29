@@ -25,4 +25,3 @@ resource aiModel 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' =
   }
 }
 
-output modelName string = aiModel.name
