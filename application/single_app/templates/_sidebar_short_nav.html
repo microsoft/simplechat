@@ -26,9 +26,35 @@
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
         </div>
-        <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+        <div class="d-flex align-items-center">
+          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations">
+            <i class="bi bi-search" style="font-size: 0.9em;"></i>
+          </button>
+          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations">
+            <i class="bi bi-eye" style="font-size: 0.9em;"></i>
+          </button>
+          <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+          <button id="sidebar-pin-selected-btn" class="btn btn-sm btn-outline-primary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Pin selected conversations">
+            <i class="bi bi-pin-angle"></i>
+          </button>
+          <button id="sidebar-hide-selected-btn" class="btn btn-sm btn-outline-secondary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Hide selected conversations">
+            <i class="bi bi-eye-slash"></i>
+          </button>
           <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
             <i class="bi bi-trash-fill"></i>
+          </button>
+          </div>
+        </div>
+      </div>
+      <!-- Search input container (hidden by default) -->
+      <div id="sidebar-search-container" class="px-3 mb-2" style="display: none;">
+        <div class="input-group input-group-sm">
+          <input type="text" id="sidebar-search-input" class="form-control form-control-sm" placeholder="Search by title..." style="font-size: 0.85em;">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="sidebar-search-clear" title="Clear search">
+            <i class="bi bi-x" style="font-size: 0.8em;"></i>
+          </button>
+          <button class="btn btn-outline-primary btn-sm" type="button" id="sidebar-search-expand" title="Advanced search">
+            <i class="bi bi-arrows-angle-expand" style="font-size: 0.8em;"></i>
           </button>
         </div>
       </div>
