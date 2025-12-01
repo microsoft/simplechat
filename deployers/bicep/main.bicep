@@ -111,13 +111,17 @@ param embeddingModels array = [
 - Default is false''')
 param deployContentSafety bool
 
+@description('''Enable deployment of Azure Cache for Redis and related resources.
+- Default is false''')
+param deployRedisCache bool
+
 @description('''Enable deployment of Azure Speech service and related resources.
 - Default is false''')
 param deploySpeechService bool
 
-@description('''Enable deployment of Azure Cache for Redis and related resources.
+@description('''Enable deployment of Azure Video Indexer service and related resources.
 - Default is false''')
-param deployRedisCache bool
+param deployVideoIndexerService bool
 
 //=========================================================
 // variable declarations for the main deployment 
@@ -410,6 +414,27 @@ module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
 }
 
 //=========================================================
+// Create Optional Resource - Redis Cache
+//=========================================================
+module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
+  name: 'redisCache'
+  scope: rg
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
+  }
+}
+
+
+//=========================================================
 // Create Optional Resource - Speech Service
 //=========================================================
 module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
@@ -429,11 +454,12 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
   }
 }
 
+
 //=========================================================
-// Create Optional Resource - Redis Cache
+// Create Optional Resource - Video Indexer Service
 //=========================================================
-module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
-  name: 'redisCache'
+module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexerService) {
+  name: 'videoIndexerService'
   scope: rg
   params: {
     location: location
@@ -443,6 +469,7 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
+    storageAccount: storageAccount.outputs.name
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
@@ -464,12 +491,12 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     openAIName: openAI.outputs.openAIName
     // openAIResourceGroupName: useExistingOpenAISvc ? existingOpenAIResourceGroupName : openAI_create.outputs.openAIResourceGroup 
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
-    // storageAccountName: storageAccount.outputs.name
-    // #disable-next-line BCP318 // expect one value to be null
-    // speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
-    // searchServiceName: searchService.outputs.searchServiceName
-    // #disable-next-line BCP318 // expect one value to be null
-    // contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    storageAccountName: storageAccount.outputs.name
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    searchServiceName: searchService.outputs.searchServiceName
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
   }
 }
 
