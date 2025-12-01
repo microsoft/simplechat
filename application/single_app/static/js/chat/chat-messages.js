@@ -444,6 +444,9 @@ function createCitationsHtml(
 }
 
 export function loadMessages(conversationId) {
+  // Clear search highlights when loading a different conversation
+  clearSearchHighlight();
+  
   fetch(`/conversation/${conversationId}/messages`)
     .then((response) => response.json())
     .then((data) => {
@@ -506,6 +509,18 @@ export function loadMessages(conversationId) {
     .catch((error) => {
       console.error("Error loading messages:", error);
       if (chatbox) chatbox.innerHTML = `<div class="text-center p-3 text-danger">Error loading messages.</div>`;
+    })
+    .finally(() => {
+      // Check if there's a search highlight to apply
+      if (window.searchHighlight && window.searchHighlight.term) {
+        const elapsed = Date.now() - window.searchHighlight.timestamp;
+        if (elapsed < 30000) { // Within 30 seconds
+          setTimeout(() => applySearchHighlight(window.searchHighlight.term), 100);
+        } else {
+          // Clear expired highlight
+          window.searchHighlight = null;
+        }
+      }
     });
 }
 
@@ -2103,3 +2118,111 @@ function loadImageInfo(fullMessageObject, container) {
 
   container.innerHTML = content;
 }
+
+// Search highlight functions
+export function applySearchHighlight(searchTerm) {
+  if (!searchTerm || searchTerm.trim() === '') return;
+  
+  // Clear any existing highlights first
+  clearSearchHighlight();
+  
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find all message content elements
+  const messageContents = chatbox.querySelectorAll('.message-content, .ai-response');
+  
+  // Escape special regex characters in search term
+  const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escapedTerm})`, 'gi');
+  
+  messageContents.forEach(element => {
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    );
+    
+    const textNodes = [];
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.nodeValue.trim() !== '') {
+        textNodes.push(node);
+      }
+    }
+    
+    textNodes.forEach(textNode => {
+      const text = textNode.nodeValue;
+      if (regex.test(text)) {
+        const span = document.createElement('span');
+        span.innerHTML = text.replace(regex, '<mark class="search-highlight">$1</mark>');
+        textNode.parentNode.replaceChild(span, textNode);
+      }
+    });
+  });
+  
+  // Set timeout to clear highlights after 30 seconds
+  if (window.searchHighlight) {
+    if (window.searchHighlight.timeoutId) {
+      clearTimeout(window.searchHighlight.timeoutId);
+    }
+    window.searchHighlight.timeoutId = setTimeout(() => {
+      clearSearchHighlight();
+      window.searchHighlight = null;
+    }, 30000);
+  }
+}
+
+export function clearSearchHighlight() {
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find all highlight marks
+  const highlights = chatbox.querySelectorAll('mark.search-highlight');
+  highlights.forEach(mark => {
+    const text = document.createTextNode(mark.textContent);
+    mark.parentNode.replaceChild(text, mark);
+  });
+  
+  // Clear timeout if exists
+  if (window.searchHighlight && window.searchHighlight.timeoutId) {
+    clearTimeout(window.searchHighlight.timeoutId);
+    window.searchHighlight.timeoutId = null;
+  }
+}
+
+export function scrollToMessageSmooth(messageId) {
+  if (!messageId) return;
+  
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find message by data-message-id attribute
+  const messageElement = chatbox.querySelector(`[data-message-id="${messageId}"]`);
+  if (!messageElement) {
+    console.warn(`Message with ID ${messageId} not found`);
+    return;
+  }
+  
+  // Scroll smoothly to message
+  messageElement.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center'
+  });
+  
+  // Add pulse animation
+  messageElement.classList.add('message-pulse');
+  
+  // Remove pulse after 2 seconds
+  setTimeout(() => {
+    messageElement.classList.remove('message-pulse');
+  }, 2000);
+}
+
+// Expose functions globally
+window.chatMessages = {
+  applySearchHighlight,
+  clearSearchHighlight,
+  scrollToMessageSmooth
+};
