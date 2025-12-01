@@ -6,12 +6,12 @@ param keyVaultName string
 param cosmosDBName string
 param acrName string
 param openAIName string
-// param openAIResourceGroupName string
+//param openAIResourceGroupName string
 param docIntelName string
-// param storageAccountName string
-// param speechServiceName string
-// param searchServiceName string
-// param contentSafetyName string
+param storageAccountName string
+param speechServiceName string
+param searchServiceName string
+param contentSafetyName string
 
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
@@ -37,21 +37,21 @@ resource docIntelService 'Microsoft.CognitiveServices/accounts@2024-10-01' exist
   name: docIntelName
 }
 
-// resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' existing = {
-//   name: storageAccountName
-// }
+resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' existing = {
+  name: storageAccountName
+}
 
-// resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (speechServiceName != '') {
-//   name: speechServiceName
-// }
+resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (speechServiceName != '') {
+  name: speechServiceName
+}
 
-// resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
-//   name: searchServiceName
-// }
+resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
+  name: searchServiceName
+}
 
-// resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
-//   name: contentSafetyName
-// }
+resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
+  name: contentSafetyName
+}
 
 // grant the webApp access to the key vault
 resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -123,7 +123,7 @@ resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // grant the managed identity access to document intelligence as a Cognitive Services User
-resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (docIntelName != '' && authenticationType == 'Managed_Identity') {
+resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
   name: guid(docIntelService.id, webApp.id, 'doc-intel-user')
   scope: docIntelService
   properties: {
@@ -136,58 +136,58 @@ resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-// // grant the managed identity access to the storage account as a blob data contributor
-// resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
-//   name: guid(storageAccount.id, webApp.id, 'storage-blob-data-contributor')
-//   scope: storageAccount
-//   properties: {
-//     roleDefinitionId: subscriptionResourceId(
-//       'Microsoft.Authorization/roleDefinitions',
-//       'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-//     )
-//     principalId: webApp.identity.principalId
-//     principalType: 'ServicePrincipal'
-//   }
-// }
+// grant the managed identity access to the storage account as a blob data contributor
+resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+  name: guid(storageAccount.id, webApp.id, 'storage-blob-data-contributor')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
-// // grant the managed identity access to speech service as a Cognitive Services User
-// resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (speechServiceName != '' && authenticationType == 'Managed_Identity') {
-//   name: guid(speechService.id, webApp.id, 'speech-service-user')
-//   scope: speechService
-//   properties: {
-//     roleDefinitionId: subscriptionResourceId(
-//       'Microsoft.Authorization/roleDefinitions',
-//       'a97b65f3-24c7-4388-baec-2e87135dc908'
-//     )
-//     principalId: webApp.identity.principalId
-//     principalType: 'ServicePrincipal'
-//   }
-// }
+// grant the managed identity access to speech service as a Cognitive Services User
+resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (speechServiceName != '' && authenticationType == 'Managed_Identity') {
+  name: guid(speechService.id, webApp.id, 'speech-service-user')
+  scope: speechService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
-// // grant the managed identity access to search service as a Search Service Contributor
-// resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
-//   name: guid(searchService.id, webApp.id, 'search-service-contributor')
-//   scope: searchService
-//   properties: {
-//     roleDefinitionId: subscriptionResourceId(
-//       'Microsoft.Authorization/roleDefinitions',
-//       '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
-//     )
-//     principalId: webApp.identity.principalId
-//     principalType: 'ServicePrincipal'
-//   }
-// } 
+// grant the managed identity access to search service as a Search Service Contributor
+resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+  name: guid(searchService.id, webApp.id, 'search-service-contributor')
+  scope: searchService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 
 
-// // grant the managed identity access to content safety as a Cognitive Services User
-// resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (contentSafetyName != '' && authenticationType == 'Managed_Identity') {
-//   name: guid(contentSafety.id, webApp.id, 'content-safety-user')
-//   scope: contentSafety
-//   properties: {
-//     roleDefinitionId: subscriptionResourceId(
-//       'Microsoft.Authorization/roleDefinitions',
-//       'a97b65f3-24c7-4388-baec-2e87135dc908'
-//     )
-//     principalId: webApp.identity.principalId
-//     principalType: 'ServicePrincipal'
-//   }
-// } 
+// grant the managed identity access to content safety as a Cognitive Services User
+resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (contentSafetyName != '' && authenticationType == 'Managed_Identity') {
+  name: guid(contentSafety.id, webApp.id, 'content-safety-user')
+  scope: contentSafety
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 

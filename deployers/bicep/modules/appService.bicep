@@ -75,25 +75,32 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false'}
         {name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint}
         {name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: authenticationType}
-        
-        {name: 'AZURE_COSMOS_KEY', value: authenticationType == 'Key' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)' : ''}
-
+          
+        // Only add this setting if authenticationType is 'Key'
+        ...(authenticationType == 'Key' ? [{name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)'}] : [])
 
         {name: 'TENANT_ID', value: tenant().tenantId }
         {name: 'CLIENT_ID', value: enterpriseAppClientId }
         {name: 'SECRET_KEY', value: !empty(enterpriseAppClientSecret) ? enterpriseAppClientSecret : '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)' }
         {name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'}
         {name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrService.name}${acrDomain}' }
-        {name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: acrService.listCredentials().username }
-        {name: 'DOCKER_REGISTRY_SERVER_PASSWORD', value: authenticationType == 'Key' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/container-registry-key)' : '' }
+
+        // Only add this setting if authenticationType is 'Key'
+        ...(authenticationType == 'Key' ? [{name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: acrService.listCredentials().username}] : [])
+
+        // Only add this setting if authenticationType is 'Key'
+        ...(authenticationType == 'Key' ? [{name: 'DOCKER_REGISTRY_SERVER_PASSWORD', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/container-registry-key)'}] : [])
+
         {name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: tenant().tenantId }
         {name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiService.name}
         {name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName}
         {name: 'AZURE_OPENAI_URL', value: openAiService.properties.endpoint}
         {name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name}
-        {name: 'AZURE_SEARCH_API_KEY', value: authenticationType == 'Key' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/search-service-key)' : ''}
+        // Only add this setting if authenticationType is 'Key'
+        ...(authenticationType == 'Key' ? [{name: 'AZURE_SEARCH_API_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/search-service-key)'}] : [])
         {name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligence.properties.endpoint}
-        {name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', value: authenticationType == 'Key' ? '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/document-intelligence-key)' : ''}
+        // Only add this setting if authenticationType is 'Key'
+        ...(authenticationType == 'Key' ? [{name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/document-intelligence-key)'}] : [])
         {name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.properties.InstrumentationKey}
         {name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString}
         {name: 'APPINSIGHTS_PROFILERFEATURE_VERSION', value: '1.0.0'}
