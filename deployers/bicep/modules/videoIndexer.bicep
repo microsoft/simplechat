@@ -9,61 +9,54 @@ param enableDiagLogging bool
 param logAnalyticsId string
 
 param storageAccount string
-
-param keyVault string
-param authenticationType string
-param configureApplicationPermissions bool
+param openAiServiceName string
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
   name: 'diagnosticConfigs'
 }
 
+resource storage 'Microsoft.Storage/storageAccounts@2021-09-01' existing = {
+  name: storageAccount
+}
 
+resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+  name: openAiServiceName
+}
 
-// deploy speech service if required
-resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+// deploy video indexer service if required
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   name: toLower('${appName}-${environment}-video')
   location: location
-  kind: 'VideoIndexer'
-  sku: {
-    name: 'S0'
-  }
+
   identity: {
     type: 'SystemAssigned'
   }
   properties: {
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false
-    customSubDomainName: toLower('${appName}-${environment}-speech')
+    storageServices: {
+        resourceId: storage.id
+      }
+    openAiServices: {
+      resourceId: openAiService.id
+    }
   }
   tags: tags
+  dependsOn: [
+    storage
+    openAiService
+  ]
 }
 
-// configure diagnostic settings for speech service
-resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
-  name: toLower('${speechService.name}-diagnostics')
-  scope: speechService
+// configure diagnostic settings for video indexer service
+resource videoIndexerServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
+  name: toLower('${videoIndexerService.name}-diagnostics')
+  scope: videoIndexerService
   properties: {
     workspaceId: logAnalyticsId
     #disable-next-line BCP318 // expect one value to be null
-    logs: diagnosticConfigs.outputs.standardLogCategories
-    #disable-next-line BCP318 // expect one value to be null
-    metrics: diagnosticConfigs.outputs.standardMetricsCategories
+    logs: diagnosticConfigs.outputs.limitedLogCategories
   }
 }
 
-//=========================================================
-// store speech Service keys in key vault if using key authentication and configure app permissions = true
-//=========================================================
-module speechServiceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
-  name: 'storeSpeechServiceSecret'
-  params: {
-    keyVaultName: keyVault
-    secretName: 'speech-service-key'
-    secretValue: speechService.listKeys().key1
-  }
-}
-
-output speechServiceName string = speechService.name
-output speechServiceEndpoint string = speechService.properties.endpoint
+output videoIndexerServiceName string = videoIndexerService.name

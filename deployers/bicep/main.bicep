@@ -470,9 +470,8 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
     storageAccount: storageAccount.outputs.name
-    keyVault: keyVault.outputs.keyVaultName
-    authenticationType: authenticationType
-    configureApplicationPermissions: configureApplicationPermissions
+    openAiServiceName: openAI.outputs.openAIName
+    
   }
 }
 
@@ -497,22 +496,33 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     searchServiceName: searchService.outputs.searchServiceName
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
   }
 }
 
 //=========================================================
 // output values
 //=========================================================
+// output required for both predeploy and postprovision scripts in azure.yaml
 output var_rgName string = rgName
+
+// output values required for predeploy script in azure.yaml
 output var_webService string = appService.outputs.name
 output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
 output var_imageTag string = split(imageName, ':')[1] 
 output var_containerRegistry string = containerRegistry
 output var_acrName string = toLower('${appName}${environment}acr')
 
-output gptModel string = gptModels[0].modelName
-output embeddingModel string = embeddingModels[0].modelName
-
-
-
-
+// output values required for postprovision script in azure.yaml
+//output var_configureApplication bool = configureApplicationPermissions
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
+output var_subscriptionId string = subscription().subscriptionId
+output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
+output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
+output var_openAIGPTModel string = gptModels[0].modelName
+output var_openAITextEmbeddingModel string = embeddingModels[0].modelName
+output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_contentSafetyName string = deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint

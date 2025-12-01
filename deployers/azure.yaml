@@ -15,7 +15,7 @@ hooks:
         export var_cosmosDb_uri=${var_cosmosDb_uri}
         export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
         export var_rgName=${var_rgName}
-        export var_enableEnterpriseApp=${var_enableEnterpriseApp}
+        #export var_enableEnterpriseApp=${var_enableEnterpriseApp}
 
         export var_openAIEndpoint=${var_openAIEndpoint}
         export var_openAIResourceGroup=${var_openAIResourceGroup}

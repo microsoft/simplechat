@@ -12,6 +12,7 @@ param storageAccountName string
 param speechServiceName string
 param searchServiceName string
 param contentSafetyName string
+param videoIndexerName string
 
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
@@ -51,6 +52,10 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
 
 resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
   name: contentSafetyName
+}
+
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '') {
+  name: videoIndexerName
 }
 
 // grant the webApp access to the key vault
@@ -188,6 +193,51 @@ resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
       'a97b65f3-24c7-4388-baec-2e87135dc908'
     )
     principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 
+
+// grant the video indexer service access to storage account as a Storage Blob Data Contributor
+resource videoIndexerStorageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' ) {
+  name: guid(storageAccount.id, videoIndexerService.id, 'video-indexer-storage-blob-data-contributor')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    #disable-next-line BCP318 // may be null if video indexer not deployed
+    principalId: videoIndexerService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 
+
+// grant the video indexer service access to OpenAI service as cognitive services Contributor
+resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' ) {
+  name: guid(openAiService.id, videoIndexerService.id, 'video-indexer-cog-services-contributor')
+  scope: openAiService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'
+    )
+    #disable-next-line BCP318 // may be null if video indexer not deployed
+    principalId: videoIndexerService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+} 
+
+// grant the video indexer service access to OpenAI service as cognitive services user
+resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' ) {
+  name: guid(openAiService.id, videoIndexerService.id, 'video-indexer-cog-services-user')
+  scope: openAiService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
+    )
+    #disable-next-line BCP318 // may be null if video indexer not deployed
+    principalId: videoIndexerService.identity.principalId
     principalType: 'ServicePrincipal'
   }
 } 
