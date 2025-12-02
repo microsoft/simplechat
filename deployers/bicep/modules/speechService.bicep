@@ -52,7 +52,7 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 //=========================================================
 // store speech Service keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module speechServiceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module speechServiceSecret 'keyVault-Secrets.bicep'  = if (configureApplicationPermissions) {
   name: 'storeSpeechServiceSecret'
   params: {
     keyVaultName: keyVault
@@ -63,3 +63,4 @@ module speechServiceSecret 'keyVault-Secrets.bicep'  = if (authenticationType ==
 
 output speechServiceName string = speechService.name
 output speechServiceEndpoint string = speechService.properties.endpoint
+output speechServiceAuthenticationType string = authenticationType

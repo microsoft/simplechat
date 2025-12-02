@@ -60,3 +60,4 @@ resource videoIndexerServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2
 }
 
 output videoIndexerServiceName string = videoIndexerService.name
+output videoIndexerAccountId string = videoIndexerService.properties.accountId

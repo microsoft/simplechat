@@ -515,14 +515,27 @@ output var_containerRegistry string = containerRegistry
 output var_acrName string = toLower('${appName}${environment}acr')
 
 // output values required for postprovision script in azure.yaml
-//output var_configureApplication bool = configureApplicationPermissions
+output var_configureApplication bool = configureApplicationPermissions
+output var_keyVaultUri string = keyVault.outputs.keyVaultUri
 output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
 output var_subscriptionId string = subscription().subscriptionId
+
+output var_authenticationType string = toLower(authenticationType)
+
 output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
 output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
-output var_openAIGPTModel string = gptModels[0].modelName
-output var_openAITextEmbeddingModel string = embeddingModels[0].modelName
+output var_openAIGPTModels array = gptModels
+output var_openAIEmbeddingModels array = embeddingModels
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
 #disable-next-line BCP318 // expect one value to be null
-output var_contentSafetyName string = deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+
+output var_deploymentLocation string = rg.location
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''

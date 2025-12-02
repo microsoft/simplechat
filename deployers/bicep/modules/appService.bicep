@@ -74,7 +74,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'AZURE_ENDPOINT', value: azurePlatform == 'AzureUSGovernment' ? 'usgovernment' : 'public'}
         {name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false'}
         {name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint}
-        {name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: authenticationType}
+        {name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType)}
           
         // Only add this setting if authenticationType is 'Key'
         ...(authenticationType == 'Key' ? [{name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)'}] : [])
