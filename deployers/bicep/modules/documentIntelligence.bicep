@@ -49,7 +49,7 @@ resource docIntelDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
 //=========================================================
 // store document intelligence keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module documentIntelligenceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module documentIntelligenceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeDocumentIntelligenceSecret'
   params: {
     keyVaultName: keyVault

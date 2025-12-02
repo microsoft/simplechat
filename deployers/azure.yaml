@@ -34,6 +34,8 @@ hooks:
 
         # Execute post-configuration script if enabled
         if [ "${var_configureApplication}" = "true" ]; then
+            echo "Grant permissions to CosmosDB for post deployment steps..."
+            bash ./bicep/cosmosDb-postDeployPerms.sh
             echo "Running post-deployment configuration..."
             python3 -m pip install --user -r ./bicep/requirements.txt
             python3 ./bicep/postconfig.py

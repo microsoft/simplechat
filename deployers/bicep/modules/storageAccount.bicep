@@ -85,7 +85,7 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
 //=========================================================
 // store storage keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module storageAccountSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module storageAccountSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeStorageAccountSecret'
   params: {
     keyVaultName: keyVault

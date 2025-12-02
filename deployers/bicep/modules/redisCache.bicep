@@ -52,7 +52,7 @@ resource redisCacheDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01
 //=========================================================
 // store redis cache keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module redisCacheSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module redisCacheSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeRedisCacheSecret'
   params: {
     keyVaultName: keyVault

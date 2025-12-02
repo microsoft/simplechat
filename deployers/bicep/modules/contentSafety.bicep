@@ -49,7 +49,7 @@ resource contentSafetyDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 //=========================================================
 // store contentSafety keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module contentSafetySecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module contentSafetySecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeContentSafetySecret'
   params: {
     keyVaultName: keyVault

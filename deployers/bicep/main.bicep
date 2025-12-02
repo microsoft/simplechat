@@ -54,10 +54,10 @@ param enterpriseAppClientSecret string
 // configurations
 @description('''Authentication type for resources that support Managed Identity or Key authentication.
 - Key: Use access keys for authentication (application keys will be stored in Key Vault)
-- Managed_Identity: Use Managed Identity for authentication''')
+- managed_identity: Use Managed Identity for authentication''')
 @allowed([
-  'Key'
-  'Managed_Identity'
+  'key'
+  'managed_identity'
 ])
 param authenticationType string
 

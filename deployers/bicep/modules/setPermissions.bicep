@@ -74,7 +74,7 @@ resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 // grant the webApp access to cosmos db as a contributor
-resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   name: guid(cosmosDb.id, webApp.id, 'cosmos-contributor')
   scope: cosmosDb
   properties: {
@@ -88,7 +88,7 @@ resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-
 }
 
 // Grant the managed identity Cosmos DB Built-in Data Contributor role
-resource cosmosDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (authenticationType == 'Managed_Identity') {
+resource cosmosDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (authenticationType == 'managed_identity') {
   name: guid(cosmosDb.id, webApp.id, 'cosmos-data-contributor')
   parent: cosmosDb
   properties: {
@@ -114,7 +114,7 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 // Grant the openai service access cognitive services openai user
-resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   scope: openAiService
   name: guid(openAiService.id, webApp.id, 'openai-user')
   properties: {
@@ -128,7 +128,7 @@ resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // grant the managed identity access to document intelligence as a Cognitive Services User
-resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   name: guid(docIntelService.id, webApp.id, 'doc-intel-user')
   scope: docIntelService
   properties: {
@@ -142,7 +142,7 @@ resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 // grant the managed identity access to the storage account as a blob data contributor
-resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   name: guid(storageAccount.id, webApp.id, 'storage-blob-data-contributor')
   scope: storageAccount
   properties: {
@@ -156,7 +156,7 @@ resource storageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments
 }
 
 // grant the managed identity access to speech service as a Cognitive Services User
-resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (speechServiceName != '' && authenticationType == 'Managed_Identity') {
+resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (speechServiceName != '' && authenticationType == 'managed_identity') {
   name: guid(speechService.id, webApp.id, 'speech-service-user')
   scope: speechService
   properties: {
@@ -170,7 +170,7 @@ resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
 }
 
 // grant the managed identity access to search service as a Search Service Contributor
-resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'Managed_Identity') {
+resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   name: guid(searchService.id, webApp.id, 'search-service-contributor')
   scope: searchService
   properties: {
@@ -184,7 +184,7 @@ resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2
 } 
 
 // grant the managed identity access to content safety as a Cognitive Services User
-resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (contentSafetyName != '' && authenticationType == 'Managed_Identity') {
+resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (contentSafetyName != '' && authenticationType == 'managed_identity') {
   name: guid(contentSafety.id, webApp.id, 'content-safety-user')
   scope: contentSafety
   properties: {

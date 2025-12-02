@@ -74,7 +74,7 @@ module aiModel 'aiModel.bicep' = [
 //=========================================================
 // store openAI keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'Key' && configureApplicationPermissions) {
+module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeOpenAISecret'
   params: {
     keyVaultName: keyVault
