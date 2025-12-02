@@ -73,6 +73,12 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         return null; // Caller should use regular fetch
     }
     
+    // Double-check: never stream if image generation is active
+    const imageGenBtn = document.getElementById('image-generate-btn');
+    if (imageGenBtn && imageGenBtn.classList.contains('active')) {
+        return null; // Force regular fetch for image generation
+    }
+    
     // Close any existing connection
     if (currentEventSource) {
         currentEventSource.close();
