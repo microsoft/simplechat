@@ -1,22 +1,8 @@
-# Builder stage: Use standard Python image with all build tools
-FROM python:3.12-slim AS builder
+# Builder stage: install dependencies in a virtualenv
+# FROM cgr.dev/chainguard/python:latest-dev AS builder
+FROM python:3.13-slim AS builder
 
 USER root
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    make \
-    libpq-dev \
-    libmariadb-dev \
-    unixodbc-dev \
-    libffi-dev \
-    libssl-dev \
-    libfreetype6-dev \
-    libjpeg-dev \
-    libpng-dev \
-    zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
 
 # Ensure /app directory exists and has proper permissions
 RUN mkdir -p /app && chown root:root /app
@@ -26,21 +12,20 @@ WORKDIR /app
 # Create a Python virtual environment
 RUN python -m venv /app/venv
 
-# Create and permission the flask_session directory in builder stage
-RUN mkdir -p /app/flask_session && chmod 777 /app/flask_session
+# Create and permission the flask_session directory
+#RUN mkdir -p /app/flask_session && chown -R nonroot:nonroot /app/flask_session
+RUN mkdir -p /app/flask_session 
 
 # Copy requirements and install them into the virtualenv
 COPY application/single_app/requirements.txt .
 ENV PATH="/app/venv/bin:$PATH"
-
-# Upgrade pip and install wheel
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# Install requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage: Use secure Chainguard image
-FROM cgr.dev/chainguard/python:latest
+#FROM cgr.dev/chainguard/python:latest
+FROM python:3.13-slim
+
+# Create nonroot user
+RUN useradd -m -u 1000 nonroot
 
 WORKDIR /app
 
