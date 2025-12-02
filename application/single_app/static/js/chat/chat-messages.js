@@ -16,6 +16,7 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
+import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -1049,7 +1050,11 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.style.height = "";
   // Update send button visibility after clearing input
   updateSendButtonVisibility();
-  showLoadingIndicatorInChatbox();
+  
+  // Only show loading indicator if NOT using streaming (streaming creates its own placeholder)
+  if (!isStreamingEnabled()) {
+    showLoadingIndicatorInChatbox();
+  }
 
   const modelDeployment = modelSelect?.value;
 
@@ -1155,26 +1160,44 @@ export function actuallySendMessage(finalMessageToSend) {
 
   // Fallback: if group_id is null/empty, use window.activeGroupId
   const finalGroupId = group_id || window.activeGroupId || null;
+  
+  // Prepare message data object
+  const messageData = {
+    message: finalMessageToSend,
+    conversation_id: currentConversationId,
+    hybrid_search: hybridSearchEnabled,
+    selected_document_id: selectedDocumentId,
+    classifications: classificationsToSend,
+    image_generation: imageGenEnabled,
+    doc_scope: effectiveDocScope,
+    chat_type: chat_type,
+    active_group_id: finalGroupId,
+    model_deployment: modelDeployment,
+    prompt_info: promptInfo,
+    agent_info: agentInfo
+  };
+  
+  // Check if streaming is enabled (but not for image generation)
+  if (isStreamingEnabled() && !imageGenEnabled) {
+    const streamInitiated = sendMessageWithStreaming(
+      messageData, 
+      tempUserMessageId, 
+      currentConversationId
+    );
+    if (streamInitiated) {
+      return; // Streaming handles the rest
+    }
+    // If streaming failed to initiate, fall through to regular fetch
+  }
+  
+  // Regular non-streaming fetch
   fetch("/api/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     credentials: "same-origin",
-    body: JSON.stringify({
-      message: finalMessageToSend,
-      conversation_id: currentConversationId,
-      hybrid_search: hybridSearchEnabled,
-      selected_document_id: selectedDocumentId,
-      classifications: classificationsToSend,
-      image_generation: imageGenEnabled,
-      doc_scope: effectiveDocScope,
-      chat_type: chat_type,
-      active_group_id: finalGroupId, // for backward compatibility
-      model_deployment: modelDeployment,
-      prompt_info: promptInfo,
-      agent_info: agentInfo
-    }),
+    body: JSON.stringify(messageData),
   })
     .then((response) => {
       if (!response.ok) {
@@ -1467,7 +1490,7 @@ if (promptSelect) {
 }
 
 // Helper function to update user message ID after backend response
-function updateUserMessageId(tempId, realId) {
+export function updateUserMessageId(tempId, realId) {
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
   
   // Find the message with the temporary ID

@@ -279,6 +279,18 @@
                     <!-- Right side selectors -->
                     <div class="d-flex align-items-center gap-2">
 
+                        <!-- Streaming toggle button -->
+                        <button 
+                            id="streaming-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Toggle streaming responses (opt-in)"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-lightning"></i>
+                        </button>
+
                         <!-- Prompt Selector -->
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
                         <div id="prompt-selection-container" class="flex-shrink-0" style="display: none;">

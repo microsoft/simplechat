@@ -2070,6 +2070,492 @@ def register_route_backend_chats(app):
                 'details': error_traceback if app.debug else None
             }), 500
 
+    @app.route('/api/chat/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_api():
+        """
+        Streaming version of chat endpoint using Server-Sent Events (SSE).
+        Streams tokens as they are generated from Azure OpenAI.
+        """
+        from flask import Response, stream_with_context
+        import json
+        
+        # IMPORTANT: Parse JSON and get user_id BEFORE entering the generator
+        # because request context may not be available inside the generator
+        try:
+            data = request.get_json()
+            user_id = get_current_user_id()
+            settings = get_settings()
+        except Exception as e:
+            return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
+        
+        def generate():
+            try:
+                
+                if not user_id:
+                    yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
+                    return
+                
+                # Extract request parameters (same as non-streaming endpoint)
+                user_message = data.get('message', '')
+                conversation_id = data.get('conversation_id')
+                hybrid_search_enabled = data.get('hybrid_search')
+                selected_document_id = data.get('selected_document_id')
+                image_gen_enabled = data.get('image_generation')
+                document_scope = data.get('doc_scope')
+                active_group_id = data.get('active_group_id')
+                frontend_gpt_model = data.get('model_deployment')
+                classifications_to_send = data.get('classifications')
+                chat_type = data.get('chat_type', 'user')
+                
+                # Streaming does not support image generation
+                if image_gen_enabled:
+                    yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
+                    return
+                
+                # Initialize Flask context
+                g.conversation_id = conversation_id
+                
+                # Clear plugin invocations
+                from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+                plugin_logger = get_plugin_logger()
+                plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+                
+                # Validate chat_type
+                if chat_type not in ('user', 'group'):
+                    chat_type = 'user'
+                
+                # Initialize variables
+                search_query = user_message
+                hybrid_citations_list = []
+                agent_citations_list = []
+                system_messages_for_augmentation = []
+                search_results = []
+                selected_agent = None
+                
+                # Configuration
+                raw_conversation_history_limit = settings.get('conversation_history_limit', 6)
+                conversation_history_limit = math.ceil(raw_conversation_history_limit)
+                if conversation_history_limit % 2 != 0:
+                    conversation_history_limit += 1
+                
+                # Convert toggles
+                if isinstance(hybrid_search_enabled, str):
+                    hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
+                
+                # Initialize GPT client (simplified version)
+                gpt_model = ""
+                gpt_client = None
+                enable_gpt_apim = settings.get('enable_gpt_apim', False)
+                
+                try:
+                    if enable_gpt_apim:
+                        raw = settings.get('azure_apim_gpt_deployment', '')
+                        if not raw:
+                            yield f"data: {json.dumps({'error': 'APIM deployment not configured'})}\n\n"
+                            return
+                        
+                        apim_models = [m.strip() for m in raw.split(',') if m.strip()]
+                        if not apim_models:
+                            yield f"data: {json.dumps({'error': 'No valid APIM models configured'})}\n\n"
+                            return
+                        
+                        if frontend_gpt_model and frontend_gpt_model in apim_models:
+                            gpt_model = frontend_gpt_model
+                        else:
+                            gpt_model = apim_models[0]
+                        
+                        gpt_client = AzureOpenAI(
+                            api_version=settings.get('azure_apim_gpt_api_version'),
+                            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                            api_key=settings.get('azure_apim_gpt_subscription_key')
+                        )
+                    else:
+                        auth_type = settings.get('azure_openai_gpt_authentication_type')
+                        endpoint = settings.get('azure_openai_gpt_endpoint')
+                        api_version = settings.get('azure_openai_gpt_api_version')
+                        gpt_model_obj = settings.get('gpt_model', {})
+                        
+                        if gpt_model_obj and gpt_model_obj.get('selected'):
+                            gpt_model = gpt_model_obj['selected'][0]['deploymentName']
+                        else:
+                            gpt_model = settings.get('azure_openai_gpt_deployment', 'gpt-4o')
+                        
+                        if frontend_gpt_model:
+                            gpt_model = frontend_gpt_model
+                        
+                        if auth_type == 'managed_identity':
+                            credential = DefaultAzureCredential()
+                            token_provider = get_bearer_token_provider(
+                                credential,
+                                "https://cognitiveservices.azure.com/.default"
+                            )
+                            gpt_client = AzureOpenAI(
+                                api_version=api_version,
+                                azure_endpoint=endpoint,
+                                azure_ad_token_provider=token_provider
+                            )
+                        else:
+                            gpt_client = AzureOpenAI(
+                                api_version=api_version,
+                                azure_endpoint=endpoint,
+                                api_key=settings.get('azure_openai_gpt_key')
+                            )
+                    
+                    if not gpt_client or not gpt_model:
+                        yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
+                        return
+                        
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
+                    return
+                
+                # Load or create conversation (simplified)
+                if not conversation_id:
+                    conversation_id = str(uuid.uuid4())
+                    conversation_item = {
+                        'id': conversation_id,
+                        'user_id': user_id,
+                        'last_updated': datetime.utcnow().isoformat(),
+                        'title': 'New Conversation',
+                        'context': [],
+                        'tags': [],
+                        'strict': False
+                    }
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                else:
+                    try:
+                        conversation_item = cosmos_conversations_container.read_item(
+                            item=conversation_id, partition_key=conversation_id
+                        )
+                    except CosmosResourceNotFoundError:
+                        conversation_item = {
+                            'id': conversation_id,
+                            'user_id': user_id,
+                            'last_updated': datetime.utcnow().isoformat(),
+                            'title': 'New Conversation',
+                            'context': [],
+                            'tags': [],
+                            'strict': False
+                        }
+                        cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Determine chat type
+                actual_chat_type = 'personal'
+                if conversation_item.get('chat_type'):
+                    actual_chat_type = conversation_item['chat_type']
+                
+                # Save user message
+                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                
+                user_metadata = {}
+                current_user = get_current_user_info()
+                if current_user:
+                    user_metadata['user_info'] = {
+                        'user_id': current_user.get('userId'),
+                        'username': current_user.get('userPrincipalName'),
+                        'display_name': current_user.get('displayName'),
+                        'email': current_user.get('email'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                
+                user_metadata['button_states'] = {
+                    'image_generation': False,
+                    'document_search': hybrid_search_enabled
+                }
+                
+                user_metadata['model_selection'] = {
+                    'selected_model': gpt_model,
+                    'frontend_requested_model': frontend_gpt_model
+                }
+                
+                user_metadata['chat_context'] = {
+                    'conversation_id': conversation_id
+                }
+                
+                user_message_doc = {
+                    'id': user_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'user',
+                    'content': user_message,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None,
+                    'metadata': user_metadata,
+                }
+                
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Log activity
+                try:
+                    log_chat_activity(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_type='user_message',
+                        message_length=len(user_message) if user_message else 0,
+                        has_document_search=hybrid_search_enabled,
+                        has_image_generation=False,
+                        document_scope=document_scope,
+                        chat_context=actual_chat_type
+                    )
+                except Exception as e:
+                    print(f"Activity logging error: {e}")
+                
+                # Update conversation title
+                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+                    conversation_item['title'] = new_title
+                
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Hybrid search (if enabled)
+                combined_documents = []
+                if hybrid_search_enabled:
+                    try:
+                        search_args = {
+                            "query": search_query,
+                            "user_id": user_id,
+                            "top_n": 12,
+                            "doc_scope": document_scope,
+                        }
+                        
+                        if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
+                            search_args['active_group_id'] = active_group_id
+                        
+                        if selected_document_id:
+                            search_args['selected_document_id'] = selected_document_id
+                        
+                        search_results = hybrid_search(**search_args)
+                    except Exception as e:
+                        print(f"Error during hybrid search: {e}")
+                    
+                    if search_results:
+                        retrieved_texts = []
+                        
+                        for doc in search_results:
+                            text = f"Source: {doc.get('source_file', 'unknown')}\n"
+                            if doc.get('page_number'):
+                                text += f"Page: {doc.get('page_number')}\n"
+                            text += f"Content: {doc.get('content', '')}"
+                            retrieved_texts.append(text)
+                            
+                            citation = {
+                                'source': doc.get('source_file', 'unknown'),
+                                'page_number': doc.get('page_number'),
+                                'chunk_id': doc.get('chunk_id'),
+                                'score': doc.get('@search.score'),
+                                'content_preview': doc.get('content', '')[:200]
+                            }
+                            hybrid_citations_list.append(citation)
+                            combined_documents.append(doc)
+                        
+                        retrieved_content = "\n\n".join(retrieved_texts)
+                        system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+
+Retrieved Excerpts:
+{retrieved_content}
+
+Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so."""
+                        
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': system_prompt_search
+                        })
+                        
+                        hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                
+                # Update message chat type
+                message_chat_type = None
+                if hybrid_search_enabled and search_results and len(search_results) > 0:
+                    if document_scope == 'group':
+                        message_chat_type = 'group'
+                    elif document_scope == 'public':
+                        message_chat_type = 'public'
+                    else:
+                        message_chat_type = 'personal'
+                else:
+                    message_chat_type = 'Model'
+                
+                user_metadata['chat_context']['chat_type'] = message_chat_type
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Prepare conversation history
+                conversation_history_for_api = []
+                
+                try:
+                    all_messages_query = "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                    params_all = [{"name": "@conv_id", "value": conversation_id}]
+                    all_messages = list(cosmos_messages_container.query_items(
+                        query=all_messages_query, parameters=params_all, 
+                        partition_key=conversation_id, enable_cross_partition_query=True
+                    ))
+                    
+                    total_messages = len(all_messages)
+                    num_recent_messages = min(total_messages, conversation_history_limit)
+                    recent_messages = all_messages[-num_recent_messages:]
+                    
+                    # Add augmentation messages
+                    for aug_msg in system_messages_for_augmentation:
+                        conversation_history_for_api.append({
+                            'role': aug_msg['role'],
+                            'content': aug_msg['content']
+                        })
+                    
+                    # Add recent messages
+                    allowed_roles_in_history = ['user', 'assistant']
+                    for message in recent_messages:
+                        if message.get('role') in allowed_roles_in_history:
+                            conversation_history_for_api.append({
+                                'role': message['role'],
+                                'content': message.get('content', '')
+                            })
+                    
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
+                    return
+                
+                # Add system prompt
+                default_system_prompt = settings.get('default_system_prompt', '').strip()
+                if default_system_prompt:
+                    has_general_system_prompt = any(
+                        msg.get('role') == 'system' and not (
+                            "retrieved document excerpts" in msg.get('content', '')
+                        )
+                        for msg in conversation_history_for_api
+                    )
+                    if not has_general_system_prompt:
+                        conversation_history_for_api.insert(0, {
+                            'role': 'system',
+                            'content': default_system_prompt
+                        })
+                
+                # Stream the response
+                accumulated_content = ""
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                
+                try:
+                    print(f"--- Streaming from GPT ({gpt_model}) ---")
+                    stream = gpt_client.chat.completions.create(
+                        model=gpt_model,
+                        messages=conversation_history_for_api,
+                        stream=True
+                    )
+                    
+                    for chunk in stream:
+                        if chunk.choices and len(chunk.choices) > 0:
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                accumulated_content += delta.content
+                                yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                    
+                    # Stream complete - save message and send final metadata
+                    assistant_doc = {
+                        'id': assistant_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'assistant',
+                        'content': accumulated_content,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'augmented': bool(system_messages_for_augmentation),
+                        'hybrid_citations': hybrid_citations_list,
+                        'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                        'agent_citations': agent_citations_list,
+                        'user_message': user_message,
+                        'model_deployment_name': gpt_model,
+                        'agent_display_name': None,
+                        'agent_name': None,
+                        'metadata': {}
+                    }
+                    cosmos_messages_container.upsert_item(assistant_doc)
+                    
+                    # Update conversation
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    
+                    try:
+                        conversation_item = collect_conversation_metadata(
+                            user_message=user_message,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            active_group_id=active_group_id,
+                            document_scope=document_scope,
+                            selected_document_id=selected_document_id,
+                            model_deployment=gpt_model,
+                            hybrid_search_enabled=hybrid_search_enabled,
+                            image_gen_enabled=False,
+                            selected_documents=combined_documents if combined_documents else None,
+                            selected_agent=None,
+                            selected_agent_details=None,
+                            search_results=search_results if search_results else None,
+                            conversation_item=conversation_item
+                        )
+                    except Exception as e:
+                        print(f"Error collecting conversation metadata: {e}")
+                    
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    
+                    # Send final message with metadata
+                    final_data = {
+                        'done': True,
+                        'conversation_id': conversation_id,
+                        'conversation_title': conversation_item['title'],
+                        'classification': conversation_item.get('classification', []),
+                        'model_deployment_name': gpt_model,
+                        'message_id': assistant_message_id,
+                        'user_message_id': user_message_id,
+                        'augmented': bool(system_messages_for_augmentation),
+                        'hybrid_citations': hybrid_citations_list,
+                        'agent_citations': agent_citations_list,
+                        'full_content': accumulated_content
+                    }
+                    yield f"data: {json.dumps(final_data)}\n\n"
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    print(f"Error during streaming: {error_msg}")
+                    
+                    # Save partial response if we have content
+                    if accumulated_content:
+                        assistant_doc = {
+                            'id': assistant_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'assistant',
+                            'content': accumulated_content,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'augmented': bool(system_messages_for_augmentation),
+                            'hybrid_citations': hybrid_citations_list,
+                            'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                            'agent_citations': agent_citations_list,
+                            'user_message': user_message,
+                            'model_deployment_name': gpt_model,
+                            'agent_display_name': None,
+                            'agent_name': None,
+                            'metadata': {'incomplete': True, 'error': error_msg}
+                        }
+                        try:
+                            cosmos_messages_container.upsert_item(assistant_doc)
+                        except:
+                            pass
+                    
+                    yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
+            
+            except Exception as e:
+                error_traceback = traceback.format_exc()
+                print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
+                print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
+                yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(
         security=get_auth_security()

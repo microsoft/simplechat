@@ -1493,3 +1493,17 @@ mark.search-highlight {
     box-shadow: 0 0 20px 5px rgba(13, 202, 240, 0.6);
   }
 }
+
+/* Streaming cursor animation */
+.streaming-cursor .badge {
+  animation: streamingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes streamingPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}

@@ -298,6 +298,8 @@ if (imageGenBtn) {
     const docBtn = document.getElementById("search-documents-btn");
     const webBtn = document.getElementById("search-web-btn");
     const fileBtn = document.getElementById("choose-file-btn");
+    const streamingBtn = document.getElementById("streaming-toggle-btn");
+    const modelSelectContainer = document.getElementById("model-select-container");
 
     if (isImageGenEnabled) {
       if (docBtn) {
@@ -312,10 +314,24 @@ if (imageGenBtn) {
         fileBtn.disabled = true;
         fileBtn.classList.remove("active");
       }
+      // Hide streaming toggle and model selector for image generation
+      if (streamingBtn) {
+        streamingBtn.style.display = "none";
+      }
+      if (modelSelectContainer) {
+        modelSelectContainer.style.display = "none";
+      }
     } else {
       if (docBtn) docBtn.disabled = false;
       if (webBtn) webBtn.disabled = false;
       if (fileBtn) fileBtn.disabled = false;
+      // Show streaming toggle and model selector when not in image generation mode
+      if (streamingBtn) {
+        streamingBtn.style.display = "flex";
+      }
+      if (modelSelectContainer) {
+        modelSelectContainer.style.display = "block";
+      }
     }
   });
 }

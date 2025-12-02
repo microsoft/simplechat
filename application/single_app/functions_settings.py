@@ -225,6 +225,9 @@ def get_settings(use_cosmos=False):
         'file_timer_unit': 'hours',
         'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
+        
+        # Streaming settings
+        'streamingEnabled': False,
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': video_indexer_endpoint,
