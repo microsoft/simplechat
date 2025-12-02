@@ -123,7 +123,7 @@ item["multimodal_vision_model"] = gpt_models_list[0]["modelName"]
 
 # Citations > Enhanced Citations
 item["enable_enhanced_citations"] = True
-item["aoffice_docs_authentication_type"] = var_authenticationType
+item["office_docs_authentication_type"] = var_authenticationType
 item["office_docs_storage_account_blob_endpoint"] = var_blobStorageEndpoint
 
 # Safety > Content Safety
