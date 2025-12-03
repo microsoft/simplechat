@@ -292,38 +292,28 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
     
-    // Remove streaming cursor
-    const contentElement = messageElement.querySelector('.message-text');
-    if (contentElement) {
-        const cursor = contentElement.querySelector('.streaming-cursor');
-        if (cursor) cursor.remove();
-        
-        // Parse markdown for final content
-        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            contentElement.innerHTML = DOMPurify.sanitize(marked.parse(finalData.full_content || ''));
-        }
-    }
-    
-    // Update message ID
-    messageElement.setAttribute('data-message-id', finalData.message_id);
-    
-    // Update user message ID
+    // Update user message ID first
     if (finalData.user_message_id && userMessageId) {
         updateUserMessageId(userMessageId, finalData.user_message_id);
     }
     
-    // Add citations if present
-    if (finalData.hybrid_citations && finalData.hybrid_citations.length > 0) {
-        // Import and call citation rendering
-        import('./chat-citations.js').then(module => {
-            module.renderCitations(
-                messageElement,
-                finalData.hybrid_citations,
-                [],
-                finalData.agent_citations || []
-            );
-        });
-    }
+    // Remove the temporary streaming message
+    messageElement.remove();
+    
+    // Create proper message with all metadata using appendMessage
+    appendMessage(
+        'AI',
+        finalData.full_content || '',
+        finalData.model_deployment_name,
+        finalData.message_id,
+        finalData.augmented,
+        finalData.hybrid_citations || [],
+        [],
+        finalData.agent_citations || [],
+        null,
+        null,
+        null
+    );
     
     // Update conversation if needed
     if (finalData.conversation_id && window.currentConversationId !== finalData.conversation_id) {

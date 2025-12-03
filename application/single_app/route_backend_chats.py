@@ -60,6 +60,7 @@ def register_route_backend_chats(app):
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
             active_group_id = data.get('active_group_id')
+            active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
@@ -339,6 +340,9 @@ def register_route_backend_chats(app):
                         user_metadata['workspace_search']['group_name'] = None
                         import traceback
                         traceback.print_exc()
+                
+                if document_scope == 'public' and active_public_workspace_id:
+                    user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
             else:
                 user_metadata['workspace_search'] = {
                     'search_enabled': False
@@ -401,7 +405,9 @@ def register_route_backend_chats(app):
             # Model selection information
             user_metadata['model_selection'] = {
                 'selected_model': gpt_model,
-                'frontend_requested_model': frontend_gpt_model
+                'frontend_requested_model': frontend_gpt_model,
+                'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                'streaming': 'Disabled'
             }
             
             # Chat type and group context for this specific message
@@ -638,6 +644,11 @@ def register_route_backend_chats(app):
                     if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
                         search_args["active_group_id"] = active_group_id
     
+                    # Add active_public_workspace_id when:
+                    # 1. Document scope is 'public' or
+                    # 2. Document scope is 'all' and public workspaces are enabled
+                    if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
+                        search_args["active_public_workspace_id"] = active_public_workspace_id
                         
                     if selected_document_id:
                         search_args["document_id"] = selected_document_id
@@ -2134,6 +2145,7 @@ def register_route_backend_chats(app):
                 image_gen_enabled = data.get('image_generation')
                 document_scope = data.get('doc_scope')
                 active_group_id = data.get('active_group_id')
+                active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
                 frontend_gpt_model = data.get('model_deployment')
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
@@ -2313,9 +2325,72 @@ def register_route_backend_chats(app):
                     'document_search': hybrid_search_enabled
                 }
                 
+                # Document search scope and selections
+                if hybrid_search_enabled:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': True,
+                        'document_scope': document_scope,
+                        'selected_document_id': selected_document_id,
+                        'classification': classifications_to_send
+                    }
+                    
+                    # Get document details if specific document selected
+                    if selected_document_id and selected_document_id != "all":
+                        try:
+                            # Use the appropriate documents container based on scope
+                            if document_scope == 'group':
+                                cosmos_container = cosmos_group_documents_container
+                            elif document_scope == 'public':
+                                cosmos_container = cosmos_public_documents_container
+                            elif document_scope == 'personal':
+                                cosmos_container = cosmos_user_documents_container
+                            
+                            doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
+                            doc_params = [{"name": "@doc_id", "value": selected_document_id}]
+                            doc_results = list(cosmos_container.query_items(
+                                query=doc_query, parameters=doc_params, enable_cross_partition_query=True
+                            ))
+                            if doc_results:
+                                doc_info = doc_results[0]
+                                user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
+                                user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
+                        except Exception as e:
+                            print(f"Error retrieving document details: {e}")
+                    
+                    # Add scope-specific details
+                    if document_scope == 'group' and active_group_id:
+                        try:
+                            from functions_debug import debug_print
+                            debug_print(f"Workspace search - looking up group for id: {active_group_id}")
+                            group_doc = find_group_by_id(active_group_id)
+                            debug_print(f"Workspace search group lookup result: {group_doc}")
+                            
+                            if group_doc and group_doc.get('name'):
+                                group_name = group_doc.get('name')
+                                user_metadata['workspace_search']['group_name'] = group_name
+                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                            else:
+                                debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                                user_metadata['workspace_search']['group_name'] = None
+                                
+                        except Exception as e:
+                            print(f"Error retrieving group details: {e}")
+                            user_metadata['workspace_search']['group_name'] = None
+                            import traceback
+                            traceback.print_exc()
+                    
+                    if document_scope == 'public' and active_public_workspace_id:
+                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                else:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': False
+                    }
+                
                 user_metadata['model_selection'] = {
                     'selected_model': gpt_model,
-                    'frontend_requested_model': frontend_gpt_model
+                    'frontend_requested_model': frontend_gpt_model,
+                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'streaming': 'Enabled'
                 }
                 
                 user_metadata['chat_context'] = {
@@ -2371,8 +2446,14 @@ def register_route_backend_chats(app):
                         if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
                             search_args['active_group_id'] = active_group_id
                         
+                        # Add active_public_workspace_id when:
+                        # 1. Document scope is 'public' or
+                        # 2. Document scope is 'all' and public workspaces are enabled
+                        if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
+                            search_args['active_public_workspace_id'] = active_public_workspace_id
+                        
                         if selected_document_id:
-                            search_args['selected_document_id'] = selected_document_id
+                            search_args['document_id'] = selected_document_id
                         
                         search_results = hybrid_search(**search_args)
                     except Exception as e:
@@ -2382,21 +2463,153 @@ def register_route_backend_chats(app):
                         retrieved_texts = []
                         
                         for doc in search_results:
-                            text = f"Source: {doc.get('source_file', 'unknown')}\n"
-                            if doc.get('page_number'):
-                                text += f"Page: {doc.get('page_number')}\n"
-                            text += f"Content: {doc.get('content', '')}"
-                            retrieved_texts.append(text)
+                            chunk_text = doc.get('chunk_text', '')
+                            file_name = doc.get('file_name', 'Unknown')
+                            version = doc.get('version', 'N/A')
+                            chunk_sequence = doc.get('chunk_sequence', 0)
+                            page_number = doc.get('page_number') or chunk_sequence or 1
+                            citation_id = doc.get('id', str(uuid.uuid4()))
+                            classification = doc.get('document_classification')
+                            chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
+                            score = doc.get('score', 0.0)
+                            group_id = doc.get('group_id', None)
                             
-                            citation = {
-                                'source': doc.get('source_file', 'unknown'),
-                                'page_number': doc.get('page_number'),
-                                'chunk_id': doc.get('chunk_id'),
-                                'score': doc.get('@search.score'),
-                                'content_preview': doc.get('content', '')[:200]
+                            citation = f"(Source: {file_name}, Page: {page_number}) [#{citation_id}]"
+                            retrieved_texts.append(f"{chunk_text}\n{citation}")
+                            
+                            combined_documents.append({
+                                "file_name": file_name,
+                                "citation_id": citation_id,
+                                "page_number": page_number,
+                                "version": version,
+                                "classification": classification,
+                                "chunk_text": chunk_text,
+                                "chunk_sequence": chunk_sequence,
+                                "chunk_id": chunk_id,
+                                "score": score,
+                                "group_id": group_id,
+                            })
+                            
+                            # Build citation data to match non-streaming format
+                            citation_data = {
+                                "file_name": file_name,
+                                "citation_id": citation_id,
+                                "page_number": page_number,
+                                "chunk_id": chunk_id,
+                                "chunk_sequence": chunk_sequence,
+                                "score": score,
+                                "group_id": group_id,
+                                "version": version,
+                                "classification": classification
                             }
-                            hybrid_citations_list.append(citation)
-                            combined_documents.append(doc)
+                            hybrid_citations_list.append(citation_data)
+                        
+                        # --- Extract metadata (keywords/abstract) for additional citations ---
+                        if settings.get('enable_extract_meta_data', False):
+                            from functions_documents import get_document_metadata_for_citations
+                            
+                            processed_doc_ids = set()
+                            
+                            for doc in search_results:
+                                doc_id = doc.get('document_id') or doc.get('id')
+                                if not doc_id or doc_id in processed_doc_ids:
+                                    continue
+                                
+                                processed_doc_ids.add(doc_id)
+                                
+                                file_name = doc.get('file_name', 'Unknown')
+                                doc_group_id = doc.get('group_id', None)
+                                
+                                metadata = get_document_metadata_for_citations(
+                                    doc_id, 
+                                    user_id, 
+                                    doc_scope=document_scope,
+                                    active_group_id=active_group_id
+                                )
+                                
+                                if metadata:
+                                    keywords = metadata.get('keywords', [])
+                                    abstract = metadata.get('abstract', '')
+                                    
+                                    if keywords and len(keywords) > 0:
+                                        keywords_citation_id = f"{doc_id}_keywords"
+                                        keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                        
+                                        keywords_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": keywords_citation_id,
+                                            "page_number": "Metadata",
+                                            "chunk_id": keywords_citation_id,
+                                            "chunk_sequence": 9999,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "keywords",
+                                            "metadata_content": keywords_text
+                                        }
+                                        hybrid_citations_list.append(keywords_citation)
+                                        combined_documents.append(keywords_citation)
+                                        
+                                        keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                        retrieved_texts.append(keywords_context)
+                                    
+                                    if abstract and len(abstract.strip()) > 0:
+                                        abstract_citation_id = f"{doc_id}_abstract"
+                                        
+                                        abstract_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": abstract_citation_id,
+                                            "page_number": "Metadata",
+                                            "chunk_id": abstract_citation_id,
+                                            "chunk_sequence": 9998,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "abstract",
+                                            "metadata_content": abstract
+                                        }
+                                        hybrid_citations_list.append(abstract_citation)
+                                        combined_documents.append(abstract_citation)
+                                        
+                                        abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                        retrieved_texts.append(abstract_context)
+                                    
+                                    vision_analysis = metadata.get('vision_analysis')
+                                    if vision_analysis:
+                                        vision_citation_id = f"{doc_id}_vision"
+                                        
+                                        vision_description = vision_analysis.get('description', '')
+                                        vision_objects = vision_analysis.get('objects', [])
+                                        vision_text = vision_analysis.get('text', '')
+                                        
+                                        vision_content = f"AI Vision Analysis:\n"
+                                        if vision_description:
+                                            vision_content += f"Description: {vision_description}\n"
+                                        if vision_objects:
+                                            vision_content += f"Objects: {', '.join(vision_objects)}\n"
+                                        if vision_text:
+                                            vision_content += f"Text in Image: {vision_text}\n"
+                                        
+                                        vision_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": vision_citation_id,
+                                            "page_number": "AI Vision",
+                                            "chunk_id": vision_citation_id,
+                                            "chunk_sequence": 9997,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "vision",
+                                            "metadata_content": vision_content
+                                        }
+                                        hybrid_citations_list.append(vision_citation)
+                                        combined_documents.append(vision_citation)
+                                        
+                                        vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
+                                        retrieved_texts.append(vision_context)
                         
                         retrieved_content = "\n\n".join(retrieved_texts)
                         system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
@@ -2404,13 +2617,20 @@ def register_route_backend_chats(app):
 Retrieved Excerpts:
 {retrieved_content}
 
-Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so."""
+Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
+
+Example
+User: What is the policy on double dipping?
+Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+"""
                         
                         system_messages_for_augmentation.append({
                             'role': 'system',
-                            'content': system_prompt_search
+                            'content': system_prompt_search,
+                            'documents': combined_documents
                         })
                         
+                        # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
                 # Update message chat type

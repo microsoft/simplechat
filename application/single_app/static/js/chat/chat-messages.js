@@ -1164,6 +1164,9 @@ export function actuallySendMessage(finalMessageToSend) {
   const finalGroupId = group_id || window.activeGroupId || null;
   
   // Prepare message data object
+  // Get active public workspace ID from user settings (similar to active_group_id)
+  const finalPublicWorkspaceId = window.activePublicWorkspaceId || null;
+  
   const messageData = {
     message: finalMessageToSend,
     conversation_id: currentConversationId,
@@ -1174,6 +1177,7 @@ export function actuallySendMessage(finalMessageToSend) {
     doc_scope: effectiveDocScope,
     chat_type: chat_type,
     active_group_id: finalGroupId,
+    active_public_workspace_id: finalPublicWorkspaceId,
     model_deployment: modelDeployment,
     prompt_info: promptInfo,
     agent_info: agentInfo,
@@ -1961,6 +1965,18 @@ function formatMetadataForDrawer(metadata) {
         metadata.model_selection.frontend_requested_model !== metadata.model_selection.selected_model) {
       content += `<div class="metadata-item">
         <strong>Frontend Model:</strong> ${escapeHtml(metadata.model_selection.frontend_requested_model)}
+      </div>`;
+    }
+    
+    if (metadata.model_selection.reasoning_effort) {
+      content += `<div class="metadata-item">
+        <strong>Reasoning Effort:</strong> ${escapeHtml(metadata.model_selection.reasoning_effort)}
+      </div>`;
+    }
+    
+    if (metadata.model_selection.streaming) {
+      content += `<div class="metadata-item">
+        <strong>Streaming:</strong> ${createStatusBadge(metadata.model_selection.streaming)}
       </div>`;
     }
     

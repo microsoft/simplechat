@@ -31,6 +31,10 @@ def register_route_frontend_chats(app):
             group_doc = find_group_by_id(active_group_id)
             if group_doc:
                 active_group_name = group_doc.get("name", "")
+        
+        # Get active public workspace ID from user settings
+        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        
         categories_list = public_settings.get("document_classification_categories","")
 
         if not user_id:
@@ -45,6 +49,7 @@ def register_route_frontend_chats(app):
             enable_user_feedback=enable_user_feedback,
             active_group_id=active_group_id,
             active_group_name=active_group_name,
+            active_public_workspace_id=active_public_workspace_id,
             enable_enhanced_citations=enable_enhanced_citations,
             enable_document_classification=enable_document_classification,
             document_classification_categories=categories_list,
