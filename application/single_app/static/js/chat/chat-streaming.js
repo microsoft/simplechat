@@ -3,6 +3,7 @@ import { appendMessage, updateUserMessageId } from './chat-messages.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
+import { updateSidebarConversationTitle } from './chat-sidebar-conversations.js';
 
 let streamingEnabled = false;
 let currentEventSource = null;
@@ -325,6 +326,9 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         if (titleElement && titleElement.textContent === 'New Conversation') {
             titleElement.textContent = finalData.conversation_title;
         }
+        
+        // Update sidebar conversation title in real-time
+        updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
     }
     
     showToast('Response complete', 'success');
