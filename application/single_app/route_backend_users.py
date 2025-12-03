@@ -147,7 +147,17 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings'} # Add others as needed
+                allowed_keys = {
+                    'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
+                    'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
+                    'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
+                    # Public directory and workspace settings
+                    'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
+                    # Chat UI settings
+                    'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
+                    # Metrics and other settings
+                    'metrics', 'lastUpdated'
+                } # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")
