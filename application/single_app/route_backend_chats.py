@@ -2139,6 +2139,24 @@ def register_route_backend_chats(app):
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
                 
+                # Check if agents are enabled
+                enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+                per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+                user_settings = {}
+                user_enable_agents = False
+                
+                if enable_semantic_kernel and per_user_semantic_kernel:
+                    try:
+                        user_settings = get_user_settings(user_id)
+                        user_enable_agents = user_settings.get('enable_agents', False)
+                    except Exception as e:
+                        print(f"Error loading user settings: {e}")
+                
+                # Streaming does not support agents yet
+                if user_enable_agents:
+                    yield f"data: {json.dumps({'error': 'Agents are not supported in streaming mode. Please disable streaming to use agents.'})}\n\n"
+                    return
+                
                 # Streaming does not support image generation
                 if image_gen_enabled:
                     yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"

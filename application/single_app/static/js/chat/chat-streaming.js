@@ -22,6 +22,7 @@ export function initializeStreamingToggle() {
         streamingEnabled = settings.streamingEnabled === true;
         console.log('Streaming enabled:', streamingEnabled);
         updateStreamingButtonState();
+        updateStreamingButtonVisibility();
     }).catch(error => {
         console.error('Error loading streaming settings:', error);
     });
@@ -42,6 +43,17 @@ export function initializeStreamingToggle() {
             : 'Streaming disabled - responses will appear when complete';
         showToast(message, 'info');
     });
+    
+    // Listen for agents toggle - hide streaming button when agents are active
+    const enableAgentsBtn = document.getElementById('enable-agents-btn');
+    if (enableAgentsBtn) {
+        const observer = new MutationObserver(() => {
+            updateStreamingButtonVisibility();
+        });
+        observer.observe(enableAgentsBtn, { attributes: true, attributeFilter: ['class'] });
+    }
+    
+    updateStreamingButtonVisibility();
 }
 
 function updateStreamingButtonState() {
@@ -57,6 +69,25 @@ function updateStreamingButtonState() {
         streamingToggleBtn.classList.add('btn-outline-secondary');
         streamingToggleBtn.title = 'Streaming disabled - click to enable';
     }
+}
+
+/**
+ * Update streaming button visibility based on agent state
+ */
+function updateStreamingButtonVisibility() {
+    const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
+    const enableAgentsBtn = document.getElementById('enable-agents-btn');
+    
+    if (!streamingToggleBtn) return;
+    
+    // Hide streaming button when agents are active
+    if (enableAgentsBtn && enableAgentsBtn.classList.contains('active')) {
+        streamingToggleBtn.style.display = 'none';
+        return;
+    }
+    
+    // Otherwise show the button
+    streamingToggleBtn.style.display = 'flex';
 }
 
 export function isStreamingEnabled() {

@@ -18,6 +18,7 @@ import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
+import { areAgentsEnabled } from './chat-agents.js';
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -1179,8 +1180,9 @@ export function actuallySendMessage(finalMessageToSend) {
     reasoning_effort: getCurrentReasoningEffort()
   };
   
-  // Check if streaming is enabled (but not for image generation)
-  if (isStreamingEnabled() && !imageGenEnabled) {
+  // Check if streaming is enabled (but not for image generation or agents)
+  const agentsEnabled = typeof areAgentsEnabled === 'function' && areAgentsEnabled();
+  if (isStreamingEnabled() && !imageGenEnabled && !agentsEnabled) {
     const streamInitiated = sendMessageWithStreaming(
       messageData, 
       tempUserMessageId, 
