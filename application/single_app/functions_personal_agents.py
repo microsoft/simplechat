@@ -123,6 +123,7 @@ def save_personal_agent(user_id, agent_data):
         agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
         agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
         agent_data.setdefault('enable_agent_gpt_apim', False)
+        agent_data.setdefault('reasoning_effort', '')
         agent_data.setdefault('actions_to_load', [])
         agent_data.setdefault('other_settings', {})
         agent_data['is_global'] = False

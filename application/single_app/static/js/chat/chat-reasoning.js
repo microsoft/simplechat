@@ -51,20 +51,36 @@ export function initializeReasoningToggle() {
         observer.observe(imageGenBtn, { attributes: true, attributeFilter: ['class'] });
     }
     
+    // Listen for agents toggle - hide reasoning button when agents are active
+    const enableAgentsBtn = document.getElementById('enable-agents-btn');
+    if (enableAgentsBtn) {
+        const observer = new MutationObserver(() => {
+            updateReasoningButtonVisibility();
+        });
+        observer.observe(enableAgentsBtn, { attributes: true, attributeFilter: ['class'] });
+    }
+    
     updateReasoningButtonVisibility();
 }
 
 /**
- * Update reasoning button visibility based on image generation state and model support
+ * Update reasoning button visibility based on image generation state, agent state, and model support
  */
 function updateReasoningButtonVisibility() {
     const reasoningToggleBtn = document.getElementById('reasoning-toggle-btn');
     const imageGenBtn = document.getElementById('image-generate-btn');
+    const enableAgentsBtn = document.getElementById('enable-agents-btn');
     
     if (!reasoningToggleBtn) return;
     
     // Hide reasoning button when image generation is active
     if (imageGenBtn && imageGenBtn.classList.contains('active')) {
+        reasoningToggleBtn.style.display = 'none';
+        return;
+    }
+    
+    // Hide reasoning button when agents are active
+    if (enableAgentsBtn && enableAgentsBtn.classList.contains('active')) {
         reasoningToggleBtn.style.display = 'none';
         return;
     }

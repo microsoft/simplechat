@@ -1826,6 +1826,16 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
             # pass this to prevent additional future agent types from potentially failing
             pass
     
+    # Reasoning effort - only add if not 'none' or empty
+    reasoning_effort = pick("reasoning_effort")
+    if reasoning_effort and reasoning_effort != "none" and "reasoning_effort" in model_fields:
+        try:
+            setattr(prompt_exec_settings, "reasoning_effort", reasoning_effort)
+            print(f"[SK Loader] Set reasoning_effort={reasoning_effort} for agent: {agent_config.get('name')}")
+        except Exception as e:
+            print(f"[SK Loader] Failed to set reasoning_effort for agent {agent_config.get('name')}: {e}")
+            pass
+    
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
         if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
             try:
@@ -1844,4 +1854,62 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
             # Log error but do not set attribute directly to avoid Pydantic validation errors
             log_event(f"[SK Loader] Failed to set prompt execution settings via setter: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Do not set prompt_execution_settings as an attribute if not supported by the service
+    
+    # Store reasoning_effort info for retry logic
+    if hasattr(chat_service, '_agent_config'):
+        chat_service._agent_config = agent_config
+    
     return chat_service
+
+
+def handle_agent_reasoning_error(chat_service, error, agent_config):
+    """
+    Handle reasoning_effort errors by retrying without the parameter.
+    Similar to the retry logic in route_backend_chats.py for direct GPT calls.
+    
+    Args:
+        chat_service: The AzureChatCompletion service
+        error: The exception that occurred
+        agent_config: The agent configuration dict
+        
+    Returns:
+        bool: True if reasoning_effort was removed and service updated, False otherwise
+    """
+    error_str = str(error).lower()
+    has_reasoning = agent_config.get("reasoning_effort") and agent_config.get("reasoning_effort") != "none"
+    
+    # Check if error is related to reasoning_effort parameter
+    if has_reasoning and (
+        'reasoning_effort' in error_str or 
+        'unrecognized request argument' in error_str or
+        'invalid_request_error' in error_str
+    ):
+        print(f"[SK Loader] Reasoning effort not supported by model, retrying without reasoning_effort for agent: {agent_config.get('name')}")
+        
+        # Remove reasoning_effort from agent_config
+        agent_config["reasoning_effort"] = ""
+        
+        # Update the service's prompt execution settings without reasoning_effort
+        try:
+            PromptExecutionSettingsClass = chat_service.get_prompt_execution_settings_class()
+            existing = getattr(chat_service, "prompt_execution_settings", None)
+            
+            if existing:
+                prompt_exec_settings = PromptExecutionSettingsClass.from_prompt_execution_settings(existing)
+            else:
+                prompt_exec_settings = PromptExecutionSettingsClass()
+            
+            # Remove reasoning_effort if it exists
+            if hasattr(prompt_exec_settings, "reasoning_effort"):
+                delattr(prompt_exec_settings, "reasoning_effort")
+            
+            # Update service settings
+            if hasattr(chat_service, "set_prompt_execution_settings"):
+                chat_service.set_prompt_execution_settings(prompt_exec_settings)
+            
+            return True
+        except Exception as update_error:
+            print(f"[SK Loader] Failed to remove reasoning_effort: {update_error}")
+            return False
+    
+    return False
