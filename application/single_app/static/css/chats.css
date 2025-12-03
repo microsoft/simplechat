@@ -1507,3 +1507,53 @@ mark.search-highlight {
     opacity: 0.6;
   }
 }
+
+/* Reasoning effort slider styles */
+.reasoning-slider-container {
+    padding: 20px 0;
+}
+
+.reasoning-levels {
+    min-height: 250px;
+}
+
+.reasoning-level {
+    cursor: pointer;
+    padding: 12px 20px;
+    border: 2px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    min-width: 180px;
+    background: var(--bs-body-bg);
+}
+
+.reasoning-level:hover {
+    border-color: var(--bs-primary);
+    background: var(--bs-primary-bg-subtle);
+}
+
+.reasoning-level.active {
+    border-color: var(--bs-primary);
+    background: var(--bs-primary);
+    color: white;
+}
+
+.reasoning-level.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.reasoning-level.disabled:hover {
+    border-color: var(--bs-border-color);
+    background: var(--bs-body-bg);
+}
+
+.reasoning-level-icon {
+    font-size: 1.5rem;
+    margin-bottom: 5px;
+}
+
+.reasoning-level-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}

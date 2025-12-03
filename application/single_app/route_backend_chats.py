@@ -64,6 +64,7 @@ def register_route_backend_chats(app):
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
+            reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
             
             # Store conversation_id in Flask context for plugin logger access
             g.conversation_id = conversation_id
@@ -1865,10 +1866,35 @@ def register_route_backend_chats(app):
                     raise Exception('Internal error: Conversation history improperly formed.')
                 print(f"--- Sending to GPT ({gpt_model}) ---")
                 print(f"Total messages in API call: {len(conversation_history_for_api)}")
-                response = gpt_client.chat.completions.create(
-                    model=gpt_model,
-                    messages=conversation_history_for_api,
-                )
+                
+                # Prepare API call parameters
+                api_params = {
+                    'model': gpt_model,
+                    'messages': conversation_history_for_api,
+                }
+                
+                # Add reasoning_effort if provided and not 'none'
+                if reasoning_effort and reasoning_effort != 'none':
+                    api_params['reasoning_effort'] = reasoning_effort
+                    print(f"Using reasoning effort: {reasoning_effort}")
+                
+                try:
+                    response = gpt_client.chat.completions.create(**api_params)
+                except Exception as e:
+                    # Check if error is related to reasoning_effort parameter
+                    error_str = str(e).lower()
+                    if reasoning_effort and reasoning_effort != 'none' and (
+                        'reasoning_effort' in error_str or 
+                        'unrecognized request argument' in error_str or
+                        'invalid_request_error' in error_str
+                    ):
+                        print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                        # Retry without reasoning_effort
+                        api_params.pop('reasoning_effort', None)
+                        response = gpt_client.chat.completions.create(**api_params)
+                    else:
+                        raise
+                
                 msg = response.choices[0].message.content
                 notice = None
                 if enable_semantic_kernel and user_enable_agents:
@@ -1972,7 +1998,9 @@ def register_route_backend_chats(app):
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
-                'metadata': {} # Used by SK
+                'metadata': {
+                    'reasoning_effort': reasoning_effort
+                } # Used by SK and reasoning effort
             }
             cosmos_messages_container.upsert_item(assistant_doc)
 
@@ -2109,6 +2137,7 @@ def register_route_backend_chats(app):
                 frontend_gpt_model = data.get('model_deployment')
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
+                reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
                 
                 # Streaming does not support image generation
                 if image_gen_enabled:
@@ -2438,11 +2467,35 @@ Based *only* on the information provided above, answer the user's query. If the 
                 
                 try:
                     print(f"--- Streaming from GPT ({gpt_model}) ---")
-                    stream = gpt_client.chat.completions.create(
-                        model=gpt_model,
-                        messages=conversation_history_for_api,
-                        stream=True
-                    )
+                    
+                    # Prepare stream parameters
+                    stream_params = {
+                        'model': gpt_model,
+                        'messages': conversation_history_for_api,
+                        'stream': True
+                    }
+                    
+                    # Add reasoning_effort if provided and not 'none'
+                    if reasoning_effort and reasoning_effort != 'none':
+                        stream_params['reasoning_effort'] = reasoning_effort
+                        print(f"Using reasoning effort: {reasoning_effort}")
+                    
+                    try:
+                        stream = gpt_client.chat.completions.create(**stream_params)
+                    except Exception as e:
+                        # Check if error is related to reasoning_effort parameter
+                        error_str = str(e).lower()
+                        if reasoning_effort and reasoning_effort != 'none' and (
+                            'reasoning_effort' in error_str or 
+                            'unrecognized request argument' in error_str or
+                            'invalid_request_error' in error_str
+                        ):
+                            print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                            # Retry without reasoning_effort
+                            stream_params.pop('reasoning_effort', None)
+                            stream = gpt_client.chat.completions.create(**stream_params)
+                        else:
+                            raise
                     
                     for chunk in stream:
                         if chunk.choices and len(chunk.choices) > 0:
@@ -2466,7 +2519,7 @@ Based *only* on the information provided above, answer the user's query. If the 
                         'model_deployment_name': gpt_model,
                         'agent_display_name': None,
                         'agent_name': None,
-                        'metadata': {}
+                        'metadata': {'reasoning_effort': reasoning_effort}
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
@@ -2531,7 +2584,11 @@ Based *only* on the information provided above, answer the user's query. If the 
                             'model_deployment_name': gpt_model,
                             'agent_display_name': None,
                             'agent_name': None,
-                            'metadata': {'incomplete': True, 'error': error_msg}
+                            'metadata': {
+                                'incomplete': True,
+                                'error': error_msg,
+                                'reasoning_effort': reasoning_effort
+                            }
                         }
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)

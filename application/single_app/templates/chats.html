@@ -285,10 +285,22 @@
                             class="btn btn-outline-secondary btn-sm rounded-circle" 
                             data-bs-toggle="tooltip" 
                             data-bs-placement="top" 
-                            title="Toggle streaming responses (opt-in)"
+                            title="Toggle streaming responses."
                             style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
                         >
                             <i class="bi bi-lightning"></i>
+                        </button>
+
+                        <!-- Reasoning effort toggle button -->
+                        <button 
+                            id="reasoning-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Configure reasoning effort"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-reception-2"></i>
                         </button>
 
                         <!-- Prompt Selector -->
@@ -630,6 +642,26 @@
     </div>
 </div>
 
+<!-- Reasoning Effort Slider Modal -->
+<div class="modal fade" id="reasoning-slider-modal" tabindex="-1" aria-labelledby="reasoning-slider-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="reasoning-slider-modal-label">Reasoning Effort</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p class="small text-muted mb-3">Adjust reasoning effort for <strong id="reasoning-model-name"></strong></p>
+                <div class="reasoning-slider-container d-flex flex-column align-items-center">
+                    <div class="reasoning-levels d-flex flex-column-reverse gap-3">
+                        <!-- Levels populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 {% endblock %}
@@ -676,6 +708,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

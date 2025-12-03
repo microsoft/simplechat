@@ -17,6 +17,7 @@ import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-
 import { showToast } from "./chat-toast.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
+import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -1174,7 +1175,8 @@ export function actuallySendMessage(finalMessageToSend) {
     active_group_id: finalGroupId,
     model_deployment: modelDeployment,
     prompt_info: promptInfo,
-    agent_info: agentInfo
+    agent_info: agentInfo,
+    reasoning_effort: getCurrentReasoningEffort()
   };
   
   // Check if streaming is enabled (but not for image generation)

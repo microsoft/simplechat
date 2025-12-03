@@ -228,6 +228,9 @@ def get_settings(use_cosmos=False):
         
         # Streaming settings
         'streamingEnabled': False,
+        
+        # Reasoning effort settings (per-model)
+        'reasoningEffortSettings': {},
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': video_indexer_endpoint,

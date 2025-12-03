@@ -9,6 +9,7 @@ import { loadUserSettings } from "./chat-layout.js";
 import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeStreamingToggle } from "./chat-streaming.js";
+import { initializeReasoningToggle } from "./chat-reasoning.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -17,6 +18,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Initialize the conversation info button
   initConversationInfoButton();
+  
+  // Initialize streaming toggle
+  initializeStreamingToggle();
+  
+  // Initialize reasoning toggle
+  initializeReasoningToggle();
 
   // Grab references to the relevant elements
   const userInput = document.getElementById("user-input");
@@ -61,9 +68,6 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-
-  // Initialize streaming toggle
-  initializeStreamingToggle();
 
   // Load documents, prompts, and user settings
   Promise.all([
