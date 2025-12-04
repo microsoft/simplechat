@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_debug import debug_print
+from functions_chat import sort_messages_by_thread
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
@@ -87,6 +88,9 @@ def register_route_frontend_conversations(app):
         debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items")
         for i, item in enumerate(all_items):
             debug_print(f"Frontend endpoint - Item {i}: id={item.get('id')}, role={item.get('role')}")
+
+        # Sort messages using threading logic
+        all_items = sort_messages_by_thread(all_items)
 
         # Process messages and reassemble chunked images
         messages = []
@@ -198,9 +202,18 @@ def register_route_frontend_conversations(app):
                 except CosmosResourceNotFoundError:
                     return jsonify({'error': 'Conversation not found'}), 404
             
-            # Return the metadata from the message
-            metadata = message.get('metadata', {})
-            return jsonify(metadata)
+            # Return appropriate data based on message role
+            # User messages: return metadata object only (has user_info, button_states, etc.)
+            # Other messages: return full document (has id, role, augmented, etc. at top level)
+            message_role = message.get('role', '')
+            
+            if message_role == 'user':
+                # User messages - return nested metadata object
+                metadata = message.get('metadata', {})
+                return jsonify(metadata)
+            else:
+                # Assistant, image, file messages - return full document
+                return jsonify(message)
             
         except Exception as e:
             print(f"Error fetching message metadata: {str(e)}")

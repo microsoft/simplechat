@@ -691,7 +691,15 @@ export function appendMessage(
       console.log(">>> Will NOT generate citation elements.");
     }
 
-    const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center">${copyAndFeedbackHtml}${citationToggleHtml}</div>`;
+    const metadataContainerId = `metadata-${messageId || Date.now()}`;
+    const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    
+    const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
+      <div class="d-flex align-items-center">${copyAndFeedbackHtml}${citationToggleHtml}</div>
+      <button class="btn btn-sm btn-link text-secondary p-0 metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+        <i class="bi bi-info-circle"></i>
+      </button>
+    </div>`;
 
     // Build AI message inner HTML
     messageDiv.innerHTML = `
@@ -701,6 +709,7 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                     ${citationContentContainerHtml}
+                    ${metadataContainerHtml}
                     ${footerContentHtml}
                 </div>
             </div>`;
@@ -727,6 +736,30 @@ export function appendMessage(
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
+    
+    const metadataBtn = messageDiv.querySelector(".metadata-info-btn");
+    if (metadataBtn) {
+      metadataBtn.addEventListener("click", () => {
+        const metadataContainer = messageDiv.querySelector('.metadata-container');
+        if (metadataContainer) {
+          const isVisible = metadataContainer.style.display !== 'none';
+          metadataContainer.style.display = isVisible ? 'none' : 'block';
+          metadataBtn.setAttribute('aria-expanded', !isVisible);
+          metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
+          
+          // Toggle icon
+          const icon = metadataBtn.querySelector('i');
+          if (icon) {
+            icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
+          }
+          
+          // Load metadata if container is empty (first open)
+          if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
+            loadMessageMetadataForDisplay(messageId, metadataContainer);
+          }
+        }
+      });
+    }
     
     const maskBtn = messageDiv.querySelector(".mask-btn");
     if (maskBtn) {
@@ -799,6 +832,11 @@ export function appendMessage(
 
     // --- Handle ALL OTHER message types ---
   } else {
+    // Declare variables for image metadata checks (needed for footer logic)
+    let isUserUpload = false;
+    let hasExtractedText = false;
+    let hasVisionAnalysis = false;
+    
     // Determine variables based on sender type
     if (sender === "You") {
       messageClass = "user-message";
@@ -839,9 +877,9 @@ export function appendMessage(
       }
 
       // Check if this is a user-uploaded image with metadata
-      const isUserUpload = fullMessageObject?.metadata?.is_user_upload || false;
-      const hasExtractedText = fullMessageObject?.extracted_text || false;
-      const hasVisionAnalysis = fullMessageObject?.vision_analysis || false;
+      isUserUpload = fullMessageObject?.metadata?.is_user_upload || false;
+      hasExtractedText = fullMessageObject?.extracted_text || false;
+      hasVisionAnalysis = fullMessageObject?.vision_analysis || false;
 
       // Use agent display name if available, otherwise show AI with model
       if (isUserUpload) {
@@ -860,20 +898,6 @@ export function appendMessage(
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
         messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
-
-        // Add info button for uploaded images with extracted text or vision analysis
-        if (isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
-          const infoContainerId = `image-info-${messageId || Date.now()}`;
-          messageContentHtml += `
-            <div class="mt-2">
-              <button class="btn btn-sm btn-outline-secondary image-info-btn" data-message-id="${messageId}" title="View extracted text & analysis" aria-expanded="false" aria-controls="${infoContainerId}">
-                <i class="bi bi-info-circle"></i> View Text
-              </button>
-            </div>
-            <div class="image-info-container mt-2 pt-2 border-top" id="${infoContainerId}" style="display: none;">
-              <div class="image-info-content">Loading image information...</div>
-            </div>`;
-        }
       } else {
         messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
       }
@@ -909,7 +933,7 @@ export function appendMessage(
     // This runs for "You", "File", "image", "safety", "Error", and the fallback "unknown"
     messageDiv.classList.add(messageClass); // Add the determined class
 
-    // Create user message footer if this is a user message
+    // Create message footer for user, image, and file messages
     let messageFooterHtml = "";
     let metadataContainerHtml = "";
     if (sender === "You") {
@@ -928,11 +952,32 @@ export function appendMessage(
               <i class="bi ${maskIcon}"></i>
             </button>
           </div>
-          <button class="btn btn-sm btn-outline-secondary metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+          <button class="btn btn-sm btn-link text-secondary p-0 metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
             <i class="bi bi-info-circle"></i>
           </button>
         </div>`;
       metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    } else if (sender === "image" || sender === "File") {
+      // Image and file messages get metadata button on right side
+      const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      
+      // For images with extracted text or vision analysis, add View Text button like citation button
+      let imageInfoToggleHtml = '';
+      let imageInfoContainerHtml = '';
+      if (sender === "image" && isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
+        const infoContainerId = `image-info-${messageId || Date.now()}`;
+        imageInfoToggleHtml = `<div class="citation-toggle-container"><button class="btn btn-sm btn-link text-secondary p-0 image-info-btn" data-message-id="${messageId}" title="View extracted text" aria-expanded="false" aria-controls="${infoContainerId}"><i class="bi bi-file-text"></i></button></div>`;
+        imageInfoContainerHtml = `<div id="${infoContainerId}" class="image-info-container mt-2 pt-2 border-top" style="display: none;"><div class="image-info-content">Loading image information...</div></div>`;
+      }
+      
+      messageFooterHtml = `
+        <div class="message-footer d-flex justify-content-between align-items-center mt-2">
+          <div class="d-flex align-items-center">${imageInfoToggleHtml}</div>
+          <button class="btn btn-sm btn-link text-secondary p-0 metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+            <i class="bi bi-info-circle"></i>
+          </button>
+        </div>`;
+      metadataContainerHtml = imageInfoContainerHtml + `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
     }
 
     // Set innerHTML using the variables determined above
@@ -985,6 +1030,33 @@ export function appendMessage(
       if (imageInfoBtn) {
         imageInfoBtn.addEventListener('click', () => {
           toggleImageInfo(messageDiv, messageId, fullMessageObject);
+        });
+      }
+    }
+    
+    // Add event listener for metadata button (image and file messages)
+    if (sender === "image" || sender === "File") {
+      const metadataBtn = messageDiv.querySelector('.metadata-info-btn');
+      if (metadataBtn) {
+        metadataBtn.addEventListener('click', () => {
+          const metadataContainer = messageDiv.querySelector('.metadata-container');
+          if (metadataContainer) {
+            const isVisible = metadataContainer.style.display !== 'none';
+            metadataContainer.style.display = isVisible ? 'none' : 'block';
+            metadataBtn.setAttribute('aria-expanded', !isVisible);
+            metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
+            
+            // Toggle icon
+            const icon = metadataBtn.querySelector('i');
+            if (icon) {
+              icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
+            }
+            
+            // Load metadata if container is empty (first open)
+            if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
+              loadMessageMetadataForDisplay(messageId, metadataContainer);
+            }
+          }
         });
       }
     }
@@ -1829,6 +1901,34 @@ function formatMetadataForDrawer(metadata) {
     content += '</div>';
   }
   
+  // Thread Information Section (priority display)
+  if (metadata.thread_info) {
+    const ti = metadata.thread_info;
+    content += '<div class="metadata-section mb-3">';
+    content += '<h6 class="metadata-title mb-2"><i class="bi bi-diagram-3 me-1"></i>Thread Information</h6>';
+    
+    content += `<div class="metadata-item">
+      <strong>Thread ID:</strong> <code>${escapeHtml(ti.thread_id || 'N/A')}</code>
+    </div>`;
+    
+    content += `<div class="metadata-item">
+      <strong>Previous Thread:</strong> <code>${escapeHtml(ti.previous_thread_id || 'None')}</code>
+    </div>`;
+    
+    const activeThreadBadge = ti.active_thread ? 
+      '<span class="badge bg-success">Active</span>' : 
+      '<span class="badge bg-secondary">Inactive</span>';
+    content += `<div class="metadata-item">
+      <strong>Active Thread:</strong> ${activeThreadBadge}
+    </div>`;
+    
+    content += `<div class="metadata-item">
+      <strong>Thread Attempt:</strong> ${createInfoBadge(ti.thread_attempt || 0, 'info')}
+    </div>`;
+    
+    content += '</div>';
+  }
+  
   // Button States Section
   if (metadata.button_states) {
     content += '<div class="metadata-section mb-3">';
@@ -2132,14 +2232,14 @@ function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
     // Hide the info
     infoContainer.style.display = "none";
     toggleBtn.setAttribute("aria-expanded", false);
-    toggleBtn.title = "View extracted text & analysis";
-    toggleBtn.innerHTML = '<i class="bi bi-info-circle"></i> View Text';
+    toggleBtn.title = "View extracted text";
+    toggleBtn.innerHTML = '<i class="bi bi-file-text"></i>';
   } else {
     // Show the info
     infoContainer.style.display = "block";
     toggleBtn.setAttribute("aria-expanded", true);
-    toggleBtn.title = "Hide extracted text & analysis";
-    toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i> Hide Text';
+    toggleBtn.title = "Hide extracted text";
+    toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
 
     // Load image info if not already loaded
     const contentDiv = infoContainer.querySelector('.image-info-content');
@@ -2156,6 +2256,121 @@ function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
       window.scrollTo(0, currentScrollTop);
     }
   }, 10);
+}
+
+/**
+ * Toggle the metadata drawer for AI, image, and file messages
+ */
+function toggleMessageMetadata(messageDiv, messageId) {
+  const existingDrawer = messageDiv.querySelector('.message-metadata-drawer');
+  
+  if (existingDrawer) {
+    // Drawer exists, remove it
+    existingDrawer.remove();
+    return;
+  }
+  
+  // Create new drawer
+  const drawerDiv = document.createElement('div');
+  drawerDiv.className = 'message-metadata-drawer mt-2 p-3 border rounded bg-light';
+  drawerDiv.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
+  
+  messageDiv.appendChild(drawerDiv);
+  
+  // Load metadata
+  loadMessageMetadataForDisplay(messageId, drawerDiv);
+}
+
+/**
+ * Load message metadata into the drawer for AI/image/file messages
+ */
+function loadMessageMetadataForDisplay(messageId, container) {
+  fetch(`/api/message/${messageId}/metadata`)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Failed to load metadata');
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (!data) {
+        container.innerHTML = '<p class="text-muted mb-0">No metadata available</p>';
+        return;
+      }
+      
+      const metadata = data;
+      let html = '<div class="metadata-content">';
+      
+      // Thread Information (check both locations for backward compatibility)
+      const threadInfo = metadata.metadata?.thread_info || {
+        thread_id: metadata.thread_id,
+        previous_thread_id: metadata.previous_thread_id,
+        active_thread: metadata.active_thread,
+        thread_attempt: metadata.thread_attempt
+      };
+      
+      if (threadInfo.thread_id) {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
+        html += '<div class="ms-3 small">';
+        html += `<div class="mb-1"><span class="text-muted">Thread ID:</span> <code class="ms-2">${threadInfo.thread_id}</code></div>`;
+        html += `<div class="mb-1"><span class="text-muted">Previous Thread:</span> <code class="ms-2">${threadInfo.previous_thread_id || 'None (first message)'}</code></div>`;
+        html += `<div class="mb-1"><span class="text-muted">Active:</span> <span class="ms-2 badge ${threadInfo.active_thread ? 'bg-success' : 'bg-secondary'}">${threadInfo.active_thread ? 'Yes' : 'No'}</span></div>`;
+        html += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${threadInfo.thread_attempt || 1}</span></div>`;
+        html += '</div></div>';
+      }
+      
+      // Message Details
+      html += '<div class="mb-3">';
+      html += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Message Details</div>';
+      html += '<div class="ms-3 small">';
+      if (metadata.id) html += `<div class="mb-1"><span class="text-muted">Message ID:</span> <code class="ms-2">${metadata.id}</code></div>`;
+      if (metadata.conversation_id) html += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${metadata.conversation_id}</code></div>`;
+      if (metadata.role) html += `<div class="mb-1"><span class="text-muted">Role:</span> <span class="ms-2 badge bg-primary">${metadata.role}</span></div>`;
+      if (metadata.timestamp) html += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${new Date(metadata.timestamp).toLocaleString()}</code></div>`;
+      if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
+      if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
+      if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${metadata.agent_display_name}</span></div>`;
+      html += '</div></div>';
+      
+      // Image/File specific info
+      if (metadata.role === 'image') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Image Details</div>';
+        html += '<div class="ms-3 small">';
+        if (metadata.filename) html += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${metadata.filename}</code></div>`;
+        if (metadata.prompt) html += `<div class="mb-1"><span class="text-muted">Prompt:</span> <span class="ms-2">${metadata.prompt}</span></div>`;
+        if (metadata.metadata?.is_chunked !== undefined) html += `<div class="mb-1"><span class="text-muted">Chunked:</span> <span class="ms-2 badge ${metadata.metadata.is_chunked ? 'bg-warning' : 'bg-success'}">${metadata.metadata.is_chunked ? 'Yes' : 'No'}</span></div>`;
+        if (metadata.metadata?.is_user_upload !== undefined) html += `<div class="mb-1"><span class="text-muted">User Upload:</span> <span class="ms-2 badge ${metadata.metadata.is_user_upload ? 'bg-info' : 'bg-secondary'}">${metadata.metadata.is_user_upload ? 'Yes' : 'No'}</span></div>`;
+        html += '</div></div>';
+      } else if (metadata.role === 'file') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-file-earmark me-2"></i>File Details</div>';
+        html += '<div class="ms-3 small">';
+        if (metadata.filename) html += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${metadata.filename}</code></div>`;
+        if (metadata.is_table !== undefined) html += `<div class="mb-1"><span class="text-muted">Table Data:</span> <span class="ms-2 badge ${metadata.is_table ? 'bg-success' : 'bg-secondary'}">${metadata.is_table ? 'Yes' : 'No'}</span></div>`;
+        html += '</div></div>';
+      }
+      
+      // Assistant message specific info
+      if (metadata.role === 'assistant') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Generation Details</div>';
+        html += '<div class="ms-3 small">';
+        if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
+        if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
+        if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
+        if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
+        html += '</div></div>';
+      }
+      
+      html += '</div>';
+      container.innerHTML = html;
+    })
+    .catch(error => {
+      console.error('Error loading message metadata:', error);
+      container.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Failed to load metadata</div>';
+    });
 }
 
 /**

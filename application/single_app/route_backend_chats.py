@@ -417,6 +417,40 @@ def register_route_backend_chats(app):
             
             # Note: Message-level chat_type will be determined after document search is completed
             
+            # --- Threading Logic ---
+            # Find the last message in the conversation to establish the chain
+            previous_thread_id = None
+            try:
+                # Query for the last message in this conversation
+                last_msg_query = f"""
+                    SELECT TOP 1 c.thread_id 
+                    FROM c 
+                    WHERE c.conversation_id = '{conversation_id}' 
+                    ORDER BY c.timestamp DESC
+                """
+                last_msgs = list(cosmos_messages_container.query_items(
+                    query=last_msg_query,
+                    partition_key=conversation_id
+                ))
+                if last_msgs:
+                    previous_thread_id = last_msgs[0].get('thread_id')
+            except Exception as e:
+                debug_print(f"Error fetching last message for threading: {e}")
+
+            # Generate thread_id for the user message
+            # We track the 'tip' of the thread in latest_thread_id
+            import uuid
+            current_user_thread_id = str(uuid.uuid4())
+            latest_thread_id = current_user_thread_id
+            
+            # Add thread information to user metadata
+            user_metadata['thread_info'] = {
+                'thread_id': current_user_thread_id,
+                'previous_thread_id': previous_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1
+            }
+            
             user_message_doc = {
                 'id': user_message_id,
                 'conversation_id': conversation_id,
@@ -424,7 +458,11 @@ def register_route_backend_chats(app):
                 'content': user_message,
                 'timestamp': datetime.utcnow().isoformat(),
                 'model_deployment_name': None,  # Model not used for user message
-                'metadata': user_metadata, 
+                'metadata': user_metadata,
+                'thread_id': current_user_thread_id,
+                'previous_thread_id': previous_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1
             }
             
             # Debug: Print the complete metadata being saved
@@ -1077,6 +1115,8 @@ def register_route_backend_chats(app):
                         
                         
                         # Create main image document with metadata
+                        current_image_thread_id = str(uuid.uuid4())
+                        
                         main_image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
@@ -1090,9 +1130,21 @@ def register_route_backend_chats(app):
                                 'is_chunked': True,
                                 'total_chunks': total_chunks,
                                 'chunk_index': 0,
-                                'original_size': len(generated_image_url)
-                            }
+                                'original_size': len(generated_image_url),
+                                'thread_info': {
+                                    'thread_id': current_image_thread_id,
+                                    'previous_thread_id': latest_thread_id,
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
+                            },
+                            'thread_id': current_image_thread_id,
+                            'previous_thread_id': latest_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
                         }
+                        # Update tip
+                        latest_thread_id = current_image_thread_id
                         
                         # Create additional chunk documents
                         chunk_docs = []
@@ -1133,6 +1185,8 @@ def register_route_backend_chats(app):
                         # Small image - store normally in single document
                         debug_print(f"Small image ({len(generated_image_url)} bytes), storing in single document")
                         
+                        current_image_thread_id = str(uuid.uuid4())
+                        
                         image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
@@ -1144,11 +1198,23 @@ def register_route_backend_chats(app):
                             'model_deployment_name': image_gen_model,
                             'metadata': {
                                 'is_chunked': False,
-                                'original_size': len(generated_image_url)
-                            }
+                                'original_size': len(generated_image_url),
+                                'thread_info': {
+                                    'thread_id': current_image_thread_id,
+                                    'previous_thread_id': latest_thread_id,
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
+                            },
+                            'thread_id': current_image_thread_id,
+                            'previous_thread_id': latest_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
                         }
                         cosmos_messages_container.upsert_item(image_doc)
                         response_image_url = generated_image_url
+                        # Update tip
+                        latest_thread_id = current_image_thread_id
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
@@ -1199,6 +1265,9 @@ def register_route_backend_chats(app):
                 all_messages = list(cosmos_messages_container.query_items(
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
+
+                # Sort messages using threading logic
+                all_messages = sort_messages_by_thread(all_messages)
 
                 total_messages = len(all_messages)
 
@@ -1263,6 +1332,8 @@ def register_route_backend_chats(app):
 
                     # 5. Create the final system_doc dictionary for Cosmos DB upsert
                     system_message_id = f"{conversation_id}_system_aug_{int(time.time())}_{random.randint(1000,9999)}"
+                    current_system_thread_id = str(uuid.uuid4())
+                    
                     system_doc = {
                         'id': system_message_id,
                         'conversation_id': conversation_id,
@@ -1272,10 +1343,16 @@ def register_route_backend_chats(app):
                         'user_message': user_message, # Include the original user message for context
                         'model_deployment_name': None, # As per your original structure
                         'timestamp': datetime.utcnow().isoformat(),
-                        'metadata': {}
+                        'metadata': {},
+                        'thread_id': current_system_thread_id,
+                        'previous_thread_id': latest_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
                     }
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
+                    # Update tip so assistant links to system message
+                    latest_thread_id = current_system_thread_id
 
                     # --- NEW: Save plugin output as agent citation ---
                     agent_citations_list.append({
@@ -1995,6 +2072,8 @@ def register_route_backend_chats(app):
                     agent_name = selected_agent.name
             
             assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+            current_assistant_thread_id = str(uuid.uuid4())
+            
             assistant_doc = {
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
@@ -2010,8 +2089,18 @@ def register_route_backend_chats(app):
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
                 'metadata': {
-                    'reasoning_effort': reasoning_effort
-                } # Used by SK and reasoning effort
+                    'reasoning_effort': reasoning_effort,
+                    'thread_info': {
+                        'thread_id': current_assistant_thread_id,
+                        'previous_thread_id': latest_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
+                    }
+                }, # Used by SK and reasoning effort
+                'thread_id': current_assistant_thread_id,
+                'previous_thread_id': latest_thread_id,
+                'active_thread': True,
+                'thread_attempt': 1
             }
             cosmos_messages_container.upsert_item(assistant_doc)
 
@@ -2397,6 +2486,35 @@ def register_route_backend_chats(app):
                     'conversation_id': conversation_id
                 }
                 
+                # --- Threading Logic for Streaming ---
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"""
+                        SELECT TOP 1 c.thread_id 
+                        FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        ORDER BY c.timestamp DESC
+                    """
+                    last_msgs = list(cosmos_messages_container.query_items(
+                        query=last_msg_query,
+                        partition_key=conversation_id
+                    ))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except Exception as e:
+                    debug_print(f"Error fetching last message for threading: {e}")
+
+                current_user_thread_id = str(uuid.uuid4())
+                latest_thread_id = current_user_thread_id
+                
+                # Add thread information to user metadata
+                user_metadata['thread_info'] = {
+                    'thread_id': current_user_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
+                }
+                
                 user_message_doc = {
                     'id': user_message_id,
                     'conversation_id': conversation_id,
@@ -2405,6 +2523,10 @@ def register_route_backend_chats(app):
                     'timestamp': datetime.utcnow().isoformat(),
                     'model_deployment_name': None,
                     'metadata': user_metadata,
+                    'thread_id': current_user_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
                 }
                 
                 cosmos_messages_container.upsert_item(user_message_doc)
@@ -2660,6 +2782,9 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
                     
+                    # Sort messages using threading logic
+                    all_messages = sort_messages_by_thread(all_messages)
+                    
                     total_messages = len(all_messages)
                     num_recent_messages = min(total_messages, conversation_history_limit)
                     recent_messages = all_messages[-num_recent_messages:]
@@ -2743,6 +2868,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
                                 yield f"data: {json.dumps({'content': delta.content})}\n\n"
                     
                     # Stream complete - save message and send final metadata
+                    current_assistant_thread_id = str(uuid.uuid4())
+                    
                     assistant_doc = {
                         'id': assistant_message_id,
                         'conversation_id': conversation_id,
@@ -2757,7 +2884,19 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         'model_deployment_name': gpt_model,
                         'agent_display_name': None,
                         'agent_name': None,
-                        'metadata': {'reasoning_effort': reasoning_effort}
+                        'metadata': {
+                            'reasoning_effort': reasoning_effort,
+                            'thread_info': {
+                                'thread_id': current_assistant_thread_id,
+                                'previous_thread_id': latest_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        },
+                        'thread_id': current_assistant_thread_id,
+                        'previous_thread_id': latest_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
@@ -2808,6 +2947,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     
                     # Save partial response if we have content
                     if accumulated_content:
+                        current_assistant_thread_id = str(uuid.uuid4())
+                        
                         assistant_doc = {
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
@@ -2826,7 +2967,11 @@ Assistant: The policy prohibits entities from using federal funds received throu
                                 'incomplete': True,
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort
-                            }
+                            },
+                            'thread_id': current_assistant_thread_id,
+                            'previous_thread_id': latest_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
                         }
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)

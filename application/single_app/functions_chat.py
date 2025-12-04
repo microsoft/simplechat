@@ -171,3 +171,56 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
             f"[SK Loader] Error saving kernel state to Redis: {e}",
             level=logging.ERROR
         )
+
+def sort_messages_by_thread(messages):
+    """
+    Sorts messages based on the thread chain (linked list via thread_id and previous_thread_id).
+    Legacy messages (without thread_id) are placed first, sorted by timestamp.
+    Threaded messages are appended, following the chain.
+    """
+    if not messages:
+        return []
+    
+    # Separate legacy and threaded messages
+    legacy_msgs = [m for m in messages if 'thread_id' not in m]
+    threaded_msgs = [m for m in messages if 'thread_id' in m]
+    
+    # Sort legacy by timestamp
+    legacy_msgs.sort(key=lambda x: x.get('timestamp', ''))
+    
+    if not threaded_msgs:
+        return legacy_msgs
+        
+    # Build map and children list for threaded messages
+    thread_map = {m['thread_id']: m for m in threaded_msgs}
+    children_map = {}
+    for m in threaded_msgs:
+        prev = m.get('previous_thread_id')
+        if prev:
+            if prev not in children_map:
+                children_map[prev] = []
+            children_map[prev].append(m)
+            
+    # Find roots: messages whose previous_thread_id is None OR not in the current set of threaded messages
+    # (This handles the case where a threaded message follows a legacy message)
+    roots = [m for m in threaded_msgs if not m.get('previous_thread_id') or m.get('previous_thread_id') not in thread_map]
+    
+    # Sort roots by timestamp to maintain order of separate chains
+    roots.sort(key=lambda x: x.get('timestamp', ''))
+    
+    ordered_threaded = []
+    
+    def traverse(node):
+        ordered_threaded.append(node)
+        tid = node.get('thread_id')
+        if tid in children_map:
+            children = children_map[tid]
+            # Sort children by timestamp
+            children.sort(key=lambda x: x.get('timestamp', ''))
+            for child in children:
+                traverse(child)
+
+    for root in roots:
+        traverse(root)
+        
+    return legacy_msgs + ordered_threaded

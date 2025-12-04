@@ -247,6 +247,18 @@ def register_route_frontend_chats(app):
                     
                     print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
                     
+                    # Threading logic for file upload
+                    previous_thread_id = None
+                    try:
+                        last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except:
+                        pass
+
+                    current_thread_id = str(uuid.uuid4())
+                    
                     # Create main image document with first chunk
                     main_image_doc = {
                         'id': file_message_id,
@@ -263,8 +275,18 @@ def register_route_frontend_chats(app):
                             'total_chunks': total_chunks,
                             'chunk_index': 0,
                             'original_size': len(image_base64_url),
-                            'is_user_upload': True
-                        }
+                            'is_user_upload': True,
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        },
+                        'thread_id': current_thread_id,
+                        'previous_thread_id': previous_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
                     }
                     
                     # Add vision analysis and extracted text if available
@@ -297,6 +319,18 @@ def register_route_frontend_chats(app):
                     print(f"Created {total_chunks} chunked image documents for {filename}")
                 else:
                     # Small enough to store in single document
+                    # Threading logic for file upload
+                    previous_thread_id = None
+                    try:
+                        last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except:
+                        pass
+
+                    current_thread_id = str(uuid.uuid4())
+                    
                     image_message = {
                         'id': file_message_id,
                         'conversation_id': conversation_id,
@@ -310,8 +344,18 @@ def register_route_frontend_chats(app):
                         'metadata': {
                             'is_chunked': False,
                             'original_size': len(image_base64_url),
-                            'is_user_upload': True
-                        }
+                            'is_user_upload': True,
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        },
+                        'thread_id': current_thread_id,
+                        'previous_thread_id': previous_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
                     }
                     
                     # Add vision analysis and extracted text if available
@@ -324,6 +368,18 @@ def register_route_frontend_chats(app):
                     print(f"Created single image document for {filename}")
             else:
                 # Non-image file or failed to convert to base64, store as 'file' role
+                # Threading logic for file upload
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                    last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except:
+                    pass
+
+                current_thread_id = str(uuid.uuid4())
+                
                 file_message = {
                     'id': file_message_id,
                     'conversation_id': conversation_id,
@@ -332,7 +388,19 @@ def register_route_frontend_chats(app):
                     'file_content': extracted_content,
                     'is_table': is_table,
                     'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None
+                    'model_deployment_name': None,
+                    'metadata': {
+                        'thread_info': {
+                            'thread_id': current_thread_id,
+                            'previous_thread_id': previous_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
+                        }
+                    },
+                    'thread_id': current_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
                 }
                 
                 # Add vision analysis if available
