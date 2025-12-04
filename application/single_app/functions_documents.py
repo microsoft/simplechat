@@ -6,6 +6,7 @@ from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
+from functions_debug import *
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -2989,8 +2990,8 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             'analysis': 'detailed analysis'
         } or None if vision analysis is disabled or fails
     """
-    if not settings.get('enable_multimodal_vision', False):
-        return None
+    debug_print(f"[VISION_ANALYSIS_V2] Function entry - document_id: {document_id}, user_id: {user_id}")
+
         
     try:
         # Convert image to base64
@@ -2998,11 +2999,20 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             image_bytes = img_file.read()
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
+        image_size = len(image_bytes)
+        base64_size = len(base64_image)
+        debug_print(f"[VISION_ANALYSIS] Image conversion for {document_id}:")
+        debug_print(f"  Image path: {image_path}")
+        debug_print(f"  Original size: {image_size:,} bytes ({image_size / 1024 / 1024:.2f} MB)")
+        debug_print(f"  Base64 size: {base64_size:,} characters")
+        
         # Determine image mime type
         mime_type = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        debug_print(f"  MIME type: {mime_type}")
         
         # Get vision model settings
         vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
+        debug_print(f"[VISION_ANALYSIS] Vision model selected: {vision_model}")
         
         if not vision_model:
             print(f"Warning: Multi-modal vision enabled but no model selected")
@@ -3010,45 +3020,76 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
         
         # Initialize client (reuse GPT configuration)
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
         
         if enable_gpt_apim:
+            api_version = settings.get('azure_apim_gpt_api_version')
+            endpoint = settings.get('azure_apim_gpt_endpoint')
+            debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            
             gpt_client = AzureOpenAI(
-                api_version=settings.get('azure_apim_gpt_api_version'),
-                azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                api_version=api_version,
+                azure_endpoint=endpoint,
                 api_key=settings.get('azure_apim_gpt_subscription_key')
             )
         else:
             # Use managed identity or key
             auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+            api_version = settings.get('azure_openai_gpt_api_version')
+            endpoint = settings.get('azure_openai_gpt_endpoint')
+            
+            debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            debug_print(f"  Auth Type: {auth_type}")
+            
             if auth_type == 'managed_identity':
                 token_provider = get_bearer_token_provider(
                     DefaultAzureCredential(), 
                     cognitive_services_scope
                 )
                 gpt_client = AzureOpenAI(
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
                     azure_ad_token_provider=token_provider
                 )
             else:
                 gpt_client = AzureOpenAI(
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
                     api_key=settings.get('azure_openai_gpt_key')
                 )
         
         # Create vision prompt
         print(f"Analyzing image with vision model: {vision_model}")
         
-        response = gpt_client.chat.completions.create(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": """Analyze this image and provide:
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        
+        debug_print(f"[VISION_ANALYSIS] Building API request parameters:")
+        debug_print(f"  Model (lowercase): {vision_model_lower}")
+        
+        # Check which parameter will be used
+        uses_completion_tokens = ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower)
+        debug_print(f"  Uses max_completion_tokens: {uses_completion_tokens}")
+        debug_print(f"  Detection: o1={('o1' in vision_model_lower)}, o3={('o3' in vision_model_lower)}, gpt-5={('gpt-5' in vision_model_lower)}")
+        
+        # Build prompt - GPT-5/reasoning models need explicit JSON instruction when using response_format
+        if uses_completion_tokens:
+            prompt_text = """Analyze this image and respond in JSON format with the following structure:
+{
+  "description": "A detailed description of what you see in the image",
+  "objects": ["list", "of", "objects", "people", "or", "notable", "elements"],
+  "text": "Any visible text extracted from the image (OCR)",
+  "analysis": "Contextual analysis, insights, or interpretation"
+}
+
+Ensure your entire response is valid JSON. Include all four keys even if some are empty strings or empty arrays."""
+        else:
+            prompt_text = """Analyze this image and provide:
 1. A detailed description of what you see
 2. List any objects, people, or notable elements
 3. Extract any visible text (OCR)
@@ -3061,6 +3102,16 @@ Format your response as JSON with these keys:
   "text": "...",
   "analysis": "..."
 }"""
+        
+        api_params = {
+            "model": vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_text
                         },
                         {
                             "type": "image_url",
@@ -3070,37 +3121,129 @@ Format your response as JSON with these keys:
                         }
                     ]
                 }
-            ],
-            max_tokens=1000
-        )
+            ]
+        }
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ About to send request to Azure OpenAI with {vision_model}")
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Using parameter: {'max_completion_tokens' if uses_completion_tokens else 'max_tokens'} = 1000")
+        debug_print(f"[VISION_ANALYSIS] Sending request to Azure OpenAI...")
+        debug_print(f"  Message content types: text + image_url")
+        debug_print(f"  Image data URL prefix: data:{mime_type};base64,... ({base64_size} chars)")
+        
+        response = gpt_client.chat.completions.create(**api_params)
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Response received successfully from {vision_model}")
+        
+        debug_print(f"[VISION_ANALYSIS] Response received from {vision_model}")
+        debug_print(f"  Response ID: {response.id if hasattr(response, 'id') else 'N/A'}")
+        debug_print(f"  Model used: {response.model if hasattr(response, 'model') else 'N/A'}")
+        if hasattr(response, 'usage'):
+            debug_print(f"  Token usage: prompt={response.usage.prompt_tokens if hasattr(response.usage, 'prompt_tokens') else 'N/A'}, completion={response.usage.completion_tokens if hasattr(response.usage, 'completion_tokens') else 'N/A'}, total={response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 'N/A'}")
+        
+        # Debug the response structure to understand why content might be empty
+        debug_print(f"[VISION_ANALYSIS] Response object inspection:")
+        debug_print(f"  Response type: {type(response)}")
+        debug_print(f"  Has choices: {hasattr(response, 'choices')}")
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+            debug_print(f"  Number of choices: {len(response.choices)}")
+            debug_print(f"  First choice type: {type(response.choices[0])}")
+            debug_print(f"  Has message: {hasattr(response.choices[0], 'message')}")
+            if hasattr(response.choices[0], 'message'):
+                debug_print(f"  Message type: {type(response.choices[0].message)}")
+                debug_print(f"  Message content type: {type(response.choices[0].message.content)}")
+                debug_print(f"  Message content is None: {response.choices[0].message.content is None}")
+                # Check for refusal
+                if hasattr(response.choices[0].message, 'refusal'):
+                    debug_print(f"  Message refusal: {response.choices[0].message.refusal}")
+                # Check finish reason
+                if hasattr(response.choices[0], 'finish_reason'):
+                    debug_print(f"  Finish reason: {response.choices[0].finish_reason}")
         
         # Parse response
         content = response.choices[0].message.content
         
-        debug_print(f"[VISION_ANALYSIS] Raw response for {document_id}: {content[:500]}...")
+        # Handle None content
+        if content is None:
+            print(f"[VISION_ANALYSIS_V2] ⚠️ Response content is None!")
+            debug_print(f"[VISION_ANALYSIS] ⚠️ Content is None - checking for refusal or error")
+            if hasattr(response.choices[0].message, 'refusal') and response.choices[0].message.refusal:
+                error_msg = f"Model refused to respond: {response.choices[0].message.refusal}"
+            else:
+                error_msg = "Model returned empty content with no refusal message"
+            
+            return {
+                'description': error_msg,
+                'error': error_msg,
+                'model': vision_model,
+                'parse_failed': True
+            }
+        
+        # Additional debugging for empty string case
+        print(f"[VISION_ANALYSIS_V2] ⚡ Content length: {len(content)}, repr: {repr(content[:200])}")
+        debug_print(f"[VISION_ANALYSIS] Raw response received:")
+        debug_print(f"  Length: {len(content)} characters")
+        debug_print(f"  Content repr: {repr(content)}")
+        debug_print(f"  First 500 chars: {content[:500]}...")
+        debug_print(f"  Last 100 chars: ...{content[-100:] if len(content) > 100 else content}")
+        
+        # Check if response looks like JSON
+        is_json_like = content.strip().startswith('{') or content.strip().startswith('[')
+        has_code_fence = '```' in content
+        debug_print(f"  Starts with JSON bracket: {is_json_like}")
+        debug_print(f"  Contains code fence: {has_code_fence}")
         
         # Try to parse as JSON, fallback to raw text
         try:
             # Clean up potential markdown code fences
+            debug_print(f"[VISION_ANALYSIS] Attempting to clean JSON code fences...")
             content_cleaned = clean_json_codeFence(content)
+            debug_print(f"  Cleaned length: {len(content_cleaned)} characters")
+            debug_print(f"  Cleaned first 200 chars: {content_cleaned[:200]}...")
+            
+            debug_print(f"[VISION_ANALYSIS] Attempting to parse as JSON...")
             vision_analysis = json.loads(content_cleaned)
-            debug_print(f"[VISION_ANALYSIS] Parsed JSON successfully for {document_id}")
+            debug_print(f"[VISION_ANALYSIS] ✅ Successfully parsed JSON response!")
+            debug_print(f"  JSON keys: {list(vision_analysis.keys())}")
+            
         except Exception as parse_error:
-            debug_print(f"[VISION_ANALYSIS] Vision response not valid JSON: {parse_error}")
+            debug_print(f"[VISION_ANALYSIS] ❌ JSON parsing failed!")
+            debug_print(f"  Error type: {type(parse_error).__name__}")
+            debug_print(f"  Error message: {str(parse_error)}")
+            debug_print(f"  Content that failed to parse (first 1000 chars): {content[:1000]}")
             print(f"Vision response not valid JSON, using raw text")
+            
             vision_analysis = {
                 'description': content,
-                'raw_response': content
+                'raw_response': content,
+                'parse_error': str(parse_error),
+                'parse_failed': True
             }
+            debug_print(f"[VISION_ANALYSIS] Created fallback structure with raw response")
         
         # Add model info to analysis
         vision_analysis['model'] = vision_model
         
-        debug_print(f"[VISION_ANALYSIS] Complete analysis for {document_id}:")
+        debug_print(f"[VISION_ANALYSIS] Final analysis structure for {document_id}:")
         debug_print(f"  Model: {vision_model}")
-        debug_print(f"  Description: {vision_analysis.get('description', 'N/A')[:200]}...")
-        debug_print(f"  Objects: {vision_analysis.get('objects', [])}")
-        debug_print(f"  Text: {vision_analysis.get('text', 'N/A')[:100]}...")
+        debug_print(f"  Has 'description': {'description' in vision_analysis}")
+        debug_print(f"  Has 'objects': {'objects' in vision_analysis}")
+        debug_print(f"  Has 'text': {'text' in vision_analysis}")
+        debug_print(f"  Has 'analysis': {'analysis' in vision_analysis}")
+        
+        if 'description' in vision_analysis:
+            desc = vision_analysis['description']
+            debug_print(f"  Description length: {len(desc)} chars")
+            debug_print(f"  Description preview: {desc[:200]}...")
+        
+        if 'objects' in vision_analysis:
+            objs = vision_analysis['objects']
+            debug_print(f"  Objects count: {len(objs) if isinstance(objs, list) else 'not a list'}")
+            debug_print(f"  Objects: {objs}")
+        
+        if 'text' in vision_analysis:
+            txt = vision_analysis['text']
+            debug_print(f"  Text length: {len(txt) if txt else 0} chars")
+            debug_print(f"  Text preview: {txt[:100] if txt else 'None'}...")
         
         print(f"Vision analysis completed for document: {document_id}")
         return vision_analysis
@@ -4478,7 +4621,7 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     if not chunks:
         print(f"[Error] No WAV chunks produced for '{input_path}'.")
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
-    print(f"[Debug] Produced {len(chunks)} WAV chunks: {chunks}")
+    print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
 
 def process_audio_document(
@@ -4509,7 +4652,7 @@ def process_audio_document(
 
     # 1) size guard
     file_size = os.path.getsize(temp_file_path)
-    print(f"[Debug] File size: {file_size} bytes")
+    print(f"File size: {file_size} bytes")
     if file_size > 300 * 1024 * 1024:
         raise ValueError("Audio exceeds 300 MB limit.")
 
@@ -4527,7 +4670,7 @@ def process_audio_document(
     all_phrases: List[str] = []
     for idx, chunk_path in enumerate(chunk_paths, start=1):
         update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-        print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+        print(f"Transcribing WAV chunk: {chunk_path}")
 
         with open(chunk_path, 'rb') as audio_f:
             files = {
@@ -4544,14 +4687,14 @@ def process_audio_document(
 
         result = resp.json()
         phrases = result.get('combinedPhrases', [])
-        print(f"[Debug] Received {len(phrases)} phrases")
+        print(f"Received {len(phrases)} phrases")
         all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
 
     # 4) cleanup WAV chunks
     for p in chunk_paths:
         try:
             os.remove(p)
-            print(f"[Debug] Removed chunk: {p}")
+            print(f"Removed chunk: {p}")
         except Exception as e:
             print(f"[Warning] Could not remove chunk {p}: {e}")
 
@@ -4560,7 +4703,7 @@ def process_audio_document(
     words = full_text.split()
     chunk_size = 400
     total_pages = max(1, math.ceil(len(words) / chunk_size))
-    print(f"[Debug] Creating {total_pages} transcript pages")
+    print(f"Creating {total_pages} transcript pages")
 
     for i in range(total_pages):
         page_text = ' '.join(words[i*chunk_size:(i+1)*chunk_size])

@@ -199,7 +199,7 @@ def before_first_request():
                             turnoff_time = None
                     
                     if turnoff_time and current_time >= turnoff_time:
-                        debug_print(f"[DEBUG]: logging timer expired at {turnoff_time}. Disabling debug logging.")
+                        debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
                         settings['enable_debug_logging'] = False
                         settings['debug_logging_timer_enabled'] = False
                         settings['debug_logging_turnoff_time'] = None

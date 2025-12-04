@@ -1,6 +1,7 @@
 # functions_debug.py
 #
 from app_settings_cache import get_settings_cache
+from functions_settings import *
 
 def debug_print(message):
     """
@@ -9,15 +10,16 @@ def debug_print(message):
     Args:
         message (str): The debug message to print
     """
+    #print(f"DEBUG_PRINT CALLED WITH MESSAGE: {message}")
     try:
         cache = get_settings_cache()
-        if cache and cache.get('enable_debug_logging', False):
-            print(f"DEBUG: {message}")
-
+        if cache.get('enable_debug_logging', False):
+            print(f"[DEBUG]: {message}")
     except Exception:
-        # If there's any error getting settings, don't print debug messages
-        # This prevents crashes in case of configuration issues
-        pass
+        settings = get_settings()
+        if settings.get('enable_debug_logging', False):
+            print(f"[DEBUG]: {message}")
+
 
 def is_debug_enabled():
     """

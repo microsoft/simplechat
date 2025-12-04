@@ -91,7 +91,7 @@ def register_route_backend_users(app):
                 item=user_id,
                 partition_key=user_id
             )
-            print(f"[DEBUG] /api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            print(f"/api/user/info/{user_id} → doc: {user_doc}", flush=True)
             return jsonify({
                 "user_id": user_id,
                 "email": user_doc.get("email", ""),

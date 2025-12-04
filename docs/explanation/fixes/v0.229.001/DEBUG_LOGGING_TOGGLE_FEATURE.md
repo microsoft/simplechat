@@ -8,7 +8,7 @@ A new feature that allows administrators to enable or disable debug print statem
 **Fixed/Implemented in version: 0.228.015**
 
 ## Problem Solved
-Previously, debug print statements using `debug_debug_print(f"[DEBUG]:: ...")` were hardcoded throughout the application and could not be turned on or off without code changes. This made it difficult to:
+Previously, debug print statements using `debug_debug_print(f"...")` were hardcoded throughout the application and could not be turned on or off without code changes. This made it difficult to:
 - Control debug output in production environments
 - Enable debugging only when needed for troubleshooting
 - Reduce console noise during normal operation
@@ -50,7 +50,7 @@ Added a new toggle in the admin settings Logging tab:
 Replace existing debug prints:
 ```python
 # Before:
-debug_debug_print(f"[DEBUG]:: Some debug message")
+debug_debug_print(f"Some debug message")
 
 # After:
 from functions_debug import debug_print
@@ -82,7 +82,7 @@ debug_print("Some debug message")
 
 ### For Developers
 1. Import the debug function: `from functions_debug import debug_print`
-2. Replace `debug_debug_print(f"[DEBUG]:: message")` with `debug_print("message")`
+2. Replace `debug_debug_print(f"message")` with `debug_print("message")`
 3. Use `is_debug_enabled()` for conditional debug blocks
 
 ## Benefits
@@ -101,7 +101,7 @@ debug_print("Some debug message")
 - Real-time control verification
 
 ## Migration Path
-Existing `debug_debug_print(f"[DEBUG]:: ...")` statements can be:
+Existing `debug_debug_print(f"...")` statements can be:
 1. Left as-is (they will still work)
 2. Gradually migrated to use `debug_print()` 
 3. Updated during future code maintenance

@@ -2595,7 +2595,17 @@ function maskSelection(messageDiv, messageId, selection, messageText, maskBtn) {
       span.setAttribute('data-display-name', userDisplayName);
       span.title = `Masked by ${userDisplayName}`;
       
-      range.surroundContents(span);
+      // Use extractContents and insertNode to handle complex selections
+      try {
+        const contents = range.extractContents();
+        span.appendChild(contents);
+        range.insertNode(span);
+      } catch (e) {
+        console.error('Error wrapping selection:', e);
+        // Fallback: reload the message to show the masked content
+        location.reload();
+        return;
+      }
       selection.removeAllRanges();
       
       // Update mask button

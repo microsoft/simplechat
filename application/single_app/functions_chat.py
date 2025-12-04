@@ -26,7 +26,7 @@ def load_user_kernel(user_id, redis_client):
     )
     try:
         kernel_state = json.loads(kernel_state_json)
-        log_event(f"[SK Loader][DEBUG] Loaded kernel state from Redis for user {user_id}.")
+        log_event(f"[SK Loader] Loaded kernel state from Redis for user {user_id}.")
         kernel = Kernel()
         # Restore kernel config if possible
         kernel_config = kernel_state.get('kernel_config')
@@ -154,7 +154,7 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
         }
         redis_client.set(f"sk:state:{user_id}", json.dumps(state, default=str))
         log_event(
-            f"[SK Loader][DEBUG] Saved kernel state snapshot to Redis for user {user_id}.",
+            f"[SK Loader] Saved kernel state snapshot to Redis for user {user_id}.",
             extra={
                 "user_id": user_id,
                 'services': kernel_services,

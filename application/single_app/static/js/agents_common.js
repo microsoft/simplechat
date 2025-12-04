@@ -205,19 +205,19 @@ export async function loadGlobalModelsForModal({
 export function setupApimToggle(apimToggle, apimFields, gptFields, onToggle) {
 	if (!apimToggle || !apimFields || !gptFields) return;
 	function updateApimFieldsVisibility() {
-		console.log('[DEBUG] updateApimFieldsVisibility fired. apimToggle.checked:', apimToggle.checked);
+		console.log('updateApimFieldsVisibility fired. apimToggle.checked:', apimToggle.checked);
 		if (apimToggle.checked) {
 			apimFields.style.display = 'block';
 			gptFields.style.display = 'none';
 			apimFields.classList.remove('d-none');
 			gptFields.classList.add('d-none');
-			console.log('[DEBUG] Showing APIM fields, hiding GPT fields.');
+			console.log('Showing APIM fields, hiding GPT fields.');
 		} else {
 			apimFields.style.display = 'none';
 			gptFields.style.display = 'block';
 			gptFields.classList.remove('d-none');
 			apimFields.classList.add('d-none');
-			console.log('[DEBUG] Hiding APIM fields, showing GPT fields.');
+			console.log('Hiding APIM fields, showing GPT fields.');
 		}
 		if (typeof onToggle === 'function') {
 			onToggle();
@@ -368,7 +368,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 	} else {
 		// Otherwise use gpt_model.selected (array)
 		let rawModels = (settings && settings.gpt_model && settings.gpt_model.selected) ? settings.gpt_model.selected : [];
-		console.log('[DEBUG] Raw models:', rawModels);
+		console.log('Raw models:', rawModels);
 		// Normalize: map deploymentName/modelName to deployment/name if present
 		models = rawModels.map(m => {
 			if (m.deploymentName || m.modelName) {
@@ -381,7 +381,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 			return m;
 		});
 		selectedModel = agent && agent.azure_openai_gpt_deployment ? agent.azure_openai_gpt_deployment : null;
-		console.log('[DEBUG] Available models:', selectedModel);
+		console.log('Available models:', selectedModel);
 	}
 	return { models, selectedModel };
 }

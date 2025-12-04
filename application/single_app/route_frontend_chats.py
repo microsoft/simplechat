@@ -8,6 +8,7 @@ from functions_documents import *
 from functions_group import find_group_by_id
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])

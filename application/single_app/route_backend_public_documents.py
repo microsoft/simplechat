@@ -8,6 +8,7 @@ from functions_public_workspaces import *
 from functions_documents import *
 from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
+from functions_debug import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_public_documents(app):
