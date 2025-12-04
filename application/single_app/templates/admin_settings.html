@@ -1,7 +1,5 @@
 {% extends "base.html" %}
-{% block title %}
-    Admin Settings - {{ app_settings.app_title }}
-{% endblock %}
+{% block title %}Admin Settings - {{ app_settings.app_title }}{% endblock %}
 
 {% block head %}
     <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simplemde/dist/simplemde.min.css">
@@ -87,6 +85,69 @@
 {% endblock %}
 
 {% block content %}
+<div class="modal fade" id="agentTemplateReviewModal" tabindex="-1" aria-labelledby="agentTemplateReviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="me-3">
+                    <h5 class="modal-title mb-0" id="agentTemplateReviewModalLabel">Agent Template</h5>
+                    <small class="text-muted d-block" id="agent-template-review-subtitle"></small>
+                </div>
+                <span class="badge bg-secondary" id="agent-template-review-status">Pending</span>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="agent-template-review-error" class="alert alert-danger d-none"></div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Helper Text</label>
+                    <p class="mb-1" id="agent-template-review-helper">-</p>
+                    <div class="small text-muted" id="agent-template-review-meta"></div>
+                </div>
+                <div class="mb-3 d-flex flex-wrap gap-2" id="agent-template-review-tags"></div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Description</label>
+                    <p id="agent-template-review-description" class="mb-0"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="fw-semibold text-muted small">Instructions</label>
+                    <pre class="bg-dark text-white rounded p-3" id="agent-template-review-instructions"></pre>
+                </div>
+                <div class="mb-3 d-none" id="agent-template-review-settings-wrapper">
+                    <label class="fw-semibold text-muted small">Additional Settings</label>
+                    <pre class="bg-light border rounded p-3" id="agent-template-review-settings"></pre>
+                </div>
+                <div class="mb-3 d-none" id="agent-template-review-actions-wrapper">
+                    <label class="fw-semibold text-muted small">Recommended Actions</label>
+                    <div id="agent-template-review-actions" class="d-flex flex-wrap gap-2"></div>
+                </div>
+                <div class="mb-3">
+                    <label for="agent-template-review-notes" class="form-label">Reviewer notes (optional)</label>
+                    <textarea class="form-control" id="agent-template-review-notes" rows="2" placeholder="Add guidance for the submitter or other admins..."></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="agent-template-reject-reason" class="form-label">Rejection reason</label>
+                    <textarea class="form-control" id="agent-template-reject-reason" rows="2" placeholder="Required when rejecting a template." aria-describedby="agent-template-reject-help"></textarea>
+                    <div class="form-text" id="agent-template-reject-help">Write clear, descriptive feedback so any admin can explain the rejection to the submitter, and plan to notify the user directly.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-danger me-auto" id="agent-template-delete-btn">
+                    <i class="bi bi-trash"></i>
+                    Delete
+                </button>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-outline-danger" id="agent-template-reject-btn">
+                    <i class="bi bi-x-circle"></i>
+                    Reject
+                </button>
+                <button type="button" class="btn btn-success" id="agent-template-approve-btn">
+                    <i class="bi bi-check-circle"></i>
+                    Approve
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 <div id="index-warning-user" class="alert alert-warning" style="display:none;">
     <strong>⚠️ User-index schema mismatch:</strong>
     Missing fields: <span id="missing-fields-user"></span>
@@ -600,6 +661,11 @@
                                     <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
                                 </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agent-template-gallery" name="enable_agent_template_gallery" {% if settings.enable_agent_template_gallery %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-enable-agent-template-gallery">Enable Agent Template Gallery</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to browse approved templates and submit their own for review."></i>
+                                </div>
                             </div>
                             <!-- End Agent Feature Flags -->
                             
@@ -657,6 +723,88 @@
                         </table>
                     </div>
                 {% endif %}
+                </div>
+
+                <!-- Agent Template Submissions Section -->
+                <div class="card p-3 mb-4" id="agent-templates-admin-panel">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-layers me-2"></i>Agent Template Gallery
+                            </h5>
+                            <p class="text-muted small mb-0">Approve community templates before they appear in the gallery.</p>
+                        </div>
+                        <div class="btn-group btn-group-sm" role="group" id="agent-template-status-filters">
+                            <button type="button" class="btn btn-outline-secondary active" data-status="pending">Pending</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="approved">Approved</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="rejected">Rejected</button>
+                            <button type="button" class="btn btn-outline-secondary" data-status="all">All</button>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-submissions" name="agent_templates_allow_user_submission" {% if settings.agent_templates_allow_user_submission %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-submissions">Allow User Template Submissions</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to submit their custom agents for review."></i>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-approval" name="agent_templates_require_approval" {% if settings.agent_templates_require_approval %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-approval">Require Admin Approval</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Keep user submissions pending until an admin approves them."></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 align-items-end mb-3">
+                        <div class="col-lg-6">
+                            <label for="agent-template-search" class="form-label mb-1">Search templates</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="search" class="form-control" id="agent-template-search" placeholder="Search by template name or submitter">
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="form-text">Matches template titles, display names, and submitter names/emails.</div>
+                        </div>
+                    </div>
+                    <div class="alert alert-info d-none" id="agent-templates-disabled-alert">
+                        <div class="d-flex gap-2 align-items-start">
+                            <i class="bi bi-info-circle"></i>
+                            <div>
+                                <strong>Template gallery is disabled.</strong>
+                                <div>Enable it under Global Agent Feature Toggles (and allow submissions) to collect templates.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle" id="agent-templates-table">
+                            <thead>
+                                <tr>
+                                    <th>Template</th>
+                                    <th>Status</th>
+                                    <th>Submitted By</th>
+                                    <th>Updated</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agent-template-table-body">
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">
+                                        <div class="spinner-border spinner-border-sm me-2" role="status"><span class="visually-hidden">Loading...</span></div>
+                                        Loading templates...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mt-2">
+                        <div class="text-muted small" id="agent-template-pagination-summary"></div>
+                        <nav id="agent-template-pagination-nav" aria-label="Template pagination">
+                            <ul class="pagination pagination-sm mb-0" id="agent-template-pagination"></ul>
+                        </nav>
+                    </div>
                 </div>
 
                 <!-- Actions Configuration Section -->
@@ -3137,6 +3285,7 @@
 {% if settings.enable_semantic_kernel %}
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_agents.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_agent_templates.js') }}"></script>
 {% endif %}
 
 <!-- Script to update the walkthrough steps based on form changes -->

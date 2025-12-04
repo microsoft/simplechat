@@ -1561,14 +1561,6 @@ def register_route_backend_chats(app):
                             }
                         )
 
-                        # print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
-                        # print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
-                        # for citation in detailed_citations:
-                        #     print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
-                        #     print(f"  Parameters: {citation['function_arguments']}")
-                        #     print(f"  Result: {citation['function_result']}")
-                        #     print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
-
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
                         
@@ -1588,12 +1580,101 @@ def register_route_backend_chats(app):
                             level=logging.ERROR,
                             exceptionTraceback=True
                         )
-                    fallback_steps.append({
-                        'name': 'agent',
-                        'func': invoke_selected_agent,
-                        'on_success': agent_success,
-                        'on_error': agent_error
-                    })
+
+                    selected_agent_type = getattr(selected_agent, 'agent_type', 'local') or 'local'
+                    if isinstance(selected_agent_type, str):
+                        selected_agent_type = selected_agent_type.lower()
+
+                    if selected_agent_type == 'aifoundry':
+                        def invoke_foundry_agent():
+                            foundry_metadata = {
+                                'conversation_id': conversation_id,
+                                'user_id': user_id,
+                                'message_id': user_message_id,
+                                'chat_type': chat_type,
+                                'document_scope': document_scope,
+                                'group_id': active_group_id if chat_type == 'group' else None,
+                                'hybrid_search_enabled': hybrid_search_enabled,
+                                'selected_document_id': selected_document_id,
+                                'search_query': search_query,
+                            }
+                            return selected_agent.invoke(
+                                agent_message_history,
+                                metadata={k: v for k, v in foundry_metadata.items() if v is not None}
+                            )
+
+                        def foundry_agent_success(result):
+                            msg = str(result)
+                            notice = None
+                            agent_used = getattr(selected_agent, 'name', 'Azure AI Foundry Agent')
+                            actual_model_deployment = (
+                                getattr(selected_agent, 'last_run_model', None)
+                                or getattr(selected_agent, 'deployment_name', None)
+                                or agent_used
+                            )
+
+                            foundry_citations = getattr(selected_agent, 'last_run_citations', []) or []
+                            if foundry_citations:
+                                for citation in foundry_citations:
+                                    try:
+                                        serializable = json.loads(json.dumps(citation, default=str))
+                                    except (TypeError, ValueError):
+                                        serializable = {'value': str(citation)}
+                                    agent_citations_list.append({
+                                        'tool_name': agent_used,
+                                        'function_name': 'azure_ai_foundry_citation',
+                                        'plugin_name': 'azure_ai_foundry',
+                                        'function_arguments': serializable,
+                                        'function_result': serializable,
+                                        'timestamp': datetime.utcnow().isoformat(),
+                                        'success': True
+                                    })
+
+                            if enable_multi_agent_orchestration and not per_user_semantic_kernel:
+                                notice = (
+                                    "[SK Fallback]: The AI assistant is running in single agent fallback mode. "
+                                    "Some advanced features may not be available. "
+                                    "Please contact your administrator to configure Semantic Kernel for richer responses."
+                                )
+
+                            log_event(
+                                f"[Foundry Agent] Invocation complete for {agent_used}",
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'user_id': user_id,
+                                    'agent_id': getattr(selected_agent, 'id', None),
+                                    'model_used': actual_model_deployment,
+                                    'citation_count': len(foundry_citations),
+                                }
+                            )
+
+                            return (msg, actual_model_deployment, 'agent', notice)
+
+                        def foundry_agent_error(e):
+                            log_event(
+                                f"Error during Azure AI Foundry agent invocation: {str(e)}",
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'user_id': user_id,
+                                    'agent_id': getattr(selected_agent, 'id', None)
+                                },
+                                level=logging.ERROR,
+                                exceptionTraceback=True
+                            )
+
+                        fallback_steps.append({
+                            'name': 'foundry_agent',
+                            'func': invoke_foundry_agent,
+                            'on_success': foundry_agent_success,
+                            'on_error': foundry_agent_error
+                        })
+                    else:
+                        fallback_steps.append({
+                            'name': 'agent',
+                            'func': invoke_selected_agent,
+                            'on_success': agent_success,
+                            'on_error': agent_error
+                        })
 
                 if kernel:
                     def invoke_kernel():

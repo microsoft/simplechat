@@ -147,6 +147,12 @@ def register_route_frontend_admin_settings(app):
             settings['allow_group_custom_agent_endpoints'] = False
         if 'allow_group_plugins' not in settings:
             settings['allow_group_plugins'] = False
+        if 'enable_agent_template_gallery' not in settings:
+            settings['enable_agent_template_gallery'] = True
+        if 'agent_templates_allow_user_submission' not in settings:
+            settings['agent_templates_allow_user_submission'] = True
+        if 'agent_templates_require_approval' not in settings:
+            settings['agent_templates_require_approval'] = True
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -497,6 +503,9 @@ def register_route_frontend_admin_settings(app):
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
+                'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
+                'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',

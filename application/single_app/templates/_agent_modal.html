@@ -423,6 +423,10 @@
       </div>
       
       <div class="modal-footer">
+        <button type="button" class="btn btn-outline-success d-none me-auto" id="agent-modal-submit-template-btn">
+          <i class="bi bi-upload"></i>
+          Submit Template
+        </button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-outline-secondary d-none" id="agent-modal-prev">Previous</button>
         <button type="button" class="btn btn-outline-primary d-none" id="agent-modal-skip">Skip to End</button>
@@ -845,3 +849,4 @@ document.addEventListener('DOMContentLoaded', function () {
 
 {% include '_agent_config_info.html' %}
 {% include '_agent_examples_modal.html' %}
+<script type="module" src="{{ url_for('static', filename='js/agent_templates_gallery.js') }}"></script>

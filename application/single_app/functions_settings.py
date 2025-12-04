@@ -40,6 +40,9 @@ def get_settings(use_cosmos=False):
         'allow_user_plugins': False,
         'allow_group_agents': False,
         'allow_group_custom_agent_endpoints': False,
+        'enable_agent_template_gallery': True,
+        'agent_templates_allow_user_submission': True,
+        'agent_templates_require_approval': True,
         'allow_group_plugins': False,
         'id': 'app_settings',
         # Control Center settings

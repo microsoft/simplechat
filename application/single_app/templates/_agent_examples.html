@@ -1,74 +1,45 @@
 {% macro agent_examples(accordion_id='agentExamples', show_copy_buttons=True, show_create_buttons=False) %}
-{% set examples = [
-  {
-    "key": "research",
-    "title": "General Research Agent",
-    "helper": "Summaries, citations, and policy-safe answers.",
-    "display_name": "Policy Research Assistant",
-    "description": "Summarizes internal policy documents with citations and highlights escalations when answers require legal review.",
-    "additional_settings": "",
-    "instructions": "You are a research assistant specialized in internal policy documents.\n- Always cite the document title and section when sharing facts.\n- Ask for clarification if the question lacks enough context.\n- Never speculate about topics outside of the shared corpus; respond with \"I don't have that information\".\n- Summaries must include a short bullet list of key takeaways.\n- Escalate to a human if the user requests legal or HR decisions."
-  },
-  {
-    "key": "data-extraction",
-    "title": "Data Extraction Agent",
-    "helper": "Great for SQL or API driven reporting.",
-    "display_name": "Operations Data Extractor",
-    "description": "Runs parameterized queries, returns markdown tables, and documents any data quality issues discovered during extraction.",
-    "additional_settings": "{\"response_format\": \"table\"}",
-    "instructions": "You extract structured data for analysts.\n- Confirm the filters (date range, region, product) before running any query.\n- Use the provided SQL/OpenAPI actions and include the action name in your explanation.\n- Return answers as markdown tables with a short narrative summary beneath.\n- Highlight potential data quality issues or empty result sets.\n- If a question requires personally identifiable information, refuse and cite policy."
-  },
-  {
-    "key": "compliance",
-    "title": "Compliance & Policy Agent",
-    "helper": "Best for approvals and guardrails.",
-    "display_name": "Compliance Review Partner",
-    "description": "Restates each request with the applicable regulation and delivers an Approve/Block/Needs Review verdict with rationale.",
-    "additional_settings": "{\"requires_review_log\": true}",
-    "instructions": "You audit requests for compliance.\n- Start by restating the user's request and the applicable regulation.\n- Cross-check every answer with the official compliance handbook.\n- If the policy is ambiguous, collect more details before responding.\n- Provide a final verdict (Approve, Block, Needs Review) with rationale.\n- Escalate immediately if sensitive data or privileged credentials are detected."
-  }
-] %}
-<div class="accordion" id="{{ accordion_id }}">
-  {% for example in examples %}
-    {% set collapse_id = accordion_id ~ '-collapse-' ~ loop.index %}
-    {% set heading_id = accordion_id ~ '-heading-' ~ loop.index %}
-    {% set payload = {
-      'display_name': example.display_name,
-      'description': example.description,
-      'instructions': example.instructions,
-      'additional_settings': example.additional_settings
-    } %}
-    <div class="accordion-item">
-      <h2 class="accordion-header" id="{{ heading_id }}">
-        <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}">
-          {{ example.title }}
-        </button>
-      </h2>
-      <div id="{{ collapse_id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" aria-labelledby="{{ heading_id }}" data-bs-parent="#{{ accordion_id }}">
-        <div class="accordion-body">
-          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-            <div class="small text-muted">{{ example.helper }}</div>
-            <div class="d-flex gap-2">
-              {% if show_copy_buttons %}
-              <button class="btn btn-sm btn-outline-secondary" type="button" onclick="copyAgentInstructionSample('{{ collapse_id }}-code')">
-                <i class="bi bi-clipboard"></i>
-                Copy
-              </button>
-              {% endif %}
-              {% if show_create_buttons %}
-              <button class="btn btn-sm btn-success agent-example-create-btn" type="button" data-agent-example='{{ payload | tojson | e }}'>
-                <i class="bi bi-plus-circle"></i>
-                Create Agent
-              </button>
-              {% endif %}
-            </div>
-          </div>
-          <p class="mb-2 text-muted small">Suggested display name: <strong>{{ example.display_name }}</strong></p>
-          <p class="mb-3">{{ example.description }}</p>
-          <pre class="bg-dark text-white p-3 rounded" id="{{ collapse_id }}-code">{{ example.instructions }}</pre>
-        </div>
+<div class="agent-template-gallery"
+     data-accordion-id="{{ accordion_id }}"
+     data-show-copy="{{ 'true' if show_copy_buttons else 'false' }}"
+     data-show-create="{{ 'true' if show_create_buttons else 'false' }}">
+  <div class="agent-template-gallery-loading py-4 text-center">
+    <div class="spinner-border" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="text-muted mt-3 mb-0">Loading agent templates...</p>
+  </div>
+
+  <div class="alert alert-warning d-none agent-template-gallery-empty" role="status">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-inbox"></i>
+      <div>
+        <strong>No templates yet.</strong>
+        <div>Be the first to submit a reusable agent configuration.</div>
       </div>
     </div>
-  {% endfor %}
+  </div>
+
+  <div class="alert alert-info d-none agent-template-gallery-disabled" role="alert">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-sliders"></i>
+      <div>
+        <strong>Agent template gallery is disabled.</strong>
+        <div>Ask an admin to enable the feature in Admin &gt; Agents.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-danger d-none agent-template-gallery-error" role="alert">
+    <div class="d-flex align-items-start gap-2">
+      <i class="bi bi-exclamation-triangle"></i>
+      <div>
+        <strong>Unable to load agent templates.</strong>
+        <div class="agent-template-gallery-error-text">Please try again in a few moments.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="accordion d-none" id="{{ accordion_id }}"></div>
 </div>
 {% endmacro %}

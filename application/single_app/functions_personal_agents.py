@@ -18,6 +18,7 @@ import logging
 from config import cosmos_personal_agents_container
 from functions_settings import get_settings, get_user_settings, update_user_settings
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_agent_payload import sanitize_agent_payload
 
 def get_personal_agents(user_id):
     """
@@ -104,36 +105,32 @@ def save_personal_agent(user_id, agent_data):
         dict: Saved agent data with ID
     """
     try:
-        # Ensure required fields
-        if 'id' not in agent_data:
-            agent_data['id'] = str(f"{user_id}_{agent_data.get('name', 'default')}")
+        cleaned_agent = sanitize_agent_payload(agent_data)
+        for field in ['name', 'display_name', 'description', 'instructions']:
+            cleaned_agent.setdefault(field, '')
+        for field in [
+            'azure_openai_gpt_endpoint',
+            'azure_openai_gpt_key',
+            'azure_openai_gpt_deployment',
+            'azure_openai_gpt_api_version',
+            'azure_agent_apim_gpt_endpoint',
+            'azure_agent_apim_gpt_subscription_key',
+            'azure_agent_apim_gpt_deployment',
+            'azure_agent_apim_gpt_api_version'
+        ]:
+            cleaned_agent.setdefault(field, '')
+        if 'id' not in cleaned_agent:
+            cleaned_agent['id'] = str(f"{user_id}_{cleaned_agent.get('name', 'default')}")
             
-        agent_data['user_id'] = user_id
-        agent_data['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['user_id'] = user_id
+        cleaned_agent['last_updated'] = datetime.utcnow().isoformat()
+        cleaned_agent['is_global'] = False
+        cleaned_agent['is_group'] = False
         
-        # Validate required fields
-        required_fields = ['name', 'display_name', 'description', 'instructions']
-        for field in required_fields:
-            if field not in agent_data:
-                agent_data[field] = ''
-                
-        # Set defaults for optional fields
-        agent_data.setdefault('azure_openai_gpt_deployment', '')
-        agent_data.setdefault('azure_openai_gpt_api_version', '')
-        agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
-        agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
-        agent_data.setdefault('enable_agent_gpt_apim', False)
-        agent_data.setdefault('actions_to_load', [])
-        agent_data.setdefault('other_settings', {})
-        agent_data['is_global'] = False
-        agent_data['is_group'] = False
-        agent_data.setdefault('agent_type', 'local')
-        
-        # Store sensitive keys in Key Vault if enabled
-        agent_data = keyvault_agent_save_helper(agent_data, agent_data.get('id', ''), scope="user")
-        if agent_data.get('max_completion_tokens') is None:
-            agent_data['max_completion_tokens'] = -1
-        result = cosmos_personal_agents_container.upsert_item(body=agent_data)
+        cleaned_agent = keyvault_agent_save_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+        if cleaned_agent.get('max_completion_tokens') is None:
+            cleaned_agent['max_completion_tokens'] = -1
+        result = cosmos_personal_agents_container.upsert_item(body=cleaned_agent)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
         cleaned_result.setdefault('is_global', False)

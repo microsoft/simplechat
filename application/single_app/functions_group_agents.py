@@ -16,6 +16,7 @@ from functions_keyvault import (
     keyvault_agent_get_helper,
     keyvault_agent_save_helper,
 )
+from functions_agent_payload import sanitize_agent_payload
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -64,8 +65,8 @@ def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
 
 def save_group_agent(group_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any]:
     """Create or update a group agent entry."""
-    agent_id = agent_data.get("id") or str(uuid.uuid4())
-    payload = dict(agent_data)
+    payload = sanitize_agent_payload(agent_data)
+    agent_id = payload.get("id") or str(uuid.uuid4())
     payload["id"] = agent_id
     payload["group_id"] = group_id
     payload["last_updated"] = datetime.utcnow().isoformat()

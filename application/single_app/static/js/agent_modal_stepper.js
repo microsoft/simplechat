@@ -12,8 +12,13 @@ export class AgentModalStepper {
     this.originalAgent = null;  // Track original state for change detection
     this.actionsToSelect = null; // Store actions to select when they're loaded
     this.updateStepIndicatorTimeout = null; // For debouncing step indicator updates
+    this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
     
     this.bindEvents();
+
+    if (this.templateSubmitButton) {
+      this.templateSubmitButton.addEventListener('click', () => this.submitTemplate());
+    }
   }
 
   bindEvents() {
@@ -129,6 +134,7 @@ export class AgentModalStepper {
           this.updateStepIndicator();
           this.showStep(1);
           this.updateNavigationButtons();
+          this.updateTemplateButtonVisibility();
           console.log('Step indicators initialized');
         } else {
           // Modal not ready yet, try again
@@ -309,6 +315,7 @@ export class AgentModalStepper {
     this.showStep(stepNumber);
     this.updateStepIndicator();
     this.updateNavigationButtons();
+    this.updateTemplateButtonVisibility();
   }
 
   showStep(stepNumber) {
@@ -438,6 +445,27 @@ export class AgentModalStepper {
       if (nextBtn) nextBtn.classList.remove('d-none');
       if (saveBtn) saveBtn.classList.add('d-none');
     }
+  }
+
+  canSubmitTemplate() {
+    if (!window.appSettings || !window.appSettings.enable_agent_template_gallery) {
+      return false;
+    }
+    if (this.isAdmin) {
+      return true;
+    }
+    if (window.appSettings.allow_user_agents === false) {
+      return false;
+    }
+    return window.appSettings.agent_templates_allow_user_submission !== false;
+  }
+
+  updateTemplateButtonVisibility() {
+    if (!this.templateSubmitButton) {
+      return;
+    }
+    const shouldShow = this.canSubmitTemplate() && this.currentStep === this.maxSteps;
+    this.templateSubmitButton.classList.toggle('d-none', !shouldShow);
   }
 
   validateCurrentStep() {
@@ -1393,6 +1421,100 @@ export class AgentModalStepper {
     // Show success message
     if (window.showToast) {
       window.showToast(`Agent ${this.isEditMode ? 'updated' : 'created'} successfully!`, 'success');
+    }
+  }
+
+  validateTemplateRequirements() {
+    const displayName = document.getElementById('agent-display-name');
+    const description = document.getElementById('agent-description');
+    const instructions = document.getElementById('agent-instructions');
+
+    if (!displayName || !displayName.value.trim()) {
+      this.showError('Please add a display name before submitting a template.');
+      displayName?.focus();
+      return false;
+    }
+
+    if (!description || !description.value.trim()) {
+      this.showError('Please add a description before submitting a template.');
+      description?.focus();
+      return false;
+    }
+
+    if (!instructions || !instructions.value.trim()) {
+      this.showError('Instructions are required before submitting a template.');
+      instructions?.focus();
+      return false;
+    }
+
+    this.hideError();
+    return true;
+  }
+
+  buildTemplatePayload() {
+    const displayName = document.getElementById('agent-display-name')?.value?.trim() || '';
+    const description = document.getElementById('agent-description')?.value?.trim() || '';
+    const instructions = document.getElementById('agent-instructions')?.value || '';
+    const additionalSettings = document.getElementById('agent-additional-settings')?.value || '';
+
+    return {
+      title: displayName || 'Agent Template',
+      display_name: displayName || 'Agent Template',
+      description,
+      helper_text: description,
+      instructions,
+      additional_settings: additionalSettings,
+      actions_to_load: this.getSelectedActionIds(),
+      source_agent_id: this.originalAgent?.id,
+      source_scope: this.isAdmin ? 'global' : 'personal'
+    };
+  }
+
+  async submitTemplate() {
+    if (!this.canSubmitTemplate()) {
+      showToast('Template submissions are disabled right now.', 'warning');
+      return;
+    }
+
+    if (!this.validateTemplateRequirements()) {
+      return;
+    }
+
+    const button = this.templateSubmitButton;
+    if (!button) {
+      return;
+    }
+
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Submitting...';
+
+    try {
+      const payload = { template: this.buildTemplatePayload() };
+      const response = await fetch('/api/agent-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit agent template.');
+      }
+
+      const status = data.template?.status;
+      const successMessage = (this.isAdmin && status === 'approved')
+        ? 'Template published to the gallery!'
+        : 'Template submitted for review.';
+      showToast(successMessage, 'success');
+      this.hideError();
+    } catch (error) {
+      console.error('Template submission failed:', error);
+      this.showError(error.message || 'Failed to submit template.');
+      showToast(error.message || 'Failed to submit template.', 'error');
+    } finally {
+      button.disabled = false;
+      button.innerHTML = originalHtml;
     }
   }
 }

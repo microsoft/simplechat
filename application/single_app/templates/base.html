@@ -286,7 +286,20 @@
 
   <!-- App settings for JS -->
   <script>
+    window.userContext = {{ {
+      'id': session.get('user', {}).get('oid'),
+      'displayName': session.get('user', {}).get('name'),
+      'email': session.get('user', {}).get('preferred_username'),
+      'roles': session.get('user', {}).get('roles', [])
+    } | tojson | safe }};
+    window.currentUserIsAdmin = Array.isArray(window.userContext?.roles)
+      ? window.userContext.roles.includes('Admin')
+      : false;
+    if (!window.current_user_id && window.userContext?.id) {
+      window.current_user_id = window.userContext.id;
+    }
     const appSettings = {{ app_settings|tojson|safe }};
+    window.appSettings = appSettings;
   </script>
 
   <!-- Prism.js syntax highlighting script -->
