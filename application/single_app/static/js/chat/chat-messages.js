@@ -1870,223 +1870,174 @@ function formatMetadataForDrawer(metadata) {
   
   // User Information Section
   if (metadata.user_info) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">User Information</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-person me-2"></i>User Information</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.user_info.display_name) {
-      content += `<div class="metadata-item">
-        <strong>User:</strong> ${escapeHtml(metadata.user_info.display_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">User:</span> <span class="ms-2">${escapeHtml(metadata.user_info.display_name)}</span></div>`;
     }
     
     if (metadata.user_info.email) {
-      content += `<div class="metadata-item">
-        <strong>Email:</strong> ${escapeHtml(metadata.user_info.email)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Email:</span> <span class="ms-2">${escapeHtml(metadata.user_info.email)}</span></div>`;
     }
     
     if (metadata.user_info.username) {
-      content += `<div class="metadata-item">
-        <strong>Username:</strong> ${escapeHtml(metadata.user_info.username)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Username:</span> <span class="ms-2">${escapeHtml(metadata.user_info.username)}</span></div>`;
     }
     
     if (metadata.user_info.timestamp) {
       const date = new Date(metadata.user_info.timestamp);
-      content += `<div class="metadata-item">
-        <strong>Timestamp:</strong> ${escapeHtml(date.toLocaleString())}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${escapeHtml(date.toLocaleString())}</code></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Thread Information Section (priority display)
   if (metadata.thread_info) {
     const ti = metadata.thread_info;
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2"><i class="bi bi-diagram-3 me-1"></i>Thread Information</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
+    content += '<div class="ms-3 small">';
     
-    content += `<div class="metadata-item">
-      <strong>Thread ID:</strong> <code>${escapeHtml(ti.thread_id || 'N/A')}</code>
-    </div>`;
+    content += `<div class="mb-1"><span class="text-muted">Thread ID:</span> <code class="ms-2">${escapeHtml(ti.thread_id || 'N/A')}</code></div>`;
     
-    content += `<div class="metadata-item">
-      <strong>Previous Thread:</strong> <code>${escapeHtml(ti.previous_thread_id || 'None')}</code>
-    </div>`;
+    content += `<div class="mb-1"><span class="text-muted">Previous Thread:</span> <code class="ms-2">${escapeHtml(ti.previous_thread_id || 'None')}</code></div>`;
     
     const activeThreadBadge = ti.active_thread ? 
-      '<span class="badge bg-success">Active</span>' : 
-      '<span class="badge bg-secondary">Inactive</span>';
-    content += `<div class="metadata-item">
-      <strong>Active Thread:</strong> ${activeThreadBadge}
-    </div>`;
+      '<span class="badge bg-success">Yes</span>' : 
+      '<span class="badge bg-secondary">No</span>';
+    content += `<div class="mb-1"><span class="text-muted">Active:</span> <span class="ms-2">${activeThreadBadge}</span></div>`;
     
-    content += `<div class="metadata-item">
-      <strong>Thread Attempt:</strong> ${createInfoBadge(ti.thread_attempt || 0, 'info')}
-    </div>`;
+    content += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${ti.thread_attempt || 1}</span></div>`;
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Button States Section
   if (metadata.button_states) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Button States</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-toggles me-2"></i>Button States</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.button_states.image_generation !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Image Generation:</strong> ${createStatusBadge(metadata.button_states.image_generation)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Image Generation:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.image_generation)}</span></div>`;
     }
     
     if (metadata.button_states.web_search !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Web Search:</strong> ${createStatusBadge(metadata.button_states.web_search)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Web Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.web_search)}</span></div>`;
     }
     
     if (metadata.button_states.document_search !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Document Search:</strong> ${createStatusBadge(metadata.button_states.document_search)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Document Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.document_search)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Workspace Search Section
   if (metadata.workspace_search) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Workspace & Document Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-folder me-2"></i>Workspace & Document Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.workspace_search.search_enabled !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Search Enabled:</strong> ${createStatusBadge(metadata.workspace_search.search_enabled)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Search Enabled:</span> <span class="ms-2">${createStatusBadge(metadata.workspace_search.search_enabled)}</span></div>`;
     }
     
     if (metadata.workspace_search.document_name) {
-      content += `<div class="metadata-item">
-        <strong>Selected Document:</strong> ${escapeHtml(metadata.workspace_search.document_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Document:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.document_name)}</span></div>`;
     } else if (metadata.workspace_search.selected_document_id && metadata.workspace_search.selected_document_id !== 'None' && metadata.workspace_search.selected_document_id !== 'all') {
-      content += `<div class="metadata-item">
-        <strong>Document ID:</strong> ${escapeHtml(metadata.workspace_search.selected_document_id)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Document ID:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.selected_document_id)}</span></div>`;
     }
     
     if (metadata.workspace_search.document_scope) {
-      content += `<div class="metadata-item">
-        <strong>Search Scope:</strong> ${createInfoBadge(metadata.workspace_search.document_scope, 'primary')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Search Scope:</span> <span class="ms-2">${createInfoBadge(metadata.workspace_search.document_scope, 'primary')}</span></div>`;
     }
     
     if (metadata.workspace_search.classification && metadata.workspace_search.classification !== 'None') {
-      content += `<div class="metadata-item">
-        <strong>Classification:</strong> ${createClassificationBadge(metadata.workspace_search.classification)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Classification:</span> <span class="ms-2">${createClassificationBadge(metadata.workspace_search.classification)}</span></div>`;
     }
     
     if (metadata.workspace_search.group_name) {
-      content += `<div class="metadata-item">
-        <strong>Group:</strong> ${escapeHtml(metadata.workspace_search.group_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Group:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.group_name)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Prompt Selection Section
   if (metadata.prompt_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Prompt Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-chat-quote me-2"></i>Prompt Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.prompt_selection.prompt_name) {
-      content += `<div class="metadata-item">
-        <strong>Prompt Name:</strong> ${createInfoBadge(metadata.prompt_selection.prompt_name, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Prompt Name:</span> <span class="ms-2">${createInfoBadge(metadata.prompt_selection.prompt_name, 'success')}</span></div>`;
     }
     
     if (metadata.prompt_selection.selected_prompt_index !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Prompt Index:</strong> ${escapeHtml(metadata.prompt_selection.selected_prompt_index)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Prompt Index:</span> <span class="ms-2">${escapeHtml(metadata.prompt_selection.selected_prompt_index)}</span></div>`;
     }
     
     if (metadata.prompt_selection.selected_prompt_text) {
-      content += `<div class="metadata-item">
-        <strong>Content:</strong>
-        <div class="mt-1 p-2 bg-light rounded small">
-          ${escapeHtml(metadata.prompt_selection.selected_prompt_text)}
-        </div>
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Content:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.prompt_selection.selected_prompt_text)}</div></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Agent Selection Section
   if (metadata.agent_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Agent Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-robot me-2"></i>Agent Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.agent_selection.agent_display_name) {
-      content += `<div class="metadata-item">
-        <strong>Agent:</strong> ${createInfoBadge(metadata.agent_selection.agent_display_name, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.agent_display_name, 'success')}</span></div>`;
     } else if (metadata.agent_selection.selected_agent) {
-      content += `<div class="metadata-item">
-        <strong>Selected Agent:</strong> ${createInfoBadge(metadata.agent_selection.selected_agent, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.selected_agent, 'success')}</span></div>`;
     }
     
     if (metadata.agent_selection.is_global !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Global Agent:</strong> ${createStatusBadge(metadata.agent_selection.is_global)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Global Agent:</span> <span class="ms-2">${createStatusBadge(metadata.agent_selection.is_global)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Model Selection Section
   if (metadata.model_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Model Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Model Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.model_selection.selected_model) {
-      content += `<div class="metadata-item">
-        <strong>Selected Model:</strong> ${escapeHtml(metadata.model_selection.selected_model)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.selected_model)}</code></div>`;
     }
     
     if (metadata.model_selection.frontend_requested_model && 
         metadata.model_selection.frontend_requested_model !== metadata.model_selection.selected_model) {
-      content += `<div class="metadata-item">
-        <strong>Frontend Model:</strong> ${escapeHtml(metadata.model_selection.frontend_requested_model)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Frontend Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.frontend_requested_model)}</code></div>`;
     }
     
     if (metadata.model_selection.reasoning_effort) {
-      content += `<div class="metadata-item">
-        <strong>Reasoning Effort:</strong> ${escapeHtml(metadata.model_selection.reasoning_effort)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.reasoning_effort)}</code></div>`;
     }
     
-    if (metadata.model_selection.streaming) {
-      content += `<div class="metadata-item">
-        <strong>Streaming:</strong> ${createStatusBadge(metadata.model_selection.streaming)}
-      </div>`;
+    if (metadata.model_selection.streaming !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Streaming:</span> <span class="ms-2">${createStatusBadge(metadata.model_selection.streaming)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Uploaded Images Section
   if (metadata.uploaded_images && metadata.uploaded_images.length > 0) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Uploaded Image</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Uploaded Image</div>';
+    content += '<div class="ms-3 small">';
     
     metadata.uploaded_images.forEach((image, index) => {
       const imageId = `image-${messageId || Date.now()}-${index}`;
@@ -2133,50 +2084,41 @@ function formatMetadataForDrawer(metadata) {
       
       content += `</div>`; // End card-body
       content += `</div>`; // End card
-      content += `</div>`; // End metadata-item
+      content += `</div>`; // End item wrapper
     });
     
-    content += '</div>';
+    content += '</div></div>'; // End ms-3 small and mb-3
   }
   
   // Chat Context Section
   if (metadata.chat_context) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Chat Context</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Chat Context</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.chat_context.conversation_id) {
-      content += `<div class="metadata-item">
-        <strong>Conversation ID:</strong> ${escapeHtml(metadata.chat_context.conversation_id)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${escapeHtml(metadata.chat_context.conversation_id)}</code></div>`;
     }
     
     if (metadata.chat_context.chat_type) {
-      content += `<div class="metadata-item">
-        <strong>Chat Type:</strong> ${createInfoBadge(metadata.chat_context.chat_type, 'primary')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Chat Type:</span> <span class="ms-2">${createInfoBadge(metadata.chat_context.chat_type, 'primary')}</span></div>`;
     }
     
     // Show context-specific information based on chat type
     if (metadata.chat_context.chat_type === 'group') {
       if (metadata.chat_context.group_name) {
-        content += `<div class="metadata-item">
-          <strong>Group:</strong> ${escapeHtml(metadata.chat_context.group_name)}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Group:</span> <span class="ms-2">${escapeHtml(metadata.chat_context.group_name)}</span></div>`;
       } else if (metadata.chat_context.group_id && metadata.chat_context.group_id !== 'None') {
-        content += `<div class="metadata-item">
-          <strong>Group ID:</strong> ${escapeHtml(metadata.chat_context.group_id)}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Group ID:</span> <span class="ms-2">${escapeHtml(metadata.chat_context.group_id)}</span></div>`;
       }
     } else if (metadata.chat_context.chat_type === 'public') {
       if (metadata.chat_context.workspace_context) {
-        content += `<div class="metadata-item">
-          <strong>Workspace:</strong> ${createInfoBadge(metadata.chat_context.workspace_context, 'info')}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Workspace:</span> <span class="ms-2">${createInfoBadge(metadata.chat_context.workspace_context, 'info')}</span></div>`;
       }
     }
     // For 'personal' chat type, no additional context needed
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   if (!content) {
@@ -2328,9 +2270,6 @@ function loadMessageMetadataForDisplay(messageId, container) {
       if (metadata.conversation_id) html += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${metadata.conversation_id}</code></div>`;
       if (metadata.role) html += `<div class="mb-1"><span class="text-muted">Role:</span> <span class="ms-2 badge bg-primary">${metadata.role}</span></div>`;
       if (metadata.timestamp) html += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${new Date(metadata.timestamp).toLocaleString()}</code></div>`;
-      if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
-      if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
-      if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${metadata.agent_display_name}</span></div>`;
       html += '</div></div>';
       
       // Image/File specific info
@@ -2352,15 +2291,25 @@ function loadMessageMetadataForDisplay(messageId, container) {
         html += '</div></div>';
       }
       
-      // Assistant message specific info
-      if (metadata.role === 'assistant') {
+      // Generation Details (for assistant, image, and file messages)
+      if (metadata.role === 'assistant' || metadata.role === 'image' || metadata.role === 'file') {
         html += '<div class="mb-3">';
         html += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Generation Details</div>';
         html += '<div class="ms-3 small">';
-        if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
-        if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
-        if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
-        if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
+        
+        // Model and Agent info (for all types)
+        if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
+        if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
+        if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${metadata.agent_display_name}</span></div>`;
+        
+        // Assistant-specific info
+        if (metadata.role === 'assistant') {
+          if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
+          if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
+          if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
+          if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
+        }
+        
         html += '</div></div>';
       }
       
