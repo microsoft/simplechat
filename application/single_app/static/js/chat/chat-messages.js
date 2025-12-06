@@ -610,21 +610,21 @@ export function appendMessage(
     const maskIcon = isMasked ? 'bi-front' : 'bi-back';
     const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
     
-    const maskButtonHtml = `
-            <button class="mask-btn me-2" data-message-id="${messageId}" title="${maskTitle}">
-                <i class="bi ${maskIcon}"></i>
-            </button>
-        `;
-    
     const copyButtonHtml = `
-            <button class="copy-btn me-2" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
+            <button class="copy-btn btn btn-sm btn-link text-muted" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
                 <i class="bi bi-copy"></i>
             </button>
             <textarea id="${hiddenTextId}" style="display:none;">${escapeHtml(
       withInlineCitations
     )}</textarea>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center">${maskButtonHtml}${copyButtonHtml}${feedbackHtml}</div>`;
+    
+    const maskButtonHtml = `
+            <button class="mask-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="${maskTitle}">
+                <i class="bi ${maskIcon}"></i>
+            </button>
+        `;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${feedbackHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -683,7 +683,7 @@ export function appendMessage(
     if (shouldShowCitations) {
       console.log(">>> Will generate and include citation elements.");
       const citationsContainerId = `citations-${messageId || Date.now()}`;
-      citationToggleHtml = `<div class="citation-toggle-container"><button class="btn btn-sm btn-outline-secondary citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button></div>`;
+      citationToggleHtml = `<button class="btn btn-sm btn-link text-muted citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button>`;
       // citationsButtonsHtml already contains a <div class="citations-container"> wrapper
       // Just add ID and display style by wrapping minimally
       citationContentContainerHtml = `<div id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
@@ -695,10 +695,11 @@ export function appendMessage(
     const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
     
     const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
-      <div class="d-flex align-items-center">${copyAndFeedbackHtml}${citationToggleHtml}</div>
-      <button class="btn btn-sm btn-link text-secondary p-0 metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+      <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
+      <div class="d-flex align-items-center"></div>
+      <div class="d-flex align-items-center gap-2">${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
         <i class="bi bi-info-circle"></i>
-      </button>
+      </button></div>
     </div>`;
 
     // Build AI message inner HTML
@@ -944,38 +945,51 @@ export function appendMessage(
       
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
-          <div class="d-flex gap-1">
-            <button class="btn btn-sm btn-outline-secondary copy-user-btn" data-message-id="${messageId}" title="Copy message">
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
               <i class="bi bi-copy"></i>
             </button>
-            <button class="btn btn-sm btn-outline-secondary mask-btn" data-message-id="${messageId}" title="${maskTitle}">
+            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
               <i class="bi ${maskIcon}"></i>
             </button>
           </div>
-          <button class="btn btn-sm btn-link text-secondary p-0 metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
-            <i class="bi bi-info-circle"></i>
-          </button>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center">
+            <button class="btn btn-sm btn-link text-muted metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+              <i class="bi bi-info-circle"></i>
+            </button>
+          </div>
         </div>`;
       metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
     } else if (sender === "image" || sender === "File") {
-      // Image and file messages get metadata button on right side
+      // Image and file messages get mask button on left, metadata button on right side
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      
+      // Check if message is masked
+      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
       
       // For images with extracted text or vision analysis, add View Text button like citation button
       let imageInfoToggleHtml = '';
       let imageInfoContainerHtml = '';
       if (sender === "image" && isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
         const infoContainerId = `image-info-${messageId || Date.now()}`;
-        imageInfoToggleHtml = `<div class="citation-toggle-container"><button class="btn btn-sm btn-link text-secondary p-0 image-info-btn" data-message-id="${messageId}" title="View extracted text" aria-expanded="false" aria-controls="${infoContainerId}"><i class="bi bi-file-text"></i></button></div>`;
+        imageInfoToggleHtml = `<button class="btn btn-sm btn-link text-muted image-info-btn" data-message-id="${messageId}" title="View extracted text" aria-expanded="false" aria-controls="${infoContainerId}"><i class="bi bi-file-text"></i></button>`;
         imageInfoContainerHtml = `<div id="${infoContainerId}" class="image-info-container mt-2 pt-2 border-top" style="display: none;"><div class="image-info-content">Loading image information...</div></div>`;
       }
       
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
-          <div class="d-flex align-items-center">${imageInfoToggleHtml}</div>
-          <button class="btn btn-sm btn-link text-secondary p-0 metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
+              <i class="bi ${maskIcon}"></i>
+            </button>
+          </div>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center gap-2">${imageInfoToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
             <i class="bi bi-info-circle"></i>
-          </button>
+          </button></div>
         </div>`;
       metadataContainerHtml = imageInfoContainerHtml + `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
     }
@@ -1031,6 +1045,28 @@ export function appendMessage(
         imageInfoBtn.addEventListener('click', () => {
           toggleImageInfo(messageDiv, messageId, fullMessageObject);
         });
+      }
+    }
+    
+    // Add event listener for mask button (image and file messages)
+    if (sender === "image" || sender === "File") {
+      const maskBtn = messageDiv.querySelector('.mask-btn');
+      if (maskBtn) {
+        // Update tooltip dynamically on hover
+        maskBtn.addEventListener("mouseenter", () => {
+          updateMaskButtonTooltip(maskBtn, messageDiv);
+        });
+        
+        // Handle mask button click
+        maskBtn.addEventListener("click", () => {
+          handleMaskButtonClick(messageDiv, messageId, messageContent);
+        });
+      }
+      
+      // Apply masked state if message has masking
+      if (fullMessageObject?.metadata) {
+        console.log('Applying masked state for image/file message:', messageId, fullMessageObject.metadata);
+        applyMaskedState(messageDiv, fullMessageObject.metadata);
       }
     }
     

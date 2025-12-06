@@ -165,8 +165,10 @@ def before_first_request():
     settings = get_settings(use_cosmos=True)
     app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
     app_settings_cache.update_settings_cache(settings)
-    print(f"DEBUG:Application settings: {settings}")
-    print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {app_settings_cache.get_settings_cache()}")
+    sanitized_settings = sanitize_settings_for_logging(settings)
+    debug_print(f"DEBUG:Application settings: {sanitized_settings}")
+    sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
+    debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
 
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)

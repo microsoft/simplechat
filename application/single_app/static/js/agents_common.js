@@ -48,6 +48,12 @@ export function setAgentModalFields(agent, opts = {}) {
 	root.getElementById('agent-instructions').value = agent.instructions || '';
 	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
 	root.getElementById('agent-max-completion-tokens').value = agent.max_completion_tokens || '';
+	
+	// Set reasoning effort if available
+	const reasoningEffortSelect = root.getElementById('agent-reasoning-effort');
+	if (reasoningEffortSelect) {
+		reasoningEffortSelect.value = agent.reasoning_effort || '';
+	}
 	// Actions handled separately
 }
 
