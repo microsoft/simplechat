@@ -487,7 +487,8 @@ export function loadMessages(conversationId) {
           appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, msg); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
-          appendMessage("File", msg);
+          // Pass file message with proper parameters including message ID
+          appendMessage("File", msg, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "image") {
           // Validate image URL before calling appendMessage
           if (msg.content && msg.content !== 'null' && msg.content.trim() !== '') {
@@ -2551,7 +2552,7 @@ function applyMaskedState(messageDiv, metadata) {
     if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
       const badge = document.createElement('div');
       badge.className = 'message-exclusion-badge text-warning small';
-      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Excluded from conversation';
+      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><span class="badge-text">Excluded from conversation</span>';
       messageFooter.appendChild(badge);
     }
     return;
@@ -2715,7 +2716,7 @@ function maskEntireMessage(messageDiv, messageId, maskBtn) {
       if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
         const badge = document.createElement('div');
         badge.className = 'message-exclusion-badge text-warning small';
-        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Excluded from conversation';
+        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><span class="badge-text">Excluded from conversation</span>';
         messageFooter.appendChild(badge);
       }
       

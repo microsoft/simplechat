@@ -735,11 +735,39 @@ main {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
+    white-space: nowrap;
+    max-width: calc(100% - 1rem);
+    overflow: hidden;
 }
 
 .message-exclusion-badge i {
     font-size: 1rem;
     color: #5c4503 !important;
+    flex-shrink: 0;
+}
+
+.message-exclusion-badge .badge-text {
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+/* Hide badge text on narrow message footers - show icon only */
+@container footer (max-width: 350px) {
+    .message-exclusion-badge .badge-text {
+        display: none;
+    }
+    
+    .message-exclusion-badge {
+        gap: 0;
+        padding: 0.25rem 0.5rem;
+    }
+}
+
+/* Ensure message footer supports absolute positioning and container queries */
+.message-footer {
+    container-type: inline-size;
+    container-name: footer;
 }
 
 /* Ensure message footer supports absolute positioning */
