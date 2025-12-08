@@ -2642,11 +2642,16 @@ def register_route_backend_chats(app):
                                 file_name = doc.get('file_name', 'Unknown')
                                 doc_group_id = doc.get('group_id', None)
                                 
+                                # Map document_scope to correct parameter names for the function
+                                metadata_params = {'user_id': user_id}
+                                if document_scope == 'group':
+                                    metadata_params['group_id'] = active_group_id
+                                elif document_scope == 'public':
+                                    metadata_params['public_workspace_id'] = active_public_workspace_id
+                                
                                 metadata = get_document_metadata_for_citations(
                                     doc_id, 
-                                    user_id, 
-                                    doc_scope=document_scope,
-                                    active_group_id=active_group_id
+                                    **metadata_params
                                 )
                                 
                                 if metadata:
@@ -2981,6 +2986,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
             
             except Exception as e:
+                import traceback
                 error_traceback = traceback.format_exc()
                 print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
                 print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")

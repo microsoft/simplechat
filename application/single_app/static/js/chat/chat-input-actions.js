@@ -86,6 +86,16 @@ export function uploadFileToConversation(file) {
     .then((data) => {
       if (data.conversation_id) {
         currentConversationId = data.conversation_id;
+        
+        // If a title was returned and it's different from "New Conversation",
+        // update the conversation title in the UI
+        if (data.title && data.title !== "New Conversation") {
+          const currentConversationTitleEl = document.getElementById("current-conversation-title");
+          if (currentConversationTitleEl) {
+            currentConversationTitleEl.textContent = data.title;
+          }
+        }
+        
         loadMessages(currentConversationId);
         loadConversations();
       } else {

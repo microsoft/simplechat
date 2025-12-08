@@ -410,6 +410,28 @@ def register_route_frontend_chats(app):
                 cosmos_messages_container.upsert_item(file_message)
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Check if this is the first message in the conversation (excluding the current file upload)
+            # and update conversation title based on filename if it's still "New Conversation"
+            try:
+                if conversation_item.get('title') == 'New Conversation':
+                    # Query to count existing messages (excluding the one we just created)
+                    count_query = f"SELECT VALUE COUNT(1) FROM c WHERE c.conversation_id = '{conversation_id}'"
+                    message_counts = list(cosmos_messages_container.query_items(query=count_query, partition_key=conversation_id))
+                    message_count = message_counts[0] if message_counts else 0
+                    
+                    # If this is the first or only message, set title based on filename
+                    if message_count <= 1:
+                        # Remove file extension and create a clean title
+                        base_filename = os.path.splitext(filename)[0]
+                        # Limit title length to 50 characters
+                        new_title = base_filename[:50] if len(base_filename) > 50 else base_filename
+                        conversation_item['title'] = new_title
+                        print(f"Auto-generated conversation title from filename: {new_title}")
+            except Exception as title_error:
+                # Don't fail the upload if title generation fails
+                print(f"Warning: Failed to auto-generate conversation title: {title_error}")
+            
             cosmos_conversations_container.upsert_item(conversation_item)
 
         except Exception as e:
@@ -419,7 +441,8 @@ def register_route_frontend_chats(app):
 
         return jsonify({
             'message': 'File added to the conversation successfully',
-            'conversation_id': conversation_id
+            'conversation_id': conversation_id,
+            'title': conversation_item.get('title', 'New Conversation')
         }), 200
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER
