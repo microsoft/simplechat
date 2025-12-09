@@ -236,6 +236,17 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_group_conversations_container_name = "group_conversations"
+cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_group_messages_container_name = "group_messages"
+cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -339,18 +350,6 @@ cosmos_personal_actions_container = cosmos_database.create_container_if_not_exis
     partition_key=PartitionKey(path="/user_id")
 )
 
-cosmos_file_processing_container_name = "group_messages"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/conversation_id")
-)
-
-cosmos_file_processing_container_name = "group_conversations"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/id")
-)
-
 cosmos_group_agents_container_name = "group_agents"
 cosmos_group_agents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_agents_container_name,
@@ -385,7 +384,6 @@ cosmos_search_cache_container_name = "search_cache"
 cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_search_cache_container_name,
     partition_key=PartitionKey(path="/user_id")
-    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 cosmos_activity_logs_container_name = "activity_logs"
