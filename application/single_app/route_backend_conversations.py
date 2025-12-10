@@ -981,3 +981,156 @@ def register_route_backend_conversations(app):
         except Exception as e:
             print(f"Error clearing search history: {e}")
             return jsonify({'error': 'Failed to clear search history'}), 500
+    
+    @app.route('/api/message/<message_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def delete_message(message_id):
+        """
+        Delete a message or entire thread. Only the message author can delete their messages.
+        If archiving is enabled, messages are marked with is_deleted=true and masked.
+        If archiving is disabled, messages are permanently deleted.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json() or {}
+            delete_thread = data.get('delete_thread', False)
+            
+            settings = get_settings()
+            archiving_enabled = settings.get('enable_conversation_archiving', False)
+            
+            # Find the message using cross-partition query
+            query = "SELECT * FROM c WHERE c.id = @message_id"
+            params = [{"name": "@message_id", "value": message_id}]
+            message_results = list(cosmos_messages_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+            
+            if not message_results:
+                return jsonify({'error': 'Message not found'}), 404
+            
+            message_doc = message_results[0]
+            conversation_id = message_doc.get('conversation_id')
+            
+            # Verify ownership - only the message author can delete their message
+            message_user_id = message_doc.get('metadata', {}).get('user_info', {}).get('user_id')
+            if not message_user_id:
+                # Fallback: check conversation ownership for backwards compatibility
+                # All messages in a conversation (user, assistant, system) belong to the conversation owner
+                try:
+                    conversation = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    if conversation.get('user_id') != user_id:
+                        return jsonify({'error': 'You can only delete messages from your own conversations'}), 403
+                except:
+                    return jsonify({'error': 'Conversation not found'}), 404
+            elif message_user_id != user_id:
+                return jsonify({'error': 'You can only delete your own messages'}), 403
+            
+            # Collect messages to delete
+            messages_to_delete = []
+            
+            if delete_thread and message_doc.get('role') == 'user':
+                # Delete entire thread: user message + system message + assistant/image messages
+                thread_id = message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                thread_previous_id = message_doc.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                
+                if thread_id:
+                    # Query all messages in this thread exchange (user, system, assistant messages with same thread_id)
+                    # Do NOT include subsequent threads that reference this thread_id as previous_thread_id
+                    thread_query = f"""
+                        SELECT * FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        AND c.metadata.thread_info.thread_id = '{thread_id}'
+                    """
+                    thread_messages = list(cosmos_messages_container.query_items(
+                        query=thread_query,
+                        partition_key=conversation_id
+                    ))
+                    messages_to_delete = thread_messages
+                    
+                    # THREAD CHAIN REPAIR: Update subsequent threads to maintain chain integrity
+                    # Find messages where previous_thread_id points to the thread we're deleting
+                    subsequent_query = f"""
+                        SELECT * FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        AND c.metadata.thread_info.previous_thread_id = '{thread_id}'
+                    """
+                    subsequent_messages = list(cosmos_messages_container.query_items(
+                        query=subsequent_query,
+                        partition_key=conversation_id
+                    ))
+                    
+                    # Update each subsequent message to skip over the deleted thread
+                    # Point their previous_thread_id to the deleted thread's previous_thread_id
+                    for subsequent_msg in subsequent_messages:
+                        # Skip messages that are being deleted (they're in the same thread)
+                        if subsequent_msg['id'] in [m['id'] for m in messages_to_delete]:
+                            continue
+                        
+                        # Update previous_thread_id to maintain chain
+                        if 'metadata' not in subsequent_msg:
+                            subsequent_msg['metadata'] = {}
+                        if 'thread_info' not in subsequent_msg['metadata']:
+                            subsequent_msg['metadata']['thread_info'] = {}
+                        
+                        subsequent_msg['metadata']['thread_info']['previous_thread_id'] = thread_previous_id
+                        
+                        # Upsert the updated message
+                        cosmos_messages_container.upsert_item(subsequent_msg)
+                        print(f"Repaired thread chain: Message {subsequent_msg['id']} now points to thread {thread_previous_id}")
+                else:
+                    messages_to_delete = [message_doc]
+            else:
+                # Delete only the specified message
+                messages_to_delete = [message_doc]
+            
+            deleted_message_ids = []
+            
+            for msg in messages_to_delete:
+                msg_id = msg['id']
+                
+                if archiving_enabled:
+                    # Mark as deleted and mask the message
+                    if 'metadata' not in msg:
+                        msg['metadata'] = {}
+                    
+                    msg['metadata']['is_deleted'] = True
+                    msg['metadata']['deleted_by_user_id'] = user_id
+                    msg['metadata']['deleted_timestamp'] = datetime.utcnow().isoformat()
+                    msg['metadata']['masked'] = True
+                    msg['metadata']['masked_by_user_id'] = user_id
+                    msg['metadata']['masked_timestamp'] = datetime.utcnow().isoformat()
+                    
+                    # Archive the message
+                    archived_msg = dict(msg)
+                    archived_msg['archived_at'] = datetime.utcnow().isoformat()
+                    cosmos_archived_messages_container.upsert_item(archived_msg)
+                    
+                    # Update the message in the main container (for conversation history exclusion)
+                    cosmos_messages_container.upsert_item(msg)
+                else:
+                    # Permanently delete the message
+                    cosmos_messages_container.delete_item(msg_id, partition_key=conversation_id)
+                
+                deleted_message_ids.append(msg_id)
+            
+            return jsonify({
+                'success': True,
+                'deleted_message_ids': deleted_message_ids,
+                'archived': archiving_enabled
+            }), 200
+            
+        except Exception as e:
+            print(f"Error deleting message: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to delete message'}), 500

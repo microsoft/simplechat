@@ -250,7 +250,7 @@ def register_route_frontend_chats(app):
                     # Threading logic for file upload
                     previous_thread_id = None
                     try:
-                        last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
@@ -282,11 +282,7 @@ def register_route_frontend_chats(app):
                                 'active_thread': True,
                                 'thread_attempt': 1
                             }
-                        },
-                        'thread_id': current_thread_id,
-                        'previous_thread_id': previous_thread_id,
-                        'active_thread': True,
-                        'thread_attempt': 1
+                        }
                     }
                     
                     # Add vision analysis and extracted text if available
@@ -322,7 +318,7 @@ def register_route_frontend_chats(app):
                     # Threading logic for file upload
                     previous_thread_id = None
                     try:
-                        last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
                         last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                         if last_msgs:
                             previous_thread_id = last_msgs[0].get('thread_id')
@@ -351,11 +347,7 @@ def register_route_frontend_chats(app):
                                 'active_thread': True,
                                 'thread_attempt': 1
                             }
-                        },
-                        'thread_id': current_thread_id,
-                        'previous_thread_id': previous_thread_id,
-                        'active_thread': True,
-                        'thread_attempt': 1
+                        }
                     }
                     
                     # Add vision analysis and extracted text if available
@@ -371,7 +363,7 @@ def register_route_frontend_chats(app):
                 # Threading logic for file upload
                 previous_thread_id = None
                 try:
-                    last_msg_query = f"SELECT TOP 1 c.thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                    last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
                     last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
                     if last_msgs:
                         previous_thread_id = last_msgs[0].get('thread_id')
@@ -396,11 +388,7 @@ def register_route_frontend_chats(app):
                             'active_thread': True,
                             'thread_attempt': 1
                         }
-                    },
-                    'thread_id': current_thread_id,
-                    'previous_thread_id': previous_thread_id,
-                    'active_thread': True,
-                    'thread_attempt': 1
+                    }
                 }
                 
                 # Add vision analysis if available

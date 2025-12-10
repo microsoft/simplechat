@@ -423,7 +423,7 @@ def register_route_backend_chats(app):
             try:
                 # Query for the last message in this conversation
                 last_msg_query = f"""
-                    SELECT TOP 1 c.thread_id 
+                    SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
                     FROM c 
                     WHERE c.conversation_id = '{conversation_id}' 
                     ORDER BY c.timestamp DESC
@@ -458,11 +458,7 @@ def register_route_backend_chats(app):
                 'content': user_message,
                 'timestamp': datetime.utcnow().isoformat(),
                 'model_deployment_name': None,  # Model not used for user message
-                'metadata': user_metadata,
-                'thread_id': current_user_thread_id,
-                'previous_thread_id': previous_thread_id,
-                'active_thread': True,
-                'thread_attempt': 1
+                'metadata': user_metadata
             }
             
             # Debug: Print the complete metadata being saved
@@ -1115,7 +1111,21 @@ def register_route_backend_chats(app):
                         
                         
                         # Create main image document with metadata
-                        current_image_thread_id = str(uuid.uuid4())
+                        
+                        # Get user_info and thread_id from the user message for ownership tracking and threading
+                        user_info_for_chunked_image = None
+                        user_thread_id = None
+                        user_previous_thread_id = None
+                        try:
+                            user_msg = cosmos_messages_container.read_item(
+                                item=user_message_id,
+                                partition_key=conversation_id
+                            )
+                            user_info_for_chunked_image = user_msg.get('metadata', {}).get('user_info')
+                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                        except Exception as e:
+                            print(f"Warning: Could not retrieve user_info from user message for chunked image: {e}")
                         
                         main_image_doc = {
                             'id': image_message_id,
@@ -1127,24 +1137,20 @@ def register_route_backend_chats(app):
                             'timestamp': datetime.utcnow().isoformat(),
                             'model_deployment_name': image_gen_model,
                             'metadata': {
+                                'user_info': user_info_for_chunked_image,  # Track which user created this image
                                 'is_chunked': True,
                                 'total_chunks': total_chunks,
                                 'chunk_index': 0,
                                 'original_size': len(generated_image_url),
                                 'thread_info': {
-                                    'thread_id': current_image_thread_id,
-                                    'previous_thread_id': latest_thread_id,
+                                    'thread_id': user_thread_id,  # Same thread as user message
+                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                                     'active_thread': True,
                                     'thread_attempt': 1
                                 }
-                            },
-                            'thread_id': current_image_thread_id,
-                            'previous_thread_id': latest_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                            }
                         }
-                        # Update tip
-                        latest_thread_id = current_image_thread_id
+                        # Image message shares the same thread as user message
                         
                         # Create additional chunk documents
                         chunk_docs = []
@@ -1185,7 +1191,20 @@ def register_route_backend_chats(app):
                         # Small image - store normally in single document
                         debug_print(f"Small image ({len(generated_image_url)} bytes), storing in single document")
                         
-                        current_image_thread_id = str(uuid.uuid4())
+                        # Get user_info and thread_id from the user message for ownership tracking and threading
+                        user_info_for_image = None
+                        user_thread_id = None
+                        user_previous_thread_id = None
+                        try:
+                            user_msg = cosmos_messages_container.read_item(
+                                item=user_message_id,
+                                partition_key=conversation_id
+                            )
+                            user_info_for_image = user_msg.get('metadata', {}).get('user_info')
+                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                        except Exception as e:
+                            print(f"Warning: Could not retrieve user_info from user message for image: {e}")
                         
                         image_doc = {
                             'id': image_message_id,
@@ -1197,24 +1216,20 @@ def register_route_backend_chats(app):
                             'timestamp': datetime.utcnow().isoformat(),
                             'model_deployment_name': image_gen_model,
                             'metadata': {
+                                'user_info': user_info_for_image,  # Track which user created this image
                                 'is_chunked': False,
                                 'original_size': len(generated_image_url),
                                 'thread_info': {
-                                    'thread_id': current_image_thread_id,
-                                    'previous_thread_id': latest_thread_id,
+                                    'thread_id': user_thread_id,  # Same thread as user message
+                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                                     'active_thread': True,
                                     'thread_attempt': 1
                                 }
-                            },
-                            'thread_id': current_image_thread_id,
-                            'previous_thread_id': latest_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                            }
                         }
                         cosmos_messages_container.upsert_item(image_doc)
                         response_image_url = generated_image_url
-                        # Update tip
-                        latest_thread_id = current_image_thread_id
+                        # Image message shares the same thread as user message
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
@@ -1332,7 +1347,21 @@ def register_route_backend_chats(app):
 
                     # 5. Create the final system_doc dictionary for Cosmos DB upsert
                     system_message_id = f"{conversation_id}_system_aug_{int(time.time())}_{random.randint(1000,9999)}"
-                    current_system_thread_id = str(uuid.uuid4())
+                    
+                    # Get user_info and thread_id from the user message for ownership tracking and threading
+                    user_info_for_system = None
+                    user_thread_id = None
+                    user_previous_thread_id = None
+                    try:
+                        user_msg = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        user_info_for_system = user_msg.get('metadata', {}).get('user_info')
+                        user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                        user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    except Exception as e:
+                        print(f"Warning: Could not retrieve user_info from user message for system message: {e}")
                     
                     system_doc = {
                         'id': system_message_id,
@@ -1343,16 +1372,19 @@ def register_route_backend_chats(app):
                         'user_message': user_message, # Include the original user message for context
                         'model_deployment_name': None, # As per your original structure
                         'timestamp': datetime.utcnow().isoformat(),
-                        'metadata': {},
-                        'thread_id': current_system_thread_id,
-                        'previous_thread_id': latest_thread_id,
-                        'active_thread': True,
-                        'thread_attempt': 1
+                        'metadata': {
+                            'user_info': user_info_for_system,
+                            'thread_info': {
+                                'thread_id': user_thread_id,  # Same thread as user message
+                                'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        }
                     }
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
-                    # Update tip so assistant links to system message
-                    latest_thread_id = current_system_thread_id
+                    # System message shares the same thread as user message, no thread update needed
 
                     # --- NEW: Save plugin output as agent citation ---
                     agent_citations_list.append({
@@ -2072,8 +2104,24 @@ def register_route_backend_chats(app):
                     agent_name = selected_agent.name
             
             assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
-            current_assistant_thread_id = str(uuid.uuid4())
             
+            # Get user_info and thread_id from the user message for ownership tracking and threading
+            user_info_for_assistant = None
+            user_thread_id = None
+            user_previous_thread_id = None
+            try:
+                user_msg = cosmos_messages_container.read_item(
+                    item=user_message_id,
+                    partition_key=conversation_id
+                )
+                user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
+                user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+            except Exception as e:
+                print(f"Warning: Could not retrieve user_info from user message: {e}")
+            
+            # Assistant message should be part of the same thread as the user message
+            # Only system/augmentation messages create new threads within a conversation
             assistant_doc = {
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
@@ -2089,18 +2137,15 @@ def register_route_backend_chats(app):
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
                 'metadata': {
+                    'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
                     'thread_info': {
-                        'thread_id': current_assistant_thread_id,
-                        'previous_thread_id': latest_thread_id,
+                        'thread_id': user_thread_id,  # Same thread as user message
+                        'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                         'active_thread': True,
                         'thread_attempt': 1
                     }
-                }, # Used by SK and reasoning effort
-                'thread_id': current_assistant_thread_id,
-                'previous_thread_id': latest_thread_id,
-                'active_thread': True,
-                'thread_attempt': 1
+                } # Used by SK and reasoning effort
             }
             cosmos_messages_container.upsert_item(assistant_doc)
 
@@ -2490,7 +2535,7 @@ def register_route_backend_chats(app):
                 previous_thread_id = None
                 try:
                     last_msg_query = f"""
-                        SELECT TOP 1 c.thread_id 
+                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
                         FROM c 
                         WHERE c.conversation_id = '{conversation_id}' 
                         ORDER BY c.timestamp DESC
@@ -2522,11 +2567,7 @@ def register_route_backend_chats(app):
                     'content': user_message,
                     'timestamp': datetime.utcnow().isoformat(),
                     'model_deployment_name': None,
-                    'metadata': user_metadata,
-                    'thread_id': current_user_thread_id,
-                    'previous_thread_id': previous_thread_id,
-                    'active_thread': True,
-                    'thread_attempt': 1
+                    'metadata': user_metadata
                 }
                 
                 cosmos_messages_container.upsert_item(user_message_doc)
@@ -2873,7 +2914,18 @@ Assistant: The policy prohibits entities from using federal funds received throu
                                 yield f"data: {json.dumps({'content': delta.content})}\n\n"
                     
                     # Stream complete - save message and send final metadata
-                    current_assistant_thread_id = str(uuid.uuid4())
+                    # Get user thread info to maintain thread consistency
+                    user_thread_id = None
+                    user_previous_thread_id = None
+                    try:
+                        user_msg = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                        user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    except Exception as e:
+                        print(f"Warning: Could not retrieve thread_id from user message: {e}")
                     
                     assistant_doc = {
                         'id': assistant_message_id,
@@ -2892,16 +2944,12 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'thread_info': {
-                                'thread_id': current_assistant_thread_id,
-                                'previous_thread_id': latest_thread_id,
+                                'thread_id': user_thread_id,
+                                'previous_thread_id': user_previous_thread_id,
                                 'active_thread': True,
                                 'thread_attempt': 1
                             }
-                        },
-                        'thread_id': current_assistant_thread_id,
-                        'previous_thread_id': latest_thread_id,
-                        'active_thread': True,
-                        'thread_attempt': 1
+                        }
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
@@ -2971,12 +3019,14 @@ Assistant: The policy prohibits entities from using federal funds received throu
                             'metadata': {
                                 'incomplete': True,
                                 'error': error_msg,
-                                'reasoning_effort': reasoning_effort
-                            },
-                            'thread_id': current_assistant_thread_id,
-                            'previous_thread_id': latest_thread_id,
-                            'active_thread': True,
-                            'thread_attempt': 1
+                                'reasoning_effort': reasoning_effort,
+                                'thread_info': {
+                                    'thread_id': user_thread_id,
+                                    'previous_thread_id': user_previous_thread_id,
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
+                            }
                         }
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
@@ -3049,6 +3099,23 @@ Assistant: The policy prohibits entities from using federal funds received throu
                 
                 message_doc = message_results[0]
                 conversation_id = message_doc.get('conversation_id')
+                
+                # Verify ownership - only the message author can mask their message
+                message_user_id = message_doc.get('metadata', {}).get('user_info', {}).get('user_id')
+                if not message_user_id:
+                    # Fallback: check conversation ownership for backwards compatibility
+                    # All messages in a conversation (user, assistant, system) belong to the conversation owner
+                    try:
+                        conversation = cosmos_conversations_container.read_item(
+                            item=conversation_id,
+                            partition_key=conversation_id
+                        )
+                        if conversation.get('user_id') != user_id:
+                            return jsonify({'error': 'You can only mask messages from your own conversations'}), 403
+                    except:
+                        return jsonify({'error': 'Conversation not found'}), 404
+                elif message_user_id != user_id:
+                    return jsonify({'error': 'You can only mask your own messages'}), 403
                 
             except Exception as e:
                 print(f"Error fetching message {message_id}: {str(e)}")

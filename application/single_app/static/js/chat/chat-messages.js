@@ -459,6 +459,11 @@ export function loadMessages(conversationId) {
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       data.messages.forEach((msg) => {
+        // Skip deleted messages (when conversation archiving is enabled)
+        if (msg.metadata && msg.metadata.is_deleted === true) {
+          console.log(`Skipping deleted message: ${msg.id}`);
+          return;
+        }
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
         console.log(`[loadMessages Loop] Role: ${msg.role}`);
         if (msg.role === "user") {
@@ -625,7 +630,12 @@ export function appendMessage(
                 <i class="bi ${maskIcon}"></i>
             </button>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${feedbackHtml}</div>`;
+    const deleteButtonHtml = `
+            <button class="delete-msg-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Delete message">
+                <i class="bi bi-trash"></i>
+            </button>
+        `;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${deleteButtonHtml}${feedbackHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -773,6 +783,13 @@ export function appendMessage(
       // Handle mask button click
       maskBtn.addEventListener("click", () => {
         handleMaskButtonClick(messageDiv, messageId, messageContent);
+      });
+    }
+    
+    const deleteBtn = messageDiv.querySelector(".delete-msg-btn");
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", () => {
+        handleDeleteButtonClick(messageDiv, messageId, 'assistant');
       });
     }
     
@@ -953,6 +970,9 @@ export function appendMessage(
             <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
               <i class="bi ${maskIcon}"></i>
             </button>
+            <button class="btn btn-sm btn-link text-muted delete-msg-btn" data-message-id="${messageId}" title="Delete message">
+              <i class="bi bi-trash"></i>
+            </button>
           </div>
           <div class="d-flex align-items-center"></div>
           <div class="d-flex align-items-center">
@@ -985,6 +1005,9 @@ export function appendMessage(
           <div class="d-flex align-items-center gap-2">
             <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
               <i class="bi ${maskIcon}"></i>
+            </button>
+            <button class="btn btn-sm btn-link text-muted delete-msg-btn" data-message-id="${messageId}" title="Delete message">
+              <i class="bi bi-trash"></i>
             </button>
           </div>
           <div class="d-flex align-items-center"></div>
@@ -1094,6 +1117,14 @@ export function appendMessage(
               loadMessageMetadataForDisplay(messageId, metadataContainer);
             }
           }
+        });
+      }
+      
+      // Add delete button event listener
+      const deleteBtn = messageDiv.querySelector('.delete-msg-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+          handleDeleteButtonClick(messageDiv, messageId, sender === "image" ? 'image' : 'file');
         });
       }
     }
@@ -1709,6 +1740,13 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     // Handle mask button click
     maskBtn.addEventListener("click", () => {
       handleMaskButtonClick(messageDiv, messageId, messageContent);
+    });
+  }
+  
+  const deleteBtn = messageDiv.querySelector(".delete-msg-btn");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => {
+      handleDeleteButtonClick(messageDiv, messageId, 'user');
     });
   }
 }
@@ -2876,9 +2914,124 @@ function unmaskMessage(messageDiv, messageId, maskBtn) {
   });
 }
 
+// ============= Message Deletion Functions =============
+
+/**
+ * Handle delete button click - shows confirmation modal
+ */
+function handleDeleteButtonClick(messageDiv, messageId, messageType) {
+  console.log(`Delete button clicked for ${messageType} message: ${messageId}`);
+  
+  // Store message info for deletion confirmation
+  window.pendingMessageDeletion = {
+    messageDiv,
+    messageId,
+    messageType
+  };
+  
+  // Show appropriate confirmation modal
+  if (messageType === 'user') {
+    // User message - offer thread deletion option
+    const modal = document.getElementById('delete-message-modal');
+    if (modal) {
+      const bsModal = new bootstrap.Modal(modal);
+      bsModal.show();
+    }
+  } else {
+    // AI, image, or file message - single confirmation
+    const modal = document.getElementById('delete-single-message-modal');
+    if (modal) {
+      // Update modal text based on message type
+      const modalBody = modal.querySelector('.modal-body p');
+      if (modalBody) {
+        if (messageType === 'assistant') {
+          modalBody.textContent = 'Are you sure you want to delete this AI response? This action cannot be undone.';
+        } else if (messageType === 'image') {
+          modalBody.textContent = 'Are you sure you want to delete this image? This action cannot be undone.';
+        } else if (messageType === 'file') {
+          modalBody.textContent = 'Are you sure you want to delete this file? This action cannot be undone.';
+        }
+      }
+      const bsModal = new bootstrap.Modal(modal);
+      bsModal.show();
+    }
+  }
+}
+
+/**
+ * Execute message deletion via API
+ */
+function executeMessageDeletion(deleteThread = false) {
+  const pendingDeletion = window.pendingMessageDeletion;
+  if (!pendingDeletion) {
+    console.error('No pending message deletion');
+    return;
+  }
+  
+  const { messageDiv, messageId, messageType } = pendingDeletion;
+  
+  console.log(`Executing deletion for message ${messageId}, deleteThread: ${deleteThread}`);
+  
+  // Call delete API
+  fetch(`/api/message/${messageId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      delete_thread: deleteThread
+    })
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(data => {
+        throw new Error(data.error || 'Failed to delete message');
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Delete API response:', data);
+    
+    if (data.success) {
+      // Remove message(s) from DOM
+      const deletedIds = data.deleted_message_ids || [messageId];
+      deletedIds.forEach(id => {
+        const msgDiv = document.querySelector(`[data-message-id="${id}"]`);
+        if (msgDiv) {
+          msgDiv.remove();
+          console.log(`Removed message ${id} from DOM`);
+        }
+      });
+      
+      // Show success message
+      const archiveMsg = data.archived ? ' (archived)' : '';
+      const countMsg = deletedIds.length > 1 ? `${deletedIds.length} messages` : 'Message';
+      showToast(`${countMsg} deleted successfully${archiveMsg}`, 'success');
+      
+      // Clean up pending deletion
+      delete window.pendingMessageDeletion;
+      
+      // Optionally reload conversation list to update preview
+      if (typeof loadConversations === 'function') {
+        loadConversations();
+      }
+    } else {
+      showToast('Failed to delete message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error deleting message:', error);
+    showToast(error.message || 'Failed to delete message', 'error');
+  });
+}
+
 // Expose functions globally
 window.chatMessages = {
   applySearchHighlight,
   clearSearchHighlight,
   scrollToMessageSmooth
 };
+
+// Expose deletion function globally for modal buttons
+window.executeMessageDeletion = executeMessageDeletion;

@@ -850,8 +850,8 @@ a.citation-link:hover {
 /* Message bubble */
 .message-bubble {
   max-width: 90%;
-  min-width: 0; /* <-- This is crucial for flex children to shrink! */
-  width: 100%;
+  min-width: 250px; /* Ensure enough width for footer buttons to display properly */
+  width: auto; /* Let content determine width, but respect min-width */
   padding: 10px;
   border-radius: 15px;
   position: relative;
@@ -864,6 +864,7 @@ a.citation-link:hover {
   background-color: #c8e0fa; /* Blue */
   color: black;
   border-bottom-right-radius: 0;
+  min-width: 250px !important; /* Ensure enough width for footer buttons */
 }
 
 
