@@ -30,7 +30,6 @@ resource speechService 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   }
   properties: {
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false
     customSubDomainName: toLower('${appName}-${environment}-speech')
   }
   tags: tags
@@ -52,7 +51,7 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 //=========================================================
 // store speech Service keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module speechServiceSecret 'keyVault-Secrets.bicep'  = if (configureApplicationPermissions) {
+module speechServiceSecret 'keyVault-Secrets.bicep'  = if ((authenticationType == 'key') && (configureApplicationPermissions) ){
   name: 'storeSpeechServiceSecret'
   params: {
     keyVaultName: keyVault

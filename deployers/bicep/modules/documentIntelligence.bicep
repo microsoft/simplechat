@@ -27,7 +27,6 @@ resource docIntel 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   }
   properties: {
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false
     customSubDomainName: toLower('${appName}-${environment}-docintel')
   }
   tags: tags
