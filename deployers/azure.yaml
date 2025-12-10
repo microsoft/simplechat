@@ -39,6 +39,10 @@ hooks:
             echo "Running post-deployment configuration..."
             python3 -m pip install --user -r ./bicep/requirements.txt
             python3 ./bicep/postconfig.py
+            echo "Post-deployment configuration completed."
+            echo "Restarting web service to apply new settings..."
+            az webapp restart --name ${var_webService} --resource-group ${var_rgName}
+            echo "Web service restarted."
         else
             echo "Skipping post-deployment configuration (var_configureApplication is not true)"
         fi
