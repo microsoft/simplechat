@@ -25,16 +25,6 @@ The folloiwng variables will be used within this document:
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Example:** *simple-chat:latest*
 
 
-The following variables may be entered with a blank depending on the response to other parameters:
-
-If *\<useExistingAcr\>* = *true* then the following variables need to be set with applicable values, if *false* a blank is permitted
-- *\<existingACRResourceGroup\>* - Resource group name for the existing Azure Container Registry.
-- *\<existingACRResourceName\>* - Azure Container Registry name
-
-if *\<useExistingOpenAISvc\>* = *true* then the following variables need to be set with applicable values, if *false* a blank is permitted.
-- *\<existingOpenAIResourceGroupName\>* - Resource group name for the existing Azure OpenAI service.
-- *\<existingOpenAIResourceName\>* - Azure OpenAI service name.
-
 ## Deployment Process
 
 The below steps cover the process to deploy the Simple Chat application to an Azure Subscription.  It is assumed the user has administrative rights to the subscription for deployment.  If the user does not also have permissions to create an Application Registration in Entra, a stand-alone script can be provided to an administrator with the correct permissions.
