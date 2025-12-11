@@ -5,8 +5,6 @@ param appName string
 param environment string
 param tags object
 
-// param managedIdentityPrincipalId string
-// param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
 
@@ -34,21 +32,6 @@ resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
   }
   tags: tags
 }
-
-// // grant the managed identity access to the key vault
-// resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-//   name: guid(kv.id, managedIdentityId, 'kv-secrets-user')
-//   scope: kv
-//   properties: {
-//     // Built-in role definition id for "Key Vault Secrets User"
-//     roleDefinitionId: subscriptionResourceId(
-//       'Microsoft.Authorization/roleDefinitions',
-//       '4633458b-17de-408a-b874-0445c86b69e6'
-//     )
-//     principalId: managedIdentityPrincipalId
-//     principalType: 'ServicePrincipal'
-//   }
-// }
 
 // configure diagnostic settings for key vault
 resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {

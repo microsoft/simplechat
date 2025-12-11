@@ -120,10 +120,6 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   }
   identity: {
     type: 'SystemAssigned'
-    // type: 'SystemAssigned, UserAssigned'
-    // userAssignedIdentities: {
-    //   '${managedIdentityId}': {}
-    // }
   }
   tags: union(tags, { 'azd-service-name': 'web' })
 }

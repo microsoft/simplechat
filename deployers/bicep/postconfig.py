@@ -19,7 +19,7 @@ container = database.get_container_client(container_name)
 
 # Read the existing item by ID and partition key
 item_id = "app_settings"
-partition_key = "app_settings"  # Use the actual partition key value for this item
+partition_key = "app_settings" 
 try:
     item = container.read_item(item=item_id, partition_key=partition_key)
     print(f"Found existing app_setting document")
@@ -105,7 +105,7 @@ item["embedding_model"] = {
 }
 
 # Agents and Actions  > Agents Configuration
-item["enable_semantic_kernel"] = True
+item["enable_semantic_kernel"] = False
 
 # Logging > Application Insights Logging
 item["enable_appinsights_global_logging"] = True

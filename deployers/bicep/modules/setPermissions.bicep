@@ -6,7 +6,6 @@ param keyVaultName string
 param cosmosDBName string
 param acrName string
 param openAIName string
-//param openAIResourceGroupName string
 param docIntelName string
 param storageAccountName string
 param speechServiceName string

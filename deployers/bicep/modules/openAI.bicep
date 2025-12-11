@@ -30,10 +30,6 @@ resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   }
   identity: {
     type: 'SystemAssigned'
-    // type: 'SystemAssigned, UserAssigned'
-    // userAssignedIdentities: {
-    //   '${managedIdentityId}': {}
-    // }
   }
   properties: {
     publicNetworkAccess: 'Enabled'
@@ -85,5 +81,4 @@ module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' &
 output openAIName string = openAI.name
 output openAIResourceGroup string = resourceGroup().name
 output openAIEndpoint string = openAI.properties.endpoint
-// output openAIGptModel string = aiModel_gpt4o.outputs.modelName
-// output openAITextEmbeddingModel string = aiModel_textEmbedding.outputs.modelName
+
