@@ -34,7 +34,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
 //=========================================================
 // store container registry keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module containerRegistrySecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
+module containerRegistrySecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeContainerRegistrySecret'
   params: {
     keyVaultName: keyVault

@@ -49,4 +49,3 @@ resource kvDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
 output keyVaultId string = kv.id
 output keyVaultName string = kv.name
 output keyVaultUri string = kv.properties.vaultUri
-

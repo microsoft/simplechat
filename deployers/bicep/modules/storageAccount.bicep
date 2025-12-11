@@ -13,7 +13,7 @@ param authenticationType string
 param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -85,7 +85,7 @@ resource storageDiagnosticsBlob 'Microsoft.Insights/diagnosticSettings@2021-05-0
 //=========================================================
 // store storage keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module storageAccountSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
+module storageAccountSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeStorageAccountSecret'
   params: {
     keyVaultName: keyVault

@@ -13,7 +13,7 @@ param authenticationType string
 param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -48,7 +48,7 @@ resource docIntelDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
 //=========================================================
 // store document intelligence keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module documentIntelligenceSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
+module documentIntelligenceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeDocumentIntelligenceSecret'
   params: {
     keyVaultName: keyVault

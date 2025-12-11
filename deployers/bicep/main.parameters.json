@@ -15,10 +15,10 @@
       "value": "${AZURE_ENV_NAME}"
     },
     "specialTags": {
-        "value": {
-            "Project": "SimpleChat",
-            "SystemOwner": "Steve Carroll"
-        }
+      "value": {
+        "Project": "SimpleChat",
+        "SystemOwner": "Steve Carroll"
+      }
     },
     "enterpriseAppClientId": {
       "value": "${ENTERPRISE_APP_CLIENT_ID}"
@@ -30,8 +30,7 @@
       "value": "${CONTAINER_IMAGE_NAME}"
     },
     "authenticationType": {
-      "value": "${AUTHENTICATION_TYPE}" 
+      "value": "${AUTHENTICATION_TYPE}"
     }
-
   }
 }

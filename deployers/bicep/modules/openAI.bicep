@@ -81,4 +81,3 @@ module openAISecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' &
 output openAIName string = openAI.name
 output openAIResourceGroup string = resourceGroup().name
 output openAIEndpoint string = openAI.properties.endpoint
-

@@ -13,7 +13,7 @@ param authenticationType string
 param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -51,7 +51,7 @@ resource speechServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 //=========================================================
 // store speech Service keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module speechServiceSecret 'keyVault-Secrets.bicep'  = if ((authenticationType == 'key') && (configureApplicationPermissions) ){
+module speechServiceSecret 'keyVault-Secrets.bicep' = if ((authenticationType == 'key') && (configureApplicationPermissions)) {
   name: 'storeSpeechServiceSecret'
   params: {
     keyVaultName: keyVault

@@ -102,7 +102,7 @@ var webAppLogCategories = [
 // Export configurations as outputs so they can be used by other templates
 output limitedLogCategories array = limitedLogCategories
 output standardRetentionPolicy object = standardRetentionPolicy
-output standardLogCategories array = standardLogCategories 
+output standardLogCategories array = standardLogCategories
 output standardMetricsCategories array = standardMetricsCategories
 output transactionMetricsCategories array = transactionMetricsCategories
 output webAppLogCategories array = webAppLogCategories

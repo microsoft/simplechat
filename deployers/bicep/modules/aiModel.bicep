@@ -1,4 +1,3 @@
-
 param parent string
 param modelName string
 param modelVersion string
@@ -24,4 +23,3 @@ resource aiModel 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' =
     capacity: skuCapacity
   }
 }
-

@@ -76,26 +76,26 @@ param enableDiagLogging bool
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
   {
-      modelName: 'gpt-4.1'
-      modelVersion: '2025-04-14'
-      skuName: 'GlobalStandard'
-      skuCapacity: 150
+    modelName: 'gpt-4.1'
+    modelVersion: '2025-04-14'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
   }
   {
-      modelName: 'gpt-4o'
-      modelVersion: '2024-11-20'
-      skuName: 'GlobalStandard'
-      skuCapacity: 100
+    modelName: 'gpt-4o'
+    modelVersion: '2024-11-20'
+    skuName: 'GlobalStandard'
+    skuCapacity: 100
   }
 ]
 
 @description('''Array of embedding model names to deploy to the OpenAI resource.''')
 param embeddingModels array = [
   {
-      modelName: 'text-embedding-3-small'
-      modelVersion: '1'
-      skuName: 'GlobalStandard'
-      skuCapacity: 150
+    modelName: 'text-embedding-3-small'
+    modelVersion: '1'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
   }
   {
     modelName: 'text-embedding-3-large'
@@ -103,7 +103,7 @@ param embeddingModels array = [
     skuName: 'GlobalStandard'
     skuCapacity: 150
   }
-] 
+]
 //----------------
 // optional services
 
@@ -142,20 +142,6 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   location: location
   tags: tags
 }
-
-//=========================================================
-// Create managed identity
-//=========================================================
-// module managedIdentity 'modules/managedIdentity.bicep' = {
-//   name: 'managedIdentity'
-//   scope: rg
-//   params: {
-//     location: location
-//     appName: appName
-//     environment: environment
-//     tags: tags
-//   }
-// }
 
 //=========================================================
 // Create log analytics workspace 
@@ -197,8 +183,6 @@ module keyVault 'modules/keyVault.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    //managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    //managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
   }
@@ -207,7 +191,7 @@ module keyVault 'modules/keyVault.bicep' = {
 //=========================================================
 // Store enterprise app client secret in key vault
 //=========================================================
-module storeEnterpriseAppSecret 'modules/keyVault-Secrets.bicep'  = if (!empty(enterpriseAppClientSecret)) {
+module storeEnterpriseAppSecret 'modules/keyVault-Secrets.bicep' = if (!empty(enterpriseAppClientSecret)) {
   name: 'storeEnterpriseAppSecret'
   scope: rg
   params: {
@@ -247,8 +231,6 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     location: location
     acrName: acrName
     tags: tags
-    //managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    //managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
@@ -321,7 +303,7 @@ module storageAccount 'modules/storageAccount.bicep' = {
 //=========================================================
 // Create - OpenAI Service
 //=========================================================
-module openAI 'modules/openAI.bicep' =  {
+module openAI 'modules/openAI.bicep' = {
   name: 'openAI'
   scope: rg
   params: {
@@ -369,8 +351,6 @@ module appService 'modules/appService.bicep' = {
     environment: environment
     tags: tags
     acrName: acr.outputs.acrName
-    // managedIdentityId: managedIdentity.outputs.resourceId
-    // managedIdentityClientId: managedIdentity.outputs.clientId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
     appServicePlanId: appServicePlan.outputs.appServicePlanId
@@ -433,7 +413,6 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
   }
 }
 
-
 //=========================================================
 // Create Optional Resource - Speech Service
 //=========================================================
@@ -454,7 +433,6 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
   }
 }
 
-
 //=========================================================
 // Create Optional Resource - Video Indexer Service
 //=========================================================
@@ -471,7 +449,6 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
 
     storageAccount: storageAccount.outputs.name
     openAiServiceName: openAI.outputs.openAIName
-    
   }
 }
 
@@ -488,7 +465,6 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     cosmosDBName: cosmosDB.outputs.cosmosDbName
     acrName: acr.outputs.acrName
     openAIName: openAI.outputs.openAIName
-    // openAIResourceGroupName: useExistingOpenAISvc ? existingOpenAIResourceGroupName : openAI_create.outputs.openAIResourceGroup 
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
     #disable-next-line BCP318 // expect one value to be null
@@ -510,7 +486,7 @@ output var_rgName string = rgName
 // output values required for predeploy script in azure.yaml
 output var_webService string = appService.outputs.name
 output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1] 
+output var_imageTag string = split(imageName, ':')[1]
 output var_containerRegistry string = containerRegistry
 output var_acrName string = toLower('${appName}${environment}acr')
 
@@ -519,9 +495,7 @@ output var_configureApplication bool = configureApplicationPermissions
 output var_keyVaultUri string = keyVault.outputs.keyVaultUri
 output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
 output var_subscriptionId string = subscription().subscriptionId
-
 output var_authenticationType string = toLower(authenticationType)
-
 output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
 output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
 output var_openAIGPTModels array = gptModels
@@ -529,13 +503,16 @@ output var_openAIEmbeddingModels array = embeddingModels
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
 #disable-next-line BCP318 // expect one value to be null
 output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
-
 output var_deploymentLocation string = rg.location
 output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
+output var_videoIndexerName string = deployVideoIndexerService
 #disable-next-line BCP318 // expect one value to be null
-output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+  ? videoIndexerService.outputs.videoIndexerServiceName
+  : ''
+output var_videoIndexerAccountId string = deployVideoIndexerService
 #disable-next-line BCP318 // expect one value to be null
-output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+  ? videoIndexerService.outputs.videoIndexerAccountId
+  : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''

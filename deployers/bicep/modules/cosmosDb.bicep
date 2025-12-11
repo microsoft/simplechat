@@ -12,7 +12,6 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
-
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
@@ -86,7 +85,7 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 //=========================================================
 // store cosmos db keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module storeEnterpriseAppSecret 'keyVault-Secrets.bicep'  = if (authenticationType == 'key' && configureApplicationPermissions) {
+module storeEnterpriseAppSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeEnterpriseAppSecret'
   params: {
     keyVaultName: keyVault
@@ -94,7 +93,6 @@ module storeEnterpriseAppSecret 'keyVault-Secrets.bicep'  = if (authenticationTy
     secretValue: cosmosDb.listKeys().primaryMasterKey
   }
 }
-
 
 output cosmosDbName string = cosmosDb.name
 output cosmosDbUri string = cosmosDb.properties.documentEndpoint

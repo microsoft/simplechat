@@ -12,7 +12,7 @@ param storageAccount string
 param openAiServiceName string
 
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -35,8 +35,8 @@ resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' = {
   properties: {
     publicNetworkAccess: 'Enabled'
     storageServices: {
-        resourceId: storage.id
-      }
+      resourceId: storage.id
+    }
     openAiServices: {
       resourceId: openAiService.id
     }

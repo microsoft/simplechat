@@ -19,7 +19,7 @@ container = database.get_container_client(container_name)
 
 # Read the existing item by ID and partition key
 item_id = "app_settings"
-partition_key = "app_settings" 
+partition_key = "app_settings"
 try:
     item = container.read_item(item=item_id, partition_key=partition_key)
     print(f"Found existing app_setting document")
@@ -31,11 +31,11 @@ except CosmosResourceNotFoundError:
     }
 
 # Get values from environment variables
-var_authenticationType = os.getenv("var_authenticationType") 
+var_authenticationType = os.getenv("var_authenticationType")
 var_keyVaultUri = os.getenv("var_keyVaultUri")
 
-var_openAIEndpoint=os.getenv("var_openAIEndpoint")
-var_openAIResourceGroup=os.getenv("var_openAIResourceGroup")
+var_openAIEndpoint = os.getenv("var_openAIEndpoint")
+var_openAIResourceGroup = os.getenv("var_openAIResourceGroup")
 var_subscriptionId = os.getenv("var_subscriptionId")
 var_rgName = os.getenv("var_rgName")
 var_openAIGPTModels = os.getenv("var_openAIGPTModels")
@@ -43,9 +43,10 @@ gpt_models_list = json.loads(var_openAIGPTModels)
 var_openAIEmbeddingModels = os.getenv("var_openAIEmbeddingModels")
 embedding_models_list = json.loads(var_openAIEmbeddingModels)
 var_blobStorageEndpoint = os.getenv("var_blobStorageEndpoint")
-var_contentSafetyEndpoint = os.getenv("var_contentSafetyEndpoint")  
+var_contentSafetyEndpoint = os.getenv("var_contentSafetyEndpoint")
 var_searchServiceEndpoint = os.getenv("var_searchServiceEndpoint")
-var_documentIntelligenceServiceEndpoint = os.getenv("var_documentIntelligenceServiceEndpoint")
+var_documentIntelligenceServiceEndpoint = os.getenv(
+    "var_documentIntelligenceServiceEndpoint")
 var_videoIndexerName = os.getenv("var_videoIndexerName")
 var_videoIndexerLocation = os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
@@ -54,7 +55,8 @@ var_speechServiceLocation = os.getenv("var_deploymentLocation")
 
 # Initialize Key Vault client if Key Vault URI is provided
 if var_keyVaultUri:
-    keyvault_client = SecretClient(vault_url=var_keyVaultUri, credential=credential)
+    keyvault_client = SecretClient(
+        vault_url=var_keyVaultUri, credential=credential)
 else:
     keyvault_client = None
 
@@ -133,11 +135,13 @@ item["content_safety_endpoint"] = var_contentSafetyEndpoint
 item["content_safety_authentication_type"] = var_authenticationType
 if keyvault_client:
     try:
-        contentSafety_key_secret = keyvault_client.get_secret("content-safety-key")
+        contentSafety_key_secret = keyvault_client.get_secret(
+            "content-safety-key")
         item["content_safety_key"] = contentSafety_key_secret.value
         print("Retrieved contentSafety service key from Key Vault")
     except Exception as e:
-        print(f"Warning: Could not retrieve content-safety-key from Key Vault: {e}")
+        print(
+            f"Warning: Could not retrieve content-safety-key from Key Vault: {e}")
 
 # Safety > Conversation Archiving
 item["enable_conversation_archiving"] = True
@@ -151,18 +155,21 @@ if keyvault_client:
         item["azure_ai_search_key"] = search_key_secret.value
         print("Retrieved search service key from Key Vault")
     except Exception as e:
-        print(f"Warning: Could not retrieve search-service-key from Key Vault: {e}")
+        print(
+            f"Warning: Could not retrieve search-service-key from Key Vault: {e}")
 
 # Search and Extract > Azure Document Intelligence
 item["azure_document_intelligence_endpoint"] = var_documentIntelligenceServiceEndpoint
 item["azure_document_intelligence_authentication_type"] = var_authenticationType
 if keyvault_client:
     try:
-        documentIntelligence_key_secret = keyvault_client.get_secret("document-intelligence-key")
+        documentIntelligence_key_secret = keyvault_client.get_secret(
+            "document-intelligence-key")
         item["azure_document_intelligence_key"] = documentIntelligence_key_secret.value
         print("Retrieved document intelligence service key from Key Vault")
     except Exception as e:
-        print(f"Warning: Could not retrieve document-intelligence-key from Key Vault: {e}")
+        print(
+            f"Warning: Could not retrieve document-intelligence-key from Key Vault: {e}")
 
 # Search and Extract > Multimedia Support
 # Video Indexer Configuration
@@ -185,8 +192,10 @@ if keyvault_client:
         item["speech_service_key"] = speech_key_secret.value
         print("Retrieved speech service key from Key Vault")
     except Exception as e:
-        print(f"Warning: Could not retrieve speech-service-key from Key Vault: {e}")
+        print(
+            f"Warning: Could not retrieve speech-service-key from Key Vault: {e}")
 
 # 5. Upsert the updated items back into Cosmos DB
 response = container.upsert_item(item)
-print(f"Updated item: {response['id']} with enable_external_healthcheck = {response['enable_external_healthcheck']}")
+print(
+    f"Updated item: {response['id']} with enable_external_healthcheck = {response['enable_external_healthcheck']}")
