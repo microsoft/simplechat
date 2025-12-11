@@ -4481,6 +4481,24 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     print(f"[Debug] Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
 
+    # Azure Speech SDK helper to get speech config with fresh token
+def _get_speech_config(settings, endpoint: str, locale: str):
+    """Get speech config with fresh token"""
+    if settings.get("speech_service_authentication_type") == "managed_identity":
+        credential = DefaultAzureCredential()
+        token = credential.get_token(cognitive_services_scope)
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint)
+
+        # Set the authorization token AFTER creating the config
+        speech_config.authorization_token = token.token
+    else:
+        key = settings.get("speech_service_key", "")
+        speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
+
+    speech_config.speech_recognition_language = locale
+    print(f"[Debug] Speech config obtained successfully", flush=True)
+    return speech_config
+
 def process_audio_document(
     document_id: str,
     user_id: str,
@@ -4520,32 +4538,65 @@ def process_audio_document(
     # 3) transcribe each WAV chunk
     settings = get_settings()
     endpoint = settings.get("speech_service_endpoint", "").rstrip('/')
-    key = settings.get("speech_service_key", "")
     locale = settings.get("speech_service_locale", "en-US")
-    url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
 
     all_phrases: List[str] = []
-    for idx, chunk_path in enumerate(chunk_paths, start=1):
-        update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-        print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
 
-        with open(chunk_path, 'rb') as audio_f:
-            files = {
-                'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
-                'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
-            }
-            headers = {'Ocp-Apim-Subscription-Key': key}
-            resp = requests.post(url, headers=headers, files=files)
-        try:
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"[Error] HTTP error for {chunk_path}: {e}")
-            raise
+    # Fast Transcription API not yet available in sovereign clouds, so use SDK
+    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+        for idx, chunk_path in enumerate(chunk_paths, start=1):
+            print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
 
-        result = resp.json()
-        phrases = result.get('combinedPhrases', [])
-        print(f"[Debug] Received {len(phrases)} phrases")
-        all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
+            # Get fresh config (tokens expire after ~1 hour)
+            speech_config = _get_speech_config(settings,endpoint, locale)
+
+            audio_config = speechsdk.AudioConfig(filename=chunk_path)
+            speech_recognizer = speechsdk.SpeechRecognizer(
+                speech_config=speech_config,
+                audio_config=audio_config
+            )
+
+            result = speech_recognizer.recognize_once()
+            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                print(f"[Debug] Recognized: {result.text}")
+                all_phrases.append(result.text)
+            elif result.reason == speechsdk.ResultReason.NoMatch:
+                print(f"[Warning] No speech in {chunk_path}")
+            elif result.reason == speechsdk.ResultReason.Canceled:
+                print(f"[Error] {result.cancellation_details.reason}: {result.cancellation_details.error_details}")
+                raise RuntimeError(f"Transcription canceled for {chunk_path}: {result.cancellation_details.error_details}")
+
+    else:
+        # Use the fast-transcription API if not in sovereign or custom cloud
+        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
+        for idx, chunk_path in enumerate(chunk_paths, start=1):
+            update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
+            print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+
+            with open(chunk_path, 'rb') as audio_f:
+                files = {
+                    'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
+                    'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
+                }
+                if settings.get("speech_service_authentication_type") == "managed_identity":
+                    credential = DefaultAzureCredential()
+                    token = credential.get_token(cognitive_services_scope)
+                    headers = {'Authorization': f'Bearer {token.token}'}
+                else:
+                    key = settings.get("speech_service_key", "")
+                    headers = {'Ocp-Apim-Subscription-Key': key}
+                
+                resp = requests.post(url, headers=headers, files=files)
+            try:
+                resp.raise_for_status()
+            except Exception as e:
+                print(f"[Error] HTTP error for {chunk_path}: {e}")
+                raise
+
+            result = resp.json()
+            phrases = result.get('combinedPhrases', [])
+            print(f"[Debug] Received {len(phrases)} phrases")
+            all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
 
     # 4) cleanup WAV chunks
     for p in chunk_paths:

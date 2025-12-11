@@ -64,6 +64,7 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
+import azure.cognitiveservices.speech as speechsdk
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential

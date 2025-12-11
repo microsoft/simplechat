@@ -668,6 +668,7 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
+                'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
