@@ -59,6 +59,42 @@ def register_route_backend_chats(app):
             selected_document_id = data.get('selected_document_id')
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
+            reload_messages_required = False
+
+            def result_requires_message_reload(result):
+                """Heuristically detect plugin outputs that inject new Cosmos messages (e.g., chart images)."""
+                if result is None:
+                    return False
+                if isinstance(result, str):
+                    candidate = result.strip()
+                    if candidate.startswith('{') or candidate.startswith('['):
+                        try:
+                            parsed = json.loads(candidate)
+                        except Exception:
+                            return False
+                        return result_requires_message_reload(parsed)
+                    return False
+                if isinstance(result, list):
+                    return any(result_requires_message_reload(item) for item in result)
+                if isinstance(result, dict):
+                    if result.get('reload_messages') or result.get('requires_message_reload'):
+                        return True
+                    metadata = result.get('metadata')
+                    if isinstance(metadata, dict) and metadata.get('requires_message_reload'):
+                        return True
+                    image_url = result.get('image_url')
+                    if isinstance(image_url, dict):
+                        if image_url.get('url'):
+                            return True
+                    elif isinstance(image_url, str) and image_url:
+                        return True
+                    result_type = result.get('type')
+                    if isinstance(result_type, str) and result_type.lower() == 'image_url':
+                        return True
+                    mime = result.get('mime')
+                    if isinstance(mime, str) and mime.startswith('image/'):
+                        return True
+                return False
             active_group_id = data.get('active_group_id')
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
@@ -1500,6 +1536,7 @@ def register_route_backend_chats(app):
                             agent_message_history,
                         ))
                     def agent_success(result):
+                        nonlocal reload_messages_required
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
@@ -1571,6 +1608,12 @@ def register_route_backend_chats(app):
 
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
+
+                        if not reload_messages_required:
+                            for citation in detailed_citations:
+                                if result_requires_message_reload(citation.get('function_result')):
+                                    reload_messages_required = True
+                                    break
                         
                         if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                             # If the agent response indicates fallback mode
@@ -1837,6 +1880,7 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'agent_citations': agent_citations_list,
+                'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice
             }), 200
         

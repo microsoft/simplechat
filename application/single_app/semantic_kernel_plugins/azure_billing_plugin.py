@@ -20,6 +20,7 @@ import random
 import re
 import numpy as np
 import datetime
+import textwrap
 from typing import Dict, Any, List, Optional, Union
 import json
 from collections import defaultdict
@@ -369,7 +370,7 @@ class AzureBillingPlugin(BasePlugin):
 
         return hints
 
-    def _iso_utc(dt: datetime.datetime) -> str:
+    def _iso_utc(self, dt: datetime.datetime) -> str:
         return dt.astimezone(datetime.timezone.utc).isoformat()
 
     def _add_months(dt: datetime.datetime, months: int) -> datetime.datetime:
@@ -404,6 +405,70 @@ class AzureBillingPlugin(BasePlugin):
             "from": self._iso_utc(first_of_earliest),
             "to": self._iso_utc(last_of_prev.replace(hour=23, minute=59, second=59, microsecond=0))
         }
+
+    def _parse_datetime_to_utc(
+        self,
+        value: Union[str, datetime.datetime, datetime.date],
+        field_name: str,
+    ) -> datetime.datetime:
+        """Normalize supported datetime inputs into timezone-aware UTC datetimes."""
+
+        if value is None:
+            raise ValueError(f"{field_name} must be provided when using a custom range.")
+
+        if isinstance(value, datetime.datetime):
+            dt_value = value
+        elif isinstance(value, datetime.date):
+            dt_value = datetime.datetime.combine(value, datetime.time.min)
+        elif isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError(f"{field_name} must be a non-empty ISO-8601 string.")
+            normalized = text[:-1] + "+00:00" if text[-1] in {"Z", "z"} else text
+            if "T" not in normalized and " " not in normalized:
+                raise ValueError(
+                    f"{field_name} must include a time component (e.g., 2025-11-30T23:59:59Z)."
+                )
+            try:
+                dt_value = datetime.datetime.fromisoformat(normalized)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{field_name} must be ISO-8601 formatted (e.g., 2025-11-30T23:59:59Z or 2025-11-30T23:59:59-05:00)."
+                ) from exc
+        else:
+            raise ValueError(
+                f"{field_name} must be a string, datetime, or date instance."
+            )
+
+        if dt_value.tzinfo is None:
+            dt_value = dt_value.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt_value = dt_value.astimezone(datetime.timezone.utc)
+
+        return dt_value
+
+    def _build_custom_time_period(
+        self,
+        start_datetime: Optional[Union[str, datetime.datetime, datetime.date]],
+        end_datetime: Optional[Union[str, datetime.datetime, datetime.date]],
+    ) -> Dict[str, str]:
+        """Return a Custom timeframe dictionary derived from start/end inputs or defaults."""
+
+        if start_datetime is None and end_datetime is None:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            month_start = self._first_day_of_month(now)
+            return {"from": self._iso_utc(month_start), "to": self._iso_utc(now)}
+
+        if (start_datetime is None) != (end_datetime is None):
+            raise ValueError("start_datetime and end_datetime must both be provided.")
+
+        start_dt = self._parse_datetime_to_utc(start_datetime, "start_datetime")
+        end_dt = self._parse_datetime_to_utc(end_datetime, "end_datetime")
+
+        if start_dt > end_dt:
+            raise ValueError("start_datetime must be earlier than end_datetime")
+
+        return {"from": self._iso_utc(start_dt), "to": self._iso_utc(end_dt)}
 
     def _normalize_enum(self, value: Optional[str], choices: List[str]) -> Optional[str]:
         """
@@ -479,6 +544,282 @@ class AzureBillingPlugin(BasePlugin):
                     filename=filename,
                     figsize=figsize
         )
+
+    def _estimate_legend_items(
+        self,
+        graph_type: str,
+        rows: List[Dict[str, Any]],
+        y_keys_list: List[str],
+        stack_col: Optional[str],
+    ) -> int:
+        """Return the number of legend entries expected for a plot."""
+        if graph_type == "pie":
+            return len(rows)
+        if graph_type == "column_stacked":
+            if stack_col:
+                return len({r.get(stack_col) for r in rows if r.get(stack_col) is not None})
+            return len(y_keys_list)
+        return len(y_keys_list)
+
+    def _adjust_figsize(self, base_figsize: List[float], legend_items: int) -> List[float]:
+        """Scale the figsize heuristically based on legend size."""
+        scaled = list(base_figsize)
+        if legend_items > 6:
+            extra_width = min(legend_items * 0.12, 5.0)
+            scaled[0] = base_figsize[0] + extra_width
+        elif legend_items > 3:
+            scaled[1] = base_figsize[1] + 0.8
+        if legend_items > 10:
+            scaled[1] = max(scaled[1], base_figsize[1] + min((legend_items - 10) * 0.2, 3.0))
+        return scaled
+
+    def _wrap_title(self, title: str, width: int = 60) -> str:
+        """Return a wrapped title so long strings stay inside the figure."""
+
+        if not title:
+            return ""
+        try:
+            return textwrap.fill(title, width=max(20, width))
+        except Exception:
+            return title
+
+    def _pie_autopct_formatter(self, values: List[float]):
+        """Return an autopct formatter that prints absolute value and percentage for top slices only."""
+
+        total = sum(values) or 1.0
+        # Show labels for the most meaningful slices to avoid visual clutter.
+        sorted_indices = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+        max_labels = 8 if len(values) >= 15 else 12
+        pct_threshold = 2.0 if len(values) >= 12 else 0.5
+        show_indices = set()
+        for idx in sorted_indices[:max_labels]:
+            pct = (values[idx] / total) * 100
+            if pct >= pct_threshold:
+                show_indices.add(idx)
+
+        call_count = {"idx": -1}
+
+        def _format(pct: float) -> str:
+            call_count["idx"] += 1
+            idx = call_count["idx"]
+            if idx not in show_indices:
+                return ""
+            value = values[idx]
+            value_str = f"{value:,.0f}" if abs(value) >= 1000 else f"{value:,.2f}"
+            return f"{value_str}\n({pct:.1f}%)"
+
+        return _format
+
+    def _annotate_column_totals(self, ax, positions: List[float], totals: List[float]) -> None:
+        """Annotate summed column totals above each bar cluster and extend axes if needed."""
+
+        if not totals or not positions:
+            return
+        safe_totals: List[float] = []
+        for value in totals:
+            try:
+                safe_totals.append(float(value))
+            except (TypeError, ValueError):
+                safe_totals.append(0.0)
+        if not safe_totals:
+            return
+        abs_max = max(max(safe_totals), abs(min(safe_totals)), 1.0)
+        offset = max(abs_max * 0.02, 0.5)
+        headroom = max(abs_max * 0.05, offset)
+        label_positions: List[float] = []
+        for x, total in zip(positions, safe_totals):
+            y = total + offset if total >= 0 else total - offset
+            label_positions.append(y)
+            va = 'bottom' if total >= 0 else 'top'
+            ax.text(
+                x,
+                y,
+                f"{total:,.2f}",
+                ha='center',
+                va=va,
+                fontsize=8,
+                fontweight='bold'
+            )
+
+        if label_positions:
+            current_bottom, current_top = ax.get_ylim()
+            max_label = max(label_positions)
+            min_label = min(label_positions)
+            pad = headroom
+            top_needed = max_label + pad
+            bottom_needed = min_label - pad
+            new_bottom = current_bottom
+            new_top = current_top
+            if top_needed > current_top:
+                new_top = top_needed
+            if bottom_needed < current_bottom:
+                new_bottom = bottom_needed
+            if new_bottom != current_bottom or new_top != current_top:
+                ax.set_ylim(new_bottom, new_top)
+
+    def _place_side_legend(
+        self,
+        ax,
+        handles: Optional[List[Any]] = None,
+        labels: Optional[List[Any]] = None,
+        title: Optional[str] = None,
+        ncol: int = 1,
+    ) -> bool:
+        """Place legend to the right of the axes and reserve horizontal space."""
+        if handles is not None or labels is not None:
+            legend = ax.legend(
+                handles,
+                labels,
+                title=title,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                borderaxespad=0.0,
+                ncol=ncol,
+            )
+        else:
+            legend = ax.legend(
+                title=title,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                borderaxespad=0.0,
+                ncol=ncol,
+            )
+        if legend is not None:
+            ax.figure.subplots_adjust(right=0.78)
+            return True
+        return False
+
+    def _plot_pie_chart(
+        self,
+        ax,
+        rows: List[Dict[str, Any]],
+        x_key: str,
+        y_key: str,
+        title: str,
+        xlabel: str,
+        ylabel: str,
+    ) -> bool:
+        labels = [r.get(x_key) for r in rows]
+        labels_display = ["Unknown" if label in (None, "") else str(label) for label in labels]
+        values = [float(r.get(y_key) or 0) for r in rows]
+        total_value = sum(values)
+        autopct = self._pie_autopct_formatter(values)
+        wedges, _, autotexts = ax.pie(values, autopct=autopct, startangle=90)
+        for autotext in autotexts:
+            autotext.set_fontsize(8)
+        ax.set_title(self._wrap_title(title or "Cost distribution"))
+        ax.text(0, 0, f"Total\n{total_value:,.2f}", ha='center', va='center', fontsize=10, fontweight='bold')
+        legend_labels = []
+        for label, value in zip(labels_display, values):
+            value_str = f"{value:,.2f}" if abs(value) < 1000 else f"{value:,.0f}"
+            pct = (value / total_value * 100) if total_value else 0
+            legend_labels.append(f"{label} — {value_str} ({pct:.1f}%)")
+        legend_title = f"{x_key} (Total: {total_value:,.2f})"
+        ncol = min(4, max(1, len(labels_display) // 10 + 1))
+        return self._place_side_legend(ax, wedges, legend_labels, title=legend_title, ncol=ncol)
+
+    def _plot_line_or_area_chart(
+        self,
+        ax,
+        rows: List[Dict[str, Any]],
+        x_vals: List[Any],
+        y_keys_list: List[str],
+        graph_type: str,
+        x_key: str,
+        xlabel: str,
+        ylabel: str,
+        title: str,
+    ) -> bool:
+        for yk in y_keys_list:
+            y_vals = [float(r.get(yk) or 0) for r in rows]
+            if graph_type == "line":
+                ax.plot(x_vals, y_vals, marker='o', label=yk)
+            else:
+                ax.fill_between(range(len(x_vals)), y_vals, alpha=0.5, label=yk)
+        ax.set_title(self._wrap_title(title or "Cost trend"))
+        ax.set_xlabel(xlabel or x_key)
+        ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Value"))
+        ax.grid(True, axis='y', alpha=0.3)
+        return self._place_side_legend(ax)
+
+    def _plot_column_grouped_chart(
+        self,
+        ax,
+        rows: List[Dict[str, Any]],
+        x_vals: List[Any],
+        y_keys_list: List[str],
+        x_key: str,
+        xlabel: str,
+        ylabel: str,
+        title: str,
+    ) -> bool:
+        n_groups = len(rows)
+        n_bars = len(y_keys_list)
+        index = np.arange(n_groups)
+        bar_width = 0.8 / max(1, n_bars)
+        group_totals = [0.0 for _ in rows]
+        for i, yk in enumerate(y_keys_list):
+            y_vals = [float(r.get(yk) or 0) for r in rows]
+            # accumulate totals for the annotation step below
+            group_totals = [total + value for total, value in zip(group_totals, y_vals)]
+            ax.bar(index + i * bar_width, y_vals, bar_width, label=yk)
+        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
+        ax.set_xticklabels([str(x) for x in x_vals], rotation=45, ha='right')
+        ax.set_title(self._wrap_title(title or "Cost comparison"))
+        ax.set_xlabel(xlabel or x_key)
+        ax.set_ylabel(ylabel or ("Values" if len(y_keys_list) > 1 else y_keys_list[0]))
+        centers = (index + bar_width * (n_bars - 1) / 2).tolist()
+        self._annotate_column_totals(ax, centers, group_totals)
+        return self._place_side_legend(ax)
+
+    def _plot_column_stacked_chart(
+        self,
+        ax,
+        rows: List[Dict[str, Any]],
+        x_key: str,
+        y_keys_list: List[str],
+        stack_col: Optional[str],
+        xlabel: str,
+        ylabel: str,
+        title: str,
+    ) -> bool:
+        x_vals_unique: List[Any] = []
+        seen_x = set()
+        for r in rows:
+            xval = r.get(x_key)
+            if xval not in seen_x:
+                seen_x.add(xval)
+                x_vals_unique.append(xval)
+
+        pivot = defaultdict(lambda: defaultdict(float))
+        if stack_col:
+            for r in rows:
+                xval = r.get(x_key)
+                sval = r.get(stack_col)
+                yval = float(r.get(y_keys_list[0]) or 0)
+                pivot[xval][sval] += yval
+            y_keys_plot = sorted({key for row in pivot.values() for key in row.keys()})
+        else:
+            for r in rows:
+                xval = r.get(x_key)
+                for yk in y_keys_list:
+                    pivot[xval][yk] += float(r.get(yk) or 0)
+            y_keys_plot = y_keys_list
+
+        data_matrix = [[pivot[x_val].get(yk, 0.0) for x_val in x_vals_unique] for yk in y_keys_plot]
+        index = np.arange(len(x_vals_unique))
+        bottoms = np.zeros(len(x_vals_unique))
+        for i, yk in enumerate(y_keys_plot):
+            ax.bar(index, data_matrix[i], bottom=bottoms, label=str(yk))
+            bottoms += np.array(data_matrix[i])
+        ax.set_xticks(index)
+        ax.set_xticklabels([str(x) for x in x_vals_unique], rotation=45, ha='right')
+        ax.set_title(self._wrap_title(title or "Cost breakdown"))
+        ax.set_xlabel(xlabel or x_key)
+        ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Values"))
+        legend_title = stack_col or "Segments"
+        self._annotate_column_totals(ax, index.tolist(), bottoms.tolist())
+        return self._place_side_legend(ax, title=legend_title)
 
     def plot_custom_chart(self,
                           conversation_id: str,
@@ -604,110 +945,59 @@ class AzureBillingPlugin(BasePlugin):
 
         fig = None
         try:
-            num_legend_items = 0
-            if graph_type == "pie":
-                num_legend_items = len(rows)
-            elif graph_type == "column_stacked":
-                if stack_col:
-                    num_legend_items = len({r.get(stack_col) for r in rows if r.get(stack_col) is not None})
-                else:
-                    num_legend_items = len(y_keys_list)
-            else:
-                num_legend_items = len(y_keys_list)
-
-            scaled_figsize = list(figsize)
-            if num_legend_items > 6:
-                extra_width = min(num_legend_items * 0.12, 5.0)
-                scaled_figsize[0] = figsize[0] + extra_width
-            elif num_legend_items > 3:
-                scaled_figsize[1] = figsize[1] + 0.8
+            legend_items = self._estimate_legend_items(graph_type, rows, y_keys_list, stack_col)
+            scaled_figsize = self._adjust_figsize(figsize, legend_items)
 
             fig, ax = plt.subplots(figsize=tuple(scaled_figsize))
 
+            legend_outside = False
             if graph_type == "pie":
-                pie_x_key = x_keys_list[0]
-                pie_y_key = y_keys_list[0]
-                labels = [r.get(pie_x_key) for r in rows]
-                labels_display = ["Unknown" if label in (None, "") else str(label) for label in labels]
-                values = [float(r.get(pie_y_key) or 0) for r in rows]
-                wedges, _, _ = ax.pie(values, autopct="%1.1f%%", startangle=90)
-                ax.set_title(title or "Cost distribution")
-                if len(labels_display) <= 6:
-                    ax.legend(wedges, labels_display, loc="center left", bbox_to_anchor=(1, 0.5))
-                else:
-                    ax.legend(wedges, labels_display, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=min(4, len(labels_display)))
-
+                legend_outside = self._plot_pie_chart(
+                    ax,
+                    rows,
+                    x_keys_list[0],
+                    y_keys_list[0],
+                    title,
+                    xlabel,
+                    ylabel,
+                )
             elif graph_type in ("line", "area"):
-                for yk in y_keys_list:
-                    y_vals = [float(r.get(yk) or 0) for r in rows]
-                    if graph_type == "line":
-                        ax.plot(x_vals, y_vals, marker='o', label=yk)
-                    else:
-                        ax.fill_between(range(len(x_vals)), y_vals, alpha=0.5, label=yk)
-                if len(y_keys_list) > 1:
-                    ax.legend()
-                ax.set_title(title or "Cost trend")
-                ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Value"))
-                ax.grid(True, axis='y', alpha=0.3)
-
+                legend_outside = self._plot_line_or_area_chart(
+                    ax,
+                    rows,
+                    x_vals,
+                    y_keys_list,
+                    graph_type,
+                    x_key,
+                    xlabel,
+                    ylabel,
+                    title,
+                )
             elif graph_type == "column_grouped":
-                n_groups = len(rows)
-                n_bars = len(y_keys_list)
-                index = np.arange(n_groups)
-                bar_width = 0.8 / max(1, n_bars)
-                for i, yk in enumerate(y_keys_list):
-                    y_vals = [float(r.get(yk) or 0) for r in rows]
-                    ax.bar(index + i * bar_width, y_vals, bar_width, label=yk)
-                ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-                ax.set_xticklabels([str(x) for x in x_vals], rotation=45, ha='right')
-                ax.set_title(title or "Cost comparison")
-                ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel or ("Values" if len(y_keys_list) > 1 else y_keys_list[0]))
-                if len(y_keys_list) > 1:
-                    ax.legend()
-
+                legend_outside = self._plot_column_grouped_chart(
+                    ax,
+                    rows,
+                    x_vals,
+                    y_keys_list,
+                    x_key,
+                    xlabel,
+                    ylabel,
+                    title,
+                )
             elif graph_type == "column_stacked":
-                x_vals_unique: List[Any] = []
-                seen_x = set()
-                for r in rows:
-                    xval = r.get(x_key)
-                    if xval not in seen_x:
-                        seen_x.add(xval)
-                        x_vals_unique.append(xval)
+                legend_outside = self._plot_column_stacked_chart(
+                    ax,
+                    rows,
+                    x_key,
+                    y_keys_list,
+                    stack_col,
+                    xlabel,
+                    ylabel,
+                    title,
+                )
 
-                y_keys_plot: List[Any]
-                pivot = defaultdict(lambda: defaultdict(float))
-                if stack_col:
-                    for r in rows:
-                        xval = r.get(x_key)
-                        sval = r.get(stack_col)
-                        yval = float(r.get(y_keys_list[0]) or 0)
-                        pivot[xval][sval] += yval
-                    y_keys_plot = sorted({key for row in pivot.values() for key in row.keys()})
-                else:
-                    for r in rows:
-                        xval = r.get(x_key)
-                        for yk in y_keys_list:
-                            pivot[xval][yk] += float(r.get(yk) or 0)
-                    y_keys_plot = y_keys_list
-
-                data_matrix = [[pivot[x_val].get(yk, 0.0) for x_val in x_vals_unique] for yk in y_keys_plot]
-                index = np.arange(len(x_vals_unique))
-                bottoms = np.zeros(len(x_vals_unique))
-                for i, yk in enumerate(y_keys_plot):
-                    ax.bar(index, data_matrix[i], bottom=bottoms, label=str(yk))
-                    bottoms += np.array(data_matrix[i])
-                ax.set_xticks(index)
-                ax.set_xticklabels([str(x) for x in x_vals_unique], rotation=45, ha='right')
-                ax.set_title(title or "Cost breakdown")
-                ax.set_xlabel(xlabel or x_key)
-                ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Values"))
-                if len(y_keys_plot) > 1:
-                    legend_title = stack_col or "Segments"
-                    ax.legend(title=legend_title)
-
-            plt.tight_layout()
+            
+            plt.tight_layout(rect=[0, 0, 0.78, 1])
             img_b64 = self._fig_to_base64_dict(fig, filename=filename)
             payload = {
                 "status": "ok",
@@ -726,12 +1016,15 @@ class AzureBillingPlugin(BasePlugin):
             if conversation_id:
                 try:
                     self.upload_cosmos_message(conversation_id, str(img_b64.get("image_url", "")))
+                    payload["image_url"] = f"Stored chart image for conversation {conversation_id}"
+                    payload["requires_message_reload"] = True
                 except Exception:
                     logging.exception("Failed to upload chart image to Cosmos DB")
                     payload.setdefault("warnings", []).append("Chart rendered but storing to conversation failed.")
             else:
                 payload.setdefault("warnings", []).append("Chart rendered but conversation_id was not provided; image not persisted.")
 
+            time.sleep(5)  # give time for image to upload before returning
             return payload
         except Exception as ex:
             logging.exception("Error while generating chart")
@@ -881,21 +1174,26 @@ class AzureBillingPlugin(BasePlugin):
             # Fallback: return raw JSON string in a single column
             return self._csv_from_table([{"raw": json.dumps(data)}])
 
-    @kernel_function(description="Run an Azure Cost Management query and return rows, column metadata, and plotting hints for manual chart selection. Defaults to BillingMonthToDate timeframe.")
+    @kernel_function(description="Run an Azure Cost Management query and return rows, column metadata, and plotting hints for manual chart selection. Requires explicit start/end datetimes and always uses a Custom timeframe.")
     @plugin_function_logger("AzureBillingPlugin")
     def run_data_query(self,
         conversation_id: str,
         subscription_id: str,
-        resource_group_name: Optional[str] = None,
+        aggregations: List[Dict[str, Any]],
+        groupings: List[Dict[str, Any]],
+        start_datetime: Union[str, datetime.datetime, datetime.date],
+        end_datetime: Union[str, datetime.datetime, datetime.date],
         query_type: str = "Usage",
-        timeframe: str = "BillingMonthToDate",
         granularity: str = "Daily",
-        aggregations: Optional[List[Dict[str, Any]]] = None,
-        groupings: Optional[List[Dict[str, Any]]] = None,
+        resource_group_name: Optional[str] = None,
         query_filter: Optional[Dict[str, Any]] = None,
-        time_period: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """
         Execute an Azure Cost Management query and return structured results.
+
+        Callers must supply start_datetime and end_datetime (ISO-8601 strings or
+        datetime objects). The outgoing payload always uses a Custom timeframe with a
+        fully populated timePeriod object.
 
         Returns a dict containing:
             - rows: list of result dictionaries
@@ -912,29 +1210,56 @@ class AzureBillingPlugin(BasePlugin):
         url = f"{self.endpoint.rstrip('/')}{scope}/providers/Microsoft.CostManagement/query?api-version={self.api_version}"
         if not self._normalize_enum(query_type, QUERY_TYPE):
             raise ValueError(f"Invalid query_type: {query_type}. Must be one of {QUERY_TYPE}.")
-        if not self._normalize_enum(timeframe, TIME_FRAME_TYPE):
-            raise ValueError(f"Invalid timeframe: {timeframe}. Must be one of {TIME_FRAME_TYPE}.")
         if not self._normalize_enum(granularity, GRANULARITY_TYPE):
             raise ValueError(f"Invalid granularity: {granularity}. Must be one of {GRANULARITY_TYPE}.")
+
+        if start_datetime is None or end_datetime is None:
+            return {
+                "status": "error",
+                "error": "start_datetime and end_datetime are required for run_data_query.",
+                "expected_format": "ISO-8601 timestamp with time component (e.g., 2025-11-01T00:00:00Z).",
+                "example": {
+                    "start_datetime": "2025-11-01T00:00:00Z",
+                    "end_datetime": "2025-11-30T23:59:59Z"
+                }
+            }
+        try:
+            time_period = self._build_custom_time_period(start_datetime, end_datetime)
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "error": str(exc),
+                "expected_format": "ISO-8601 timestamp with time component (e.g., 2025-11-01T00:00:00Z).",
+                "example": {
+                    "start_datetime": "2025-11-01T00:00:00Z",
+                    "end_datetime": "2025-11-30T23:59:59Z"
+                }
+            }
+
         query = {
             "type": query_type,
-            "timeframe": timeframe,
+            "timeframe": "Custom",
             "dataset": {
                 "granularity": granularity
-            }
+            },
+            "timePeriod": time_period,
         }
-        # If user did not provide aggregations/groupings or filter, construct sensible defaults
-        if not aggregations and not groupings and not query_filter:
-            logging.info("No aggregations/groupings/filter provided; applying default aggregation and grouping.")
-            aggregations = [{
-                "name": "totalCost",
-                "function": "Sum",
-                "column": "PreTaxCost"
-            }]
-            groupings = [{
-                "type": "Dimension",
-                "name": "ResourceType"
-            }]
+        if not aggregations:
+            return {
+                "status": "error",
+                "error": "Aggregations list cannot be empty; supply at least one aggregation entry.",
+                "example": [
+                    {"name": "totalCost", "function": "Sum", "column": "PreTaxCost"}
+                ]
+            }
+        if not groupings:
+            return {
+                "status": "error",
+                "error": "Groupings list cannot be empty; include at least one Dimension/Tag grouping.",
+                "example": [
+                    {"type": "Dimension", "name": "ResourceType"}
+                ]
+            }
         # Validate and normalize aggregations (if provided)
         if aggregations:
             if not isinstance(aggregations, list):
@@ -1003,30 +1328,7 @@ class AzureBillingPlugin(BasePlugin):
             query["dataset"]["grouping"] = normalized_groupings
         if query_filter:
             query["dataset"]["filter"] = query_filter
-        # Enforce presence and shape of time_period when timeframe is Custom
-        if self._normalize_enum(timeframe, TIME_FRAME_TYPE) == "Custom":
-            if not time_period or not isinstance(time_period, dict):
-                example = {
-                    "type": query_type,
-                    "dataSet": {
-                        "granularity": granularity,
-                        "aggregation": {
-                            "totalCost": {"name": "Cost", "function": "Sum"}
-                        },
-                        "grouping": [{"type": "Dimension", "name": "ResourceType"}]
-                    },
-                    "timeframe": "Custom",
-                    "time_period": {"from": "2025-04-01T00:00:00+00:00", "to": "2025-09-30T23:59:59+00:00"}
-                }
-                return {
-                    "status": "valueError",
-                    "error": "timeframe is 'Custom' but no valid time_period provided. Provide a time_period dict with 'from' and 'to' ISO timestamps. Resubmit the query again with the time_period included.",
-                    "example": example
-                }
-            # Validate that 'from' and 'to' exist
-            if 'from' not in time_period or 'to' not in time_period:
-                return {"status": "error", "error": "time_period must include 'from' and 'to' keys with ISO datetime strings."}
-            query["timePeriod"] = time_period
+        # No additional validation required; _build_custom_time_period enforces shape
         logging.debug("Running Cost Management query with payload: %s", json.dumps(query, indent=2))
         data = self._post(url, query)
         if isinstance(data, dict) and ("error" in data or "consent_url" in data):
@@ -1051,16 +1353,16 @@ class AzureBillingPlugin(BasePlugin):
         plot_hints = self._build_plot_hints(result_rows, column_objects)
 
         return {
-            "status": "ok",
+            "status": 200,
             "conversation_id": conversation_id,
             "scope": scope,
             "api_version": self.api_version,
             "query": query,
-            "rows": result_rows,
             "row_count": len(result_rows),
             "columns": columns_meta,
             "csv": csv_output,
-            "plot_hints": plot_hints
+            "plot_hints": plot_hints,
+            #"rows": result_rows,
         }
 
     @kernel_function(description="Return available configuration options for Azure Billing report queries.")
@@ -1193,7 +1495,7 @@ class AzureBillingPlugin(BasePlugin):
 
     @kernel_function(description="Get the expected formatting, in JSON, for run_data_query parameters.")
     @plugin_function_logger("AzureBillingPlugin")
-    def get_format_run_data_query(self) -> Dict[str, Any]:
+    def get_run_data_query_format(self) -> Dict[str, Any]:
         """
         Returns an example JSON object describing the expected parameters for run_data_query.
         Includes required/optional fields, types, valid values, and reflects the latest method signature.
@@ -1203,31 +1505,29 @@ class AzureBillingPlugin(BasePlugin):
             "subscription_id": "<string, required>",
             "resource_group_name": "<string, optional>",
             "query_type": f"<string, optional, one of {QUERY_TYPE}>",
-            "timeframe": f"<string, optional, one of {TIME_FRAME_TYPE}>",
+            "start_datetime": "<string, required - ISO-8601 timestamp with time (e.g., 2025-11-01T00:00:00Z)>",
+            "end_datetime": "<string, required - ISO-8601 timestamp with time (e.g., 2025-11-30T23:59:59Z)>",
             "granularity": f"<string, optional, one of {GRANULARITY_TYPE}>",
             "aggregations": [
                 {
                     "name": "totalCost",
-                    "function": f"<string, one of {AGGREGATION_FUNCTIONS}>",
-                    "column": f"<string, one of {AGGREGATION_COLUMNS}>"
+                    "function": f"<string, required, one of {AGGREGATION_FUNCTIONS}>",
+                    "column": f"<string, required, one of {AGGREGATION_COLUMNS}>"
                 }
             ],
             "groupings": [
                 {
-                    "type": f"<string, one of {GROUPING_TYPE}>",
-                    "name": f"<string, one of {GROUPING_DIMENSIONS}>"
+                    "type": f"<string, required, one of {GROUPING_TYPE}>",
+                    "name": f"<string, required, one of {GROUPING_DIMENSIONS}>"
                 }
             ],
             "query_filter": "<object, optional – Cost Management filter definition>",
-            "time_period": {
-                "from": "2025-04-01T00:00:00+00:00",
-                "to": "2025-09-30T23:59:59+00:00"
-            },
             "example_request": {
                 "conversation_id": "abc123",
                 "subscription_id": "00000000-0000-0000-0000-000000000000",
                 "query_type": "Usage",
-                "timeframe": "BillingMonthToDate",
+                "start_datetime": "2025-04-01T00:00:00-04:00",
+                "end_datetime": "2025-09-30T23:59:59-04:00",
                 "granularity": "Daily",
                 "aggregations": [
                     {"name": "totalCost", "function": "Sum", "column": "PreTaxCost"}
@@ -1241,7 +1541,8 @@ class AzureBillingPlugin(BasePlugin):
                 "row_count": 3,
                 "rows": [
                     {"ResourceType": "microsoft.compute/virtualmachines", "PreTaxCost": 12694.43},
-                    {"ResourceType": "microsoft.compute/disks", "PreTaxCost": 4715.20}
+                    {"ResourceType": "microsoft.compute/disks", "PreTaxCost": 4715.20},
+                    {"ResourceType": "microsoft.keyvault/vaults", "PreTaxCost": 201.11}
                 ],
                 "columns": [
                     {"name": "ResourceType", "type": "String"},
@@ -1264,6 +1565,9 @@ class AzureBillingPlugin(BasePlugin):
             },
             "workflow": [
                 "Call run_data_query to retrieve rows, columns, csv, and plot_hints.",
+                "Always provide start_datetime and end_datetime using ISO-8601 strings (e.g., 2025-11-01T00:00:00Z).",
+                "Always supply at least one aggregation entry; the plugin no longer infers defaults when none are provided.",
+                "Include at least one grouping (Dimension + name) so the query can bucket the data.",
                 "Inspect plot_hints['recommended'] for suggested x_keys, y_keys, and chart types.",
                 "Pass rows (or the csv string) plus the chosen keys into plot_chart to render and persist a graph."
             ]
@@ -1272,7 +1576,7 @@ class AzureBillingPlugin(BasePlugin):
     # Returns the expected input data format for plot_custom_chart
     @kernel_function(description="Get the expected input data format for plot_custom_chart (graphing) as JSON.")
     @plugin_function_logger("AzureBillingPlugin")
-    def get_format_plot_chart() -> Dict[str, Any]:
+    def get_plot_chart_format() -> Dict[str, Any]:
         """
         Returns an example object describing the expected 'data' parameter for plot_custom_chart.
         The 'data' field should be a CSV string (with headers and rows), matching the output format of run_data_query.
@@ -1400,10 +1704,10 @@ class AzureBillingPlugin(BasePlugin):
                     'conversation_id': conversation_id,
                     'role': 'image',
                     'content': content,
-                    'prompt': user_message,
+                    'prompt': "",
                     'created_at': datetime.datetime.utcnow().isoformat(),
                     'timestamp': datetime.datetime.utcnow().isoformat(),
-                    'model_deployment_name': image_gen_model,
+                    'model_deployment_name': "azurebillingplugin",
                     'metadata': {
                         'is_chunked': False,
                         'original_size': len(content)
@@ -1414,6 +1718,7 @@ class AzureBillingPlugin(BasePlugin):
             conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
             conversation_item['last_updated'] = datetime.datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
+            time.sleep(5) # sleep to allow the message to propogate and the front end to pick it up when receiving the agent response
         except Exception as e:
             print(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")
             logging.error(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")
