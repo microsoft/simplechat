@@ -11,6 +11,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 import builtins
 import asyncio, types
 import json
+from typing import Any, Dict, List
 from config import *
 from flask import g
 from functions_authentication import *
@@ -61,43 +62,63 @@ def register_route_backend_chats(app):
             document_scope = data.get('doc_scope')
             reload_messages_required = False
 
-            def result_requires_message_reload(result):
+            def parse_json_string(candidate: str) -> Any:
+                """Parse JSON content when strings look like serialized structures."""
+                trimmed = candidate.strip()
+                if not trimmed or trimmed[0] not in ('{', '['):
+                    return None
+                try:
+                    return json.loads(trimmed)
+                except Exception as exc:
+                    log_event(
+                        f"[result_requires_message_reload] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
+                        level=logging.DEBUG
+                    )
+                    return None
+
+            def dict_requires_reload(payload: Dict[str, Any]) -> bool:
+                """Inspect dictionary payloads for any signal that messages were persisted."""
+                if payload.get('reload_messages') or payload.get('requires_message_reload'):
+                    return True
+
+                metadata = payload.get('metadata')
+                if isinstance(metadata, dict) and metadata.get('requires_message_reload'):
+                    return True
+
+                image_url = payload.get('image_url')
+                if isinstance(image_url, dict) and image_url.get('url'):
+                    return True
+                if isinstance(image_url, str) and image_url.strip():
+                    return True
+
+                result_type = payload.get('type')
+                if isinstance(result_type, str) and result_type.lower() == 'image_url':
+                    return True
+
+                mime = payload.get('mime')
+                if isinstance(mime, str) and mime.startswith('image/'):
+                    return True
+
+                for value in payload.values():
+                    if result_requires_message_reload(value):
+                        return True
+                return False
+
+            def list_requires_reload(items: List[Any]) -> bool:
+                """Evaluate list items for reload requirements."""
+                return any(result_requires_message_reload(item) for item in items)
+
+            def result_requires_message_reload(result: Any) -> bool:
                 """Heuristically detect plugin outputs that inject new Cosmos messages (e.g., chart images)."""
                 if result is None:
                     return False
                 if isinstance(result, str):
-                    candidate = result.strip()
-                    if candidate.startswith('{') or candidate.startswith('['):
-                        try:
-                            parsed = json.loads(candidate)
-                        except Exception as e:
-                            log_event(
-                                f"[result_requires_message_reload] Failed to parse JSON: {str(e)} | candidate: {candidate[:200]}",
-                                level=logging.DEBUG
-                            )
-                            return False
-                        return result_requires_message_reload(parsed)
-                    return False
+                    parsed = parse_json_string(result)
+                    return result_requires_message_reload(parsed) if parsed is not None else False
                 if isinstance(result, list):
-                    return any(result_requires_message_reload(item) for item in result)
+                    return list_requires_reload(result)
                 if isinstance(result, dict):
-                    if result.get('reload_messages') or result.get('requires_message_reload'):
-                        return True
-                    metadata = result.get('metadata')
-                    if isinstance(metadata, dict) and metadata.get('requires_message_reload'):
-                        return True
-                    image_url = result.get('image_url')
-                    if isinstance(image_url, dict):
-                        if image_url.get('url'):
-                            return True
-                    elif isinstance(image_url, str) and image_url:
-                        return True
-                    result_type = result.get('type')
-                    if isinstance(result_type, str) and result_type.lower() == 'image_url':
-                        return True
-                    mime = result.get('mime')
-                    if isinstance(mime, str) and mime.startswith('image/'):
-                        return True
+                    return dict_requires_reload(result)
                 return False
             active_group_id = data.get('active_group_id')
             frontend_gpt_model = data.get('model_deployment')
