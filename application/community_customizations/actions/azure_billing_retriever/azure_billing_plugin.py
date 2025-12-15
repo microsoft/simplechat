@@ -337,8 +337,6 @@ class AzureBillingPlugin(BasePlugin):
 
         temporal_primary = next((k for k in ordered_labels if any(term in k.lower() for term in temporal_terms)), None)
         stack_candidate = next((k for k in ordered_labels if k != temporal_primary), None)
-
-        default_graph_type = "column_grouped"
         default_x_keys: List[str] = []
 
         if temporal_primary:
