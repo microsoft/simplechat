@@ -184,7 +184,7 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
-    search_resource_manager = "https://search.windows.net"
+    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
