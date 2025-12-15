@@ -39,7 +39,7 @@ GRANULARITY_TYPE = ["None", "Daily", "Monthly", "Accumulated"]
 GROUPING_TYPE = ["Dimension", "TagKey"]
 AGGREGATION_FUNCTIONS = ["Sum"] #, "Average", "Min", "Max", "Count", "None"]
 AGGREGATION_COLUMNS= ["Cost", "CostUSD", "PreTaxCost", "PreTaxCostUSD"]
-GROUPING_DIMENSIONS = ["None", "BillingPeriod", "ChargeType", "Frequency", "MeterCategory", "MeterId", "MeterSubCategory", "Product", "ResourceGroupName", "ResourceLocation", "ResourceType", "ServiceFamily", "ServiceName", "SubscriptionId", "SubscriptionName", "Tag"]
+DEFAULT_GROUPING_DIMENSIONS = ["None", "BillingPeriod", "ChargeType", "Frequency", "MeterCategory", "MeterId", "MeterSubCategory", "Product", "ResourceGroupName", "ResourceLocation", "ResourceType", "ServiceFamily", "ServiceName", "SubscriptionId", "SubscriptionName", "Tag"]
 SUPPORTED_GRAPH_TYPES = ["pie", "column_stacked", "column_grouped", "line", "area"]
 
 class AzureBillingPlugin(BasePlugin):
@@ -55,6 +55,7 @@ class AzureBillingPlugin(BasePlugin):
         self.endpoint = endpoint
         self.metadata_dict = manifest.get('metadata', {})
         self.api_version = self.additionalFields.get('apiVersion', '2023-03-01')
+        self.grouping_dimensions: List[str] = list(DEFAULT_GROUPING_DIMENSIONS)
 
     def _get_token(self) -> Optional[str]:
         """Get an access token for Azure REST API calls."""
@@ -1319,8 +1320,8 @@ class AzureBillingPlugin(BasePlugin):
                 gname = grp.get('name')
                 if not gtype or not self._normalize_enum(gtype, GROUPING_TYPE):
                     return {"status": "error", "error": f"Grouping type '{gtype}' is invalid. Must be one of: {GROUPING_TYPE}", "example": [{"type": "Dimension", "name": "ResourceType"}]}
-                if not gname or not self._normalize_enum(gname, GROUPING_DIMENSIONS):
-                    return {"status": "error", "error": f"Grouping name '{gname}' is invalid. Must be one of: {GROUPING_DIMENSIONS}", "example": [{"type": "Dimension", "name": "ResourceType"}]}
+                if not gname or not self._normalize_enum(gname, self.grouping_dimensions):
+                    return {"status": "error", "error": f"Grouping name '{gname}' is invalid. Must be one of: {self.grouping_dimensions}", "example": [{"type": "Dimension", "name": "ResourceType"}]}
                 normalized_groupings.append({'type': gtype, 'name': gname})
             query["dataset"]["grouping"] = normalized_groupings
         if query_filter:
@@ -1369,14 +1370,14 @@ class AzureBillingPlugin(BasePlugin):
         if isinstance(get_dimension_results, dict) and ("error" in get_dimension_results or "consent_url" in get_dimension_results):
             return get_dimension_results
         if isinstance(get_dimension_results, list):
-            global GROUPING_DIMENSIONS
-            GROUPING_DIMENSIONS = get_dimension_results
+            # Store a per-instance copy to prevent cross-request state bleed.
+            self.grouping_dimensions = list(get_dimension_results) or list(DEFAULT_GROUPING_DIMENSIONS)
         return {
             "TIME_FRAME_TYPE": TIME_FRAME_TYPE,
             "QUERY_TYPE": QUERY_TYPE,
             "GRANULARITY_TYPE": GRANULARITY_TYPE,
             "GROUPING_TYPE": GROUPING_TYPE,
-            "GROUPING_DIMENSIONS": GROUPING_DIMENSIONS,
+            "GROUPING_DIMENSIONS": self.grouping_dimensions,
             "AGGREGATION_FUNCTIONS": AGGREGATION_FUNCTIONS,
             "AGGREGATION_COLUMNS": AGGREGATION_COLUMNS,
             "NOTE": "Not all combinations are available for all queries."
@@ -1515,7 +1516,7 @@ class AzureBillingPlugin(BasePlugin):
             "groupings": [
                 {
                     "type": f"<string, required, one of {GROUPING_TYPE}>",
-                    "name": f"<string, required, one of {GROUPING_DIMENSIONS}>"
+                    "name": f"<string, required, one of {self.grouping_dimensions}>"
                 }
             ],
             "query_filter": "<object, optional – Cost Management filter definition>",
@@ -1573,7 +1574,7 @@ class AzureBillingPlugin(BasePlugin):
     # Returns the expected input data format for plot_custom_chart
     @kernel_function(description="Get the expected input data format for plot_custom_chart (graphing) as JSON.")
     @plugin_function_logger("AzureBillingPlugin")
-    def get_plot_chart_format() -> Dict[str, Any]:
+    def get_plot_chart_format(self) -> Dict[str, Any]:
         """
         Returns an example object describing the expected 'data' parameter for plot_custom_chart.
         The 'data' field should be a CSV string (with headers and rows), matching the output format of run_data_query.
