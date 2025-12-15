@@ -12,7 +12,6 @@ import io
 import base64
 import requests
 import csv
-import inspect
 import matplotlib.pyplot as plt
 import logging
 import time
@@ -27,11 +26,9 @@ from collections import defaultdict
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
-from functions_authentication import get_valid_access_token, get_valid_access_token_for_plugins
-from azure.identity import DefaultAzureCredential
+from functions_authentication import get_valid_access_token_for_plugins
 from functions_debug import debug_print
 from azure.core.credentials import AccessToken, TokenCredential
-from semantic_kernel.contents import ImageContent
 from config import cosmos_messages_container, cosmos_conversations_container
 
 
