@@ -73,6 +73,12 @@ def register_route_backend_conversations(app):
                     debug_print(f"Reassembling chunked image {image_id} with {total_chunks} chunks")
                     debug_print(f"Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
                     
+                    # Preserve extracted_text and vision_analysis from main message
+                    extracted_text = message.get('extracted_text')
+                    vision_analysis = message.get('vision_analysis')
+                    
+                    debug_print(f"Image has extracted_text: {bool(extracted_text)}, vision_analysis: {bool(vision_analysis)}")
+                    
                     # Start with the content from the main message (chunk 0)
                     complete_content = message.get('content', '')
                     debug_print(f"Main message content length: {len(complete_content)} bytes")
@@ -105,6 +111,13 @@ def register_route_backend_conversations(app):
                     else:
                         # Small enough to embed directly
                         message['content'] = complete_content
+                    
+                    # IMPORTANT: Preserve extracted_text and vision_analysis in the final message
+                    # These fields are needed by the frontend to display the info drawer
+                    if extracted_text:
+                        message['extracted_text'] = extracted_text
+                    if vision_analysis:
+                        message['vision_analysis'] = vision_analysis
             
             return jsonify({'messages': messages})
         except CosmosResourceNotFoundError:
@@ -271,7 +284,9 @@ def register_route_backend_conversations(app):
             'title': 'New Conversation',
             'context': [],
             'tags': [],
-            'strict': False
+            'strict': False,
+            'is_pinned': False,
+            'is_hidden': False
         }
         cosmos_conversations_container.upsert_item(conversation_item)
 
@@ -465,6 +480,206 @@ def register_route_backend_conversations(app):
             "failed_ids": failed_ids
         }), 200
 
+    @app.route('/api/conversations/<conversation_id>/pin', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def toggle_conversation_pin(conversation_id):
+        """
+        Toggle the pinned status of a conversation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Toggle the pinned status
+            current_pinned = conversation_item.get('is_pinned', False)
+            conversation_item['is_pinned'] = not current_pinned
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Update in Cosmos DB
+            cosmos_conversations_container.upsert_item(conversation_item)
+            
+            return jsonify({
+                'success': True,
+                'is_pinned': conversation_item['is_pinned']
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error toggling conversation pin: {e}")
+            return jsonify({'error': 'Failed to toggle pin status'}), 500
+    
+    @app.route('/api/conversations/<conversation_id>/hide', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def toggle_conversation_hide(conversation_id):
+        """
+        Toggle the hidden status of a conversation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Toggle the hidden status
+            current_hidden = conversation_item.get('is_hidden', False)
+            conversation_item['is_hidden'] = not current_hidden
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Update in Cosmos DB
+            cosmos_conversations_container.upsert_item(conversation_item)
+            
+            return jsonify({
+                'success': True,
+                'is_hidden': conversation_item['is_hidden']
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error toggling conversation hide: {e}")
+            return jsonify({'error': 'Failed to toggle hide status'}), 500
+
+    @app.route('/api/conversations/bulk-pin', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def bulk_pin_conversations():
+        """
+        Pin or unpin multiple conversations at once.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        pin_action = data.get('action', 'pin')  # 'pin' or 'unpin'
+        
+        if not conversation_ids:
+            return jsonify({'error': 'No conversation IDs provided'}), 400
+        
+        if pin_action not in ['pin', 'unpin']:
+            return jsonify({'error': 'Invalid action. Must be "pin" or "unpin"'}), 400
+        
+        success_count = 0
+        failed_ids = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+                
+                # Check if the conversation belongs to the current user
+                if conversation_item.get('user_id') != user_id:
+                    failed_ids.append(conversation_id)
+                    continue
+                
+                # Set pin status
+                conversation_item['is_pinned'] = (pin_action == 'pin')
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                
+                # Update in Cosmos DB
+                cosmos_conversations_container.upsert_item(conversation_item)
+                success_count += 1
+                
+            except CosmosResourceNotFoundError:
+                failed_ids.append(conversation_id)
+            except Exception as e:
+                print(f"Error updating conversation {conversation_id}: {str(e)}")
+                failed_ids.append(conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "updated_count": success_count,
+            "failed_ids": failed_ids,
+            "action": pin_action
+        }), 200
+
+    @app.route('/api/conversations/bulk-hide', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def bulk_hide_conversations():
+        """
+        Hide or unhide multiple conversations at once.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        hide_action = data.get('action', 'hide')  # 'hide' or 'unhide'
+        
+        if not conversation_ids:
+            return jsonify({'error': 'No conversation IDs provided'}), 400
+        
+        if hide_action not in ['hide', 'unhide']:
+            return jsonify({'error': 'Invalid action. Must be "hide" or "unhide"'}), 400
+        
+        success_count = 0
+        failed_ids = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                conversation_item = cosmos_conversations_container.read_item(
+                    item=conversation_id,
+                    partition_key=conversation_id
+                )
+                
+                # Check if the conversation belongs to the current user
+                if conversation_item.get('user_id') != user_id:
+                    failed_ids.append(conversation_id)
+                    continue
+                
+                # Set hide status
+                conversation_item['is_hidden'] = (hide_action == 'hide')
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                
+                # Update in Cosmos DB
+                cosmos_conversations_container.upsert_item(conversation_item)
+                success_count += 1
+                
+            except CosmosResourceNotFoundError:
+                failed_ids.append(conversation_id)
+            except Exception as e:
+                print(f"Error updating conversation {conversation_id}: {str(e)}")
+                failed_ids.append(conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "updated_count": success_count,
+            "failed_ids": failed_ids,
+            "action": hide_action
+        }), 200
+
     @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -497,7 +712,9 @@ def register_route_backend_conversations(app):
                 "classification": conversation_item.get('classification', []),
                 "context": conversation_item.get('context', []),
                 "tags": conversation_item.get('tags', []),
-                "strict": conversation_item.get('strict', False)
+                "strict": conversation_item.get('strict', False),
+                "is_pinned": conversation_item.get('is_pinned', False),
+                "is_hidden": conversation_item.get('is_hidden', False)
             }), 200
             
         except CosmosResourceNotFoundError:
@@ -505,3 +722,262 @@ def register_route_backend_conversations(app):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+    
+    @app.route('/api/conversations/classifications', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_user_classifications():
+        """
+        Get all unique classifications from user's conversations
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Query all conversations for this user
+            query = f"SELECT c.classification FROM c WHERE c.user_id = '{user_id}'"
+            items = list(cosmos_conversations_container.query_items(
+                query=query,
+                enable_cross_partition_query=True
+            ))
+            
+            # Extract and flatten all classifications
+            classifications_set = set()
+            for item in items:
+                classifications = item.get('classification', [])
+                if isinstance(classifications, list):
+                    for classification in classifications:
+                        if classification and isinstance(classification, str):
+                            classifications_set.add(classification.strip())
+            
+            # Sort alphabetically
+            classifications_list = sorted(list(classifications_set))
+            
+            return jsonify({
+                'success': True,
+                'classifications': classifications_list
+            }), 200
+            
+        except Exception as e:
+            print(f"Error fetching classifications: {e}")
+            return jsonify({'error': 'Failed to fetch classifications'}), 500
+    
+    @app.route('/api/search_conversations', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def search_conversations():
+        """
+        Search conversations and messages with filters and pagination
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json()
+            search_term = data.get('search_term', '').strip()
+            date_from = data.get('date_from', '')
+            date_to = data.get('date_to', '')
+            chat_types = data.get('chat_types', [])
+            classifications = data.get('classifications', [])
+            has_files = data.get('has_files', False)
+            has_images = data.get('has_images', False)
+            page = int(data.get('page', 1))
+            per_page = int(data.get('per_page', 20))
+            
+            # Validate search term
+            if not search_term or len(search_term) < 3:
+                return jsonify({
+                    'success': False,
+                    'error': 'Search term must be at least 3 characters'
+                }), 400
+            
+            # Build conversation query with filters
+            query_parts = [f"c.user_id = '{user_id}'"]
+            
+            if date_from:
+                query_parts.append(f"c.last_updated >= '{date_from}'")
+            if date_to:
+                query_parts.append(f"c.last_updated <= '{date_to}T23:59:59'")
+            
+            conversation_query = f"SELECT * FROM c WHERE {' AND '.join(query_parts)}"
+            conversations = list(cosmos_conversations_container.query_items(
+                query=conversation_query,
+                enable_cross_partition_query=True
+            ))
+            
+            # Filter by chat types if specified
+            if chat_types:
+                conversations = [c for c in conversations if c.get('chat_type') in chat_types]
+            
+            # Filter by classifications if specified
+            if classifications:
+                conversations = [c for c in conversations if any(
+                    cls in (c.get('classification', []) or []) for cls in classifications
+                )]
+            
+            # Search messages in each conversation
+            results = []
+            search_lower = search_term.lower()
+            
+            for conversation in conversations:
+                conv_id = conversation['id']
+                
+                # Query messages for this conversation
+                message_query = f"SELECT * FROM m WHERE m.conversation_id = '{conv_id}' AND CONTAINS(LOWER(m.content), '{search_lower}')"
+                matching_messages = list(cosmos_messages_container.query_items(
+                    query=message_query,
+                    partition_key=conv_id
+                ))
+                
+                # Apply file/image filters if specified
+                if has_files or has_images:
+                    filtered_messages = []
+                    for msg in matching_messages:
+                        metadata = msg.get('metadata', {})
+                        if has_files and metadata.get('uploaded_files'):
+                            filtered_messages.append(msg)
+                        elif has_images and metadata.get('generated_images'):
+                            filtered_messages.append(msg)
+                        elif not has_files and not has_images:
+                            filtered_messages.append(msg)
+                    matching_messages = filtered_messages
+                
+                if matching_messages:
+                    # Build message snippets
+                    message_snippets = []
+                    for msg in matching_messages[:5]:  # Limit to 5 messages per conversation
+                        content = msg.get('content', '')
+                        content_lower = content.lower()
+                        
+                        # Find match position
+                        match_pos = content_lower.find(search_lower)
+                        if match_pos != -1:
+                            # Extract 50 chars before and after
+                            start = max(0, match_pos - 50)
+                            end = min(len(content), match_pos + len(search_term) + 50)
+                            snippet = content[start:end]
+                            
+                            # Add ellipsis if truncated
+                            if start > 0:
+                                snippet = '...' + snippet
+                            if end < len(content):
+                                snippet = snippet + '...'
+                            
+                            message_snippets.append({
+                                'message_id': msg.get('id'),
+                                'content_snippet': snippet,
+                                'timestamp': msg.get('timestamp', ''),
+                                'role': msg.get('role', 'unknown')
+                            })
+                    
+                    results.append({
+                        'conversation': {
+                            'id': conversation['id'],
+                            'title': conversation.get('title', 'Untitled'),
+                            'last_updated': conversation.get('last_updated', ''),
+                            'classification': conversation.get('classification', []),
+                            'chat_type': conversation.get('chat_type', 'personal'),
+                            'is_pinned': conversation.get('is_pinned', False),
+                            'is_hidden': conversation.get('is_hidden', False)
+                        },
+                        'messages': message_snippets,
+                        'match_count': len(matching_messages)
+                    })
+            
+            # Sort by last_updated (most recent first)
+            results.sort(key=lambda x: x['conversation']['last_updated'], reverse=True)
+            
+            # Pagination
+            total_results = len(results)
+            total_pages = math.ceil(total_results / per_page) if total_results > 0 else 1
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated_results = results[start_idx:end_idx]
+            
+            return jsonify({
+                'success': True,
+                'total_results': total_results,
+                'page': page,
+                'total_pages': total_pages,
+                'per_page': per_page,
+                'results': paginated_results
+            }), 200
+            
+        except Exception as e:
+            print(f"Error searching conversations: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to search conversations'}), 500
+    
+    @app.route('/api/user-settings/search-history', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_search_history():
+        """Get user's search history"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            history = get_user_search_history(user_id)
+            return jsonify({
+                'success': True,
+                'history': history
+            }), 200
+        except Exception as e:
+            print(f"Error retrieving search history: {e}")
+            return jsonify({'error': 'Failed to retrieve search history'}), 500
+    
+    @app.route('/api/user-settings/search-history', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def save_search_to_history():
+        """Save a search term to user's history"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json()
+            search_term = data.get('search_term', '').strip()
+            
+            if not search_term:
+                return jsonify({'error': 'Search term is required'}), 400
+            
+            history = add_search_to_history(user_id, search_term)
+            return jsonify({
+                'success': True,
+                'history': history
+            }), 200
+        except Exception as e:
+            print(f"Error saving search to history: {e}")
+            return jsonify({'error': 'Failed to save search to history'}), 500
+    
+    @app.route('/api/user-settings/search-history', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def clear_search_history():
+        """Clear user's search history"""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            success = clear_user_search_history(user_id)
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': 'Search history cleared'
+                }), 200
+            else:
+                return jsonify({'error': 'Failed to clear search history'}), 500
+        except Exception as e:
+            print(f"Error clearing search history: {e}")
+            return jsonify({'error': 'Failed to clear search history'}), 500

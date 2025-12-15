@@ -194,8 +194,14 @@
             <div class="d-flex justify-content-between align-items-center p-3 border-bottom flex-shrink-0">
                 <h5>Conversations</h5>
                 <div class="d-flex align-items-center">
+                    <button class="btn btn-primary btn-sm me-2" id="pin-selected-btn" style="display: none;" title="Pin selected conversations">
+                        <i class="bi bi-pin-angle"></i>
+                    </button>
+                    <button class="btn btn-secondary btn-sm me-2" id="hide-selected-btn" style="display: none;" title="Hide selected conversations">
+                        <i class="bi bi-eye-slash"></i>
+                    </button>
                     <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
-                        <i class="bi bi-trash"></i> <span class="d-none d-md-inline"></span>
+                        <i class="bi bi-trash"></i>
                     </button>
                     <!-- Dock toggle button removed: sidebar is always docked -->
                     <button class="btn btn-primary btn-sm ms-2" id="new-conversation-btn" title="Start a new chat">
@@ -250,8 +256,8 @@
                             <i class="bi bi-file-earmark-text"></i> <span class="search-btn-text d-none d-md-inline">Workspaces</span>
                         </button>
                         {% endif %}
-                         <input type="file" id="file-input" accept=".txt,.pdf,.docx,.xlsx,.xlsm,.xls,.csv,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json" style="display: none"/>
-                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation">
+                         <input type="file" id="file-input" accept=".txt,.pdf,.doc,.docm,.docx,.xlsx,.xlsm,.pptx,.html,.jpg,.jpeg,.png,.bmp,.tiff,.tif,.heif,.md,.json,.csv,.xml,.yaml,.yml,.log" style="display: none"/>
+                         <button id="choose-file-btn" class="btn btn-outline-secondary btn-sm file-btn position-relative" data-bs-toggle="tooltip" data-bs-placement="top" title="Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, xlsx, pptx, html, images, md, json, csv, xml, yaml, yml, log)">
                              <i class="bi bi-paperclip"></i> <span class="file-btn-text d-none d-md-inline">File</span>
                              <span id="cancel-file-selection" class="position-absolute top-50 end-0 translate-middle-y me-1" style="display: none; cursor: pointer;" title="Cancel file selection">
                                  <i class="bi bi-x-circle-fill text-danger"></i>
@@ -456,6 +462,162 @@
     </div>
 </div>
 
+<!-- Modal for advanced search -->
+<div class="modal fade" id="advancedSearchModal" tabindex="-1" aria-labelledby="advancedSearchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="advancedSearchModalLabel">
+                    <i class="bi bi-search me-2"></i>Advanced Search
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Nav tabs -->
+                <ul class="nav nav-tabs mb-3" id="searchTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="search-tab" data-bs-toggle="tab" data-bs-target="#search-panel" type="button" role="tab" aria-controls="search-panel" aria-selected="true">
+                            <i class="bi bi-search me-1"></i> Search
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-panel" type="button" role="tab" aria-controls="history-panel" aria-selected="false">
+                            <i class="bi bi-clock-history me-1"></i> History
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- Tab content -->
+                <div class="tab-content" id="searchTabContent">
+                    <!-- Search Tab -->
+                    <div class="tab-pane fade show active" id="search-panel" role="tabpanel" aria-labelledby="search-tab">
+                        <form id="advancedSearchForm">
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <label for="searchMessageInput" class="form-label">Search Messages</label>
+                                    <input type="text" class="form-control" id="searchMessageInput" placeholder="Search messages (min 3 characters)..." autocomplete="off">
+                                    <small class="form-text text-muted">Search across all message content in your conversations</small>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="searchDateFrom" class="form-label">Date From</label>
+                                    <input type="date" class="form-control" id="searchDateFrom">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="searchDateTo" class="form-label">Date To</label>
+                                    <input type="date" class="form-control" id="searchDateTo">
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Chat Type</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="personal" id="chatTypePersonal" checked>
+                                        <label class="form-check-label" for="chatTypePersonal">Personal</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="group-single-user" id="chatTypeGroupSingle" checked>
+                                        <label class="form-check-label" for="chatTypeGroupSingle">Group (Single User)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="group-multi-user" id="chatTypeGroupMulti" checked>
+                                        <label class="form-check-label" for="chatTypeGroupMulti">Group (Multi User)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="public" id="chatTypePublic" checked>
+                                        <label class="form-check-label" for="chatTypePublic">Public</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="searchClassifications" class="form-label">Classifications</label>
+                                    <select class="form-select" id="searchClassifications" multiple size="4">
+                                        <option value="" disabled>Loading classifications...</option>
+                                    </select>
+                                    <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple</small>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="true" id="searchHasFiles">
+                                        <label class="form-check-label" for="searchHasFiles">
+                                            <i class="bi bi-file-earmark me-1"></i> Has Uploaded Files
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="true" id="searchHasImages">
+                                        <label class="form-check-label" for="searchHasImages">
+                                            <i class="bi bi-image me-1"></i> Has Generated Images
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+
+                        <!-- Search Results -->
+                        <hr>
+                        <div id="searchResultsContainer">
+                            <div id="searchResultsLoading" class="text-center p-4" style="display: none;">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Searching...</span>
+                                </div>
+                                <p class="mt-2 text-muted">Searching your conversations...</p>
+                            </div>
+                            <div id="searchResultsContent"></div>
+                            <div id="searchResultsEmpty" class="text-center p-4 text-muted" style="display: none;">
+                                <i class="bi bi-search" style="font-size: 3rem; opacity: 0.3;"></i>
+                                <p class="mt-2">No conversations match your search</p>
+                            </div>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div id="searchPagination" class="d-flex justify-content-between align-items-center mt-3" style="display: none !important;">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="searchPrevBtn" disabled>
+                                <i class="bi bi-arrow-left me-1"></i> Previous
+                            </button>
+                            <span id="searchPageInfo" class="text-muted">Page 1 of 1</span>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="searchNextBtn" disabled>
+                                Next <i class="bi bi-arrow-right ms-1"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- History Tab -->
+                    <div class="tab-pane fade" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0">Recent Searches</h6>
+                            <button type="button" class="btn btn-sm btn-outline-danger" id="clearHistoryBtn">
+                                <i class="bi bi-trash me-1"></i> Clear History
+                            </button>
+                        </div>
+                        <div id="searchHistoryList">
+                            <div class="text-center p-4 text-muted">
+                                <i class="bi bi-clock-history" style="font-size: 3rem; opacity: 0.3;"></i>
+                                <p class="mt-2">No search history yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="clearFiltersBtn">
+                    <i class="bi bi-x-circle me-1"></i> Clear Filters
+                </button>
+                <button type="button" class="btn btn-primary" id="performSearchBtn">
+                    <i class="bi bi-search me-1"></i> Search
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 {% endblock %}
@@ -495,6 +657,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>
