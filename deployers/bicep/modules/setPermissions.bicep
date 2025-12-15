@@ -3,6 +3,7 @@ targetScope = 'resourceGroup'
 param webAppName string
 param authenticationType string
 param keyVaultName string
+param enterpriseAppServicePrincipalId string
 param cosmosDBName string
 param acrName string
 param openAIName string
@@ -122,6 +123,20 @@ resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
       '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     )
     principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant the enterprise application access to the cognitive services openai user
+resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
+  scope: openAiService
+  name: guid(openAiService.id, webApp.id, 'enterpriseApp-CognitiveServicesOpenAIUserRole')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+    )
+    principalId: enterpriseAppServicePrincipalId
     principalType: 'ServicePrincipal'
   }
 }

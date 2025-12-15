@@ -39,9 +39,12 @@ param azdEnvironmentName string
 param imageName string
 
 @description('''Azure AD Application Client ID for enterprise authentication.
-- Required if enableEnterpriseApp is true
 - Should be the client ID of the registered Azure AD application''')
 param enterpriseAppClientId string
+
+@description('''Azure AD Application Service Principal Id for the enterprise application.
+- Should be the Service Principal ID of the registered Azure AD application''')
+param enterpriseAppServicePrincipalId string
 
 @description('''Azure AD Application Client Secret for enterprise authentication.
 - Required if enableEnterpriseApp is true
@@ -459,9 +462,11 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
   name: 'setPermissions'
   scope: rg
   params: {
+
     webAppName: appService.outputs.name
-    keyVaultName: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
+    enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
+    keyVaultName: keyVault.outputs.keyVaultName
     cosmosDBName: cosmosDB.outputs.cosmosDbName
     acrName: acr.outputs.acrName
     openAIName: openAI.outputs.openAIName
