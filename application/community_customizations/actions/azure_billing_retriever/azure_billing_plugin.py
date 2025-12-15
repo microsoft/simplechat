@@ -838,7 +838,7 @@ class AzureBillingPlugin(BasePlugin):
         - returns structured dict with mime, filename, base64, image_url and metadata
         """
         try:
-            #print(f"[AzureBillingPlugin] plot_custom_chart called with conversation_id={conversation_id}, graph_type={graph_type},\n x_key={x_key},\n y_keys={y_keys},\n title={title},\n xlabel={xlabel},\n ylabel={ylabel},\n figsize={figsize},\n data:{data}")
+            #print(f"[AzureBillingPlugin] plot_custom_chart called with conversation_id={conversation_id}, graph_type={graph_type},\n x_keys={x_keys},\n y_keys={y_keys},\n title={title},\n xlabel={xlabel},\n ylabel={ylabel},\n figsize={figsize},\n data:{data}")
             graph_type = graph_type.lower() if isinstance(graph_type, str) else str(graph_type)
             # Validate figsize: must be a list/tuple of two numbers if provided
             if figsize is None:
@@ -1360,7 +1360,6 @@ class AzureBillingPlugin(BasePlugin):
             "columns": columns_meta,
             "csv": csv_output,
             "plot_hints": plot_hints,
-            #"rows": result_rows,
         }
 
     @kernel_function(description="Return available configuration options for Azure Billing report queries.")
@@ -1689,10 +1688,6 @@ class AzureBillingPlugin(BasePlugin):
                 debug_print(f"Successfully stored image in {total_chunks} documents")
                 debug_print(f"Main doc content starts with: {main_image_doc['content'][:50]}...")
                 debug_print(f"Main doc content ends with: ...{main_image_doc['content'][-50:]}")
-                
-                # Return the full image URL for immediate display
-                response_image_url = content
-                
             else:
                 # Small image - store normally in single document
                 debug_print(f"Small image ({len(content)} bytes), storing in single document")
@@ -1712,7 +1707,6 @@ class AzureBillingPlugin(BasePlugin):
                     }
                 }
                 cosmos_messages_container.upsert_item(image_doc)
-                response_image_url = content
             conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
             conversation_item['last_updated'] = datetime.datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
