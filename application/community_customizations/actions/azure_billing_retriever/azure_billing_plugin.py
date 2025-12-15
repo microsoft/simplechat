@@ -996,8 +996,10 @@ class AzureBillingPlugin(BasePlugin):
                     title,
                 )
 
-            
-            plt.tight_layout(rect=[0, 0, 0.78, 1])
+            if legend_outside:
+                plt.tight_layout(rect=[0, 0, 0.78, 1])
+            else:
+                plt.tight_layout()
             img_b64 = self._fig_to_base64_dict(fig, filename=filename)
             payload = {
                 "status": "ok",
