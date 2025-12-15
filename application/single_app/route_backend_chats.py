@@ -70,7 +70,11 @@ def register_route_backend_chats(app):
                     if candidate.startswith('{') or candidate.startswith('['):
                         try:
                             parsed = json.loads(candidate)
-                        except Exception:
+                        except Exception as e:
+                            log_event(
+                                f"[result_requires_message_reload] Failed to parse JSON: {str(e)} | candidate: {candidate[:200]}",
+                                level=logging.DEBUG
+                            )
                             return False
                         return result_requires_message_reload(parsed)
                     return False
