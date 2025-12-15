@@ -38,3 +38,8 @@ application/single_app/static/.DS_Store
 application/external_apps/bulkloader/map.csv
 
 flask_session
+
+# Azure Billing Local Plugin Development Files
+**/azure_billing_retriever/sample*.csv
+**/azure_billing_retriever/abd_proto.py
+**/azure_billing_retriever/my_chart.png

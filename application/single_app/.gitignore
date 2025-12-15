@@ -195,9 +195,3 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-
-
-# Azure Billing Local Plugin Development Files
-semantic_kernel_plugins/sample*.csv
-semantic_kernel_plugins/abd_proto.py
-semantic_kernel_plugins/my_chart.png
