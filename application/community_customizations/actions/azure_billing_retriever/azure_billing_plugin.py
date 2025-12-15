@@ -373,7 +373,7 @@ class AzureBillingPlugin(BasePlugin):
     def _iso_utc(self, dt: datetime.datetime) -> str:
         return dt.astimezone(datetime.timezone.utc).isoformat()
 
-    def _add_months(dt: datetime.datetime, months: int) -> datetime.datetime:
+    def _add_months(self, dt: datetime.datetime, months: int) -> datetime.datetime:
         # Add (or subtract) months without external deps.
         year = dt.year + (dt.month - 1 + months) // 12
         month = (dt.month - 1 + months) % 12 + 1
@@ -382,20 +382,20 @@ class AzureBillingPlugin(BasePlugin):
                         31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month-1])
         return dt.replace(year=year, month=month, day=day)
 
-    def _first_day_of_month(dt: datetime.datetime) -> datetime.datetime:
+    def _first_day_of_month(self, dt: datetime.datetime) -> datetime.datetime:
         return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    def _last_day_of_month(dt: datetime.datetime) -> datetime.datetime:
+    def _last_day_of_month(self, dt: datetime.datetime) -> datetime.datetime:
         # move to first of next month then subtract one second
         next_month = self._add_months(self._first_day_of_month(dt), 1)
         return next_month - datetime.timedelta(seconds=1)
 
-    def _last_n_months_timeperiod(n: int):
+    def _last_n_months_timeperiod(self, n: int):
         now = datetime.datetime.now(datetime.timezone.utc)
         start = self._add_months(now, -n)
         return {"from": self._iso_utc(start), "to": self._iso_utc(now)}
 
-    def _previous_n_months_timeperiod(n: int):
+    def _previous_n_months_timeperiod(self, n: int):
         today = datetime.datetime.now(datetime.timezone.utc)
         first_this_month = self._first_day_of_month(today)
         last_of_prev = first_this_month - datetime.timedelta(seconds=1)
@@ -1024,7 +1024,7 @@ class AzureBillingPlugin(BasePlugin):
             else:
                 payload.setdefault("warnings", []).append("Chart rendered but conversation_id was not provided; image not persisted.")
 
-            time.sleep(5)  # give time for image to upload before returning
+            #time.sleep(5)  # give time for image to upload before returning
             return payload
         except Exception as ex:
             logging.exception("Error while generating chart")
@@ -1718,7 +1718,7 @@ class AzureBillingPlugin(BasePlugin):
             conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
             conversation_item['last_updated'] = datetime.datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
-            time.sleep(5) # sleep to allow the message to propogate and the front end to pick it up when receiving the agent response
+            #time.sleep(5) # sleep to allow the message to propogate and the front end to pick it up when receiving the agent response
         except Exception as e:
             print(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")
             logging.error(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")
