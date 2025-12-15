@@ -184,13 +184,27 @@ resource speechServiceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
 }
 
 // grant the managed identity access to search service as a Search Service Contributor
+resource searchIndexDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
+  name: guid(searchService.id, webApp.id, 'search-index-data-contributor')
+  scope: searchService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// grant the managed identity access to search service as a Search Service Contributor
 resource searchServiceContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
   name: guid(searchService.id, webApp.id, 'search-service-contributor')
   scope: searchService
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+      '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'

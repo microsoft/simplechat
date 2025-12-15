@@ -30,6 +30,10 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
     publicNetworkAccess: 'Enabled'
     replicaCount: 1
     partitionCount: 1
+    authOptions: {
+      aadOrApiKey: {aadAuthFailureMode: 'http403' }
+    } 
+    disableLocalAuth: false
   }
   tags: tags
 }
