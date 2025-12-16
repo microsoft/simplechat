@@ -18,8 +18,8 @@ RUN pip install wheel
 WORKDIR /app
 # Copy requirements and install them into the virtualenv
 ENV PATH="/app/venv/bin:$PATH"
-COPY requirements.txt . 
-RUN pip install --no-cache-dir -r requirements.txt
+COPY application/single_app/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Fix permissions so nonroot can use everything
 RUN chown -R 65532:65532 /app
@@ -59,13 +59,12 @@ COPY --from=builder \
 
 # Copy system libraries for x86_64
 COPY --from=builder /lib/x86_64-linux-gnu/ \
-    /usr/lib/x86_64-linux-gnu/ \
-    /lib64/ld-linux-x86-64.so.2 \
-    /usr/share/ca-certificates \
-    /etc/ssl/certs \
-    /usr/bin/ffmpeg \
-    /usr/share/zoneinfo /usr/share/
-    
+    /lib64/ld-linux-x86-64.so.2 \    
+    /usr/lib/x86_64-linux-gnu/ 
+    #/usr/share/ca-certificates \
+    #/etc/ssl/certs \
+    #/usr/bin/ffmpeg \
+    #/usr/share/zoneinfo /usr/share/
 
 # Copy application code and set ownership
 COPY --chown=65532:65532 . ./
