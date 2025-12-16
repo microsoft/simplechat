@@ -22,13 +22,6 @@
 
 /* PARAMETERS
 =============================================================================== */
-@description('Specifies the Azure environment platform.')
-@allowed([
-  'AzureCloud'
-  'AzureUSGovernment'
-])
-param azurePlatform string = 'AzureUSGovernment'
-
 @description('Tenant ID where the resources are deployed and for App Registration.')
 param tenantId string = subscription().tenantId
 
@@ -76,10 +69,10 @@ param imageName string
 param useExistingOpenAiInstance bool = true
 
 @description('Name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true.')
-param existingAzureOpenAiResourceName string = ''
+param existingAzureOpenAiResourceName string?
 
 @description('Resource group name of the existing Azure OpenAI resource. Required if useExistingOpenAiInstance is true.')
-param existingAzureOpenAiResourceGroupName string = ''
+param existingAzureOpenAiResourceGroupName string?
 
 // --- Entra App Registration Parameters (MUST BE CREATED MANUALLY FIRST) ---
 @description('Client ID (Application ID) of the pre-created Entra App Registration.')
@@ -92,7 +85,7 @@ param appRegistrationClientSecret string
 // Optional: Object ID of the Service Principal for the App Registration if RBAC needs to be assigned to it.
 // If the app registration was just created, its SP might take a few minutes to replicate.
 @description('Object ID of the Service Principal for the App Registration (used for RBAC, e.g., to OpenAI). Obtain via "az ad sp show --id <appRegistrationClientId> --query id -o tsv"')
-param appRegistrationSpObjectId string = ''
+param appRegistrationSpObjectId string?
 
 // --- SKU Parameters (as in PowerShell script) ---
 @description('SKU for the App Service Plan.')
@@ -122,6 +115,17 @@ param searchSku string = 'basic'
 @description('The UTC date and time when the deployment was started.')
 param createdDateTime string = utcNow('yyyy-MM-dd HH:mm:ss')
 
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+param customBlobStorageSuffix string?
+param customGraphUrl string?
+param customIdentityUrl string?
+param customResourceManagerUrl string?
+
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string?
+
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string?
 
 /* VARIABLES
 =============================================================================== */
@@ -133,11 +137,11 @@ var tags = {
 }
 
 var clientSecretSettingName = 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
-var openIdIssuerUrl = 'https://login.microsoftonline${azurePlatform == 'AzureUSGovernment' ? '.us' : '.com'}/${tenantId}/v2.0'
+var openIdIssuerUrl = '${az.environment().authentication.loginEndpoint}/${tenantId}/v2.0'
+var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}/${tenantId}/v2.0/.well-known/openid-configuration'
 
-var docIntelEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.cognitiveservices.azure.us' : '.cognitiveservices.azure.com'
-var azureSearchEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.search.azure.us' : '.search.windows.net'
-
+param azureSearchEndpointSuffix string = az.environment().name == 'AzureUSGovernment' ? '.search.azure.us' : '.search.windows.net'
+var azureSearchEndpoint string = 'https://${searchServiceName}${azureSearchEndpointSuffix}'
 
 // --- Naming Conventions (simplified from PowerShell functions) ---
 var resourceNamePrefix = toLower('${baseName}-${environment}')
@@ -150,19 +154,24 @@ var managedIdentityName = '${resourceNamePrefix}-id'
 var appServicePlanName = '${resourceNamePrefix}-asp'
 var appServiceName = '${resourceNamePrefix}-app-${uniqueStringForGlobals}' // App Service names are globally unique for hostname
 var cosmosDbName = '${resourceNamePrefix}-cosmos-${uniqueStringForGlobals}' // Cosmos DB names are globally unique
-var openAIName = useExistingOpenAiInstance ? existingAzureOpenAiResourceName : '${resourceNamePrefix}-oai'
+var openAIName = useExistingOpenAiInstance ? existingAzureOpenAiResourceName! : '${resourceNamePrefix}-oai'
 var docIntelName = '${resourceNamePrefix}-docintel'
 var searchServiceName = '${resourceNamePrefix}-search-${uniqueStringForGlobals}' // Search names are globally unique
-var acrLoginServer = '${acrName}${azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'}'
-var appServiceDefaultHostName = '${appServiceName}${azurePlatform == 'AzureUSGovernment' ? '.azurewebsites.us' : '.azurewebsites.net'}'
-var cosmosDbEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.documents.azure.us' : '.documents.azure.com'
-var openAIEndpointSuffix = azurePlatform == 'AzureUSGovernment' ? '.openai.azure.us' : '.openai.azure.com'
-var azureEndpointNameForAppSetting = azurePlatform == 'AzureUSGovernment' ? 'usgovernment' : 'azurecloud'
-//var graphEndpoint = azurePlatform == 'AzureUSGovernment' ? 'https://graph.microsoft.us' : 'https://graph.microsoft.com'
+
+param acrLoginServer string = '${acrName}${az.environment().suffixes.acrLoginServer}'
+
+// Allow handing custom private endpoints
+param openAiEndpointOverride string?
+
+param azureEnvironmentOverride string?
+var azureEnvironmentNameForAppSetting = azureEnvironmentOverride ?? (az.environment().name == 'AzureCloud' ? 'azurecloud' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom'))
+
+var appServiceDefaultHostName = appService.properties.defaultHostName
+var openAiEndpoint = openAiEndpointOverride ?? (useExistingOpenAiInstance ? existingOpenAI!.properties.endpoint : cognitiveServicesOpenAI!.properties.endpoint)
 var appServiceRedirectUri1 = 'https://${appServiceDefaultHostName}/.auth/login/aad/callback'
 var appServiceRedirectUri2 = 'https://${appServiceDefaultHostName}/getAToken'
 var appServiceLogoutUrl = 'https://${appServiceDefaultHostName}/logout'
-var dockerRegistryUrl = '${acrLoginServer}${azurePlatform == 'AzureUSGovernment' ? '/${imageName}' : ':${imageName}'}'
+var dockerRegistryUrl = '${acrLoginServer}/${imageName}'
 
 /* RESOURCES
 =============================================================================== */
@@ -291,13 +300,13 @@ resource appService 'Microsoft.Web/sites@2022-09-01' = {
 resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   name: 'appsettings'
   parent: appService
-  properties: {
+  properties: union({
     APPINSIGHTS_INSTRUMENTATIONKEY: applicationInsights.properties.InstrumentationKey
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
-    AZURE_ENDPOINT: azureEndpointNameForAppSetting
+    AZURE_ENVIRONMENT: azureEnvironmentNameForAppSetting
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
     AZURE_COSMOS_AUTHENTICATION_TYPE: 'key'
-    AZURE_COSMOS_ENDPOINT: 'https://${cosmosDbName}${cosmosDbEndpointSuffix}'
+    AZURE_COSMOS_ENDPOINT: cosmosDb.properties.documentEndpoint
     AZURE_COSMOS_KEY: cosmosDb.listKeys().primaryMasterKey
     TENANT_ID: tenantId
     CLIENT_ID: appRegistrationClientId
@@ -307,11 +316,19 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     DOCKER_REGISTRY_SERVER_URL: 'https://${acrLoginServer}'
     DOCKER_REGISTRY_SERVER_PASSWORD: ''
     DOCKER_REGISTRY_SERVER_USERNAME: ''
-    AZURE_OPENAI_ENDPOINT: useExistingOpenAiInstance ? 'https://${existingAzureOpenAiResourceName}${openAIEndpointSuffix}' : 'https://${openAIName}${openAIEndpointSuffix}'
-    AZURE_DOCUMENTINTELLIGENCE_ENDPOINT: 'https://${docIntelName}${docIntelEndpointSuffix}/'
-    AZURE_SEARCH_SERVICE_ENDPOINT: 'https://${searchServiceName}${azureSearchEndpointSuffix}/'
+    AZURE_OPENAI_ENDPOINT: openAiEndpoint
+    AZURE_DOCUMENTINTELLIGENCE_ENDPOINT: cognitiveServicesDocIntel.properties.endpoint
+    AZURE_SEARCH_SERVICE_ENDPOINT: azureSearchEndpoint
     AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri
-  }
+  }, azureEnvironmentNameForAppSetting == 'custom' ? {
+    CUSTOM_GRAPH_URL_VALUE: customGraphUrl ?? az.environment().graph
+    CUSTOM_IDENTITY_URL_VALUE: customIdentityUrl ?? az.environment().authentication.loginEndpoint
+    CUSTOM_RESOURCE_MANAGER_URL_VALUE: customResourceManagerUrl ?? az.environment().resourceManager
+    CUSTOM_BLOB_STORAGE_URL_VALUE: customBlobStorageSuffix ?? 'blob.${az.environment().suffixes.storage}'
+    CUSTOM_COGNITIVE_SERVICES_URL_VALUE: customCognitiveServicesScope!
+    CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE: customSearchResourceUrl!
+    CUSTOM_OIDC_METADATA_URL_VALUE: openIdMetadataUrl
+  } : {})
 }
 
 resource authSettingsV2 'Microsoft.Web/sites/config@2024-04-01' = {
@@ -342,7 +359,6 @@ resource authSettingsV2 'Microsoft.Web/sites/config@2024-04-01' = {
         validation: {
           allowedAudiences: [
             'api://${appRegistrationClientId}' // Replace with your application's client ID or other allowed audiences
-            //'https://${appServiceName}${azurePlatform == 'AzureUSGovernment' ? '.azurewebsites.us' : '.azurewebsites.net'}'
           ]
         }
       }
@@ -457,26 +473,38 @@ resource uamiToKeyVaultAccess 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
+var openAiResourceId = useExistingOpenAiInstance ? existingOpenAI.id : cognitiveServicesOpenAI.id
+// Parse the OpenAI resource ID to extract components
+// Resource ID format: /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.CognitiveServices/accounts/{resourceName}
+var openAiResourceIdParts = split(openAiResourceId, '/')
+var openAiSubscriptionId = openAiResourceIdParts[2]
+var openAiResourceGroupName = openAiResourceIdParts[4]
+var openAiResourceName = openAiResourceIdParts[8]
+
 // --- User-Assigned MI to OpenAI ---
 resource existingOpenAI 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = if (useExistingOpenAiInstance) {
-  name: existingAzureOpenAiResourceName
-  scope: resourceGroup(existingAzureOpenAiResourceGroupName)
+  name: openAIName
+  scope: resourceGroup(existingAzureOpenAiResourceGroupName!)
 }
 
-resource uamiToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, useExistingOpenAiInstance ? existingOpenAI.id : cognitiveServicesOpenAI.id, roles.cognitiveServicesOpenAIUser)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
+module uamiToOpenAIAccess_User 'modules/openai-role-assignments.bicep' = {
+  name: 'uamiToOpenAIAccess_User'
+  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
+  params: {
+    assignmentGuid: guid(managedIdentity.id, openAiResourceId, roles.cognitiveServicesOpenAIUser)
+    openAiResourceName: openAiResourceName
     roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource uamiToOpenAIAccess_Contributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(managedIdentity.id, useExistingOpenAiInstance ? existingOpenAI.id : cognitiveServicesOpenAI.id, roles.cognitiveServicesOpenAIContributor)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
+module uamiToOpenAIAccess_Contributor 'modules/openai-role-assignments.bicep' = {
+  name: 'uamiToOpenAIAccess_Contributor'
+  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
+  params: {
+    assignmentGuid: guid(managedIdentity.id, openAiResourceId, roles.cognitiveServicesOpenAIContributor)
+    openAiResourceName: openAiResourceName
     roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIContributor)
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
@@ -507,17 +535,6 @@ resource uamiToStorageAccess 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
-// --- App Service System-Assigned MI to OpenAI ---
-resource appSvcSmiToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(appService.id, 'smi-openai-user', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
-    principalId: appService.identity.principalId // System-Assigned MI Principal ID
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // --- App Service System-Assigned MI to Storage ---
 resource appSvcSmiToStorageAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(appService.id, 'smi-storage', storageAccount.id)
@@ -529,23 +546,40 @@ resource appSvcSmiToStorageAccess 'Microsoft.Authorization/roleAssignments@2022-
   }
 }
 
-// --- App Registration Service Principal to OpenAI (if SP ObjectId is provided) ---
-resource appRegSpToOpenAIAccess_User 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appRegistrationSpObjectId)) {
-  name: guid(appRegistrationSpObjectId, 'appreg-sp-openai-user', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
+// --- App Service System-Assigned MI to OpenAI ---
+module appSvcSmiToOpenAIAccess_User 'modules/openai-role-assignments.bicep' = {
+  name: 'appSvcSmiToOpenAIAccess_User'
+  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
+  params: {
+    assignmentGuid: guid(appService.id, 'smi-openai-user', openAiResourceId)
+    openAiResourceName: openAiResourceName
     roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
-    principalId: appRegistrationSpObjectId
+    principalId: appService.identity.principalId // System-Assigned MI Principal ID
     principalType: 'ServicePrincipal'
   }
 }
 
-resource appRegSpToOpenAIAccess_Contributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(appRegistrationSpObjectId)) {
-  name: guid(appRegistrationSpObjectId, 'appreg-sp-openai-contrib', useExistingOpenAiInstance ? existingAzureOpenAiResourceName : cognitiveServicesOpenAI.id)
-  scope: useExistingOpenAiInstance ? existingOpenAI : cognitiveServicesOpenAI
-  properties: {
+// --- App Registration Service Principal to OpenAI (if SP ObjectId is provided) ---
+module appRegSpToOpenAIAccess_User 'modules/openai-role-assignments.bicep' = if (appRegistrationSpObjectId != null && !empty(appRegistrationSpObjectId)) {
+  name: 'appRegSpToOpenAIAccess_User'
+  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
+  params: {
+    assignmentGuid: guid(appRegistrationSpObjectId!, 'appreg-sp-openai-user', openAiResourceId)
+    openAiResourceName: openAiResourceName
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIUser)
+    principalId: appRegistrationSpObjectId!
+    principalType: 'ServicePrincipal'
+  }
+}
+
+module appRegSpToOpenAIAccess_Contributor 'modules/openai-role-assignments.bicep' = if (appRegistrationSpObjectId != null && !empty(appRegistrationSpObjectId)) {
+  name: 'appRegSpToOpenAIAccess_Contributor'
+  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
+  params: {
+    assignmentGuid: guid(appRegistrationSpObjectId!, 'appreg-sp-openai-contrib', openAiResourceId)
+    openAiResourceName: openAiResourceName
     roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roles.cognitiveServicesOpenAIContributor)
-    principalId: appRegistrationSpObjectId
+    principalId: appRegistrationSpObjectId!
     principalType: 'ServicePrincipal'
   }
 }
@@ -554,8 +588,8 @@ resource appRegSpToOpenAIAccess_Contributor 'Microsoft.Authorization/roleAssignm
 /* OUTPUTS
 =============================================================================== */
 output tenantId string = tenantId
-output existingAzureOpenAiResourceName string = existingAzureOpenAiResourceName
-output existingAzureOpenAiResourceGroupName string = existingAzureOpenAiResourceGroupName
+output existingAzureOpenAiResourceName string? = existingAzureOpenAiResourceName
+output existingAzureOpenAiResourceGroupName string? = existingAzureOpenAiResourceGroupName
 output cognitiveServicesSku string = cognitiveServicesSku
 output acrResourceGroupName string = acrResourceGroupName
 output appServiceName string = appService.name
@@ -573,6 +607,6 @@ output appRegistrationRedirectUri1 string = appServiceRedirectUri1
 output appRegistrationRedirectUri2 string = appServiceRedirectUri2
 @description('Logout URL for manual App Registration configuration.')
 output appRegistrationLogoutUrl string = appServiceLogoutUrl
-output azureOpenAiEndpoint string = useExistingOpenAiInstance ? 'https://${existingAzureOpenAiResourceName}${openAIEndpointSuffix}' : 'https://${openAIName}${openAIEndpointSuffix}'
+output azureOpenAiEndpoint string = openAiEndpoint
 output documentIntelligenceEndpoint string = cognitiveServicesDocIntel.properties.endpoint
-output searchServiceEndpoint string = 'https://${searchServiceName}.search.windows.net/' // Suffix may vary by platform
+output searchServiceEndpoint string = azureSearchEndpoint
