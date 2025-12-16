@@ -82,7 +82,6 @@ COPY --from=builder \
 # Add all common Python 3.12 entrypoints for compatibility
 COPY --from=builder \ 
     /usr/local/bin/python \
-    /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG} \
     /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \
     /usr/local/bin/
 
