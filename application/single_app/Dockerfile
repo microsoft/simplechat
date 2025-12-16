@@ -1,8 +1,12 @@
 # Stage 1: System dependencies and ODBC driver install
-ARG PYTHON_VERSION_ARG="3.12"
+ARG PYTHON_MAJOR_VERSION_ARG="3"
+ARG PYTHON_MINOR_VERSION_ARG="13"
+ARG PYTHON_PATCH_VERSION_ARG="11"
 FROM debian:12-slim AS builder
 
-ARG PYTHON_VERSION_ARG
+ARG PYTHON_MAJOR_VERSION_ARG
+ARG PYTHON_MINOR_VERSION_ARG
+ARG PYTHON_PATCH_VERSION_ARG
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONIOENCODING=utf-8 \
@@ -19,10 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Build and install Python from source
+# Example: https://www.python.org/ftp/python/3.13.11/Python-3.13.11.tgz
 WORKDIR /tmp
-RUN wget https://www.python.org/ftp/python/${PYTHON_VERSION_ARG}/Python-${PYTHON_VERSION_ARG}.tgz && \
-    tar -xzf Python-${PYTHON_VERSION_ARG}.tgz && \
-    cd Python-${PYTHON_VERSION_ARG} && \
+RUN wget https://www.python.org/ftp/python/${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}/Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}.tgz && \
+    tar -xzf Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}.tgz && \
+    cd Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG} && \
     ./configure --enable-optimizations --with-ensurepip=install --prefix=/usr/local && \
     make -j"$(nproc)" && \
     make altinstall
@@ -30,7 +35,7 @@ RUN wget https://www.python.org/ftp/python/${PYTHON_VERSION_ARG}/Python-${PYTHON
 USER root
 WORKDIR /app
 RUN groupadd -g 65532 nonroot && useradd -m -u 65532 -g nonroot nonroot
-RUN python${PYTHON_VERSION_ARG} -m venv /app/venv
+RUN python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} -m venv /app/venv
 RUN pip install wheel
 
 # Copy requirements and install them into the virtualenv
@@ -47,7 +52,10 @@ USER 65532:65532
 
 #Stage 2: Final containter
 FROM gcr.io/distroless/base-debian12:latest
-ARG PYTHON_VERSION_ARG
+ARG PYTHON_MAJOR_VERSION_ARG
+ARG PYTHON_MINOR_VERSION_ARG
+ARG PYTHON_PATCH_VERSION_ARG
+
 ENV PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -59,23 +67,22 @@ WORKDIR /app
 USER root
 
 #Copy 3.12 from Base
-COPY --from=builder /usr/local/lib/python${PYTHON_VERSION_ARG} /usr/local/lib/python${PYTHON_VERSION_ARG}
+COPY --from=builder /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}
 
 # Copy the Python interpreter with a specific name
-COPY --from=builder /usr/local/bin/python${PYTHON_VERSION_ARG} /usr/local/bin/python${PYTHON_VERSION_ARG}
+COPY --from=builder /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}
 COPY --from=builder \
-    /usr/local/lib/libpython3.12.so \
-    /usr/local/lib/libpython3.12.so.1.0 \
-    /usr/local/lib/libpython3.so \ 
+    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so \
+    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so.1.0 \
+    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.so \ 
     /usr/local/lib/pkgconfig \ 
-    /usr/local/lib/python3.12 \ 
-    /usr/local/lib/python3.13 \ 
+    /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \ 
     /usr/local/lib/
 # Add all common Python 3.12 entrypoints for compatibility
 COPY --from=builder \ 
     /usr/local/bin/python \
-    /usr/local/bin/python3 \
-    /usr/local/bin/python${PYTHON_VERSION_ARG} \
+    /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG} \
+    /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \
     /usr/local/bin/
 
 # Copy system libraries for x86_64
