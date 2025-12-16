@@ -61,7 +61,9 @@ ENV PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/venv/bin:/usr/local/bin:$PATH"
+    PATH="/app/venv/bin:/usr/local/bin:$PATH" \
+    PYTHONHOME="/usr/local" \
+    PYTHONPATH="/usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}"
 
 WORKDIR /app
 
