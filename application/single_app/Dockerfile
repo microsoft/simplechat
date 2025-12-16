@@ -35,13 +35,14 @@ RUN wget https://www.python.org/ftp/python/${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_
 USER root
 WORKDIR /app
 RUN groupadd -g 65532 nonroot && useradd -m -u 65532 -g nonroot nonroot
+USER 65532:65532
 RUN python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} -m venv /app/venv
-RUN pip install wheel
+RUN python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} -m pip install wheel
 
 # Copy requirements and install them into the virtualenv
 ENV PATH="/app/venv/bin:$PATH"
 COPY application/single_app/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} -m pip install --no-cache-dir -r /app/requirements.txt
 
 # Fix permissions so nonroot can use everything
 RUN chown -R 65532:65532 /app
