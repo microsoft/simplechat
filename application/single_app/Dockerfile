@@ -28,7 +28,7 @@ WORKDIR /tmp
 RUN wget https://www.python.org/ftp/python/${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}/Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}.tgz && \
     tar -xzf Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG}.tgz && \
     cd Python-${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.${PYTHON_PATCH_VERSION_ARG} && \
-    ./configure --enable-optimizations --with-ensurepip=install --prefix=/usr/local && \
+    LDFLAGS="-Wl,-rpath,/usr/local/lib" ./configure --enable-optimizations --enable-shared --with-ensurepip=install --prefix=/usr/local && \
     make -j"$(nproc)" && \
     make altinstall
 
