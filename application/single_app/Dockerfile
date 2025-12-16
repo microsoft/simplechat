@@ -62,22 +62,15 @@ ENV PYTHONIOENCODING=utf-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/venv/bin:/usr/local/bin:$PATH" \
-    PYTHONHOME="/usr/local" \
-    PYTHONPATH="/usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}"
+    LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
 WORKDIR /app
 
 USER root
 
 # Copy only the built Python interpreter (venv entrypoint handles python/python3)
-COPY --from=builder /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}
-
-COPY --from=builder \
-    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so \
-    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so.1.0 \
-    /usr/local/lib/pkgconfig \
-    /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \
-    /usr/local/lib/
+# Copy the full CPython installation so stdlib modules (e.g., encodings) are available
+COPY --from=builder /usr/local/ /usr/local/
 
 # Copy system libraries for x86_64
 COPY --from=builder /lib/x86_64-linux-gnu/ \
