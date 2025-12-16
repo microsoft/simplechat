@@ -2,6 +2,8 @@
 ARG PYTHON_VERSION_ARG="3.12"
 FROM debian:12-slim AS builder
 
+ARG PYTHON_VERSION_ARG
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
