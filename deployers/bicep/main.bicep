@@ -116,9 +116,13 @@ param searchSku string = 'basic'
 param createdDateTime string = utcNow('yyyy-MM-dd HH:mm:ss')
 
 // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
 param customBlobStorageSuffix string?
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
 param customGraphUrl string?
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us')
 param customIdentityUrl string?
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
 param customResourceManagerUrl string?
 
 @description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
