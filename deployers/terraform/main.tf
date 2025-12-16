@@ -113,6 +113,12 @@ variable "param_base_name" {
   type        = string
 }
 
+variable "param_existing_resource_group_name" {
+  description = "Name of existing resource group to deploy resources into. If not provided, a new RG will be created."
+  type        = string
+  default     = ""
+}
+
 variable "acr_name" {
   description = "Azure Container Registry name (must be globally unique, lowercase alphanumeric)."
   type        = string
@@ -164,7 +170,8 @@ variable "acr_password" {
 
 # Resource Naming Convention (matching PowerShell script logic)
 locals {
-  resource_group_name         = "sc-${var.param_base_name}-${var.param_environment}-rg"
+  resource_group_name         = var.param_existing_resource_group_name != "" ? var.param_existing_resource_group_name : "sc-${var.param_base_name}-${var.param_environment}-rg"
+  use_existing_rg             = var.param_existing_resource_group_name != ""
   app_registration_name       = "${var.param_base_name}-${var.param_environment}-ar"
   app_service_plan_name       = "${var.param_base_name}-${var.param_environment}-asp"
   app_service_name            = "${var.param_base_name}-${var.param_environment}-app"
@@ -178,8 +185,8 @@ locals {
   search_service_name         = "${var.param_base_name}-${var.param_environment}-search"
   storage_account_base        = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name        = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
-  
-  acr_base_url                = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"  
+
+  acr_base_url                = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"
   param_registry_server   = var.global_which_azure_platform == "AzureUSGovernment" ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
 
   app_service_fqdn_suffix = var.global_which_azure_platform == "AzureUSGovernment" ? ".azurewebsites.us" : ".azurewebsites.net"
@@ -254,17 +261,29 @@ resource "azuread_group" "simplechat_feedbackadmin" {
 }
 
 # --- Resource Group ---
+# Use existing resource group if specified, otherwise create a new one
+data "azurerm_resource_group" "existing_rg" {
+  count = local.use_existing_rg ? 1 : 0
+  name  = local.resource_group_name
+}
+
 resource "azurerm_resource_group" "rg" {
+  count    = local.use_existing_rg ? 0 : 1
   name     = local.resource_group_name
   location = var.param_location
   tags     = local.common_tags
 }
 
+locals {
+  rg_name     = local.use_existing_rg ? data.azurerm_resource_group.existing_rg[0].name : azurerm_resource_group.rg[0].name
+  rg_location = local.use_existing_rg ? data.azurerm_resource_group.existing_rg[0].location : azurerm_resource_group.rg[0].location
+}
+
 # --- Log Analytics Workspace ---
 resource "azurerm_log_analytics_workspace" "la" {
   name                = local.log_analytics_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   sku                 = "PerGB2018" # Pay-as-you-go SKU
   tags                = local.common_tags
 }
@@ -275,8 +294,8 @@ resource "azurerm_log_analytics_workspace" "la" {
 # or destroy/re-create the resource group if recovery is not an option.
 resource "azurerm_key_vault" "kv" {
   name                        = local.key_vault_name
-  location                    = azurerm_resource_group.rg.location
-  resource_group_name         = azurerm_resource_group.rg.name
+  location                    = local.rg_location
+  resource_group_name         = local.rg_name
   enabled_for_disk_encryption = false
   purge_protection_enabled    = false # Set to true in production
   sku_name                    = "standard" # or "premium"
@@ -304,8 +323,8 @@ resource "azurerm_role_assignment" "kv_secrets_officer_current_user" {
 # --- Application Insights ---
 resource "azurerm_application_insights" "ai" {
   name                = local.app_insights_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.la.id
   tags                = local.common_tags
@@ -314,8 +333,8 @@ resource "azurerm_application_insights" "ai" {
 # --- Storage Account ---
 resource "azurerm_storage_account" "sa" {
   name                     = local.storage_account_name
-  resource_group_name      = azurerm_resource_group.rg.name
-  location                 = azurerm_resource_group.rg.location
+  resource_group_name      = local.rg_name
+  location                 = local.rg_location
   account_tier             = "Standard"
   account_replication_type = "LRS" # Standard_LRS
   account_kind             = "StorageV2"
@@ -329,8 +348,8 @@ resource "azurerm_storage_account" "sa" {
 # --- User-Assigned Managed Identity ---
 resource "azurerm_user_assigned_identity" "id" {
   name                = local.managed_identity_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
 }
 
 # Grant Managed Identity access to Key Vault secrets (get/list)
@@ -343,13 +362,13 @@ resource "azurerm_role_assignment" "kv_secrets_user_managed_identity" {
 # --- App Service Plan ---
 resource "azurerm_service_plan" "asp" {
   name                = local.app_service_plan_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   os_type             = "Linux" # Script uses --is-linux
   sku_name            = "P1v3" # Basic tier, 1 core, 1.75GB RAM.
-  # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3" 
-  # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1" 
-  # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2" 
+  # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3"
+  # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1"
+  # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2"
   # "I3mv2" "I4mv2" "I5mv2" "D1" "SHARED" "WS1" "WS2" "WS3"]
   tags                = local.common_tags
 }
@@ -357,11 +376,11 @@ resource "azurerm_service_plan" "asp" {
 # --- App Service (Web App) ---
 resource "azurerm_linux_web_app" "app" {
   name                = local.app_service_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   service_plan_id     = azurerm_service_plan.asp.id
   ftp_publish_basic_authentication_enabled = false
-  webdeploy_publish_basic_authentication_enabled = false   
+  webdeploy_publish_basic_authentication_enabled = false
 
   # auth_settings {
   #     enabled                 = true
@@ -406,7 +425,7 @@ resource "azurerm_linux_web_app" "app" {
     "SECRET_KEY"                    = azuread_application_password.app_registration_secret.value
     "WEBSITE_AUTH_AAD_ALLOWED_TENANTS" = var.param_tenant_id
     "AZURE_OPENAI_RESOURCE_NAME"       = var.param_use_existing_openai_instance ? var.param_existing_azure_openai_resource_name : azurerm_cognitive_account.openai[0].name
-    "AZURE_OPENAI_RESOURCE_GROUP_NAME" = var.param_use_existing_openai_instance ? var.param_existing_azure_openai_resource_group_name : azurerm_resource_group.rg.name
+    "AZURE_OPENAI_RESOURCE_GROUP_NAME" = var.param_use_existing_openai_instance ? var.param_existing_azure_openai_resource_group_name : local.rg_name
     "AZURE_OPENAI_URL"                 = var.param_use_existing_openai_instance ? format(local.openai_url_template, var.param_existing_azure_openai_resource_name) : format(local.openai_url_template, azurerm_cognitive_account.openai[0].name)
     "AZURE_SEARCH_SERVICE_NAME"        = azurerm_search_service.search.name
     "AZURE_SEARCH_API_KEY"             = azurerm_search_service.search.primary_key
@@ -450,7 +469,7 @@ resource "azurerm_linux_web_app" "app" {
       site_config[0].application_stack[0].docker_image_name
     ]
   }
-  
+
   tags = local.common_tags
 }
 
@@ -510,7 +529,7 @@ resource "azuread_application_api_access" "api_permissions" {
 }
 
 ##################################################################
-# **** Not working in Azure Government **** 
+# **** Not working in Azure Government ****
 # Grant admin consent - this is a manual step in the script for sovereign clouds.
 # "azuread_application" "app_registration"
 # "azuread_service_principal" "app_registration_sp"
@@ -601,8 +620,8 @@ resource "azuread_group_member" "group_membership_admin" {
 #################################################################
 resource "azurerm_cosmosdb_account" "cosmos" {
   name                = local.cosmos_db_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   kind                = "GlobalDocumentDB" # SQL API
 
   offer_type = "Standard"
@@ -616,7 +635,7 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   }
 
   geo_location {
-    location          = azurerm_resource_group.rg.location
+    location          = local.rg_location
     failover_priority = 0
   }
 
@@ -627,8 +646,8 @@ resource "azurerm_cosmosdb_account" "cosmos" {
 resource "azurerm_cognitive_account" "openai" {
   count               = var.param_use_existing_openai_instance ? 0 : 1 # Only create if not using existing
   name                = local.open_ai_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   kind                = "OpenAI"
   sku_name            = "S0" # Standard tier
   tags                = local.common_tags
@@ -644,8 +663,8 @@ data "azurerm_cognitive_account" "existing_openai" {
 # --- Document Intelligence Service (Cognitive Services) ---
 resource "azurerm_cognitive_account" "docintel" {
   name                = local.doc_intel_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   kind                = "FormRecognizer"
   sku_name            = "S0" # Standard tier
   custom_subdomain_name = local.doc_intel_name # Maps to --custom-domain
@@ -656,8 +675,8 @@ resource "azurerm_cognitive_account" "docintel" {
 # --- Azure AI Search Service ---
 resource "azurerm_search_service" "search" {
   name                = local.search_service_name
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.rg_location
+  resource_group_name = local.rg_name
   sku                 = "basic" # Other options: standard, standard2, standard3
   replica_count       = 1
   partition_count     = 1
@@ -762,6 +781,6 @@ output "web_app_url" {
 # }
 
 output "resource_group_name" {
-  description = "Name of the created Resource Group."
-  value       = azurerm_resource_group.rg.name
+  description = "Name of the Resource Group."
+  value       = local.rg_name
 }

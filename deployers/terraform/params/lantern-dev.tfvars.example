@@ -1,0 +1,59 @@
+# Example Terraform Variables for Lantern Dev Environment
+# Copy this file to lantern-dev.tfvars and fill in your actual values
+
+# ===================================
+# Azure Environment Configuration
+# ===================================
+global_which_azure_platform = "AzureCloud"  # or "AzureUSGovernment"
+param_tenant_id             = "your-tenant-id-here"
+param_subscription_id       = "your-subscription-id-here"
+param_location              = "northcentralus"  # Must match your existing RG location
+
+# ===================================
+# Existing Resource Group
+# ===================================
+# Use this to deploy into an existing resource group
+param_existing_resource_group_name = "rg-lantern-dev-ess-simple-chat-ncus"
+
+# ===================================
+# Azure Container Registry (ACR)
+# ===================================
+# These should be from your Initialize-AzureEnvironment.ps1 output
+acr_name                = "your-acr-name"  # e.g., "lanternacr123"
+acr_resource_group_name = "your-acr-rg"    # e.g., "sc-prereq-rg"
+acr_username            = "your-acr-name"  # Usually same as acr_name
+acr_password            = "your-acr-password-here"  # From ACR admin credentials
+
+# ===================================
+# Container Image Configuration
+# ===================================
+# This should match the image tag from your GitHub Actions build
+image_name = "simple-chat:latest"  # or "simple-chat:2025-12-16_42"
+
+# ===================================
+# Application Configuration
+# ===================================
+param_environment = "dev"
+param_base_name   = "lantern"  # Short name for your organization
+
+# ===================================
+# Azure OpenAI Configuration
+# ===================================
+# Set to true if you already have an OpenAI instance from Initialize script
+param_use_existing_openai_instance            = true
+param_existing_azure_openai_resource_name     = "your-openai-name"  # e.g., "lanternoai123"
+param_existing_azure_openai_resource_group_name = "your-openai-rg"  # e.g., "sc-prereq-rg"
+
+# If false, Terraform will create a new OpenAI instance in your resource group
+# param_use_existing_openai_instance = false
+
+# ===================================
+# Owner/Tagging Information
+# ===================================
+param_resource_owner_id       = "Your Name"
+param_resource_owner_email_id = "youremail@yourdomain.com"
+
+# ===================================
+# Entra ID Security Groups
+# ===================================
+param_create_entra_security_groups = true
