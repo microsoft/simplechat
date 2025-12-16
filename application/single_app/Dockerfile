@@ -67,28 +67,20 @@ WORKDIR /app
 
 USER root
 
-#Copy 3.12 from Base
-COPY --from=builder /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}
-
-# Copy the Python interpreter with a specific name
+# Copy only the built Python interpreter (venv entrypoint handles python/python3)
 COPY --from=builder /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}
+
 COPY --from=builder \
     /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so \
     /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG}.so.1.0 \
-    /usr/local/lib/libpython${PYTHON_MAJOR_VERSION_ARG}.so \ 
-    /usr/local/lib/pkgconfig \ 
-    /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \ 
+    /usr/local/lib/pkgconfig \
+    /usr/local/lib/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \
     /usr/local/lib/
-# Add all common Python 3.12 entrypoints for compatibility
-COPY --from=builder \ 
-    /usr/local/bin/python \
-    /usr/local/bin/python${PYTHON_MAJOR_VERSION_ARG}.${PYTHON_MINOR_VERSION_ARG} \
-    /usr/local/bin/
 
 # Copy system libraries for x86_64
 COPY --from=builder /lib/x86_64-linux-gnu/ \
-    /lib64/ld-linux-x86-64.so.2 \    
-    /usr/lib/x86_64-linux-gnu/ 
+    /lib64/ld-linux-x86-64.so.2 \
+    /usr/lib/x86_64-linux-gnu/
     #/usr/share/ca-certificates \
     #/etc/ssl/certs \
     #/usr/bin/ffmpeg \
