@@ -1,21 +1,36 @@
 # Stage 1: System dependencies and ODBC driver install
 ARG PYTHON_VERSION_ARG="3.12"
-FROM python:3.12 AS builder
+FROM debian:12-slim AS builder
 
-ENV PYTHONIOENCODING=utf-8
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
+# Build deps for CPython and pip stdlib modules
 WORKDIR /deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget ca-certificates \
+    libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
+    libncursesw5-dev libffi-dev liblzma-dev uuid-dev tk-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y wget unzip
+# Build and install Python from source
+WORKDIR /tmp
+RUN wget https://www.python.org/ftp/python/${PYTHON_VERSION_ARG}/Python-${PYTHON_VERSION_ARG}.tgz && \
+    tar -xzf Python-${PYTHON_VERSION_ARG}.tgz && \
+    cd Python-${PYTHON_VERSION_ARG} && \
+    ./configure --enable-optimizations --with-ensurepip=install --prefix=/usr/local && \
+    make -j"$(nproc)" && \
+    make altinstall
 
 USER root
+WORKDIR /app
 RUN groupadd -g 65532 nonroot && useradd -m -u 65532 -g nonroot nonroot
-RUN python -m venv /app/venv
+RUN python${PYTHON_VERSION_ARG} -m venv /app/venv
 RUN pip install wheel
 
-WORKDIR /app
 # Copy requirements and install them into the virtualenv
 ENV PATH="/app/venv/bin:$PATH"
 COPY application/single_app/requirements.txt /app/requirements.txt
@@ -31,15 +46,19 @@ USER 65532:65532
 #Stage 2: Final containter
 FROM gcr.io/distroless/base-debian12:latest
 ARG PYTHON_VERSION_ARG
+ENV PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/venv/bin:/usr/local/bin:$PATH"
+
 WORKDIR /app
+
 USER root
-ENV PYTHONIOENCODING=utf-8
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-ENV PYTHONUNBUFFERED=1
-ENV PATH="/app/venv/bin:/usr/local/bin:$PATH"
+
 #Copy 3.12 from Base
 COPY --from=builder /usr/local/lib/python${PYTHON_VERSION_ARG} /usr/local/lib/python${PYTHON_VERSION_ARG}
+
 # Copy the Python interpreter with a specific name
 COPY --from=builder /usr/local/bin/python${PYTHON_VERSION_ARG} /usr/local/bin/python${PYTHON_VERSION_ARG}
 COPY --from=builder \
@@ -67,7 +86,7 @@ COPY --from=builder /lib/x86_64-linux-gnu/ \
     #/usr/share/zoneinfo /usr/share/
 
 # Copy application code and set ownership
-COPY --chown=65532:65532 . ./
+COPY --chown=65532:65532 application/single_app/ /app/
 
 # Copy the virtualenv from the builder stage
 COPY --from=builder --chown=65532:65532 /app/venv /app/venv
