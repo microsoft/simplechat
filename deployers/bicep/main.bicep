@@ -5,14 +5,13 @@ targetScope = 'subscription'
 - Region must align to the target cloud environment''')
 param location string
 
-@description('''The target Azure Cloud environment.
-- Accepted values are: AzureCloud, AzureUSGovernment
-- Default is AzureCloud''')
 @allowed([
-  'AzureCloud'
-  'AzureUSGovernment'
+  'public'
+  'usgovernment'
+  'custom'  
 ])
-param cloudEnvironment string
+param cloudEnvironmentOverride string?
+var cloudEnvironment = cloudEnvironmentOverride ?? (az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom'))
 
 @description('''The name of the application to be deployed.  
 - Name may only contain letters and numbers
@@ -119,7 +118,7 @@ param unauthenticatedClientAction string = 'RedirectToLoginPage'
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
-var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var acrCloudSuffix = az.environment().suffixes.acrLoginServer
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var acrName = useExistingAcr ? existingAcrResourceName : toLower('${appName}${environment}acr')
 var containerImageName = '${containerRegistry}/${imageName}'
@@ -385,8 +384,7 @@ module appService 'modules/appService.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    #disable-next-line BCP318 // expect one value to be null
-    acrName: useExistingAcr ? acr_existing.outputs.acrName : acr_create.outputs.acrName
+    acrName: useExistingAcr ? acr_existing!.outputs.acrName : acr_create!.outputs.acrName
     managedIdentityId: managedIdentity.outputs.resourceId
     managedIdentityClientId: managedIdentity.outputs.clientId
     enableDiagLogging: enableDiagLogging
@@ -396,13 +394,10 @@ module appService 'modules/appService.bicep' = {
     azurePlatform: cloudEnvironment
     cosmosDbName: cosmosDB.outputs.cosmosDbName
     searchServiceName: searchService.outputs.searchServiceName
-    #disable-next-line BCP318 // expect one value to be null
-    openAiServiceName: useExistingOpenAISvc ? openAI_existing.outputs.openAIName : openAI_create.outputs.openAIName
-    #disable-next-line BCP318 // expect one value to be null
+    openAiServiceName: useExistingOpenAISvc ? openAI_existing!.outputs.openAIName : openAI_create!.outputs.openAIName
     openAiResourceGroupName: useExistingOpenAISvc
       ? existingOpenAIResourceGroupName
-      #disable-next-line BCP318 // expect one value to be null
-      : openAI_create.outputs.openAIResourceGroup
+      : openAI_create!.outputs.openAIResourceGroup
     documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
     appInsightsName: appInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
