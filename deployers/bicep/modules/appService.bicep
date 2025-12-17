@@ -130,12 +130,13 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled'}
       ],
       azurePlatform == 'custom' ? [
-        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl ?? az.environment().graph}
-        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl ?? az.environment().authentication.loginEndpoint}
-        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl ?? az.environment().resourceManager}
-        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix ?? 'blob.${az.environment().suffixes.storage}'}
-        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope!}
-        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl!}
+        {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl}
+        {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl}
+        {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl}
+        {name: 'CUSTOM_BLOB_STORAGE_URL_VALUE', value: customBlobStorageSuffix}
+        {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope}
+        {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl}
+        {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
         {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}
       ] : [])      
     }

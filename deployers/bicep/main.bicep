@@ -124,6 +124,20 @@ param imageName string
 ])
 param unauthenticatedClientAction string = 'RedirectToLoginPage'
 
+// --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+@description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
+param customBlobStorageSuffix string = 'blob.${az.environment().suffixes.storage}'
+@description('Custom Graph API URL, e.g. https://graph.microsoft.us')
+param customGraphUrl string = az.environment().graph
+@description('Custom Identity URL, e.g. https://login.microsoftonline.us')
+param customIdentityUrl string = az.environment().authentication.loginEndpoint
+@description('Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net')
+param customResourceManagerUrl string = az.environment().resourceManager
+@description('Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default')
+param customCognitiveServicesScope string = 'https://cognitiveservices.azure.com/.default'
+@description('Custom search resource URL for token audience, e.g. https://search.azure.us')
+param customSearchResourceUrl string = 'https://search.azure.com'
+
 //=========================================================
 // variable declarations for the main deployment 
 //=========================================================
@@ -419,6 +433,13 @@ module appService 'modules/appService.bicep' = {
     enterpriseAppClientId: enterpriseAppClientId
     enterpriseAppClientSecret: ''
     keyVaultUri: keyVault.outputs.keyVaultUri
+    // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+    customBlobStorageSuffix: customBlobStorageSuffix
+    customGraphUrl: customGraphUrl
+    customIdentityUrl: customIdentityUrl
+    customResourceManagerUrl: customResourceManagerUrl
+    customCognitiveServicesScope: customCognitiveServicesScope
+    customSearchResourceUrl: customSearchResourceUrl
   }
 }
 
