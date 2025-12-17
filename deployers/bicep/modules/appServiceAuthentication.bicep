@@ -31,6 +31,8 @@ param unauthenticatedClientAction string = 'RedirectToLoginPage'
 @description('Token store enabled')
 param tokenStoreEnabled bool = true
 
+var openIdIssuerUrl = '${az.environment().authentication.loginEndpoint}/${tenantId}'
+
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
 }
@@ -49,7 +51,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = if (enableAuthen
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: 'https://sts.windows.net/${tenantId}/'
+          openIdIssuer: openIdIssuerUrl
           clientId: clientId
           clientSecretSettingName: !empty(clientSecretKeyVaultUri) ? 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET' : null
         }
