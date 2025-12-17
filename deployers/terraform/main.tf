@@ -54,6 +54,11 @@ provider "azurerm" {
       permanently_delete_on_destroy = true
     }
   }
+
+  # Disable automatic resource provider registration
+  # Required when user doesn't have subscription-level Owner permissions
+  resource_provider_registrations = "none"
+
   storage_use_azuread = true
   environment = var.global_which_azure_platform == "AzureUSGovernment" ? "usgovernment" : (var.global_which_azure_platform == "AzureCloud" ? "public" : null)
   tenant_id   = var.param_tenant_id
@@ -362,10 +367,10 @@ resource "azurerm_role_assignment" "kv_secrets_user_managed_identity" {
 # --- App Service Plan ---
 resource "azurerm_service_plan" "asp" {
   name                = local.app_service_plan_name
-  location            = local.rg_location
+  location            = "eastus2" # Override: North Central US has zero App Service quota
   resource_group_name = local.rg_name
   os_type             = "Linux" # Script uses --is-linux
-  sku_name            = "P1v3" # Basic tier, 1 core, 1.75GB RAM.
+  sku_name            = "F1" # Free tier - no quota required (limited to 60 min/day)
   # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3"
   # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1"
   # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2"
@@ -376,7 +381,7 @@ resource "azurerm_service_plan" "asp" {
 # --- App Service (Web App) ---
 resource "azurerm_linux_web_app" "app" {
   name                = local.app_service_name
-  location            = local.rg_location
+  location            = "eastus2" # Must match App Service Plan location
   resource_group_name = local.rg_name
   service_plan_id     = azurerm_service_plan.asp.id
   ftp_publish_basic_authentication_enabled = false
@@ -533,14 +538,13 @@ resource "azuread_application_api_access" "api_permissions" {
 # Grant admin consent - this is a manual step in the script for sovereign clouds.
 # "azuread_application" "app_registration"
 # "azuread_service_principal" "app_registration_sp"
+# COMMENTED OUT: Requires Global Admin permissions - grant consent manually in Azure Portal
 ##################################################################
-resource "azuread_service_principal_delegated_permission_grant" "delegatedpermissiongrant" {
-  service_principal_object_id          = azuread_service_principal.app_registration_sp.object_id
-  resource_service_principal_object_id = data.azuread_service_principal.msgraph.object_id
-  claim_values                         = ["User.Read", "profile", "email", "Group.Read.All", "offline_access", "openid"]
-}
-
-##################################################################
+# resource "azuread_service_principal_delegated_permission_grant" "delegatedpermissiongrant" {
+#   service_principal_object_id          = azuread_service_principal.app_registration_sp.object_id
+#   resource_service_principal_object_id = data.azuread_service_principal.msgraph.object_id
+#   claim_values                         = ["User.Read", "profile", "email", "Group.Read.All", "offline_access", "openid"]
+# }##################################################################
 # Entra App Registration App Roles
 ##################################################################
 resource "azuread_application_app_role" "app_registration_admin" {
