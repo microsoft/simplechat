@@ -79,6 +79,6 @@ dependsOn: [
 
 output openAIName string = newOpenAI.name
 output openAIResourceGroup string = resourceGroup().name
-
+output openAIEndpoint string = newOpenAI.properties.endpoint
 
 

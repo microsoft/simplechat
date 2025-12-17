@@ -10,8 +10,7 @@ param location string
   'usgovernment'
   'custom'  
 ])
-param cloudEnvironmentOverride string?
-var cloudEnvironment = cloudEnvironmentOverride ?? (az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom'))
+param cloudEnvironment string = az.environment().name == 'AzureCloud' ? 'public' : (az.environment().name == 'AzureUSGovernment' ? 'usgovernment' : 'custom')
 
 @description('''The name of the application to be deployed.  
 - Name may only contain letters and numbers
@@ -94,6 +93,20 @@ param existingOpenAIResourceGroupName string
 @description('''Existing Azure OpenAI Resource Name
 - Required if useExistingOpenAISvc is true''')
 param existingOpenAIResourceName string
+
+param existingOpenAIChatModelParams object = {
+  modelName: 'gpt-4o'
+  modelVersion: '2024-11-20'
+  skuName: 'GlobalStandard'
+  skuCapacity: 100
+}
+
+param existingOpenAIEmbeddingModelParams object = {
+  modelName: 'text-embedding-3-small'
+  modelVersion: '1'
+  skuName: 'GlobalStandard'
+  skuCapacity: 150
+}
 
 @description('''The name of the container image to deploy to the web app.
 - should be in the format <repository>:<tag>''')
@@ -318,6 +331,8 @@ module openAI_existing 'modules/openAI-existing.bicep' = if (useExistingOpenAISv
   scope: resourceGroup(useExistingOpenAISvc ? existingOpenAIResourceGroupName : rgName)
   params: {
     openAIName: existingOpenAIResourceName
+    openAIChatModelParams: existingOpenAIChatModelParams
+    openAIEmbeddingModelParams: existingOpenAIEmbeddingModelParams
   }
 }
 
@@ -395,6 +410,7 @@ module appService 'modules/appService.bicep' = {
     cosmosDbName: cosmosDB.outputs.cosmosDbName
     searchServiceName: searchService.outputs.searchServiceName
     openAiServiceName: useExistingOpenAISvc ? openAI_existing!.outputs.openAIName : openAI_create!.outputs.openAIName
+    openAiEndpoint: useExistingOpenAISvc ? openAI_existing!.outputs.openAIEndpoint : openAI_create!.outputs.openAIEndpoint
     openAiResourceGroupName: useExistingOpenAISvc
       ? existingOpenAIResourceGroupName
       : openAI_create!.outputs.openAIResourceGroup
@@ -489,6 +505,6 @@ output var_rgName string = rgName
 output var_acrName string = useExistingAcr ? existingAcrResourceName : toLower('${appName}${environment}acr')
 output var_containerRegistry string = containerRegistry
 output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1] 
+output var_imageTag string = contains(imageName, ':') ? split(imageName, ':')[1] : 'latest'
 output var_specialImage bool = contains(imageName, ':') ? split(imageName, ':')[1] != 'latest' : false
 output var_webService string = appService.outputs.name
