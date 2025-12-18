@@ -630,15 +630,17 @@ export function appendMessage(
                 <i class="bi ${maskIcon}"></i>
             </button>
         `;
-    const deleteButtonHtml = `
-            <button class="delete-msg-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Delete message">
-                <i class="bi bi-trash"></i>
-            </button>
-        `;
-    const retryButtonHtml = `
-            <button class="retry-msg-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Retry message">
-                <i class="bi bi-arrow-clockwise"></i>
-            </button>
+    const actionsDropdownHtml = `
+            <div class="dropdown">
+                <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                    <i class="bi bi-three-dots"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-start">
+                    <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                    <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${feedbackHtml}
+                </ul>
+            </div>
         `;
     const carouselButtonsHtml = `
             <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
@@ -648,7 +650,7 @@ export function appendMessage(
                 <i class="bi bi-box-arrow-in-right"></i>
             </button>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${deleteButtonHtml}${retryButtonHtml}${carouselButtonsHtml}${feedbackHtml}</div>`;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${copyButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -799,17 +801,50 @@ export function appendMessage(
       });
     }
     
-    const deleteBtn = messageDiv.querySelector(".delete-msg-btn");
-    if (deleteBtn) {
-      deleteBtn.addEventListener("click", () => {
+    const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
+    if (dropdownDeleteBtn) {
+      dropdownDeleteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         handleDeleteButtonClick(messageDiv, messageId, 'assistant');
       });
     }
     
-    const retryBtn = messageDiv.querySelector(".retry-msg-btn");
-    if (retryBtn) {
-      retryBtn.addEventListener("click", () => {
+    const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
+    if (dropdownRetryBtn) {
+      dropdownRetryBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         handleRetryButtonClick(messageDiv, messageId, 'assistant');
+      });
+    }
+    
+    // Handle dropdown positioning manually - move to chatbox container
+    const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
+    const dropdownMenu = messageDiv.querySelector(".message-actions .dropdown-menu");
+    if (dropdownToggle && dropdownMenu) {
+      dropdownToggle.addEventListener("show.bs.dropdown", () => {
+        // Move dropdown menu to chatbox to escape message bubble
+        const chatbox = document.getElementById('chatbox');
+        if (chatbox) {
+          dropdownMenu.remove();
+          chatbox.appendChild(dropdownMenu);
+          
+          // Position relative to button
+          const rect = dropdownToggle.getBoundingClientRect();
+          const chatboxRect = chatbox.getBoundingClientRect();
+          dropdownMenu.style.position = 'absolute';
+          dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+          dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+          dropdownMenu.style.zIndex = '9999';
+        }
+      });
+      
+      // Return menu to original position when closed
+      dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+        const dropdown = messageDiv.querySelector(".message-actions .dropdown");
+        if (dropdown && dropdownMenu.parentElement !== dropdown) {
+          dropdownMenu.remove();
+          dropdown.appendChild(dropdownMenu);
+        }
       });
     }
     
@@ -998,17 +1033,20 @@ export function appendMessage(
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
           <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+              </ul>
+            </div>
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
               <i class="bi bi-copy"></i>
             </button>
             <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
               <i class="bi ${maskIcon}"></i>
-            </button>
-            <button class="btn btn-sm btn-link text-muted delete-msg-btn" data-message-id="${messageId}" title="Delete message">
-              <i class="bi bi-trash"></i>
-            </button>
-            <button class="btn btn-sm btn-link text-muted retry-msg-btn" data-message-id="${messageId}" title="Retry message">
-              <i class="bi bi-arrow-clockwise"></i>
             </button>
             <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
               <i class="bi bi-box-arrow-in-left"></i>
@@ -1046,11 +1084,16 @@ export function appendMessage(
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
           <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+              </ul>
+            </div>
             <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
               <i class="bi ${maskIcon}"></i>
-            </button>
-            <button class="btn btn-sm btn-link text-muted delete-msg-btn" data-message-id="${messageId}" title="Delete message">
-              <i class="bi bi-trash"></i>
             </button>
           </div>
           <div class="d-flex align-items-center"></div>
@@ -1163,11 +1206,40 @@ export function appendMessage(
         });
       }
       
-      // Add delete button event listener
-      const deleteBtn = messageDiv.querySelector('.delete-msg-btn');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', () => {
+      // Add delete button event listener from dropdown
+      const dropdownDeleteBtn = messageDiv.querySelector('.dropdown-delete-btn');
+      if (dropdownDeleteBtn) {
+        dropdownDeleteBtn.addEventListener('click', (e) => {
+          e.preventDefault();
           handleDeleteButtonClick(messageDiv, messageId, sender === "image" ? 'image' : 'file');
+        });
+      }
+      
+      // Handle dropdown positioning manually for image/file messages - move to chatbox
+      const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+      const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+      if (dropdownToggle && dropdownMenu) {
+        dropdownToggle.addEventListener("show.bs.dropdown", () => {
+          const chatbox = document.getElementById('chatbox');
+          if (chatbox) {
+            dropdownMenu.remove();
+            chatbox.appendChild(dropdownMenu);
+            
+            const rect = dropdownToggle.getBoundingClientRect();
+            const chatboxRect = chatbox.getBoundingClientRect();
+            dropdownMenu.style.position = 'absolute';
+            dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+            dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+            dropdownMenu.style.zIndex = '9999';
+          }
+        });
+        
+        dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+          const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+          if (dropdown && dropdownMenu.parentElement !== dropdown) {
+            dropdownMenu.remove();
+            dropdown.appendChild(dropdownMenu);
+          }
         });
       }
     }
@@ -1786,17 +1858,47 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     });
   }
   
-  const deleteBtn = messageDiv.querySelector(".delete-msg-btn");
-  if (deleteBtn) {
-    deleteBtn.addEventListener("click", () => {
+  const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
+  if (dropdownDeleteBtn) {
+    dropdownDeleteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
       handleDeleteButtonClick(messageDiv, messageId, 'user');
     });
   }
   
-  const retryBtn = messageDiv.querySelector(".retry-msg-btn");
-  if (retryBtn) {
-    retryBtn.addEventListener("click", () => {
+  const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
+  if (dropdownRetryBtn) {
+    dropdownRetryBtn.addEventListener("click", (e) => {
+      e.preventDefault();
       handleRetryButtonClick(messageDiv, messageId, 'user');
+    });
+  }
+  
+  // Handle dropdown positioning manually for user messages - move to chatbox
+  const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+  const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+  if (dropdownToggle && dropdownMenu) {
+    dropdownToggle.addEventListener("show.bs.dropdown", () => {
+      const chatbox = document.getElementById('chatbox');
+      if (chatbox) {
+        dropdownMenu.remove();
+        chatbox.appendChild(dropdownMenu);
+        
+        const rect = dropdownToggle.getBoundingClientRect();
+        const chatboxRect = chatbox.getBoundingClientRect();
+        dropdownMenu.style.position = 'absolute';
+        dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+        dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+        dropdownMenu.style.zIndex = '9999';
+      }
+    });
+    
+    dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+      const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+      if (dropdown && dropdownMenu.parentElement !== dropdown) {
+        dropdownMenu.remove();
+        dropdown.appendChild(dropdownMenu);
+      }
     });
   }
   
@@ -2654,7 +2756,7 @@ function applyMaskedState(messageDiv, metadata) {
     if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
       const badge = document.createElement('div');
       badge.className = 'message-exclusion-badge text-warning small';
-      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><span class="badge-text">Excluded from conversation</span>';
+      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
       messageFooter.appendChild(badge);
     }
     return;
@@ -2818,7 +2920,7 @@ function maskEntireMessage(messageDiv, messageId, maskBtn) {
       if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
         const badge = document.createElement('div');
         badge.className = 'message-exclusion-badge text-warning small';
-        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><span class="badge-text">Excluded from conversation</span>';
+        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
         messageFooter.appendChild(badge);
       }
       
