@@ -103,8 +103,28 @@ def register_route_frontend_conversations(app):
         all_items = filtered_items
         debug_print(f"Frontend endpoint - After filtering: {len(all_items)} items remaining")
 
+        # Log thread info BEFORE sorting
+        debug_print(f"Frontend endpoint - BEFORE SORT:")
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
+
         # Sort messages using threading logic
         all_items = sort_messages_by_thread(all_items)
+        
+        # Log thread info AFTER sorting
+        debug_print(f"Frontend endpoint - AFTER SORT:")
+        for i, item in enumerate(all_items):
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {i+1}. {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
 
         # Process messages and reassemble chunked images
         messages = []
