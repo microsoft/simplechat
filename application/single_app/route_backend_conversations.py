@@ -26,16 +26,40 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
-            # Query all messages and chunks in cosmos_messages_container
-            message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp ASC"
+            # Query all messages in cosmos_messages_container
+            # We'll filter for active_thread in Python since Cosmos DB boolean queries can be tricky
+            message_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                ORDER BY c.timestamp ASC
+            """
+            
+            debug_print(f"Executing query: {message_query}")
+            
             all_items = list(cosmos_messages_container.query_items(
                 query=message_query,
                 partition_key=conversation_id
             ))
             
-            debug_print(f"Query returned {len(all_items)} total items")
-            for i, item in enumerate(all_items):
-                debug_print(f"Item {i}: id={item.get('id')}, role={item.get('role')}")
+            debug_print(f"Query returned {len(all_items)} total items (before filtering)")
+            
+            # Filter for active_thread = True OR active_thread is not defined (backwards compatibility)
+            filtered_items = []
+            for item in all_items:
+                thread_info = item.get('metadata', {}).get('thread_info', {})
+                active = thread_info.get('active_thread')
+                debug_print(f"Evaluating item id={item.get('id')}, role={item.get('role')}, active_thread={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+                
+                # Include if: active_thread is True, OR active_thread is not defined, OR active_thread is None
+                if active is True or active is None or 'active_thread' not in thread_info:
+                    filtered_items.append(item)
+                    debug_print(f"  ✅ Including: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+                else:
+                    debug_print(f"  ❌ Excluding: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+            
+            all_items = filtered_items
+            debug_print(f"After filtering: {len(all_items)} items remaining")
+            
             
             # Process messages and reassemble chunked images
             messages = []
@@ -1093,6 +1117,54 @@ def register_route_backend_conversations(app):
                 # Delete only the specified message
                 messages_to_delete = [message_doc]
             
+            # THREAD ATTEMPT PROMOTION: If deleting an active thread attempt, promote next attempt
+            if messages_to_delete:
+                first_msg = messages_to_delete[0]
+                thread_id = first_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                is_active = first_msg.get('metadata', {}).get('thread_info', {}).get('active_thread', True)
+                
+                if thread_id and is_active:
+                    # Find all other attempts for this thread_id
+                    other_attempts_query = f"""
+                        SELECT * FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        AND c.metadata.thread_info.thread_id = '{thread_id}'
+                        AND c.id NOT IN ({','.join([f"'{m['id']}'" for m in messages_to_delete])})
+                        AND c.role = 'user'
+                    """
+                    other_attempts = list(cosmos_messages_container.query_items(
+                        query=other_attempts_query,
+                        partition_key=conversation_id
+                    ))
+                    
+                    # If there are other attempts, promote the next one (lowest thread_attempt)
+                    if other_attempts:
+                        # Sort by thread_attempt to find the next one
+                        other_attempts.sort(key=lambda m: m.get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0))
+                        next_attempt_number = other_attempts[0].get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0)
+                        
+                        # Activate all messages with this thread_attempt
+                        activate_query = f"""
+                            SELECT * FROM c 
+                            WHERE c.conversation_id = '{conversation_id}' 
+                            AND c.metadata.thread_info.thread_id = '{thread_id}'
+                            AND c.metadata.thread_info.thread_attempt = {next_attempt_number}
+                        """
+                        messages_to_activate = list(cosmos_messages_container.query_items(
+                            query=activate_query,
+                            partition_key=conversation_id
+                        ))
+                        
+                        for msg_to_activate in messages_to_activate:
+                            if 'metadata' not in msg_to_activate:
+                                msg_to_activate['metadata'] = {}
+                            if 'thread_info' not in msg_to_activate['metadata']:
+                                msg_to_activate['metadata']['thread_info'] = {}
+                            msg_to_activate['metadata']['thread_info']['active_thread'] = True
+                            cosmos_messages_container.upsert_item(msg_to_activate)
+                        
+                        print(f"Promoted thread_attempt {next_attempt_number} to active after deleting active thread {thread_id}")
+            
             deleted_message_ids = []
             
             for msg in messages_to_delete:
@@ -1134,3 +1206,325 @@ def register_route_backend_conversations(app):
             import traceback
             traceback.print_exc()
             return jsonify({'error': 'Failed to delete message'}), 500
+    @app.route('/api/message/<message_id>/retry', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def retry_message(message_id):
+        """
+        Retry/regenerate a message by creating new user+system+assistant messages 
+        with incremented thread_attempt and same thread_id.
+        Only the message author can retry their messages.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json() or {}
+            selected_model = data.get('model')
+            reasoning_effort = data.get('reasoning_effort')
+            
+            # Find the original message
+            query = "SELECT * FROM c WHERE c.id = @message_id"
+            params = [{"name": "@message_id", "value": message_id}]
+            message_results = list(cosmos_messages_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+            
+            if not message_results:
+                return jsonify({'error': 'Message not found'}), 404
+            
+            original_msg = message_results[0]
+            conversation_id = original_msg.get('conversation_id')
+            original_role = original_msg.get('role')
+            
+            # Verify ownership
+            message_user_id = original_msg.get('metadata', {}).get('user_info', {}).get('user_id')
+            if not message_user_id:
+                # Fallback to conversation ownership
+                try:
+                    conversation = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    if conversation.get('user_id') != user_id:
+                        return jsonify({'error': 'You can only retry messages from your own conversations'}), 403
+                except:
+                    return jsonify({'error': 'Conversation not found'}), 404
+            elif message_user_id != user_id:
+                return jsonify({'error': 'You can only retry your own messages'}), 403
+            
+            # Get thread info from original message
+            thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+            previous_thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+            
+            if not thread_id:
+                return jsonify({'error': 'Message has no thread_id'}), 400
+            
+            # Find current max thread_attempt for this thread_id
+            attempt_query = f"""
+                SELECT VALUE MAX(c.metadata.thread_info.thread_attempt) 
+                FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+            """
+            attempt_results = list(cosmos_messages_container.query_items(
+                query=attempt_query,
+                partition_key=conversation_id
+            ))
+            
+            current_max_attempt = attempt_results[0] if attempt_results and attempt_results[0] is not None else 0
+            new_attempt = current_max_attempt + 1
+            
+            # Set all existing attempts for this thread to active_thread=false
+            deactivate_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+            """
+            existing_messages = list(cosmos_messages_container.query_items(
+                query=deactivate_query,
+                partition_key=conversation_id
+            ))
+            
+            print(f"🔍 Retry - Found {len(existing_messages)} existing messages to deactivate")
+            
+            for msg in existing_messages:
+                msg_id = msg.get('id', 'unknown')
+                msg_role = msg.get('role', 'unknown')
+                old_active = msg.get('metadata', {}).get('thread_info', {}).get('active_thread', None)
+                
+                if 'metadata' not in msg:
+                    msg['metadata'] = {}
+                if 'thread_info' not in msg['metadata']:
+                    msg['metadata']['thread_info'] = {}
+                msg['metadata']['thread_info']['active_thread'] = False
+                cosmos_messages_container.upsert_item(msg)
+                
+                print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
+            
+            # Find the original user message in this thread to get the content
+            # Get the FIRST user message in this thread (attempt=1) to ensure we get the original content
+            user_msg_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+                AND c.role = 'user'
+                ORDER BY c.metadata.thread_info.thread_attempt ASC
+            """
+            user_msg_results = list(cosmos_messages_container.query_items(
+                query=user_msg_query,
+                partition_key=conversation_id
+            ))
+            
+            if not user_msg_results:
+                return jsonify({'error': 'User message not found in thread'}), 404
+            
+            # Get the first user message (attempt 1) to get original content and metadata
+            original_user_msg = user_msg_results[0]
+            user_content = original_user_msg.get('content', '')
+            original_metadata = original_user_msg.get('metadata', {})
+            original_thread_info = original_metadata.get('thread_info', {})
+            
+            print(f"🔍 Retry - Original user message: {original_user_msg.get('id')}")
+            print(f"🔍 Retry - Original thread_id: {original_thread_info.get('thread_id')}")
+            print(f"🔍 Retry - Original previous_thread_id: {original_thread_info.get('previous_thread_id')}")
+            print(f"🔍 Retry - Original attempt: {original_thread_info.get('thread_attempt')}")
+            print(f"🔍 Retry - New attempt will be: {new_attempt}")
+            
+            # Create new user message with same content but new attempt number
+            import uuid
+            import time
+            import random
+            
+            new_user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+            
+            # Copy metadata but update thread_attempt and keep same thread_id and previous_thread_id from original
+            new_metadata = dict(original_metadata)
+            new_metadata['thread_info'] = {
+                'thread_id': thread_id,  # Keep same thread_id
+                'previous_thread_id': original_thread_info.get('previous_thread_id'),  # Preserve original previous_thread_id
+                'active_thread': True,
+                'thread_attempt': new_attempt
+            }
+            
+            print(f"🔍 Retry - New user message ID: {new_user_message_id}")
+            print(f"🔍 Retry - New thread_info: {new_metadata['thread_info']}")
+            
+            # Create new user message
+            new_user_message = {
+                'id': new_user_message_id,
+                'conversation_id': conversation_id,
+                'role': 'user',
+                'content': user_content,
+                'timestamp': datetime.utcnow().isoformat(),
+                'model_deployment_name': None,
+                'metadata': new_metadata
+            }
+            cosmos_messages_container.upsert_item(new_user_message)
+            
+            # Build chat request parameters from original message metadata
+            chat_request = {
+                'message': user_content,
+                'conversation_id': conversation_id,
+                'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
+                'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
+                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
+                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
+                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
+                'top_n': original_metadata.get('document_search', {}).get('top_n'),
+                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
+                'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
+                'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
+                'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
+                'retry_user_message_id': new_user_message_id,  # Pass this to skip user message creation
+                'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
+                'retry_thread_attempt': new_attempt  # Pass attempt number
+            }
+            
+            print(f"🔍 Retry - Chat request params: retry_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
+            
+            # Make internal request to chat API
+            from flask import g
+            g.conversation_id = conversation_id
+            
+            # Import and call chat function directly
+            # We'll need to modify the chat_api to handle retry requests
+            return jsonify({
+                'success': True,
+                'message': 'Retry initiated',
+                'thread_id': thread_id,
+                'new_attempt': new_attempt,
+                'user_message_id': new_user_message_id,
+                'chat_request': chat_request
+            }), 200
+            
+        except Exception as e:
+            print(f"Error retrying message: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to retry message'}), 500
+
+    @app.route('/api/message/<message_id>/switch-attempt', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def switch_attempt(message_id):
+        """
+        Switch between thread attempts by setting active_thread flags.
+        Cycles through attempts based on direction (prev/next).
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json() or {}
+            direction = data.get('direction', 'next')  # 'prev' or 'next'
+            
+            # Find the current message
+            query = "SELECT * FROM c WHERE c.id = @message_id"
+            params = [{"name": "@message_id", "value": message_id}]
+            message_results = list(cosmos_messages_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+            
+            if not message_results:
+                return jsonify({'error': 'Message not found'}), 404
+            
+            current_msg = message_results[0]
+            conversation_id = current_msg.get('conversation_id')
+            
+            # Verify ownership
+            message_user_id = current_msg.get('metadata', {}).get('user_info', {}).get('user_id')
+            if not message_user_id:
+                try:
+                    conversation = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    if conversation.get('user_id') != user_id:
+                        return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403
+                except:
+                    return jsonify({'error': 'Conversation not found'}), 404
+            elif message_user_id != user_id:
+                return jsonify({'error': 'You can only switch attempts in your own conversations'}), 403
+            
+            # Get thread info
+            thread_id = current_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+            current_attempt = current_msg.get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0)
+            
+            if not thread_id:
+                return jsonify({'error': 'Message has no thread_id'}), 400
+            
+            # Get all attempts for this thread_id, ordered by thread_attempt
+            attempts_query = f"""
+                SELECT DISTINCT c.metadata.thread_info.thread_attempt 
+                FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+                AND c.role = 'user'
+                ORDER BY c.metadata.thread_info.thread_attempt ASC
+            """
+            attempts_results = list(cosmos_messages_container.query_items(
+                query=attempts_query,
+                partition_key=conversation_id
+            ))
+            
+            available_attempts = sorted([r.get('thread_attempt', 0) for r in attempts_results])
+            
+            if not available_attempts:
+                return jsonify({'error': 'No attempts found'}), 404
+            
+            # Find current index and determine target attempt
+            try:
+                current_index = available_attempts.index(current_attempt)
+            except ValueError:
+                current_index = 0
+            
+            if direction == 'prev':
+                target_index = (current_index - 1) % len(available_attempts)
+            else:  # 'next'
+                target_index = (current_index + 1) % len(available_attempts)
+            
+            target_attempt = available_attempts[target_index]
+            
+            # Deactivate all attempts for this thread
+            deactivate_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+            """
+            all_thread_messages = list(cosmos_messages_container.query_items(
+                query=deactivate_query,
+                partition_key=conversation_id
+            ))
+            
+            # Update active_thread flags
+            for msg in all_thread_messages:
+                if 'metadata' not in msg:
+                    msg['metadata'] = {}
+                if 'thread_info' not in msg['metadata']:
+                    msg['metadata']['thread_info'] = {}
+                
+                msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
+                msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
+                cosmos_messages_container.upsert_item(msg)
+            
+            return jsonify({
+                'success': True,
+                'target_attempt': target_attempt,
+                'available_attempts': available_attempts
+            }), 200
+            
+        except Exception as e:
+            print(f"Error switching attempt: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to switch attempt'}), 500

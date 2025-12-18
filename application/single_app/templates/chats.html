@@ -513,6 +513,41 @@
     </div>
 </div>
 
+<!-- Modal for retrying/regenerating assistant message -->
+<div class="modal fade" id="retry-message-modal" tabindex="-1" aria-labelledby="retryMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="retryMessageModalLabel">
+                    <i class="bi bi-arrow-clockwise me-2"></i>Retry Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Generate a new response for this message.</p>
+                <div class="mb-3">
+                    <label for="retry-model-select" class="form-label">Model</label>
+                    <select id="retry-model-select" class="form-select">
+                        <!-- Options will be populated from #model-select -->
+                    </select>
+                </div>
+                <div id="retry-reasoning-container" class="mb-3" style="display: none;">
+                    <label class="form-label">Reasoning Effort</label>
+                    <div id="retry-reasoning-levels" class="d-flex flex-column-reverse gap-2">
+                        <!-- Reasoning levels will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.executeMessageRetry()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal for conversation details -->
 <div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl">
@@ -764,6 +799,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-retry.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>

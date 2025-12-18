@@ -85,9 +85,23 @@ def register_route_frontend_conversations(app):
             partition_key=conversation_id
         ))
 
-        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items")
-        for i, item in enumerate(all_items):
-            debug_print(f"Frontend endpoint - Item {i}: id={item.get('id')}, role={item.get('role')}")
+        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
+        
+        # Filter for active_thread = True OR active_thread is not defined (backwards compatibility)
+        filtered_items = []
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            active = thread_info.get('active_thread')
+            
+            # Include if: active_thread is True, OR active_thread is not defined, OR active_thread is None
+            if active is True or active is None or 'active_thread' not in thread_info:
+                filtered_items.append(item)
+                debug_print(f"Frontend endpoint - ✅ Including: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+            else:
+                debug_print(f"Frontend endpoint - ❌ Excluding: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+        
+        all_items = filtered_items
+        debug_print(f"Frontend endpoint - After filtering: {len(all_items)} items remaining")
 
         # Sort messages using threading logic
         all_items = sort_messages_by_thread(all_items)

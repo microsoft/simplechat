@@ -67,6 +67,15 @@ def register_route_backend_chats(app):
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
             reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
             
+            # Check if this is a retry request
+            retry_user_message_id = data.get('retry_user_message_id')
+            retry_thread_id = data.get('retry_thread_id')
+            retry_thread_attempt = data.get('retry_thread_attempt')
+            is_retry = bool(retry_user_message_id)
+            
+            if is_retry:
+                print(f"🔍 Chat API - Retry detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
+            
             # Store conversation_id in Flask context for plugin logger access
             g.conversation_id = conversation_id
             
@@ -264,38 +273,65 @@ def register_route_backend_chats(app):
                 print(f"New conversation - using legacy logic: {actual_chat_type}")
 
             # ---------------------------------------------------------------------
-            # 2) Append the user message to conversation immediately
+            # 2) Append the user message to conversation immediately (or use existing for retry)
             # ---------------------------------------------------------------------
-            user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
             
-            # Collect comprehensive metadata for user message
-            user_metadata = {}
-            
-            # Get current user information
-            current_user = get_current_user_info()
-            if current_user:
-                user_metadata['user_info'] = {
-                    'user_id': current_user.get('userId'),
-                    'username': current_user.get('userPrincipalName'),
-                    'display_name': current_user.get('displayName'),
-                    'email': current_user.get('email'),
-                    'timestamp': datetime.utcnow().isoformat()
+            if is_retry:
+                # For retry, use the provided user message ID and thread info
+                user_message_id = retry_user_message_id
+                current_user_thread_id = retry_thread_id
+                latest_thread_id = current_user_thread_id
+                
+                # Read the existing user message to get metadata
+                try:
+                    user_message_doc = cosmos_messages_container.read_item(
+                        item=user_message_id,
+                        partition_key=conversation_id
+                    )
+                    previous_thread_id = user_message_doc.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    # Extract user_metadata from existing message for later use
+                    user_metadata = user_message_doc.get('metadata', {})
+                    
+                    print(f"🔍 Chat API - Read retry user message:")
+                    print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
+                    print(f"    previous_thread_id: {previous_thread_id}")
+                    print(f"    attempt: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_attempt')}")
+                    print(f"    active: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('active_thread')}")
+                except Exception as e:
+                    print(f"Error reading retry user message: {e}")
+                    return jsonify({'error': 'Retry user message not found'}), 404
+            else:
+                # Normal flow: create new user message
+                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                
+                # Collect comprehensive metadata for user message
+                user_metadata = {}
+                
+                # Get current user information
+                current_user = get_current_user_info()
+                if current_user:
+                    user_metadata['user_info'] = {
+                        'user_id': current_user.get('userId'),
+                        'username': current_user.get('userPrincipalName'),
+                        'display_name': current_user.get('displayName'),
+                        'email': current_user.get('email'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                
+                # Button states and selections
+                user_metadata['button_states'] = {
+                    'image_generation': image_gen_enabled,
+                    'document_search': hybrid_search_enabled
                 }
-            
-            # Button states and selections
-            user_metadata['button_states'] = {
-                'image_generation': image_gen_enabled,
-                'document_search': hybrid_search_enabled
-            }
-            
-            # Document search scope and selections
-            if hybrid_search_enabled:
-                user_metadata['workspace_search'] = {
-                    'search_enabled': True,
-                    'document_scope': document_scope,
-                    'selected_document_id': selected_document_id,
-                    'classification': classifications_to_send
-                }
+                
+                # Document search scope and selections
+                if hybrid_search_enabled:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': True,
+                        'document_scope': document_scope,
+                        'selected_document_id': selected_document_id,
+                        'classification': classifications_to_send
+                    }
                 
                 # Get document details if specific document selected
                 if selected_document_id and selected_document_id != "all":
@@ -343,156 +379,156 @@ def register_route_backend_chats(app):
                 
                 if document_scope == 'public' and active_public_workspace_id:
                     user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
-            else:
-                user_metadata['workspace_search'] = {
-                    'search_enabled': False
-                }
+                else:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': False
+                    }
             
-            # Agent selection (if available)
-            if hasattr(g, 'kernel_agents') and g.kernel_agents:
+                # Agent selection (if available)
+                if hasattr(g, 'kernel_agents') and g.kernel_agents:
+                    try:
+                        # Try to get selected agent info from user settings or global settings
+                        selected_agent_info = None
+                        if user_id:
+                            try:
+                                user_settings_doc = cosmos_user_settings_container.read_item(
+                                    item=user_id, partition_key=user_id
+                                )
+                                selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
+                            except:
+                                pass
+                        
+                        if not selected_agent_info:
+                            # Fallback to global selected agent
+                            selected_agent_info = settings.get('global_selected_agent')
+                        
+                        if selected_agent_info:
+                            user_metadata['agent_selection'] = {
+                                'selected_agent': selected_agent_info.get('name'),
+                                'agent_display_name': selected_agent_info.get('display_name'),
+                                'is_global': selected_agent_info.get('is_global', False),
+                                'is_group': selected_agent_info.get('is_group', False),
+                                'group_id': selected_agent_info.get('group_id'),
+                                'group_name': selected_agent_info.get('group_name'),
+                                'agent_id': selected_agent_info.get('id')
+                            }
+                    except Exception as e:
+                        print(f"Error retrieving agent details: {e}")
+                
+                # Prompt selection (extract from message if available)
+                prompt_info = data.get('prompt_info')
+                if prompt_info:
+                    user_metadata['prompt_selection'] = {
+                        'selected_prompt_index': prompt_info.get('index'),
+                        'selected_prompt_text': prompt_info.get('content'),
+                        'prompt_name': prompt_info.get('name'),
+                        'prompt_id': prompt_info.get('id')
+                    }
+                
+                # Agent selection (from frontend if available, override settings-based selection)
+                agent_info = data.get('agent_info')
+                if agent_info:
+                    user_metadata['agent_selection'] = {
+                        'selected_agent': agent_info.get('name'),
+                        'agent_display_name': agent_info.get('display_name'),
+                        'is_global': agent_info.get('is_global', False),
+                        'is_group': agent_info.get('is_group', False),
+                        'group_id': agent_info.get('group_id'),
+                        'group_name': agent_info.get('group_name'),
+                        'agent_id': agent_info.get('id')
+                    }
+                
+                # Model selection information
+                user_metadata['model_selection'] = {
+                    'selected_model': gpt_model,
+                    'frontend_requested_model': frontend_gpt_model,
+                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'streaming': 'Disabled'
+                }
+                
+                # Chat type and group context for this specific message
+                user_metadata['chat_context'] = {
+                    'conversation_id': conversation_id
+                }
+                
+                # Note: Message-level chat_type will be determined after document search is completed
+                
+                # --- Threading Logic ---
+                # Find the last message in the conversation to establish the chain
+                previous_thread_id = None
                 try:
-                    # Try to get selected agent info from user settings or global settings
-                    selected_agent_info = None
-                    if user_id:
-                        try:
-                            user_settings_doc = cosmos_user_settings_container.read_item(
-                                item=user_id, partition_key=user_id
-                            )
-                            selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
-                        except:
-                            pass
-                    
-                    if not selected_agent_info:
-                        # Fallback to global selected agent
-                        selected_agent_info = settings.get('global_selected_agent')
-                    
-                    if selected_agent_info:
-                        user_metadata['agent_selection'] = {
-                            'selected_agent': selected_agent_info.get('name'),
-                            'agent_display_name': selected_agent_info.get('display_name'),
-                            'is_global': selected_agent_info.get('is_global', False),
-                            'is_group': selected_agent_info.get('is_group', False),
-                            'group_id': selected_agent_info.get('group_id'),
-                            'group_name': selected_agent_info.get('group_name'),
-                            'agent_id': selected_agent_info.get('id')
-                        }
+                    # Query for the last message in this conversation
+                    last_msg_query = f"""
+                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                        FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        ORDER BY c.timestamp DESC
+                    """
+                    last_msgs = list(cosmos_messages_container.query_items(
+                        query=last_msg_query,
+                        partition_key=conversation_id
+                    ))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
                 except Exception as e:
-                    print(f"Error retrieving agent details: {e}")
-            
-            # Prompt selection (extract from message if available)
-            prompt_info = data.get('prompt_info')
-            if prompt_info:
-                user_metadata['prompt_selection'] = {
-                    'selected_prompt_index': prompt_info.get('index'),
-                    'selected_prompt_text': prompt_info.get('content'),
-                    'prompt_name': prompt_info.get('name'),
-                    'prompt_id': prompt_info.get('id')
+                    debug_print(f"Error fetching last message for threading: {e}")
+
+                # Generate thread_id for the user message
+                # We track the 'tip' of the thread in latest_thread_id
+                import uuid
+                current_user_thread_id = str(uuid.uuid4())
+                latest_thread_id = current_user_thread_id
+                
+                # Add thread information to user metadata
+                user_metadata['thread_info'] = {
+                    'thread_id': current_user_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
                 }
-            
-            # Agent selection (from frontend if available, override settings-based selection)
-            agent_info = data.get('agent_info')
-            if agent_info:
-                user_metadata['agent_selection'] = {
-                    'selected_agent': agent_info.get('name'),
-                    'agent_display_name': agent_info.get('display_name'),
-                    'is_global': agent_info.get('is_global', False),
-                    'is_group': agent_info.get('is_group', False),
-                    'group_id': agent_info.get('group_id'),
-                    'group_name': agent_info.get('group_name'),
-                    'agent_id': agent_info.get('id')
+                
+                user_message_doc = {
+                    'id': user_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'user',
+                    'content': user_message,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None,  # Model not used for user message
+                    'metadata': user_metadata
                 }
-            
-            # Model selection information
-            user_metadata['model_selection'] = {
-                'selected_model': gpt_model,
-                'frontend_requested_model': frontend_gpt_model,
-                'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
-                'streaming': 'Disabled'
-            }
-            
-            # Chat type and group context for this specific message
-            user_metadata['chat_context'] = {
-                'conversation_id': conversation_id
-            }
-            
-            # Note: Message-level chat_type will be determined after document search is completed
-            
-            # --- Threading Logic ---
-            # Find the last message in the conversation to establish the chain
-            previous_thread_id = None
-            try:
-                # Query for the last message in this conversation
-                last_msg_query = f"""
-                    SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
-                    FROM c 
-                    WHERE c.conversation_id = '{conversation_id}' 
-                    ORDER BY c.timestamp DESC
-                """
-                last_msgs = list(cosmos_messages_container.query_items(
-                    query=last_msg_query,
-                    partition_key=conversation_id
-                ))
-                if last_msgs:
-                    previous_thread_id = last_msgs[0].get('thread_id')
-            except Exception as e:
-                debug_print(f"Error fetching last message for threading: {e}")
+                
+                # Debug: Print the complete metadata being saved
+                debug_print(f"Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+                debug_print(f"Final chat_context for message: {user_metadata['chat_context']}")
+                debug_print(f"document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
+                
+                # Note: Message-level chat_type will be updated after document search
+                
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Log chat activity for real-time tracking
+                try:
+                    log_chat_activity(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_type='user_message',
+                        message_length=len(user_message) if user_message else 0,
+                        has_document_search=hybrid_search_enabled,
+                        has_image_generation=image_gen_enabled,
+                        document_scope=document_scope,
+                        chat_context=actual_chat_type
+                    )
+                except Exception as e:
+                    # Don't let activity logging errors interrupt chat flow
+                    print(f"Activity logging error: {e}")
+                    
+                # Set conversation title if it's still the default
+                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+                    conversation_item['title'] = new_title
 
-            # Generate thread_id for the user message
-            # We track the 'tip' of the thread in latest_thread_id
-            import uuid
-            current_user_thread_id = str(uuid.uuid4())
-            latest_thread_id = current_user_thread_id
-            
-            # Add thread information to user metadata
-            user_metadata['thread_info'] = {
-                'thread_id': current_user_thread_id,
-                'previous_thread_id': previous_thread_id,
-                'active_thread': True,
-                'thread_attempt': 1
-            }
-            
-            user_message_doc = {
-                'id': user_message_id,
-                'conversation_id': conversation_id,
-                'role': 'user',
-                'content': user_message,
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None,  # Model not used for user message
-                'metadata': user_metadata
-            }
-            
-            # Debug: Print the complete metadata being saved
-            debug_print(f"Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
-            debug_print(f"Final chat_context for message: {user_metadata['chat_context']}")
-            debug_print(f"document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
-            
-            # Note: Message-level chat_type will be updated after document search
-            
-            cosmos_messages_container.upsert_item(user_message_doc)
-            
-            # Log chat activity for real-time tracking
-            try:
-                log_chat_activity(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    message_type='user_message',
-                    message_length=len(user_message) if user_message else 0,
-                    has_document_search=hybrid_search_enabled,
-                    has_image_generation=image_gen_enabled,
-                    document_scope=document_scope,
-                    chat_context=actual_chat_type
-                )
-            except Exception as e:
-                # Don't let activity logging errors interrupt chat flow
-                print(f"Activity logging error: {e}")
-
-            # Set conversation title if it's still the default
-            if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
-                new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
-                conversation_item['title'] = new_title
-
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
 
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
@@ -2143,10 +2179,17 @@ def register_route_backend_chats(app):
                         'thread_id': user_thread_id,  # Same thread as user message
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                         'active_thread': True,
-                        'thread_attempt': 1
+                        'thread_attempt': retry_thread_attempt if is_retry else 1
                     }
                 } # Used by SK and reasoning effort
             }
+            
+            print(f"🔍 Chat API - Creating assistant message with thread_info:")
+            print(f"    thread_id: {user_thread_id}")
+            print(f"    previous_thread_id: {user_previous_thread_id}")
+            print(f"    attempt: {retry_thread_attempt if is_retry else 1}")
+            print(f"    is_retry: {is_retry}")
+            
             cosmos_messages_container.upsert_item(assistant_doc)
 
             # Update the user message metadata with the actual model used

@@ -635,7 +635,20 @@ export function appendMessage(
                 <i class="bi bi-trash"></i>
             </button>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${deleteButtonHtml}${feedbackHtml}</div>`;
+    const retryButtonHtml = `
+            <button class="retry-msg-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Retry message">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        `;
+    const carouselButtonsHtml = `
+            <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
+                <i class="bi bi-box-arrow-in-left"></i>
+            </button>
+            <button class="carousel-next-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Next attempt" style="display: none;">
+                <i class="bi bi-box-arrow-in-right"></i>
+            </button>
+        `;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${copyButtonHtml}${maskButtonHtml}${deleteButtonHtml}${retryButtonHtml}${carouselButtonsHtml}${feedbackHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -790,6 +803,27 @@ export function appendMessage(
     if (deleteBtn) {
       deleteBtn.addEventListener("click", () => {
         handleDeleteButtonClick(messageDiv, messageId, 'assistant');
+      });
+    }
+    
+    const retryBtn = messageDiv.querySelector(".retry-msg-btn");
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => {
+        handleRetryButtonClick(messageDiv, messageId, 'assistant');
+      });
+    }
+    
+    const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
+    if (carouselPrevBtn) {
+      carouselPrevBtn.addEventListener("click", () => {
+        handleCarouselClick(messageId, 'prev');
+      });
+    }
+    
+    const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
+    if (carouselNextBtn) {
+      carouselNextBtn.addEventListener("click", () => {
+        handleCarouselClick(messageId, 'next');
       });
     }
     
@@ -972,6 +1006,15 @@ export function appendMessage(
             </button>
             <button class="btn btn-sm btn-link text-muted delete-msg-btn" data-message-id="${messageId}" title="Delete message">
               <i class="bi bi-trash"></i>
+            </button>
+            <button class="btn btn-sm btn-link text-muted retry-msg-btn" data-message-id="${messageId}" title="Retry message">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
+              <i class="bi bi-box-arrow-in-left"></i>
+            </button>
+            <button class="carousel-next-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Next attempt" style="display: none;">
+              <i class="bi bi-box-arrow-in-right"></i>
             </button>
           </div>
           <div class="d-flex align-items-center"></div>
@@ -1747,6 +1790,27 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (deleteBtn) {
     deleteBtn.addEventListener("click", () => {
       handleDeleteButtonClick(messageDiv, messageId, 'user');
+    });
+  }
+  
+  const retryBtn = messageDiv.querySelector(".retry-msg-btn");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", () => {
+      handleRetryButtonClick(messageDiv, messageId, 'user');
+    });
+  }
+  
+  const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
+  if (carouselPrevBtn) {
+    carouselPrevBtn.addEventListener("click", () => {
+      handleCarouselClick(messageId, 'prev');
+    });
+  }
+  
+  const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
+  if (carouselNextBtn) {
+    carouselNextBtn.addEventListener("click", () => {
+      handleCarouselClick(messageId, 'next');
     });
   }
 }
