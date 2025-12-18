@@ -548,6 +548,36 @@
     </div>
 </div>
 
+<!-- Modal for editing user message -->
+<div class="modal fade" id="edit-message-modal" tabindex="-1" aria-labelledby="editMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editMessageModalLabel">
+                    <i class="bi bi-pencil me-2"></i>Edit Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Edit your message and regenerate the response. Your original model and settings will be preserved.</p>
+                <div class="mb-3">
+                    <label for="edit-message-content" class="form-label">Message</label>
+                    <textarea id="edit-message-content" class="form-control" rows="6" placeholder="Edit your message..."></textarea>
+                </div>
+                <div id="edit-original-settings-info" class="mb-2">
+                    <!-- Settings info will be populated dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.executeMessageEdit()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Save & Regenerate
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal for conversation details -->
 <div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl">

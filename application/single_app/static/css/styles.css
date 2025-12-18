@@ -830,3 +830,27 @@ main {
     color: #ffc107;
     background-color: rgba(255, 193, 7, 0.15);
 }
+
+/* Dark mode styles for links in messages */
+[data-bs-theme="dark"] .message-bubble a,
+[data-bs-theme="dark"] .user-message a,
+[data-bs-theme="dark"] .assistant-message a,
+[data-bs-theme="dark"] .message-content a {
+    color: #66b3ff !important; /* Brighter blue for better visibility */
+    text-decoration: underline;
+}
+
+[data-bs-theme="dark"] .message-bubble a:hover,
+[data-bs-theme="dark"] .user-message a:hover,
+[data-bs-theme="dark"] .assistant-message a:hover,
+[data-bs-theme="dark"] .message-content a:hover {
+    color: #99ccff !important; /* Even lighter blue on hover */
+    text-decoration: underline;
+}
+
+[data-bs-theme="dark"] .message-bubble a:visited,
+[data-bs-theme="dark"] .user-message a:visited,
+[data-bs-theme="dark"] .assistant-message a:visited,
+[data-bs-theme="dark"] .message-content a:visited {
+    color: #b399ff !important; /* Purple-ish for visited links */
+}
