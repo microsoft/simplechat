@@ -1038,6 +1038,7 @@ export function appendMessage(
                 <i class="bi bi-three-dots"></i>
               </button>
               <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-edit-btn" href="#" data-message-id="${messageId}"><i class="bi bi-pencil me-2"></i>Edit</a></li>
                 <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                 <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
               </ul>
@@ -1115,7 +1116,11 @@ export function appendMessage(
                     : ""
                 }
                 <div class="message-bubble">
-                    <div class="message-sender">${senderLabel}</div>
+                    <div class="message-sender">
+                        ${senderLabel}
+                        ${fullMessageObject?.metadata?.edited ? '<span class="badge bg-secondary ms-2">Edited</span>' : ''}
+                        ${fullMessageObject?.metadata?.retried ? '<span class="badge bg-info ms-2">Retried</span>' : ''}
+                    </div>
                     <div class="message-text">${messageContentHtml}</div>
                     ${metadataContainerHtml}
                     ${messageFooterHtml}
@@ -1871,6 +1876,19 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
     dropdownRetryBtn.addEventListener("click", (e) => {
       e.preventDefault();
       handleRetryButtonClick(messageDiv, messageId, 'user');
+    });
+  }
+  
+  const dropdownEditBtn = messageDiv.querySelector(".dropdown-edit-btn");
+  if (dropdownEditBtn) {
+    dropdownEditBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Import chat-edit module dynamically
+      import('./chat-edit.js').then(module => {
+        module.handleEditButtonClick(messageDiv, messageId, 'user');
+      }).catch(err => {
+        console.error('❌ Error loading chat-edit module:', err);
+      });
     });
   }
   

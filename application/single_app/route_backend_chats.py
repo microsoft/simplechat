@@ -67,14 +67,16 @@ def register_route_backend_chats(app):
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
             reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
             
-            # Check if this is a retry request
-            retry_user_message_id = data.get('retry_user_message_id')
+            # Check if this is a retry or edit request (both work the same way - reuse existing user message)
+            retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
             retry_thread_id = data.get('retry_thread_id')
             retry_thread_attempt = data.get('retry_thread_attempt')
             is_retry = bool(retry_user_message_id)
+            is_edit = bool(data.get('edited_user_message_id'))
             
             if is_retry:
-                print(f"🔍 Chat API - Retry detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
+                operation_type = 'Edit' if is_edit else 'Retry'
+                print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
             
             # Store conversation_id in Flask context for plugin logger access
             g.conversation_id = conversation_id
@@ -659,22 +661,39 @@ def register_route_backend_chats(app):
 
                         if last_messages_asc and len(last_messages_asc) >= conversation_history_limit:
                             summary_prompt_search = "Please summarize the key topics or questions from this recent conversation history in 50 words or less:\n\n"
-                            message_texts_search = [f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}" for msg in last_messages_asc]
-                            summary_prompt_search += "\n".join(message_texts_search)
+                            
+                            # Filter out inactive thread messages before summarizing
+                            message_texts_search = []
+                            for msg in last_messages_asc:
+                                thread_info = msg.get('metadata', {}).get('thread_info', {})
+                                active_thread = thread_info.get('active_thread')
+                                
+                                # Exclude messages with active_thread=False
+                                if active_thread is False:
+                                    print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from search summary")
+                                    continue
+                                    
+                                message_texts_search.append(f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}")
+                            
+                            if not message_texts_search:
+                                # No active messages to summarize
+                                print("[THREAD] No active thread messages available for search summary")
+                            else:
+                                summary_prompt_search += "\n".join(message_texts_search)
 
-                            try:
-                                # Use the already initialized gpt_client and gpt_model
-                                summary_response_search = gpt_client.chat.completions.create(
-                                    model=gpt_model,
-                                    messages=[{"role": "system", "content": summary_prompt_search}],
-                                    max_tokens=100 # Keep summary short
-                                )
-                                summary_for_search = summary_response_search.choices[0].message.content.strip()
-                                if summary_for_search:
-                                    search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
-                            except Exception as e:
-                                print(f"Error summarizing conversation for search: {e}")
-                                # Proceed with original user_message as search_query
+                                try:
+                                    # Use the already initialized gpt_client and gpt_model
+                                    summary_response_search = gpt_client.chat.completions.create(
+                                        model=gpt_model,
+                                        messages=[{"role": "system", "content": summary_prompt_search}],
+                                        max_tokens=100 # Keep summary short
+                                    )
+                                    summary_for_search = summary_response_search.choices[0].message.content.strip()
+                                    if summary_for_search:
+                                        search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
+                                except Exception as e:
+                                    print(f"Error summarizing conversation for search: {e}")
+                                    # Proceed with original user_message as search_query
                     except Exception as e:
                         print(f"Error fetching messages for search summarization: {e}")
 
@@ -1342,6 +1361,17 @@ def register_route_backend_chats(app):
                     message_texts_older = []
                     for msg in older_messages_to_summarize:
                         role = msg.get('role', 'user')
+                        metadata = msg.get('metadata', {})
+                        
+                        # Check active_thread flag - skip messages with active_thread=False
+                        thread_info = metadata.get('thread_info', {})
+                        active_thread = thread_info.get('active_thread')
+                        
+                        # Exclude content when active_thread is explicitly False
+                        if active_thread is False:
+                            print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
+                            continue
+                        
                         # Skip roles that shouldn't be in summary (adjust as needed)
                         if role in ['system', 'safety', 'blocked', 'image', 'file']: continue
                         content = msg.get('content', '')
@@ -1440,6 +1470,17 @@ def register_route_backend_chats(app):
                     role = message.get('role')
                     content = message.get('content')
                     metadata = message.get('metadata', {})
+                    
+                    # Check active_thread flag - skip messages with active_thread=False
+                    # This handles both threaded messages and legacy messages with the flag set
+                    thread_info = metadata.get('thread_info', {})
+                    active_thread = thread_info.get('active_thread')
+                    
+                    # Exclude content when active_thread is explicitly False
+                    # Include when: active_thread is True, None, or not present (legacy messages)
+                    if active_thread is False:
+                        print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
+                        continue
                     
                     # Check if message is fully masked - skip it entirely
                     if metadata.get('masked', False):

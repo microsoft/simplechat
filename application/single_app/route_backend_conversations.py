@@ -1344,6 +1344,7 @@ def register_route_backend_conversations(app):
             
             # Copy metadata but update thread_attempt and keep same thread_id and previous_thread_id from original
             new_metadata = dict(original_metadata)
+            new_metadata['retried'] = True  # Mark as retried
             new_metadata['thread_info'] = {
                 'thread_id': thread_id,  # Keep same thread_id
                 'previous_thread_id': original_thread_info.get('previous_thread_id'),  # Preserve original previous_thread_id
@@ -1408,6 +1409,211 @@ def register_route_backend_conversations(app):
             import traceback
             traceback.print_exc()
             return jsonify({'error': 'Failed to retry message'}), 500
+
+    @app.route('/api/message/<message_id>/edit', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def edit_message(message_id):
+        """
+        Edit a user message and regenerate the response with the edited content.
+        Creates a new attempt with edited content while preserving original model/settings.
+        Only the message author can edit their messages.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            data = request.get_json() or {}
+            edited_content = data.get('content', '').strip()
+            
+            if not edited_content:
+                return jsonify({'error': 'Message content cannot be empty'}), 400
+            
+            # Find the original message
+            query = "SELECT * FROM c WHERE c.id = @message_id"
+            params = [{"name": "@message_id", "value": message_id}]
+            message_results = list(cosmos_messages_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            ))
+            
+            if not message_results:
+                return jsonify({'error': 'Message not found'}), 404
+            
+            original_msg = message_results[0]
+            conversation_id = original_msg.get('conversation_id')
+            original_role = original_msg.get('role')
+            
+            # Only allow editing user messages
+            if original_role != 'user':
+                return jsonify({'error': 'Only user messages can be edited'}), 400
+            
+            # Verify ownership
+            message_user_id = original_msg.get('metadata', {}).get('user_info', {}).get('user_id')
+            if not message_user_id:
+                # Fallback to conversation ownership
+                try:
+                    conversation = cosmos_conversations_container.read_item(
+                        item=conversation_id,
+                        partition_key=conversation_id
+                    )
+                    if conversation.get('user_id') != user_id:
+                        return jsonify({'error': 'You can only edit messages from your own conversations'}), 403
+                except:
+                    return jsonify({'error': 'Conversation not found'}), 404
+            elif message_user_id != user_id:
+                return jsonify({'error': 'You can only edit your own messages'}), 403
+            
+            # Get thread info from original message
+            thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+            previous_thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+            
+            if not thread_id:
+                return jsonify({'error': 'Message has no thread_id'}), 400
+            
+            # Find current max thread_attempt for this thread_id
+            attempt_query = f"""
+                SELECT VALUE MAX(c.metadata.thread_info.thread_attempt) 
+                FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+            """
+            attempt_results = list(cosmos_messages_container.query_items(
+                query=attempt_query,
+                partition_key=conversation_id
+            ))
+            
+            current_max_attempt = attempt_results[0] if attempt_results and attempt_results[0] is not None else 0
+            new_attempt = current_max_attempt + 1
+            
+            # Set all existing attempts for this thread to active_thread=false
+            deactivate_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+            """
+            existing_messages = list(cosmos_messages_container.query_items(
+                query=deactivate_query,
+                partition_key=conversation_id
+            ))
+            
+            print(f"🔍 Edit - Found {len(existing_messages)} existing messages to deactivate")
+            
+            for msg in existing_messages:
+                msg_id = msg.get('id', 'unknown')
+                msg_role = msg.get('role', 'unknown')
+                old_active = msg.get('metadata', {}).get('thread_info', {}).get('active_thread', None)
+                
+                if 'metadata' not in msg:
+                    msg['metadata'] = {}
+                if 'thread_info' not in msg['metadata']:
+                    msg['metadata']['thread_info'] = {}
+                msg['metadata']['thread_info']['active_thread'] = False
+                cosmos_messages_container.upsert_item(msg)
+                
+                print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
+            
+            # Get the FIRST user message in this thread (attempt=1) to get original metadata
+            user_msg_query = f"""
+                SELECT * FROM c 
+                WHERE c.conversation_id = '{conversation_id}' 
+                AND c.metadata.thread_info.thread_id = '{thread_id}'
+                AND c.role = 'user'
+                ORDER BY c.metadata.thread_info.thread_attempt ASC
+            """
+            user_msg_results = list(cosmos_messages_container.query_items(
+                query=user_msg_query,
+                partition_key=conversation_id
+            ))
+            
+            if not user_msg_results:
+                return jsonify({'error': 'User message not found in thread'}), 404
+            
+            # Get the first user message (attempt 1) to get original metadata
+            original_user_msg = user_msg_results[0]
+            original_metadata = original_user_msg.get('metadata', {})
+            original_thread_info = original_metadata.get('thread_info', {})
+            
+            print(f"🔍 Edit - Original user message: {original_user_msg.get('id')}")
+            print(f"🔍 Edit - Original thread_id: {original_thread_info.get('thread_id')}")
+            print(f"🔍 Edit - Original previous_thread_id: {original_thread_info.get('previous_thread_id')}")
+            print(f"🔍 Edit - Original attempt: {original_thread_info.get('thread_attempt')}")
+            print(f"🔍 Edit - New attempt will be: {new_attempt}")
+            
+            # Create new user message with edited content
+            import time
+            import random
+            
+            new_user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+            
+            # Copy metadata but update thread_attempt, add edited flag, and keep same thread_id
+            new_metadata = dict(original_metadata)
+            new_metadata['edited'] = True  # Mark as edited
+            new_metadata['thread_info'] = {
+                'thread_id': thread_id,  # Keep same thread_id
+                'previous_thread_id': original_thread_info.get('previous_thread_id'),  # Preserve original
+                'active_thread': True,
+                'thread_attempt': new_attempt
+            }
+            
+            print(f"🔍 Edit - New user message ID: {new_user_message_id}")
+            print(f"🔍 Edit - New thread_info: {new_metadata['thread_info']}")
+            print(f"🔍 Edit - Edited flag set: {new_metadata.get('edited')}")
+            
+            # Create new user message with edited content
+            new_user_message = {
+                'id': new_user_message_id,
+                'conversation_id': conversation_id,
+                'role': 'user',
+                'content': edited_content,  # Use edited content
+                'timestamp': datetime.utcnow().isoformat(),
+                'model_deployment_name': None,
+                'metadata': new_metadata
+            }
+            cosmos_messages_container.upsert_item(new_user_message)
+            
+            # Build chat request parameters from original message metadata
+            # Keep all original settings (model, reasoning, doc search, etc.)
+            chat_request = {
+                'message': edited_content,  # Use edited content
+                'conversation_id': conversation_id,
+                'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
+                'reasoning_effort': original_metadata.get('reasoning_effort'),
+                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
+                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
+                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
+                'top_n': original_metadata.get('document_search', {}).get('top_n'),
+                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
+                'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
+                'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
+                'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
+                'edited_user_message_id': new_user_message_id,  # Pass this to skip user message creation
+                'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
+                'retry_thread_attempt': new_attempt  # Pass attempt number
+            }
+            
+            print(f"🔍 Edit - Chat request params: edited_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
+            
+            # Return success with chat_request for frontend to call chat API
+            return jsonify({
+                'success': True,
+                'message': 'Edit initiated',
+                'thread_id': thread_id,
+                'new_attempt': new_attempt,
+                'user_message_id': new_user_message_id,
+                'edited': True,
+                'chat_request': chat_request
+            }), 200
+            
+        except Exception as e:
+            print(f"Error editing message: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to edit message'}), 500
 
     @app.route('/api/message/<message_id>/switch-attempt', methods=['POST'])
     @swagger_route(security=get_auth_security())
