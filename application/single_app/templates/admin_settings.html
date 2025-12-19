@@ -369,7 +369,7 @@
                             <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Audio Support</strong> settings in the Workspaces tab to enable and configure audio file processing.</p>
+                        <p class="mb-3">Use the <strong>Audio Support</strong> settings on the Search & Extract tab to enable and configure audio file processing.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -377,10 +377,16 @@
                                 <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Speech Service Key</span>
-                                <span id="audio-key-badge" class="badge bg-danger">Required</span>
+                                <span>Authentication</span>
+                                <span id="speech-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> If using Managed Identity authentication ensure the Service Principal has been assigned the Cognitive Services Speech Contributor role on the Azure Speech Service and that the Speech endpoint is configured with a custom domain name.
+                            
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a Cognitive Service has a custom domain name, the endpoint will typically look like https://<resource-name>.cognitiveservices.azure.<com or us> instead of https://<location>.cognitiveservices.azure.<com or us>"></i>
+                        </div>
                     </div>
 
                     <!-- Step 10: Content Safety -->
@@ -2831,7 +2837,7 @@
                             <input type="text" class="form-control"
                                 id="speech_service_endpoint" name="speech_service_endpoint"
                                 value="{{ settings.speech_service_endpoint or '' }}"
-                                placeholder="https://<location>.cognitiveservices.azure.<com or us>/">
+                                placeholder="https://<location or custom domain>.cognitiveservices.azure.<com or us>/">
                         </div>
 
                         <div class="mb-3">
@@ -2849,17 +2855,41 @@
                         </div>
 
                         <div class="mb-3">
-                            <label for="speech_service_key" class="form-label">API Key</label>
+                            <label for="speech_service_authentication_type" class="form-label">
+                                Authentication Type
+                            </label>
+                            <select class="form-select" id="speech_service_authentication_type" name="speech_service_authentication_type">
+                                <option value="key" {% if settings.speech_service_authentication_type == 'key' or not settings.speech_service_authentication_type %}selected{% endif %}>
+                                    Key
+                                </option>
+                                <option value="managed_identity" {% if settings.speech_service_authentication_type == 'managed_identity' %}selected{% endif %}>
+                                    Managed Identity
+                                </option>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="speech_service_key_container" {% if settings.speech_service_authentication_type == 'managed_identity' %}style="display: none;"{% endif %}>
+                            <label for="speech_service_key" class="form-label">
+                                API Key
+                            </label>
                             <div class="input-group">
-                            <input type="password" class="form-control"
-                                    id="speech_service_key" name="speech_service_key"
-                                    value="{{ settings.speech_service_key or '' }}">
-                            <button type="button" class="btn btn-outline-secondary"
-                                    id="toggle_speech_service_key">Show</button>
+                                <input
+                                    type="password"
+                                    class="form-control"
+                                    id="speech_service_key"
+                                    name="speech_service_key"
+                                    value="{{ settings.speech_service_key or '' }}"
+                                >
+                                <button
+                                    type="button"
+                                    class="btn btn-outline-secondary"
+                                    id="toggle_speech_service_key"
+                                >
+                                    Show
+                                </button>
                             </div>
                         </div>
-                    </div>
 
+                    </div>
                     <p class="mt-2 mb-0">
                         <small class="text-muted">
                             <a href="#citation" onclick="switchTab(event, 'citation-tab')">
