@@ -131,14 +131,7 @@ def register_route_frontend_authentication(app):
         _save_cache(msal_app.token_cache)
 
         print(f"User {session['user'].get('name')} logged in successfully.")
-        
-        # Log the login activity using the standard application logger.
-        user_id = session['user'].get('oid') or session['user'].get('sub')
-        if user_id:
-            current_app.logger.info("User login recorded", extra={"user_id": user_id, "auth_provider": "azure_ad"})
-        else:
-            current_app.logger.debug("Login completed but no user ID (oid/sub) found in session claims.")
-        
+
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
         # Get settings from database, with environment variable fallback
