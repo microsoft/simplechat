@@ -4832,7 +4832,7 @@ def process_audio_document(
             print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
 
             # Get fresh config (tokens expire after ~1 hour)
-            speech_config = _get_speech_config(settings,endpoint, locale)
+            speech_config = _get_speech_config(settings, endpoint, locale)
 
             audio_config = speechsdk.AudioConfig(filename=chunk_path)
             speech_recognizer = speechsdk.SpeechRecognizer(
