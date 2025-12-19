@@ -152,6 +152,8 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
         # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
@@ -355,6 +357,7 @@ def register_route_frontend_admin_settings(app):
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -653,6 +656,7 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+                'classification_banner_text_color': classification_banner_text_color,
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---
