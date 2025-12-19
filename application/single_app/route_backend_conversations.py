@@ -820,7 +820,19 @@ def register_route_backend_conversations(app):
                 }), 400
             
             # Build conversation query with filters
-            query_parts = [f"c.user_id = '{user_id}'"]
+            # Find conversations where user is a participant (supports multi-user conversations)
+            # Check both old schema (user_id at root) and new schema (participant tag)
+            query_parts = [
+                f"(c.user_id = '{user_id}' OR EXISTS(SELECT VALUE t FROM t IN c.tags WHERE t.category = 'participant' AND t.user_id = '{user_id}'))"
+            ]
+            
+            debug_print(f"🔍 Search parameters:")
+            debug_print(f"  user_id: {user_id}")
+            debug_print(f"  search_term: {search_term}")
+            debug_print(f"  date_from: {date_from}")
+            debug_print(f"  date_to: {date_to}")
+            debug_print(f"  chat_types: {chat_types}")
+            debug_print(f"  classifications: {classifications}")
             
             if date_from:
                 query_parts.append(f"c.last_updated >= '{date_from}'")
@@ -828,34 +840,103 @@ def register_route_backend_conversations(app):
                 query_parts.append(f"c.last_updated <= '{date_to}T23:59:59'")
             
             conversation_query = f"SELECT * FROM c WHERE {' AND '.join(query_parts)}"
+            debug_print(f"\n📋 Conversation query: {conversation_query}")
+            
             conversations = list(cosmos_conversations_container.query_items(
                 query=conversation_query,
-                enable_cross_partition_query=True
+                enable_cross_partition_query=True,
+                max_item_count=-1  # Get all items, no pagination limit
             ))
+            
+            debug_print(f"Found {len(conversations)} conversations from query")
+            
+            # Check if target conversation is in the results
+            target_conv_id = "2712dbad-560d-4d2e-a354-b8f67fcf9429"
+            target_conv = next((c for c in conversations if c['id'] == target_conv_id), None)
+            if target_conv:
+                debug_print(f"\n🎯 Found target conversation {target_conv_id}")
+                debug_print(f"   chat_type: {target_conv.get('chat_type')}")
+                debug_print(f"   title: {target_conv.get('title', 'N/A')}")
+            else:
+                debug_print(f"\n❌ Target conversation {target_conv_id} NOT in query results")
             
             # Filter by chat types if specified
             if chat_types:
-                conversations = [c for c in conversations if c.get('chat_type') in chat_types]
+                before_count = len(conversations)
+                filtered_out = []
+                filtered_in = []
+                
+                for c in conversations:
+                    # Default to 'personal' if chat_type is not defined (legacy conversations)
+                    chat_type = c.get('chat_type', 'personal')
+                    if chat_type in chat_types:
+                        filtered_in.append(c)
+                    else:
+                        filtered_out.append(c)
+                
+                conversations = filtered_in
+                debug_print(f"After chat_type filter: {len(conversations)} (removed {before_count - len(conversations)})")
+                
+                # Show some examples of filtered out chat types
+                if filtered_out:
+                    unique_types = set(c.get('chat_type', 'None/personal') for c in filtered_out[:10])
+                    debug_print(f"   Filtered out chat_types (sample): {unique_types}")
             
             # Filter by classifications if specified
             if classifications:
+                before_count = len(conversations)
                 conversations = [c for c in conversations if any(
                     cls in (c.get('classification', []) or []) for cls in classifications
                 )]
+                debug_print(f"After classification filter: {len(conversations)} (removed {before_count - len(conversations)})")
             
             # Search messages in each conversation
             results = []
             search_lower = search_term.lower()
             
-            for conversation in conversations:
-                conv_id = conversation['id']
+            debug_print(f"🔍 Starting search for term: '{search_term}'")
+            debug_print(f"Found {len(conversations)} conversations to search")
+            
+            # Create a set of conversation IDs for fast lookup
+            conversation_ids = set(c['id'] for c in conversations)
+            conversation_map = {c['id']: c for c in conversations}
+            
+            # Do a single cross-partition query for all matching messages
+            # This is much faster than querying each conversation individually
+            message_query = f"SELECT * FROM m WHERE CONTAINS(m.content, '{search_term}', true) AND (m.role = 'user' OR m.role = 'assistant')"
+            debug_print(f"\n📋 Cross-partition message query: {message_query}")
+            
+            all_matching_messages = list(cosmos_messages_container.query_items(
+                query=message_query,
+                enable_cross_partition_query=True,
+                max_item_count=-1
+            ))
+            
+            debug_print(f"Found {len(all_matching_messages)} total messages across all conversations")
+            
+            # Group messages by conversation and filter
+            messages_by_conversation = {}
+            for msg in all_matching_messages:
+                conv_id = msg.get('conversation_id')
                 
-                # Query messages for this conversation
-                message_query = f"SELECT * FROM m WHERE m.conversation_id = '{conv_id}' AND CONTAINS(LOWER(m.content), '{search_lower}')"
-                matching_messages = list(cosmos_messages_container.query_items(
-                    query=message_query,
-                    partition_key=conv_id
-                ))
+                # Only include messages from conversations we have access to
+                if conv_id not in conversation_ids:
+                    continue
+                
+                # Filter out inactive threads
+                thread_info = msg.get('metadata', {}).get('thread_info', {})
+                active = thread_info.get('active_thread')
+                
+                # Include all messages where active_thread is not explicitly False
+                if active is not False:
+                    if conv_id not in messages_by_conversation:
+                        messages_by_conversation[conv_id] = []
+                    messages_by_conversation[conv_id].append(msg)
+            
+            debug_print(f"After filtering: {len(messages_by_conversation)} conversations have matching messages")
+            
+            # Build results for each conversation with matches
+            for conv_id, matching_messages in messages_by_conversation.items():
                 
                 # Apply file/image filters if specified
                 if has_files or has_images:
@@ -871,6 +952,11 @@ def register_route_backend_conversations(app):
                     matching_messages = filtered_messages
                 
                 if matching_messages:
+                    # Get conversation details
+                    conversation = conversation_map.get(conv_id)
+                    if not conversation:
+                        continue
+                    
                     # Build message snippets
                     message_snippets = []
                     for msg in matching_messages[:5]:  # Limit to 5 messages per conversation
