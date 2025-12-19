@@ -2101,6 +2101,14 @@ def register_route_backend_chats(app):
                         "No advanced features are available. "
                         "Please contact your administrator to resolve Semantic Kernel integration."
                     )
+                # Capture token usage for storage in message metadata
+                token_usage_data = {
+                    'prompt_tokens': response.usage.prompt_tokens,
+                    'completion_tokens': response.usage.completion_tokens,
+                    'total_tokens': response.usage.total_tokens,
+                    'captured_at': datetime.utcnow().isoformat()
+                }
+                
                 log_event(
                     f"[Tokens] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
                     extra={
@@ -2114,15 +2122,15 @@ def register_route_backend_chats(app):
                     },
                     level=logging.INFO
                 )
-                return (msg, gpt_model, None, notice)
+                return (msg, gpt_model, None, notice, token_usage_data)
             def gpt_success(result):
                 return result
             def gpt_error(e):
                 print(f"Error during final GPT completion: {str(e)}")
                 if "context length" in str(e).lower():
-                    return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None)
+                    return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
-                    return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None)
+                    return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None, None)
             fallback_steps.append({
                 'name': 'gpt',
                 'func': invoke_gpt_fallback,
@@ -2130,8 +2138,16 @@ def register_route_backend_chats(app):
                 'on_error': gpt_error
             })
 
-            ai_message, final_model_used, chat_mode, kernel_fallback_notice = try_fallback_chain(fallback_steps)
-            if kernel:
+            fallback_result = try_fallback_chain(fallback_steps)
+            # Unpack result - handle both 4-tuple (SK) and 5-tuple (GPT with tokens)
+            if len(fallback_result) == 5:
+                ai_message, final_model_used, chat_mode, kernel_fallback_notice, token_usage_data = fallback_result
+            else:
+                ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
+                token_usage_data = None
+            
+            # Collect token usage from Semantic Kernel services if available
+            if kernel and not token_usage_data:
                 try:
                     for service in getattr(kernel, "services", {}).values():
                         # Each service is likely an AzureChatCompletion or similar
@@ -2152,6 +2168,16 @@ def register_route_backend_chats(app):
                             },
                             level=logging.INFO
                         )
+                        
+                        # Capture token usage from first service with token data
+                        if (prompt_tokens or completion_tokens or total_tokens) and not token_usage_data:
+                            token_usage_data = {
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': total_tokens,
+                                'captured_at': datetime.utcnow().isoformat(),
+                                'service_id': getattr(service, 'service_id', None)
+                            }
                 except Exception as e:
                     log_event(
                         f"[Tokens] Error logging service token usage for user '{get_current_user_id()}': {e}",
@@ -2221,7 +2247,8 @@ def register_route_backend_chats(app):
                         'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
                         'active_thread': True,
                         'thread_attempt': retry_thread_attempt if is_retry else 1
-                    }
+                    },
+                    'token_usage': token_usage_data  # Store token usage information
                 } # Used by SK and reasoning effort
             }
             
@@ -2956,6 +2983,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
                 
                 # Stream the response
                 accumulated_content = ""
+                token_usage_data = None  # Will be populated from final stream chunk
                 assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
                 
                 try:
@@ -2965,7 +2993,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     stream_params = {
                         'model': gpt_model,
                         'messages': conversation_history_for_api,
-                        'stream': True
+                        'stream': True,
+                        'stream_options': {'include_usage': True}  # Request token usage in final chunk
                     }
                     
                     # Add reasoning_effort if provided and not 'none'
@@ -2996,6 +3025,16 @@ Assistant: The policy prohibits entities from using federal funds received throu
                             if delta.content:
                                 accumulated_content += delta.content
                                 yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                        
+                        # Capture token usage from final chunk with stream_options
+                        if hasattr(chunk, 'usage') and chunk.usage:
+                            token_usage_data = {
+                                'prompt_tokens': chunk.usage.prompt_tokens,
+                                'completion_tokens': chunk.usage.completion_tokens,
+                                'total_tokens': chunk.usage.total_tokens,
+                                'captured_at': datetime.utcnow().isoformat()
+                            }
+                            print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
                     
                     # Stream complete - save message and send final metadata
                     # Get user thread info to maintain thread consistency
@@ -3032,7 +3071,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
                                 'previous_thread_id': user_previous_thread_id,
                                 'active_thread': True,
                                 'thread_attempt': 1
-                            }
+                            },
+                            'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
