@@ -1,5 +1,6 @@
 # Builder stage: install dependencies in a virtualenv
-FROM cgr.dev/chainguard/python:latest-dev AS builder
+# FROM cgr.dev/chainguard/python:latest-dev AS builder
+FROM python:3.13-slim AS builder
 
 USER root
 
@@ -12,14 +13,19 @@ WORKDIR /app
 RUN python -m venv /app/venv
 
 # Create and permission the flask_session directory
-RUN mkdir -p /app/flask_session && chown -R nonroot:nonroot /app/flask_session
+#RUN mkdir -p /app/flask_session && chown -R nonroot:nonroot /app/flask_session
+RUN mkdir -p /app/flask_session 
 
 # Copy requirements and install them into the virtualenv
 COPY application/single_app/requirements.txt .
 ENV PATH="/app/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
-FROM cgr.dev/chainguard/python:latest
+#FROM cgr.dev/chainguard/python:latest
+FROM python:3.13-slim
+
+# Create nonroot user
+RUN useradd -m -u 1000 nonroot
 
 WORKDIR /app
 

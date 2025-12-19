@@ -25,16 +25,6 @@ The folloiwng variables will be used within this document:
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Example:** *simple-chat:latest*
 
 
-The following variables may be entered with a blank depending on the response to other parameters:
-
-If *\<useExistingAcr\>* = *true* then the following variables need to be set with applicable values, if *false* a blank is permitted
-- *\<existingACRResourceGroup\>* - Resource group name for the existing Azure Container Registry.
-- *\<existingACRResourceName\>* - Azure Container Registry name
-
-if *\<useExistingOpenAISvc\>* = *true* then the following variables need to be set with applicable values, if *false* a blank is permitted.
-- *\<existingOpenAIResourceGroupName\>* - Resource group name for the existing Azure OpenAI service.
-- *\<existingOpenAIResourceName\>* - Azure OpenAI service name.
-
 ## Deployment Process
 
 The below steps cover the process to deploy the Simple Chat application to an Azure Subscription.  It is assumed the user has administrative rights to the subscription for deployment.  If the user does not also have permissions to create an Application Registration in Entra, a stand-alone script can be provided to an administrator with the correct permissions.
@@ -113,26 +103,19 @@ Using the bash terminal in Visual Studio Code
 
 - Select an Azure Subscription to use: *\<select from available list\>*
 - Enter a value for the 'appName' infrastructure parameter: *\<appName\>*
+- Enter a value for the 'authenticationType' infrastructure parameter: *\<authType\>*
+- Enter a vaule for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
+- Enter a value for the 'configureApplicationPermissions' infrastructure parameter: \<true | false\>*
 - Enter a value for the 'deployContentSafety' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'deployRedisCache' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'deploySpeechService' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'deployVideoIndexerService' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'enableDiagLogging' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'enterpriseAppClientId' infrastructure parameter: *\<clientID\>*
 - Enter a value for the 'enterpriseAppClientSecret' infrastructure secured parameter: *\<clientSecret\>*
 - Enter a value for the 'environment' infrastructure parameter: *\<environment\>*
-
->Note:  The following variables may be blank depending on other parameter settings
-
-- Enter a value for the 'existingAcrResourceGroup' infrastructure parameter:
-- Enter a value for the 'existingAcrResourceName' infrastructure parameter:
-- Enter a value for the 'existingOpenAIResourceGroupName' infrastructure parameter:
-- Enter a value for the 'existingOpenAIResourceName' infrastructure parameter:
-
->Remaining parameters 
 - Enter a value for the 'imageName' infrastructure parameter: *\<imageName\>*
 - Enter a value for the 'location' infrastructure parameter: *\<select from the list provided\>*
-- Enter a value for the 'useExistingAcr' infrastructure parameter: *\<true | false\>*
-- Enter a value for the 'useExistingOpenAISvc' infrastructure parameter: *\<true | false\>*
 
 Provisioning may take between 10-40 minutes depending on the options selected.
 
@@ -142,31 +125,24 @@ On the completion of the deployment, a URL will be presented, the user may use t
 
 ### Post Deployment Tasks:
 
-Once logged in to the newly deployed application with admin credentials, the application will need to be configured with several configurations:
+Once logged in to the newly deployed application with admin credentials, the application will need to be set up with several configurations:
 
-1. Admin Settings > Health Check > "Enable External Health Check Endpoint" - Set to "ON"
-1. AI Models > GPT Configuration & Embeddings Configuration.  Use managed Identity.  Configure the subscription and resource group.  Click Save
+1. AI Models > GPT Configuration & Embeddings Configuration.  Application is pre-configured with the chosen security model (key / managed identity).  Select "Test GPT Connection" and "Test Embedding Connection" to verify connection.
 
     > Known Bug:  User will be unable to Fetch GPT or Embedding models. </br>
 Workaround:  Set configurations in CosmosDB.  For details see [Workarounds](##Workarounds) below.
 
-1. Agents and Actions > Agents Configuration > "Enable Agents" - Set to "ON"
 1. Logging > Application Insights Logging  > "Enable Application Insights Global Logging - Set to "ON"
 1. Citations > Ehnahced Citations > "Enable Enhanced Citations" - Set to "ON"
     -  Configure "All Filetypes"
         - "Storage Account Authentication Type" = Managed Identity
         - "Storage Account Blob Endpoint" = "https://\<appName\>\<environment\>sa.blob.core.windows.net" (or appropiate domain if in Azure Gov.)
-1. Workflow > Workflow Settings > "Enable Workflow" - Set to "ON"
-    > Note if the deployment option for "deployContentSafety" was set to true follow the next step.
-1. Safety > Content Safety > "Enable Content Safety" - Set to "ON"
-    - "Content Safety Endpoint" - "https://\<appName\>-\<environment\>-contentsafety.cognitiveservices.azure.com/" (or appropiate domain if in Azure Gov.)
 1. Safety > Conversation Archiving > "Enable Conversation Archiving" - Set to "ON"
-1. PII Analysis > PII Analysis > "Enable PII Analysis" - Set to "ON"
 1. Search & Extract > Azure AI Search 
     - "Search Endpoint" = "https://\<appName\>-\<environment\>-search.search.windows.net" (or appropiate domain if in Azure Gov.)
     > Known Bug:  Unable to configure "Managed Identity" authentication type.  Must use "Key"
     - "Authentication Type" - Key
-    - "Search Key" - Retreive from the deployed search service.
+    - "Search Key" - *Pre-populated from key vault value*.
     - At the top of the Admin Page you'll see warning boxes indicating Index Schema Mismatch.
         - Click "Create user Index"
         - Click "Create group Index"

@@ -5,13 +5,15 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
 
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
+
 // Import diagnostic settings configurations
-module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging){
+module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
 
@@ -25,24 +27,9 @@ resource docIntel 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   }
   properties: {
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false
     customSubDomainName: toLower('${appName}-${environment}-docintel')
   }
   tags: tags
-}
-
-// grant the managed identity access to document intelligence as a Cognitive Services User
-resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(docIntel.id, managedIdentityId, 'doc-intel-user')
-  scope: docIntel
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'a97b65f3-24c7-4388-baec-2e87135dc908'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 // configure diagnostic settings for document intelligence
@@ -58,5 +45,18 @@ resource docIntelDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
+//=========================================================
+// store document intelligence keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module documentIntelligenceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+  name: 'storeDocumentIntelligenceSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'document-intelligence-key'
+    secretValue: docIntel.listKeys().key1
+  }
+}
+
 output documentIntelligenceServiceName string = docIntel.name
 output diagnosticLoggingEnabled bool = enableDiagLogging
+output documentIntelligenceServiceEndpoint string = docIntel.properties.endpoint

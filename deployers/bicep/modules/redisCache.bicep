@@ -5,10 +5,12 @@ param appName string
 param environment string
 param tags object
 
-//param managedIdentityPrincipalId string
-//param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -34,22 +36,6 @@ resource redisCache 'Microsoft.Cache/Redis@2024-11-01' = {
   tags: tags
 }
 
-// todo: grant the managed identity access to content safety as a Cognitive Services User
-/*
-resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployContentSafety) {
-  name: guid(contentSafety.id, managedIdentity.id, 'content-safety-user')
-  scope: contentSafety
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'a97b65f3-24c7-4388-baec-2e87135dc908'
-    )
-    principalId: managedIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-*/
-
 // configure diagnostic settings for redis cache
 resource redisCacheDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${redisCache.name}-diagnostics')
@@ -62,3 +48,17 @@ resource redisCacheDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
   }
 }
+
+//=========================================================
+// store redis cache keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module redisCacheSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+  name: 'storeRedisCacheSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'redis-cache-key'
+    secretValue: redisCache.listKeys().primaryKey
+  }
+}
+
+output redisCacheName string = redisCache.name
