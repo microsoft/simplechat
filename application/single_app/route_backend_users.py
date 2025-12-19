@@ -27,7 +27,7 @@ def register_route_backend_users(app):
         if AZURE_ENVIRONMENT == "usgovernment":
             user_endpoint = "https://graph.microsoft.us/v1.0/users"
         elif AZURE_ENVIRONMENT == "custom":
-            user_endpoint = CUSTOM_GRAPH_URL_VALUE
+            user_endpoint = f"{CUSTOM_GRAPH_URL_VALUE}/v1.0/users"
         else:
             user_endpoint = "https://graph.microsoft.com/v1.0/users"
             
