@@ -94,4 +94,5 @@ EXPOSE 5000
 
 USER 65532:65532
 
+
 ENTRYPOINT ["/app/venv/bin/python", "-c", "import runpy; runpy.run_path('/app/app.py', run_name='__main__')"]
