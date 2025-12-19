@@ -1,3 +1,4 @@
+# route_openapi.py
 """
 OpenAPI Plugin Routes
 
@@ -13,6 +14,8 @@ from functions_authentication import login_required, user_required
 from openapi_security import openapi_validator
 from openapi_auth_analyzer import analyze_openapi_authentication, get_authentication_help_text
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_security import is_valid_storage_name
+
 
 def register_openapi_routes(app):
     """Register OpenAPI-related routes."""
@@ -193,6 +196,11 @@ def register_openapi_routes(app):
             unique_id = str(uuid.uuid4())[:8]
             base_name, ext = os.path.splitext(safe_filename)
             stored_filename = f"{base_name}_{unique_id}{ext}"
+            if not is_valid_storage_name(stored_filename):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid storage filename'
+                }), 400
             storage_path = os.path.join(upload_dir, stored_filename)
             
             # Save spec to file
@@ -303,6 +311,11 @@ def register_openapi_routes(app):
             unique_id = str(uuid.uuid4())[:8]
             base_name, ext = os.path.splitext(safe_filename)
             stored_filename = f"{base_name}_{unique_id}{ext}"
+            if not is_valid_storage_name(stored_filename):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid storage filename'
+                }), 400
             storage_path = os.path.join(upload_dir, stored_filename)
             
             # Save spec to file

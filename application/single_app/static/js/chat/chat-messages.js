@@ -1556,6 +1556,11 @@ export function actuallySendMessage(finalMessageToSend) {
         );
       }
 
+      if (data.reload_messages && currentConversationId) {
+        console.log("Reload flag received from backend - refreshing messages.");
+        loadMessages(currentConversationId);
+      }
+
       // Update conversation list item and header if needed
       if (data.conversation_id) {
         currentConversationId = data.conversation_id; // Update current ID

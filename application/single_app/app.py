@@ -479,7 +479,6 @@ if __name__ == '__main__':
         werkzeug_logger = logging.getLogger('werkzeug')
         werkzeug_logger.setLevel(logging.ERROR)
         app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
-
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))
