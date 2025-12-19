@@ -4765,7 +4765,7 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
 
-    # Azure Speech SDK helper to get speech config with fresh token
+# Azure Speech SDK helper to get speech config with fresh token
 def _get_speech_config(settings, endpoint: str, locale: str):
     """Get speech config with fresh token"""
     if settings.get("speech_service_authentication_type") == "managed_identity":
