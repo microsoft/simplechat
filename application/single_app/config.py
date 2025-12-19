@@ -178,6 +178,7 @@ elif AZURE_ENVIRONMENT == "custom":
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
     KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
+    video_indexer_endpoint = os.getenv("VIDEO_INDEXER_ENDPOINT", "https://api.videoindexer.ai")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
