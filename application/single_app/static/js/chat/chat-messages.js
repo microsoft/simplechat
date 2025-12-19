@@ -805,7 +805,10 @@ export function appendMessage(
     if (dropdownDeleteBtn) {
       dropdownDeleteBtn.addEventListener("click", (e) => {
         e.preventDefault();
-        handleDeleteButtonClick(messageDiv, messageId, 'assistant');
+        // Always read the message ID from the DOM attribute dynamically
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        console.log(`🗑️ AI Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+        handleDeleteButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
     
@@ -813,7 +816,10 @@ export function appendMessage(
     if (dropdownRetryBtn) {
       dropdownRetryBtn.addEventListener("click", (e) => {
         e.preventDefault();
-        handleRetryButtonClick(messageDiv, messageId, 'assistant');
+        // Always read the message ID from the DOM attribute dynamically
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
+        handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
     
@@ -1216,7 +1222,10 @@ export function appendMessage(
       if (dropdownDeleteBtn) {
         dropdownDeleteBtn.addEventListener('click', (e) => {
           e.preventDefault();
-          handleDeleteButtonClick(messageDiv, messageId, sender === "image" ? 'image' : 'file');
+          // Always read the message ID from the DOM attribute dynamically
+          const currentMessageId = messageDiv.getAttribute('data-message-id');
+          console.log(`🗑️ Image/File Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+          handleDeleteButtonClick(messageDiv, currentMessageId, sender === "image" ? 'image' : 'file');
         });
       }
       
@@ -1501,10 +1510,15 @@ export function actuallySendMessage(finalMessageToSend) {
       console.log("data.web_search_citations:", data.web_search_citations);
       console.log("data.agent_citations:", data.agent_citations);
       console.log(`data.message_id: ${data.message_id}`);
+      console.log(`data.user_message_id: ${data.user_message_id}`);
+      console.log(`tempUserMessageId: ${tempUserMessageId}`);
 
       // Update the user message with the real message ID
       if (data.user_message_id) {
+        console.log(`🔄 Calling updateUserMessageId(${tempUserMessageId}, ${data.user_message_id})`);
         updateUserMessageId(tempUserMessageId, data.user_message_id);
+      } else {
+        console.warn(`⚠️ No user_message_id in response! User message will keep temporary ID: ${tempUserMessageId}`);
       }
 
       if (data.reply) {
@@ -1867,7 +1881,11 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownDeleteBtn) {
     dropdownDeleteBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      handleDeleteButtonClick(messageDiv, messageId, 'user');
+      // Always read the message ID from the DOM attribute dynamically
+      // This ensures we use the updated ID after updateUserMessageId is called
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`🗑️ Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+      handleDeleteButtonClick(messageDiv, currentMessageId, 'user');
     });
   }
   
@@ -1875,7 +1893,10 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownRetryBtn) {
     dropdownRetryBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      handleRetryButtonClick(messageDiv, messageId, 'user');
+      // Always read the message ID from the DOM attribute dynamically
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`🔄 Retry button clicked - using message ID from DOM: ${currentMessageId}`);
+      handleRetryButtonClick(messageDiv, currentMessageId, 'user');
     });
   }
   
@@ -1883,9 +1904,12 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownEditBtn) {
     dropdownEditBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      // Always read the message ID from the DOM attribute dynamically
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`✏️ Edit button clicked - using message ID from DOM: ${currentMessageId}`);
       // Import chat-edit module dynamically
       import('./chat-edit.js').then(module => {
-        module.handleEditButtonClick(messageDiv, messageId, 'user');
+        module.handleEditButtonClick(messageDiv, currentMessageId, 'user');
       }).catch(err => {
         console.error('❌ Error loading chat-edit module:', err);
       });
@@ -3155,6 +3179,8 @@ function executeMessageDeletion(deleteThread = false) {
   const { messageDiv, messageId, messageType } = pendingDeletion;
   
   console.log(`Executing deletion for message ${messageId}, deleteThread: ${deleteThread}`);
+  console.log(`Message div:`, messageDiv);
+  console.log(`Message ID from DOM:`, messageDiv ? messageDiv.getAttribute('data-message-id') : 'N/A');
   
   // Call delete API
   fetch(`/api/message/${messageId}`, {
@@ -3169,7 +3195,21 @@ function executeMessageDeletion(deleteThread = false) {
   .then(response => {
     if (!response.ok) {
       return response.json().then(data => {
-        throw new Error(data.error || 'Failed to delete message');
+        const errorMsg = data.error || 'Failed to delete message';
+        console.error(`Delete API error (${response.status}):`, errorMsg);
+        console.error(`Failed message ID:`, messageId);
+        
+        // Add specific error message for 404
+        if (response.status === 404) {
+          throw new Error(`Message not found in database. This may happen if the message was just created and hasn't fully synced yet. Try refreshing the page and deleting again.`);
+        }
+        throw new Error(errorMsg);
+      }).catch(jsonError => {
+        // If response.json() fails, throw a generic error
+        if (response.status === 404) {
+          throw new Error(`Message not found in database. Message ID: ${messageId}. Try refreshing the page.`);
+        }
+        throw new Error(`Failed to delete message (status ${response.status})`);
       });
     }
     return response.json();
@@ -3206,7 +3246,21 @@ function executeMessageDeletion(deleteThread = false) {
   })
   .catch(error => {
     console.error('Error deleting message:', error);
-    showToast(error.message || 'Failed to delete message', 'error');
+    
+    // If we got a 404, suggest reloading messages
+    if (error.message && error.message.includes('not found')) {
+      showToast(error.message + ' Click here to reload messages.', 'error', 8000, () => {
+        // Reload messages when toast is clicked
+        if (window.currentConversationId) {
+          loadMessages(window.currentConversationId);
+        }
+      });
+    } else {
+      showToast(error.message || 'Failed to delete message', 'error');
+    }
+    
+    // Clean up pending deletion
+    delete window.pendingMessageDeletion;
   });
 }
 
