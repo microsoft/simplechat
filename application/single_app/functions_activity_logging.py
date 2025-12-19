@@ -159,6 +159,315 @@ def log_document_upload(
         )
 
 
+def log_document_creation_transaction(
+    user_id: str,
+    document_id: str,
+    workspace_type: str,
+    file_name: str,
+    file_type: Optional[str] = None,
+    file_size: Optional[int] = None,
+    page_count: Optional[int] = None,
+    embedding_tokens: Optional[int] = None,
+    embedding_model: Optional[str] = None,
+    version: Optional[int] = None,
+    author: Optional[str] = None,
+    title: Optional[str] = None,
+    subject: Optional[str] = None,
+    publication_date: Optional[str] = None,
+    keywords: Optional[list] = None,
+    abstract: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_metadata: Optional[dict] = None
+) -> None:
+    """
+    Log comprehensive document creation transaction to activity_logs container.
+    This creates a permanent record of the document creation that persists even if the document is deleted.
+    
+    Args:
+        user_id (str): The ID of the user who created the document
+        document_id (str): The ID of the created document
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        file_name (str): Name of the uploaded file
+        file_type (str, optional): File extension/type (.pdf, .docx, etc.)
+        file_size (int, optional): Size of the file in bytes
+        page_count (int, optional): Number of pages/chunks processed
+        embedding_tokens (int, optional): Total embedding tokens used
+        embedding_model (str, optional): Embedding model deployment name
+        version (int, optional): Document version
+        author (str, optional): Document author (from metadata)
+        title (str, optional): Document title (from metadata)
+        subject (str, optional): Document subject (from metadata)
+        publication_date (str, optional): Document publication date (from metadata)
+        keywords (list, optional): Document keywords (from metadata)
+        abstract (str, optional): Document abstract (from metadata)
+        group_id (str, optional): Group ID if group workspace
+        public_workspace_id (str, optional): Public workspace ID if public workspace
+        additional_metadata (dict, optional): Any additional metadata to store
+    """
+    
+    try:
+        import uuid
+        
+        # Create comprehensive activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'document_creation',
+            'workspace_type': workspace_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'document': {
+                'document_id': document_id,
+                'file_name': file_name,
+                'file_type': file_type,
+                'file_size_bytes': file_size,
+                'page_count': page_count,
+                'version': version
+            },
+            'embedding_usage': {
+                'total_tokens': embedding_tokens,
+                'model_deployment_name': embedding_model
+            },
+            'document_metadata': {
+                'author': author,
+                'title': title,
+                'subject': subject,
+                'publication_date': publication_date,
+                'keywords': keywords or [],
+                'abstract': abstract
+            },
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_record['workspace_context']['public_workspace_id'] = public_workspace_id
+            
+        # Add any additional metadata
+        if additional_metadata:
+            activity_record['additional_metadata'] = additional_metadata
+            
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Document creation transaction logged: {file_name} ({file_type}) for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        print(f"✅ Document creation transaction logged to activity_logs: {document_id}")
+        
+    except Exception as e:
+        # Log error but don't break the document creation flow
+        log_event(
+            message=f"Error logging document creation transaction: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'document_id': document_id,
+                'workspace_type': workspace_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        print(f"⚠️  Warning: Failed to log document creation transaction: {str(e)}")
+
+
+def log_document_deletion_transaction(
+    user_id: str,
+    document_id: str,
+    workspace_type: str,
+    file_name: str,
+    file_type: Optional[str] = None,
+    page_count: Optional[int] = None,
+    version: Optional[int] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    document_metadata: Optional[dict] = None
+) -> None:
+    """
+    Log document deletion transaction to activity_logs container.
+    This creates a permanent record of the document deletion.
+    
+    Args:
+        user_id (str): The ID of the user who deleted the document
+        document_id (str): The ID of the deleted document
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        file_name (str): Name of the deleted file
+        file_type (str, optional): File extension/type (.pdf, .docx, etc.)
+        page_count (int, optional): Number of pages/chunks that were stored
+        version (int, optional): Document version
+        group_id (str, optional): Group ID if group workspace
+        public_workspace_id (str, optional): Public workspace ID if public workspace
+        document_metadata (dict, optional): Full document metadata for reference
+    """
+    
+    try:
+        import uuid
+        
+        # Create deletion activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'document_deletion',
+            'workspace_type': workspace_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'document': {
+                'document_id': document_id,
+                'file_name': file_name,
+                'file_type': file_type,
+                'page_count': page_count,
+                'version': version
+            },
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_record['workspace_context']['public_workspace_id'] = public_workspace_id
+            
+        # Add full document metadata if provided
+        if document_metadata:
+            activity_record['deleted_document_metadata'] = document_metadata
+            
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Document deletion transaction logged: {file_name} ({file_type}) for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        print(f"✅ Document deletion transaction logged to activity_logs: {document_id}")
+        
+    except Exception as e:
+        # Log error but don't break the document deletion flow
+        log_event(
+            message=f"Error logging document deletion transaction: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'document_id': document_id,
+                'workspace_type': workspace_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        print(f"⚠️  Warning: Failed to log document deletion transaction: {str(e)}")
+
+
+def log_token_usage(
+    user_id: str,
+    token_type: str,
+    total_tokens: int,
+    model: str,
+    workspace_type: Optional[str] = None,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
+    document_id: Optional[str] = None,
+    file_name: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_context: Optional[dict] = None
+) -> None:
+    """
+    Log token usage to activity_logs container for easy reporting and analytics.
+    Supports both embedding tokens (document processing) and chat tokens (conversations).
+    
+    Args:
+        user_id (str): The ID of the user whose action consumed tokens
+        token_type (str): Type of token usage ('embedding' or 'chat')
+        total_tokens (int): Total tokens consumed
+        model (str): Model deployment name used
+        workspace_type (str, optional): Type of workspace ('personal', 'group', 'public')
+        prompt_tokens (int, optional): Prompt tokens (for chat)
+        completion_tokens (int, optional): Completion tokens (for chat)
+        document_id (str, optional): Document ID (for embedding)
+        file_name (str, optional): File name (for embedding)
+        conversation_id (str, optional): Conversation ID (for chat)
+        message_id (str, optional): Message ID (for chat)
+        group_id (str, optional): Group ID if group workspace
+        public_workspace_id (str, optional): Public workspace ID if public workspace
+        additional_context (dict, optional): Any additional context to store
+    """
+    
+    try:
+        import uuid
+        
+        # Create token usage activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'token_usage',
+            'token_type': token_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'usage': {
+                'total_tokens': total_tokens,
+                'model': model
+            },
+            'workspace_type': workspace_type,
+            'workspace_context': {}
+        }
+        
+        # Add token type specific details
+        if token_type == 'embedding':
+            activity_record['embedding_details'] = {
+                'document_id': document_id,
+                'file_name': file_name
+            }
+        elif token_type == 'chat':
+            activity_record['usage']['prompt_tokens'] = prompt_tokens
+            activity_record['usage']['completion_tokens'] = completion_tokens
+            activity_record['chat_details'] = {
+                'conversation_id': conversation_id,
+                'message_id': message_id
+            }
+        
+        # Add workspace-specific context
+        if group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+        if public_workspace_id:
+            activity_record['workspace_context']['public_workspace_id'] = public_workspace_id
+            
+        # Add any additional context
+        if additional_context:
+            activity_record['additional_context'] = additional_context
+            
+        # Save to activity_logs container
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Token usage logged: {token_type} - {total_tokens} tokens ({model})",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+    except Exception as e:
+        # Log error but don't break the flow
+        log_event(
+            message=f"Error logging token usage: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'token_type': token_type,
+                'total_tokens': total_tokens,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+
+
 def log_user_login(
     user_id: str,
     login_method: str = 'azure_ad'

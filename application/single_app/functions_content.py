@@ -362,7 +362,17 @@ def generate_embedding(
             )
 
             embedding = response.data[0].embedding
-            return embedding
+            
+            # Capture token usage for embedding tracking
+            token_usage = None
+            if hasattr(response, 'usage') and response.usage:
+                token_usage = {
+                    'prompt_tokens': response.usage.prompt_tokens,
+                    'total_tokens': response.usage.total_tokens,
+                    'model_deployment_name': embedding_model
+                }
+            
+            return embedding, token_usage
 
         except RateLimitError as e:
             retries += 1

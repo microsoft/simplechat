@@ -2259,6 +2259,40 @@ def register_route_backend_chats(app):
             debug_print(f"    is_retry: {is_retry}")
             
             cosmos_messages_container.upsert_item(assistant_doc)
+            
+            # Log chat token usage to activity_logs for easy reporting
+            if token_usage_data and token_usage_data.get('total_tokens'):
+                try:
+                    from functions_activity_logging import log_token_usage
+                    
+                    # Determine workspace type based on active group/public workspace
+                    workspace_type = 'personal'
+                    if active_public_workspace_id:
+                        workspace_type = 'public'
+                    elif active_group_id:
+                        workspace_type = 'group'
+                    
+                    log_token_usage(
+                        user_id=get_current_user_id(),
+                        token_type='chat',
+                        total_tokens=token_usage_data.get('total_tokens'),
+                        model=actual_model_used,
+                        workspace_type=workspace_type,
+                        prompt_tokens=token_usage_data.get('prompt_tokens'),
+                        completion_tokens=token_usage_data.get('completion_tokens'),
+                        conversation_id=conversation_id,
+                        message_id=assistant_message_id,
+                        group_id=active_group_id,
+                        public_workspace_id=active_public_workspace_id,
+                        additional_context={
+                            'agent_name': agent_name,
+                            'augmented': bool(system_messages_for_augmentation),
+                            'reasoning_effort': reasoning_effort
+                        }
+                    )
+                except Exception as log_error:
+                    debug_print(f"⚠️  Warning: Failed to log chat token usage: {log_error}")
+                    # Don't fail the chat flow if logging fails
 
             # Update the user message metadata with the actual model used
             # This ensures the UI shows the correct model in the metadata panel

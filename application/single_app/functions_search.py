@@ -126,7 +126,17 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     )
     logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
     
-    query_embedding = generate_embedding(query)
+    # Unpack tuple from generate_embedding (returns embedding, token_usage)
+    result = generate_embedding(query)
+    if result is None:
+        return None
+    
+    # Handle both tuple (new) and single value (backward compatibility)
+    if isinstance(result, tuple):
+        query_embedding, _ = result  # Ignore token_usage for search
+    else:
+        query_embedding = result
+    
     if query_embedding is None:
         return None
     
