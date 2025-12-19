@@ -81,13 +81,7 @@ function updateStreamingButtonVisibility() {
     
     if (!streamingToggleBtn) return;
     
-    // Hide streaming button when agents are active
-    if (enableAgentsBtn && enableAgentsBtn.classList.contains('active')) {
-        streamingToggleBtn.style.display = 'none';
-        return;
-    }
-    
-    // Otherwise show the button
+    // Show streaming button even when agents are active (agents now support streaming)
     streamingToggleBtn.style.display = 'flex';
 }
 
@@ -311,8 +305,8 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         finalData.hybrid_citations || [],
         [],
         finalData.agent_citations || [],
-        null,
-        null,
+        finalData.agent_display_name || null,
+        finalData.agent_name || null,
         null
     );
     

@@ -1453,9 +1453,9 @@ export function actuallySendMessage(finalMessageToSend) {
     reasoning_effort: getCurrentReasoningEffort()
   };
   
-  // Check if streaming is enabled (but not for image generation or agents)
+  // Check if streaming is enabled (but not for image generation)
   const agentsEnabled = typeof areAgentsEnabled === 'function' && areAgentsEnabled();
-  if (isStreamingEnabled() && !imageGenEnabled && !agentsEnabled) {
+  if (isStreamingEnabled() && !imageGenEnabled) {
     const streamInitiated = sendMessageWithStreaming(
       messageData, 
       tempUserMessageId, 

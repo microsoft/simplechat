@@ -76,7 +76,7 @@ def register_route_backend_chats(app):
             
             if is_retry:
                 operation_type = 'Edit' if is_edit else 'Retry'
-                print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
+                debug_print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
             
             # Store conversation_id in Flask context for plugin logger access
             g.conversation_id = conversation_id
@@ -200,7 +200,7 @@ def register_route_backend_chats(app):
                     raise ValueError("GPT Client or Model could not be initialized.")
 
             except Exception as e:
-                print(f"Error initializing GPT client/model: {e}")
+                debug_print(f"Error initializing GPT client/model: {e}")
                 # Handle error appropriately - maybe return 500 or default behavior
                 return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
 
@@ -235,10 +235,10 @@ def register_route_backend_chats(app):
                         'strict': False
                     }
                     # Optionally log that a conversation was expected but not found
-                    print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
+                    debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
                     cosmos_conversations_container.upsert_item(conversation_item)
                 except Exception as e:
-                    print(f"Error reading conversation {conversation_id}: {e}")
+                    debug_print(f"Error reading conversation {conversation_id}: {e}")
                     return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
 
             # Determine the actual chat context based on existing conversation or document usage
@@ -249,7 +249,7 @@ def register_route_backend_chats(app):
             if conversation_item.get('chat_type'):
                 # Use existing chat_type from conversation metadata
                 actual_chat_type = conversation_item['chat_type']
-                print(f"Using existing chat_type from conversation: {actual_chat_type}")
+                debug_print(f"Using existing chat_type from conversation: {actual_chat_type}")
             elif conversation_item.get('context'):
                 # Fallback: determine from existing context
                 primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
@@ -260,11 +260,11 @@ def register_route_backend_chats(app):
                         actual_chat_type = 'public'
                     elif primary_context.get('scope') == 'personal':
                         actual_chat_type = 'personal'
-                    print(f"Determined chat_type from existing primary context: {actual_chat_type}")
+                    debug_print(f"Determined chat_type from existing primary context: {actual_chat_type}")
                 else:
                     # No primary context exists - model-only conversation
                     actual_chat_type = None  # This will result in no badges
-                    print(f"No primary context found - model-only conversation")
+                    debug_print(f"No primary context found - model-only conversation")
             else:
                 # New conversation - will be determined by document usage during metadata collection
                 # For now, use the legacy logic as fallback
@@ -272,7 +272,7 @@ def register_route_backend_chats(app):
                     actual_chat_type = 'group'
                 elif document_scope == 'public':
                     actual_chat_type = 'public'
-                print(f"New conversation - using legacy logic: {actual_chat_type}")
+                debug_print(f"New conversation - using legacy logic: {actual_chat_type}")
 
             # ---------------------------------------------------------------------
             # 2) Append the user message to conversation immediately (or use existing for retry)
@@ -294,13 +294,13 @@ def register_route_backend_chats(app):
                     # Extract user_metadata from existing message for later use
                     user_metadata = user_message_doc.get('metadata', {})
                     
-                    print(f"🔍 Chat API - Read retry user message:")
-                    print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
-                    print(f"    previous_thread_id: {previous_thread_id}")
-                    print(f"    attempt: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_attempt')}")
-                    print(f"    active: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('active_thread')}")
+                    debug_print(f"🔍 Chat API - Read retry user message:")
+                    debug_print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
+                    debug_print(f"    previous_thread_id: {previous_thread_id}")
+                    debug_print(f"    attempt: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_attempt')}")
+                    debug_print(f"    active: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('active_thread')}")
                 except Exception as e:
-                    print(f"Error reading retry user message: {e}")
+                    debug_print(f"Error reading retry user message: {e}")
                     return jsonify({'error': 'Retry user message not found'}), 404
             else:
                 # Normal flow: create new user message
@@ -356,7 +356,7 @@ def register_route_backend_chats(app):
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                             user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
                     except Exception as e:
-                        print(f"Error retrieving document details: {e}")
+                        debug_print(f"Error retrieving document details: {e}")
                 
                 # Add scope-specific details
                 if document_scope == 'group' and active_group_id:
@@ -374,7 +374,7 @@ def register_route_backend_chats(app):
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
-                        print(f"Error retrieving group details: {e}")
+                        debug_print(f"Error retrieving group details: {e}")
                         user_metadata['workspace_search']['group_name'] = None
                         import traceback
                         traceback.print_exc()
@@ -415,7 +415,7 @@ def register_route_backend_chats(app):
                                 'agent_id': selected_agent_info.get('id')
                             }
                     except Exception as e:
-                        print(f"Error retrieving agent details: {e}")
+                        debug_print(f"Error retrieving agent details: {e}")
                 
                 # Prompt selection (extract from message if available)
                 prompt_info = data.get('prompt_info')
@@ -522,7 +522,7 @@ def register_route_backend_chats(app):
                     )
                 except Exception as e:
                     # Don't let activity logging errors interrupt chat flow
-                    print(f"Activity logging error: {e}")
+                    debug_print(f"Activity logging error: {e}")
                     
                 # Set conversation title if it's still the default
                 if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
@@ -634,9 +634,9 @@ def register_route_backend_chats(app):
                         }), 200
 
                 except HttpResponseError as e:
-                    print(f"[Content Safety Error] {e}")
+                    debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
-                    print(f"[Content Safety] Unexpected error: {ex}")
+                    debug_print(f"[Content Safety] Unexpected error: {ex}")
 
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
@@ -670,14 +670,14 @@ def register_route_backend_chats(app):
                                 
                                 # Exclude messages with active_thread=False
                                 if active_thread is False:
-                                    print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from search summary")
+                                    debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from search summary")
                                     continue
                                     
                                 message_texts_search.append(f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}")
                             
                             if not message_texts_search:
                                 # No active messages to summarize
-                                print("[THREAD] No active thread messages available for search summary")
+                                debug_print("[THREAD] No active thread messages available for search summary")
                             else:
                                 summary_prompt_search += "\n".join(message_texts_search)
 
@@ -692,10 +692,10 @@ def register_route_backend_chats(app):
                                     if summary_for_search:
                                         search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
                                 except Exception as e:
-                                    print(f"Error summarizing conversation for search: {e}")
+                                    debug_print(f"Error summarizing conversation for search: {e}")
                                     # Proceed with original user_message as search_query
                     except Exception as e:
-                        print(f"Error fetching messages for search summarization: {e}")
+                        debug_print(f"Error fetching messages for search summarization: {e}")
 
 
                 # Perform the search
@@ -744,12 +744,12 @@ def register_route_backend_chats(app):
                     
                     # Log if a non-default top_n value is being used
                     if top_n != default_top_n:
-                        print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
+                        debug_print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
                     
                     # Public scope now automatically searches all visible public workspaces
                     search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
                 except Exception as e:
-                    print(f"Error during hybrid search: {e}")
+                    debug_print(f"Error during hybrid search: {e}")
                     # Only treat as error if the exception is from embedding failure
                     return jsonify({
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
@@ -1022,7 +1022,7 @@ def register_route_backend_chats(app):
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
-                        print(f"Error retrieving group name for chat context: {e}")
+                        debug_print(f"Error retrieving group name for chat context: {e}")
                         user_metadata['chat_context']['group_name'] = None
                         import traceback
                         traceback.print_exc()
@@ -1180,7 +1180,7 @@ def register_route_backend_chats(app):
                             user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                             user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                         except Exception as e:
-                            print(f"Warning: Could not retrieve user_info from user message for chunked image: {e}")
+                            debug_print(f"Warning: Could not retrieve user_info from user message for chunked image: {e}")
                         
                         main_image_doc = {
                             'id': image_message_id,
@@ -1259,7 +1259,7 @@ def register_route_backend_chats(app):
                             user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                             user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                         except Exception as e:
-                            print(f"Warning: Could not retrieve user_info from user message for image: {e}")
+                            debug_print(f"Warning: Could not retrieve user_info from user message for image: {e}")
                         
                         image_doc = {
                             'id': image_message_id,
@@ -1351,7 +1351,7 @@ def register_route_backend_chats(app):
 
                 # Summarize older messages if needed and present
                 if enable_summarize_content_history_beyond_conversation_history_limit and older_messages_to_summarize:
-                    print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
+                    debug_print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
                     summary_prompt_older = (
                         "Summarize the following conversation history concisely (around 50-100 words), "
                         "focusing on key facts, decisions, or context that might be relevant for future turns. "
@@ -1369,7 +1369,7 @@ def register_route_backend_chats(app):
                         
                         # Exclude content when active_thread is explicitly False
                         if active_thread is False:
-                            print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
+                            debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
                             continue
                         
                         # Skip roles that shouldn't be in summary (adjust as needed)
@@ -1388,12 +1388,12 @@ def register_route_backend_chats(app):
                                 temperature=0.3 # Lower temp for factual summary
                             )
                             summary_of_older = summary_response_older.choices[0].message.content.strip()
-                            print(f"Generated summary: {summary_of_older}")
+                            debug_print(f"Generated summary: {summary_of_older}")
                         except Exception as e:
-                            print(f"Error summarizing older conversation history: {e}")
+                            debug_print(f"Error summarizing older conversation history: {e}")
                             summary_of_older = "" # Failed, proceed without summary
                     else:
-                        print("No summarizable content found in older messages.")
+                        debug_print("No summarizable content found in older messages.")
 
 
                 # Construct the final history for the API call
@@ -1427,7 +1427,7 @@ def register_route_backend_chats(app):
                         user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                         user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     except Exception as e:
-                        print(f"Warning: Could not retrieve user_info from user message for system message: {e}")
+                        debug_print(f"Warning: Could not retrieve user_info from user message for system message: {e}")
                     
                     system_doc = {
                         'id': system_message_id,
@@ -1479,12 +1479,12 @@ def register_route_backend_chats(app):
                     # Exclude content when active_thread is explicitly False
                     # Include when: active_thread is True, None, or not present (legacy messages)
                     if active_thread is False:
-                        print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
+                        debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
                         continue
                     
                     # Check if message is fully masked - skip it entirely
                     if metadata.get('masked', False):
-                        print(f"[MASK] Skipping fully masked message {message.get('id')}")
+                        debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
                         continue
                     
                     # Check for partially masked content
@@ -1492,7 +1492,7 @@ def register_route_backend_chats(app):
                     if masked_ranges and content:
                         # Remove masked portions from content
                         content = remove_masked_content(content, masked_ranges)
-                        print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
+                        debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
 
                     if role in allowed_roles_in_history:
                         conversation_history_for_api.append({"role": role, "content": content})
@@ -1561,7 +1561,7 @@ def register_route_backend_chats(app):
                             
                             # Verify we're not accidentally including base64 data
                             if 'data:image/' in image_context_content or ';base64,' in image_context_content:
-                                print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
+                                debug_print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
                                 # This should never happen, but safety check just in case
                                 image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
                             
@@ -1584,7 +1584,7 @@ def register_route_backend_chats(app):
 
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
                 if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
-                    print("Warning: Last message in history is not the user's current message. Appending.")
+                    debug_print("Warning: Last message in history is not the user's current message. Appending.")
                     # This might happen if 'recent_messages' somehow didn't include the latest user message saved in step 2
                     # Or if the last message had an ignored role. Find the actual user message:
                     user_msg_found = False
@@ -1597,7 +1597,7 @@ def register_route_backend_chats(app):
                         conversation_history_for_api.append({"role": "user", "content": user_message})
 
             except Exception as e:
-                print(f"Error preparing conversation history: {e}")
+                debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
 
             # ---------------------------------------------------------------------
@@ -1887,7 +1887,7 @@ def register_route_backend_chats(app):
                         notice = None
                         return (msg, "multi-agent-chat", "multi-agent-chat", notice)
                     def orchestrator_error(e):
-                        print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                        debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
                             extra=extra,
@@ -1969,13 +1969,13 @@ def register_route_backend_chats(app):
                             }
                         )
 
-                        # print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
-                        # print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
+                        # debug_print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
+                        # debug_print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
                         # for citation in detailed_citations:
-                        #     print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
-                        #     print(f"  Parameters: {citation['function_arguments']}")
-                        #     print(f"  Result: {citation['function_result']}")
-                        #     print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
+                        #     debug_print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
+                        #     debug_print(f"  Parameters: {citation['function_arguments']}")
+                        #     debug_print(f"  Result: {citation['function_result']}")
+                        #     debug_print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
 
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
@@ -1989,7 +1989,7 @@ def register_route_backend_chats(app):
                             )
                         return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
-                        print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                        debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
                             extra=extra,
@@ -2042,7 +2042,7 @@ def register_route_backend_chats(app):
                         msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
                         return (str(result), "kernel", "kernel", msg)
                     def kernel_error(e):
-                        print(f"Error during kernel invocation: {str(e)}")
+                        debug_print(f"Error during kernel invocation: {str(e)}")
                         log_event(
                             f"Error during kernel invocation: {str(e)}",
                             extra=extra,
@@ -2061,8 +2061,8 @@ def register_route_backend_chats(app):
                     raise Exception('Cannot generate response: No conversation history available.')
                 if conversation_history_for_api[-1].get('role') != 'user':
                     raise Exception('Internal error: Conversation history improperly formed.')
-                print(f"--- Sending to GPT ({gpt_model}) ---")
-                print(f"Total messages in API call: {len(conversation_history_for_api)}")
+                debug_print(f"--- Sending to GPT ({gpt_model}) ---")
+                debug_print(f"Total messages in API call: {len(conversation_history_for_api)}")
                 
                 # Prepare API call parameters
                 api_params = {
@@ -2073,7 +2073,7 @@ def register_route_backend_chats(app):
                 # Add reasoning_effort if provided and not 'none'
                 if reasoning_effort and reasoning_effort != 'none':
                     api_params['reasoning_effort'] = reasoning_effort
-                    print(f"Using reasoning effort: {reasoning_effort}")
+                    debug_print(f"Using reasoning effort: {reasoning_effort}")
                 
                 try:
                     response = gpt_client.chat.completions.create(**api_params)
@@ -2085,7 +2085,7 @@ def register_route_backend_chats(app):
                         'unrecognized request argument' in error_str or
                         'invalid_request_error' in error_str
                     ):
-                        print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                        debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
                         # Retry without reasoning_effort
                         api_params.pop('reasoning_effort', None)
                         response = gpt_client.chat.completions.create(**api_params)
@@ -2126,7 +2126,7 @@ def register_route_backend_chats(app):
             def gpt_success(result):
                 return result
             def gpt_error(e):
-                print(f"Error during final GPT completion: {str(e)}")
+                debug_print(f"Error during final GPT completion: {str(e)}")
                 if "context length" in str(e).lower():
                     return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
@@ -2221,7 +2221,7 @@ def register_route_backend_chats(app):
                 user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                 user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
             except Exception as e:
-                print(f"Warning: Could not retrieve user_info from user message: {e}")
+                debug_print(f"Warning: Could not retrieve user_info from user message: {e}")
             
             # Assistant message should be part of the same thread as the user message
             # Only system/augmentation messages create new threads within a conversation
@@ -2252,11 +2252,11 @@ def register_route_backend_chats(app):
                 } # Used by SK and reasoning effort
             }
             
-            print(f"🔍 Chat API - Creating assistant message with thread_info:")
-            print(f"    thread_id: {user_thread_id}")
-            print(f"    previous_thread_id: {user_previous_thread_id}")
-            print(f"    attempt: {retry_thread_attempt if is_retry else 1}")
-            print(f"    is_retry: {is_retry}")
+            debug_print(f"🔍 Chat API - Creating assistant message with thread_info:")
+            debug_print(f"    thread_id: {user_thread_id}")
+            debug_print(f"    previous_thread_id: {user_previous_thread_id}")
+            debug_print(f"    attempt: {retry_thread_attempt if is_retry else 1}")
+            debug_print(f"    is_retry: {is_retry}")
             
             cosmos_messages_container.upsert_item(assistant_doc)
 
@@ -2274,7 +2274,7 @@ def register_route_backend_chats(app):
                     cosmos_messages_container.upsert_item(user_message_doc)
                     
             except Exception as e:
-                print(f"Warning: Could not update user message metadata: {e}")
+                debug_print(f"Warning: Could not update user message metadata: {e}")
 
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
@@ -2304,7 +2304,7 @@ def register_route_backend_chats(app):
                     conversation_item=conversation_item
                 )
             except Exception as e:
-                print(f"Error collecting conversation metadata: {e}")
+                debug_print(f"Error collecting conversation metadata: {e}")
                 # Continue even if metadata collection fails
             
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
@@ -2337,8 +2337,8 @@ def register_route_backend_chats(app):
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
-            print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
-            print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
+            debug_print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
+            debug_print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
             log_event(
                 f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}",
                 extra={
@@ -2377,6 +2377,8 @@ def register_route_backend_chats(app):
         
         def generate():
             try:
+                # Import debug_print for use in generator
+                from functions_debug import debug_print
                 
                 if not user_id:
                     yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
@@ -2402,17 +2404,41 @@ def register_route_backend_chats(app):
                 user_settings = {}
                 user_enable_agents = False
                 
+                debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, per_user_semantic_kernel={per_user_semantic_kernel}")
+                
+                # Initialize Semantic Kernel if needed
+                redis_client = None
+                if enable_semantic_kernel and per_user_semantic_kernel:
+                    redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
+                    initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
+                    debug_print(f"[DEBUG] Initialized Semantic Kernel for user {user_id}")
+                elif enable_semantic_kernel:
+                    # Global mode: set g.kernel/g.kernel_agents from builtins
+                    g.kernel = getattr(builtins, 'kernel', None)
+                    g.kernel_agents = getattr(builtins, 'kernel_agents', None)
+                    debug_print(f"[DEBUG] Using global Semantic Kernel")
+                
                 if enable_semantic_kernel and per_user_semantic_kernel:
                     try:
-                        user_settings = get_user_settings(user_id)
+                        user_settings_obj = get_user_settings(user_id)
+                        debug_print(f"[DEBUG] user_settings_obj type: {type(user_settings_obj)}")
+                        debug_print(f"[DEBUG] user_settings_obj: {user_settings_obj}")
+                        
+                        # user_settings_obj might be nested with 'settings' key
+                        if isinstance(user_settings_obj, dict):
+                            if 'settings' in user_settings_obj:
+                                user_settings = user_settings_obj['settings']
+                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key: {user_settings}")
+                            else:
+                                user_settings = user_settings_obj
+                                debug_print(f"[DEBUG] Using user_settings_obj directly: {user_settings}")
+                        
                         user_enable_agents = user_settings.get('enable_agents', False)
+                        debug_print(f"[DEBUG] user_enable_agents={user_enable_agents}")
                     except Exception as e:
-                        print(f"Error loading user settings: {e}")
-                
-                # Streaming does not support agents yet
-                if user_enable_agents:
-                    yield f"data: {json.dumps({'error': 'Agents are not supported in streaming mode. Please disable streaming to use agents.'})}\n\n"
-                    return
+                        debug_print(f"Error loading user settings: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Streaming does not support image generation
                 if image_gen_enabled:
@@ -2600,7 +2626,7 @@ def register_route_backend_chats(app):
                                 user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                                 user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
                         except Exception as e:
-                            print(f"Error retrieving document details: {e}")
+                            debug_print(f"Error retrieving document details: {e}")
                     
                     # Add scope-specific details
                     if document_scope == 'group' and active_group_id:
@@ -2619,7 +2645,7 @@ def register_route_backend_chats(app):
                                 user_metadata['workspace_search']['group_name'] = None
                                 
                         except Exception as e:
-                            print(f"Error retrieving group details: {e}")
+                            debug_print(f"Error retrieving group details: {e}")
                             user_metadata['workspace_search']['group_name'] = None
                             import traceback
                             traceback.print_exc()
@@ -2696,7 +2722,7 @@ def register_route_backend_chats(app):
                         chat_context=actual_chat_type
                     )
                 except Exception as e:
-                    print(f"Activity logging error: {e}")
+                    debug_print(f"Activity logging error: {e}")
                 
                 # Update conversation title
                 if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
@@ -2731,7 +2757,7 @@ def register_route_backend_chats(app):
                         
                         search_results = hybrid_search(**search_args)
                     except Exception as e:
-                        print(f"Error during hybrid search: {e}")
+                        debug_print(f"Error during hybrid search: {e}")
                     
                     if search_results:
                         retrieved_texts = []
@@ -2981,60 +3007,297 @@ Assistant: The policy prohibits entities from using federal funds received throu
                             'content': default_system_prompt
                         })
                 
+                # Check if agents are enabled and should be used
+                selected_agent = None
+                agent_name_used = None
+                agent_display_name_used = None
+                use_agent_streaming = False
+                
+                if enable_semantic_kernel and user_enable_agents:
+                    # Agent selection logic (similar to non-streaming)
+                    kernel = get_kernel()
+                    all_agents = get_kernel_agents()
+                    
+                    if all_agents:
+                        agent_name_to_select = None
+                        if per_user_semantic_kernel:
+                            # user_settings.get('selected_agent') returns a dict with agent info
+                            selected_agent_info = user_settings.get('selected_agent')
+                            if isinstance(selected_agent_info, dict):
+                                agent_name_to_select = selected_agent_info.get('name')
+                            elif isinstance(selected_agent_info, str):
+                                agent_name_to_select = selected_agent_info
+                            debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select}")
+                        else:
+                            global_selected_agent_info = settings.get('global_selected_agent')
+                            if global_selected_agent_info:
+                                agent_name_to_select = global_selected_agent_info.get('name')
+                            debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select}")
+                        
+                        # Find the agent
+                        agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
+                        for agent in agent_iter:
+                            agent_obj_name = getattr(agent, 'name', None)
+                            debug_print(f"[Streaming] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
+                            if agent_name_to_select and agent_obj_name == agent_name_to_select:
+                                selected_agent = agent
+                                debug_print(f"[Streaming] ✅ Found matching agent: {agent_obj_name}")
+                                break
+                        
+                        # Fallback to default agent
+                        if not selected_agent:
+                            for agent in agent_iter:
+                                if getattr(agent, 'default_agent', False):
+                                    selected_agent = agent
+                                    debug_print(f"[Streaming] Using default agent: {getattr(agent, 'name', 'unknown')}")
+                                    break
+                        
+                        # Fallback to first agent
+                        if not selected_agent:
+                            selected_agent = next(iter(agent_iter), None)
+                            if selected_agent:
+                                debug_print(f"[Streaming] Using first agent: {getattr(selected_agent, 'name', 'unknown')}")
+                        
+                        if selected_agent:
+                            use_agent_streaming = True
+                            agent_name_used = getattr(selected_agent, 'name', 'agent')
+                            agent_display_name_used = getattr(selected_agent, 'display_name', agent_name_used)
+                            actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
+                            debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
+                        else:
+                            debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+                
                 # Stream the response
                 accumulated_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
                 assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
+                
+                # DEBUG: Check agent streaming decision
+                debug_print(f"[DEBUG] use_agent_streaming={use_agent_streaming}, selected_agent={selected_agent is not None}")
+                debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, user_enable_agents={user_enable_agents}")
                 
                 try:
-                    print(f"--- Streaming from GPT ({gpt_model}) ---")
-                    
-                    # Prepare stream parameters
-                    stream_params = {
-                        'model': gpt_model,
-                        'messages': conversation_history_for_api,
-                        'stream': True,
-                        'stream_options': {'include_usage': True}  # Request token usage in final chunk
-                    }
-                    
-                    # Add reasoning_effort if provided and not 'none'
-                    if reasoning_effort and reasoning_effort != 'none':
-                        stream_params['reasoning_effort'] = reasoning_effort
-                        print(f"Using reasoning effort: {reasoning_effort}")
-                    
-                    try:
-                        stream = gpt_client.chat.completions.create(**stream_params)
-                    except Exception as e:
-                        # Check if error is related to reasoning_effort parameter
-                        error_str = str(e).lower()
-                        if reasoning_effort and reasoning_effort != 'none' and (
-                            'reasoning_effort' in error_str or 
-                            'unrecognized request argument' in error_str or
-                            'invalid_request_error' in error_str
-                        ):
-                            print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
-                            # Retry without reasoning_effort
-                            stream_params.pop('reasoning_effort', None)
-                            stream = gpt_client.chat.completions.create(**stream_params)
-                        else:
-                            raise
-                    
-                    for chunk in stream:
-                        if chunk.choices and len(chunk.choices) > 0:
-                            delta = chunk.choices[0].delta
-                            if delta.content:
-                                accumulated_content += delta.content
-                                yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                    if use_agent_streaming and selected_agent:
+                        # Stream from agent using invoke_stream
+                        debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
                         
-                        # Capture token usage from final chunk with stream_options
-                        if hasattr(chunk, 'usage') and chunk.usage:
-                            token_usage_data = {
-                                'prompt_tokens': chunk.usage.prompt_tokens,
-                                'completion_tokens': chunk.usage.completion_tokens,
-                                'total_tokens': chunk.usage.total_tokens,
-                                'captured_at': datetime.utcnow().isoformat()
+                        # Import required classes
+                        from semantic_kernel.contents.chat_message_content import ChatMessageContent
+                        
+                        # Convert conversation history to ChatMessageContent (same as non-streaming)
+                        agent_message_history = [
+                            ChatMessageContent(
+                                role=msg["role"],
+                                content=msg["content"],
+                                metadata=msg.get("metadata", {})
+                            )
+                            for msg in conversation_history_for_api
+                        ]
+                        
+                        # Stream agent responses - collect chunks first then yield
+                        async def stream_agent_async():
+                            """Collect all streaming chunks from agent"""
+                            chunks = []
+                            usage_data = None
+                            
+                            # invoke_stream doesn't need a thread parameter - it works like invoke but streams
+                            async for response in selected_agent.invoke_stream(messages=agent_message_history):
+                                # Extract content from StreamingChatMessageContent
+                                if hasattr(response, 'content') and response.content:
+                                    chunks.append(str(response.content))
+                                elif isinstance(response, str):
+                                    chunks.append(response)
+                                else:
+                                    # Fallback: convert to string
+                                    chunks.append(str(response))
+                                
+                                # Check for usage metadata in the last response
+                                # Don't break early - keep collecting all chunks
+                                if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
+                                    usage = response.metadata.get('usage')
+                                    if usage:
+                                        usage_data = usage  # Keep updating, last one wins
+                            
+                            return chunks, usage_data
+                        
+                        # Execute async streaming
+                        import asyncio
+                        try:
+                            # Try to get existing event loop
+                            loop = asyncio.get_event_loop()
+                            if loop.is_closed():
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                        except RuntimeError:
+                            # No event loop in current thread
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        try:
+                            # Run streaming and collect chunks and usage
+                            chunks, stream_usage = loop.run_until_complete(stream_agent_async())
+                            
+                            # Yield chunks to frontend
+                            for chunk_content in chunks:
+                                accumulated_content += chunk_content
+                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                            
+                            # Try to capture token usage from stream metadata
+                            if stream_usage:
+                                # stream_usage is a CompletionUsage object, not a dict
+                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                                total_tokens = getattr(stream_usage, 'total_tokens', None)
+                                
+                                # Calculate total if not provided
+                                if total_tokens is None or total_tokens == 0:
+                                    total_tokens = prompt_tokens + completion_tokens
+                                
+                                token_usage_data = {
+                                    'prompt_tokens': prompt_tokens,
+                                    'completion_tokens': completion_tokens,
+                                    'total_tokens': total_tokens,
+                                    'captured_at': datetime.utcnow().isoformat()
+                                }
+                                debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                        except Exception as stream_error:
+                            debug_print(f"❌ Agent streaming error: {stream_error}")
+                            import traceback
+                            traceback.print_exc()
+                            yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
+                            return
+                        
+                        # Collect token usage from kernel services if not captured from stream
+                        if not token_usage_data:
+                            kernel = get_kernel()
+                            if kernel:
+                                try:
+                                    for service in getattr(kernel, "services", {}).values():
+                                        prompt_tokens = getattr(service, "prompt_tokens", None)
+                                        completion_tokens = getattr(service, "completion_tokens", None)
+                                        total_tokens = getattr(service, "total_tokens", None)
+                                        
+                                        if prompt_tokens is not None or completion_tokens is not None:
+                                            token_usage_data = {
+                                                'prompt_tokens': prompt_tokens or 0,
+                                                'completion_tokens': completion_tokens or 0,
+                                                'total_tokens': total_tokens or (prompt_tokens or 0) + (completion_tokens or 0),
+                                                'captured_at': datetime.utcnow().isoformat()
+                                            }
+                                            debug_print(f"[Agent Streaming Tokens] From kernel service - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                                            break
+                                except Exception as e:
+                                    debug_print(f"Warning: Could not collect token usage from kernel services: {e}")
+                        
+                        # Capture agent citations after streaming completes
+                        # Plugin invocations should have been logged during agent execution
+                        plugin_logger = get_plugin_logger()
+                        
+                        # Debug: Check all invocations first
+                        all_invocations = plugin_logger.get_recent_invocations()
+                        debug_print(f"[Agent Streaming] Total plugin invocations logged: {len(all_invocations)}")
+                        
+                        plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+                        debug_print(f"[Agent Streaming] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
+                        
+                        # If no invocations found, check if plugins were called at all
+                        if len(plugin_invocations) == 0 and len(all_invocations) > 0:
+                            debug_print(f"[Agent Streaming] ⚠️ Plugin invocations exist but not for this conversation - possible filtering issue")
+                            # Debug: show last few invocations
+                            for inv in all_invocations[-3:]:
+                                debug_print(f"[Agent Streaming] Recent invocation: user={inv.user_id}, conv={inv.conversation_id}, plugin={inv.plugin_name}.{inv.function_name}")
+                        
+                        # Convert to citation format
+                        for inv in plugin_invocations:
+                            timestamp_str = None
+                            if inv.timestamp:
+                                if hasattr(inv.timestamp, 'isoformat'):
+                                    timestamp_str = inv.timestamp.isoformat()
+                                else:
+                                    timestamp_str = str(inv.timestamp)
+                            
+                            def make_json_serializable(obj):
+                                if obj is None:
+                                    return None
+                                elif isinstance(obj, (str, int, float, bool)):
+                                    return obj
+                                elif isinstance(obj, dict):
+                                    return {str(k): make_json_serializable(v) for k, v in obj.items()}
+                                elif isinstance(obj, (list, tuple)):
+                                    return [make_json_serializable(item) for item in obj]
+                                else:
+                                    return str(obj)
+                            
+                            citation = {
+                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'function_name': inv.function_name,
+                                'plugin_name': inv.plugin_name,
+                                'function_arguments': make_json_serializable(inv.parameters),
+                                'function_result': make_json_serializable(inv.result),
+                                'duration_ms': inv.duration_ms,
+                                'timestamp': timestamp_str,
+                                'success': inv.success,
+                                'error_message': make_json_serializable(inv.error_message),
+                                'user_id': inv.user_id
                             }
-                            print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+                            agent_citations_list.append(citation)
+                        
+                        debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
+                        final_model_used = actual_model_used
+                    
+                    else:
+                        # Stream from regular GPT model (non-agent)
+                        debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
+                        
+                        # Prepare stream parameters
+                        stream_params = {
+                            'model': gpt_model,
+                            'messages': conversation_history_for_api,
+                            'stream': True,
+                            'stream_options': {'include_usage': True}  # Request token usage in final chunk
+                        }
+                        
+                        # Add reasoning_effort if provided and not 'none'
+                        if reasoning_effort and reasoning_effort != 'none':
+                            stream_params['reasoning_effort'] = reasoning_effort
+                            debug_print(f"Using reasoning effort: {reasoning_effort}")
+                        
+                        final_model_used = gpt_model
+                        
+                        try:
+                            stream = gpt_client.chat.completions.create(**stream_params)
+                        except Exception as e:
+                            # Check if error is related to reasoning_effort parameter
+                            error_str = str(e).lower()
+                            if reasoning_effort and reasoning_effort != 'none' and (
+                                'reasoning_effort' in error_str or 
+                                'unrecognized request argument' in error_str or
+                                'invalid_request_error' in error_str
+                            ):
+                                debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                                # Retry without reasoning_effort
+                                stream_params.pop('reasoning_effort', None)
+                                stream = gpt_client.chat.completions.create(**stream_params)
+                            else:
+                                raise
+                        
+                        for chunk in stream:
+                            if chunk.choices and len(chunk.choices) > 0:
+                                delta = chunk.choices[0].delta
+                                if delta.content:
+                                    accumulated_content += delta.content
+                                    yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                            
+                            # Capture token usage from final chunk with stream_options
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                token_usage_data = {
+                                    'prompt_tokens': chunk.usage.prompt_tokens,
+                                    'completion_tokens': chunk.usage.completion_tokens,
+                                    'total_tokens': chunk.usage.total_tokens,
+                                    'captured_at': datetime.utcnow().isoformat()
+                                }
+                                debug_print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
                     
                     # Stream complete - save message and send final metadata
                     # Get user thread info to maintain thread consistency
@@ -3048,7 +3311,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
                         user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     except Exception as e:
-                        print(f"Warning: Could not retrieve thread_id from user message: {e}")
+                        debug_print(f"Warning: Could not retrieve thread_id from user message: {e}")
                     
                     assistant_doc = {
                         'id': assistant_message_id,
@@ -3061,9 +3324,9 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                         'agent_citations': agent_citations_list,
                         'user_message': user_message,
-                        'model_deployment_name': gpt_model,
-                        'agent_display_name': None,
-                        'agent_name': None,
+                        'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                        'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                        'agent_name': agent_name_used if use_agent_streaming else None,
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'thread_info': {
@@ -3098,7 +3361,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
                             conversation_item=conversation_item
                         )
                     except Exception as e:
-                        print(f"Error collecting conversation metadata: {e}")
+                        debug_print(f"Error collecting conversation metadata: {e}")
                     
                     cosmos_conversations_container.upsert_item(conversation_item)
                     
@@ -3108,19 +3371,21 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         'conversation_id': conversation_id,
                         'conversation_title': conversation_item['title'],
                         'classification': conversation_item.get('classification', []),
-                        'model_deployment_name': gpt_model,
+                        'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'message_id': assistant_message_id,
                         'user_message_id': user_message_id,
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'agent_citations': agent_citations_list,
+                        'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                        'agent_name': agent_name_used if use_agent_streaming else None,
                         'full_content': accumulated_content
                     }
                     yield f"data: {json.dumps(final_data)}\n\n"
                     
                 except Exception as e:
                     error_msg = str(e)
-                    print(f"Error during streaming: {error_msg}")
+                    debug_print(f"Error during streaming: {error_msg}")
                     
                     # Save partial response if we have content
                     if accumulated_content:
@@ -3137,9 +3402,9 @@ Assistant: The policy prohibits entities from using federal funds received throu
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': agent_citations_list,
                             'user_message': user_message,
-                            'model_deployment_name': gpt_model,
-                            'agent_display_name': None,
-                            'agent_name': None,
+                            'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                            'agent_name': agent_name_used if use_agent_streaming else None,
                             'metadata': {
                                 'incomplete': True,
                                 'error': error_msg,
@@ -3162,8 +3427,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
             except Exception as e:
                 import traceback
                 error_traceback = traceback.format_exc()
-                print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
-                print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
+                debug_print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
+                debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
         
         return Response(
@@ -3242,7 +3507,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     return jsonify({'error': 'You can only mask your own messages'}), 403
                 
             except Exception as e:
-                print(f"Error fetching message {message_id}: {str(e)}")
+                debug_print(f"Error fetching message {message_id}: {str(e)}")
                 return jsonify({'error': f'Error fetching message: {str(e)}'}), 500
             
             # Initialize metadata if it doesn't exist
@@ -3301,7 +3566,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
             try:
                 cosmos_messages_container.upsert_item(message_doc)
             except Exception as e:
-                print(f"Error updating message {message_id}: {str(e)}")
+                debug_print(f"Error updating message {message_id}: {str(e)}")
                 return jsonify({'error': f'Error updating message: {str(e)}'}), 500
             
             return jsonify({
@@ -3314,8 +3579,8 @@ Assistant: The policy prohibits entities from using federal funds received throu
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
-            print(f"[MASK API ERROR] Unhandled exception: {str(e)}")
-            print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
+            debug_print(f"[MASK API ERROR] Unhandled exception: {str(e)}")
+            debug_print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
             return jsonify({
                 'error': f'Internal server error: {str(e)}',
                 'details': error_traceback if app.debug else None
