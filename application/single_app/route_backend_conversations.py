@@ -322,6 +322,10 @@ def register_route_backend_conversations(app):
             title='New Conversation',
             workspace_type='personal'
         )
+        
+        # Mark as logged to activity logs to prevent duplicate migration
+        conversation_item['added_to_activity_log'] = True
+        cosmos_conversations_container.upsert_item(conversation_item)
 
         return jsonify({
             'conversation_id': conversation_id,

@@ -5152,6 +5152,29 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                         'page_count': total_chunks_saved
                     }
                 )
+            
+            # Mark document as logged to activity logs to prevent duplicate migration
+            try:
+                # All document containers use /id as partition key
+                if public_workspace_id:
+                    doc_container = cosmos_public_documents_container
+                elif group_id:
+                    doc_container = cosmos_group_documents_container
+                else:
+                    doc_container = cosmos_user_documents_container
+                
+                # All document containers use document_id (/id) as partition key
+                partition_key = document_id
+                
+                # Read, update, and upsert the document with the flag
+                doc_record = doc_container.read_item(item=document_id, partition_key=partition_key)
+                doc_record['added_to_activity_log'] = True
+                doc_container.upsert_item(doc_record)
+                print(f"✅ Set added_to_activity_log flag for document {document_id}")
+                
+            except Exception as flag_error:
+                print(f"⚠️  Warning: Failed to set added_to_activity_log flag: {flag_error}")
+                # Don't fail if flag setting fails
                 
         except Exception as log_error:
             print(f"⚠️  Warning: Failed to log document creation transaction: {log_error}")

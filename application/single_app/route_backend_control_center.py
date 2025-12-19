@@ -1087,94 +1087,98 @@ def get_activity_trends_data(start_date, end_date):
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying conversations...")
             
-            # Count conversations updated in date range (using last_updated field)
+            # Count conversations using activity_logs container (conversation_creation activity_type)
+            # This uses permanent activity log records instead of querying the conversations container
             conversations_query = """
-                SELECT c.last_updated
+                SELECT c.timestamp, c.created_at
                 FROM c 
-                WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
+                WHERE c.activity_type = 'conversation_creation'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Process conversations
-            conversations = list(cosmos_conversations_container.query_items(
+            # Process conversations from activity logs
+            conversations = list(cosmos_activity_logs_container.query_items(
                 query=conversations_query,
                 parameters=parameters,
                 enable_cross_partition_query=True
             ))
             
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversations")
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversation creation logs")
             
             for conv in conversations:
-                last_updated = conv.get('last_updated')
-                if last_updated:
+                # Use timestamp or created_at from activity log
+                timestamp = conv.get('timestamp') or conv.get('created_at')
+                if timestamp:
                     try:
-                        if isinstance(last_updated, str):
-                            conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00') if 'Z' in last_updated else last_updated)
+                        if isinstance(timestamp, str):
+                            conv_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
                         else:
-                            conv_date = last_updated
+                            conv_date = timestamp
                         
                         date_key = conv_date.strftime('%Y-%m-%d')
                         if date_key in daily_data:
                             daily_data[date_key]['chats'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse conversation timestamp {last_updated}: {e}")
-            
-            # Note: Only using conversations.last_updated for chat activity tracking
-            # as requested - not using individual message timestamps
+                        current_app.logger.debug(f"Could not parse conversation timestamp {timestamp}: {e}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query conversation/message data: {e}")
+            current_app.logger.warning(f"Could not query conversation activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
 
-        # Query 2: Get document activity - separate personal and group documents
+        # Query 2: Get document activity from activity_logs container (document_creation activity_type)
+        # This uses permanent activity log records and unified workspace tracking
         try:
-            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents...")
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents from activity logs...")
             
             documents_query = """
-                SELECT c.upload_date
+                SELECT c.timestamp, c.created_at, c.workspace_type
                 FROM c 
-                WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
+                WHERE c.activity_type = 'document_creation'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Query document containers separately to track personal vs group vs public
-            containers = [
-                ('user_documents', cosmos_user_documents_container, 'personal_documents'),
-                ('group_documents', cosmos_group_documents_container, 'group_documents'), 
-                ('public_documents', cosmos_public_documents_container, 'public_documents')  # Track public separately
-            ]
+            # Query activity logs for all document types
+            docs = list(cosmos_activity_logs_container.query_items(
+                query=documents_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
             
-            total_docs = 0
-            for container_name, container, doc_type in containers:
-                docs = list(container.query_items(
-                    query=documents_query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True
-                ))
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} document creation logs")
+            
+            for doc in docs:
+                # Use timestamp or created_at from activity log
+                timestamp = doc.get('timestamp') or doc.get('created_at')
+                workspace_type = doc.get('workspace_type', 'personal')
                 
-                debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} documents in {container_name} (type: {doc_type})")
-                total_docs += len(docs)
-                
-                for doc in docs:
-                    # Use upload_date field as specified
-                    upload_date = doc.get('upload_date')
-                    
-                    if upload_date:
-                        try:
-                            if isinstance(upload_date, str):
-                                doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            doc_date = timestamp
+                        
+                        date_key = doc_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            # Increment workspace-specific counter
+                            if workspace_type == 'group':
+                                daily_data[date_key]['group_documents'] += 1
+                            elif workspace_type == 'public':
+                                daily_data[date_key]['public_documents'] += 1
                             else:
-                                doc_date = upload_date
+                                daily_data[date_key]['personal_documents'] += 1
                             
-                            date_key = doc_date.strftime('%Y-%m-%d')
-                            if date_key in daily_data:
-                                daily_data[date_key][doc_type] += 1  # Increment specific document type
-                                daily_data[date_key]['documents'] += 1  # Keep total for backward compatibility
-                        except Exception as e:
-                            current_app.logger.debug(f"Could not parse document upload_date {upload_date}: {e}")
+                            # Keep total for backward compatibility
+                            daily_data[date_key]['documents'] += 1
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse document timestamp {timestamp}: {e}")
             
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {total_docs}")
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query document data: {e}")
+            current_app.logger.warning(f"Could not query document activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying documents: {e}")
 
         # Query 3: Get login activity from activity_logs container
@@ -1235,6 +1239,68 @@ def get_activity_trends_data(start_date, end_date):
             current_app.logger.warning(f"Could not query activity logs for login data: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying logins: {e}")
 
+        # Query 4: Get token usage from activity_logs (token_usage activity_type)
+        try:
+            debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying token usage...")
+            
+            token_usage_query = """
+                SELECT c.timestamp, c.created_at, c.token_type, c.usage.total_tokens as token_count
+                FROM c
+                WHERE c.activity_type = 'token_usage'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            token_activities = list(cosmos_activity_logs_container.query_items(
+                query=token_usage_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(token_activities)} token_usage records")
+            
+            # Initialize token tracking structure
+            token_daily_data = {}
+            current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            while current_date <= end_date:
+                date_key = current_date.strftime('%Y-%m-%d')
+                token_daily_data[date_key] = {
+                    'embedding': 0,
+                    'chat': 0
+                }
+                current_date += timedelta(days=1)
+            
+            for token_record in token_activities:
+                timestamp = token_record.get('timestamp') or token_record.get('created_at')
+                token_type = token_record.get('token_type', '')
+                token_count = token_record.get('token_count', 0)
+                
+                if timestamp and token_type in ['embedding', 'chat']:
+                    try:
+                        if isinstance(timestamp, str):
+                            token_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            token_date = timestamp
+                        
+                        date_key = token_date.strftime('%Y-%m-%d')
+                        if date_key in token_daily_data:
+                            token_daily_data[date_key][token_type] += token_count
+                    except Exception as e:
+                        current_app.logger.debug(f"Could not parse token timestamp {timestamp}: {e}")
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Token daily data: {token_daily_data}")
+                        
+        except Exception as e:
+            current_app.logger.warning(f"Could not query activity logs for token usage: {e}")
+            print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying tokens: {e}")
+            # Initialize empty token data on error
+            token_daily_data = {}
+            current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            while current_date <= end_date:
+                date_key = current_date.strftime('%Y-%m-%d')
+                token_daily_data[date_key] = {'embedding': 0, 'chat': 0}
+                current_date += timedelta(days=1)
+
         # Calculate totals for each day
         for date_key in daily_data:
             daily_data[date_key]['total'] = (
@@ -1250,7 +1316,8 @@ def get_activity_trends_data(start_date, end_date):
             'personal_documents': {},  # New: personal documents only
             'group_documents': {},     # New: group documents only
             'public_documents': {},    # New: public documents only
-            'logins': {}
+            'logins': {},
+            'tokens': token_daily_data  # Token usage by type (embedding, chat)
         }
         
         for date_key, data in daily_data.items():
@@ -1274,7 +1341,8 @@ def get_activity_trends_data(start_date, end_date):
             'personal_documents': {},
             'group_documents': {},
             'public_documents': {},
-            'logins': {}
+            'logins': {},
+            'tokens': {}
         }
 
 def get_raw_activity_trends_data(start_date, end_date, charts):
@@ -1492,72 +1560,66 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                 debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting login data: {e}")
                 result['logins'] = []
         
-        # 2. Document Data - Handle personal and group documents separately
-        documents_query = """
-            SELECT c.id, c.user_id, c.file_name, c.title, c.number_of_pages, 
-                   c.num_chunks, c.upload_date, c.last_updated, c.status,
-                   c.document_id, c.document_classification
-            FROM c 
-            WHERE c.upload_date >= @start_date AND c.upload_date <= @end_date
-        """
-        
-        # Personal Documents (user_documents only)
+        # 2. Document Data - From activity_logs container using document_creation activity_type
+        # Personal Documents
         if 'personal_documents' in charts:
-            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting personal document records...")
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting personal document records from activity logs...")
             try:
-                personal_containers = [
-                    ('user_documents', cosmos_user_documents_container)
-                ]
+                personal_docs_query = """
+                    SELECT c.timestamp, c.created_at, c.user_id, c.document.document_id,
+                           c.document.file_name, c.document.file_type, c.document.file_size_bytes,
+                           c.document.page_count, c.document_metadata, c.embedding_usage
+                    FROM c 
+                    WHERE c.activity_type = 'document_creation'
+                    AND c.workspace_type = 'personal'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                """
+                
+                personal_docs = list(cosmos_activity_logs_container.query_items(
+                    query=personal_docs_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
                 
                 personal_document_records = []
-                for container_name, container in personal_containers:
-                    docs = list(container.query_items(
-                        query=documents_query,
-                        parameters=parameters,
-                        enable_cross_partition_query=True
-                    ))
+                for doc in personal_docs:
+                    user_id = doc.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    timestamp = doc.get('timestamp') or doc.get('created_at')
                     
-                    for doc in docs:
-                        user_id = doc.get('user_id', '')
-                        user_info = get_user_info(user_id)
-                        upload_date = doc.get('upload_date')
-                        
-                        if upload_date:
-                            try:
-                                if isinstance(upload_date, str):
-                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
-                                else:
-                                    doc_date = upload_date
-                                
-                                # Get AI Search size (with caching)
-                                ai_search_size = get_ai_search_size(doc, container)
-                                pages = doc.get('number_of_pages', 0) or 0
-                                
-                                # Get actual storage size from Azure Storage (with caching)
-                                document_id = doc.get('document_id', '') or doc.get('id', '')
-                                storage_size = get_document_storage_size(
-                                    doc,
-                                    container,
-                                    storage_account_user_documents_container_name,
-                                    user_id,
-                                    document_id
-                                )
-                                
-                                personal_document_records.append({
-                                    'display_name': user_info['display_name'],
-                                    'email': user_info['email'],
-                                    'user_id': user_id,
-                                    'document_id': document_id,
-                                    'filename': doc.get('file_name', ''),
-                                    'title': doc.get('title', 'Unknown Title'),
-                                    'page_count': pages,
-                                    'ai_search_size': ai_search_size,
-                                    'storage_account_size': storage_size,
-                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'document_type': 'Personal'
-                                })
-                            except Exception as e:
-                                debug_print(f"Could not parse personal document upload_date {upload_date}: {e}")
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                            else:
+                                doc_date = timestamp
+                            
+                            document_info = doc.get('document', {})
+                            doc_metadata = doc.get('document_metadata', {})
+                            pages = document_info.get('page_count', 0) or 0
+                            
+                            # Calculate AI Search size (pages × 80KB)
+                            ai_search_size = pages * 80 * 1024 if pages else 0
+                            
+                            # Get file size from activity log
+                            storage_size = document_info.get('file_size_bytes', 0) or 0
+                            
+                            personal_document_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'document_id': document_info.get('document_id', ''),
+                                'filename': document_info.get('file_name', ''),
+                                'title': doc_metadata.get('title', 'Unknown Title'),
+                                'page_count': pages,
+                                'ai_search_size': ai_search_size,
+                                'storage_account_size': storage_size,
+                                'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                'document_type': 'Personal'
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse personal document timestamp {timestamp}: {e}")
                 
                 result['personal_documents'] = personal_document_records
                 debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(personal_document_records)} personal document records")
@@ -1568,62 +1630,64 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         
         # Group Documents
         if 'group_documents' in charts:
-            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting group document records...")
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting group document records from activity logs...")
             try:
-                group_containers = [
-                    ('group_documents', cosmos_group_documents_container)
-                ]
+                group_docs_query = """
+                    SELECT c.timestamp, c.created_at, c.user_id, c.document.document_id,
+                           c.document.file_name, c.document.file_type, c.document.file_size_bytes,
+                           c.document.page_count, c.document_metadata, c.embedding_usage,
+                           c.workspace_context.group_id
+                    FROM c 
+                    WHERE c.activity_type = 'document_creation'
+                    AND c.workspace_type = 'group'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                """
+                
+                group_docs = list(cosmos_activity_logs_container.query_items(
+                    query=group_docs_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
                 
                 group_document_records = []
-                for container_name, container in group_containers:
-                    docs = list(container.query_items(
-                        query=documents_query,
-                        parameters=parameters,
-                        enable_cross_partition_query=True
-                    ))
+                for doc in group_docs:
+                    user_id = doc.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    timestamp = doc.get('timestamp') or doc.get('created_at')
                     
-                    for doc in docs:
-                        user_id = doc.get('user_id', '')
-                        user_info = get_user_info(user_id)
-                        upload_date = doc.get('upload_date')
-                        
-                        if upload_date:
-                            try:
-                                if isinstance(upload_date, str):
-                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
-                                else:
-                                    doc_date = upload_date
-                                
-                                # Get AI Search size (with caching)
-                                ai_search_size = get_ai_search_size(doc, container)
-                                pages = doc.get('number_of_pages', 0) or 0
-                                
-                                # Get actual storage size from Azure Storage (with caching)
-                                document_id = doc.get('document_id', '') or doc.get('id', '')
-                                group_id = doc.get('group_workspace_id', '')
-                                storage_size = get_document_storage_size(
-                                    doc,
-                                    container,
-                                    storage_account_group_documents_container_name,
-                                    group_id,
-                                    document_id
-                                )
-                                
-                                group_document_records.append({
-                                    'display_name': user_info['display_name'],
-                                    'email': user_info['email'],
-                                    'user_id': user_id,
-                                    'document_id': document_id,
-                                    'filename': doc.get('file_name', ''),
-                                    'title': doc.get('title', 'Unknown Title'),
-                                    'page_count': pages,
-                                    'ai_search_size': ai_search_size,
-                                    'storage_account_size': storage_size,
-                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'document_type': 'Group'
-                                })
-                            except Exception as e:
-                                debug_print(f"Could not parse group document upload_date {upload_date}: {e}")
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                            else:
+                                doc_date = timestamp
+                            
+                            document_info = doc.get('document', {})
+                            doc_metadata = doc.get('document_metadata', {})
+                            pages = document_info.get('page_count', 0) or 0
+                            
+                            # Calculate AI Search size (pages × 80KB)
+                            ai_search_size = pages * 80 * 1024 if pages else 0
+                            
+                            # Get file size from activity log
+                            storage_size = document_info.get('file_size_bytes', 0) or 0
+                            
+                            group_document_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'document_id': document_info.get('document_id', ''),
+                                'filename': document_info.get('file_name', ''),
+                                'title': doc_metadata.get('title', 'Unknown Title'),
+                                'page_count': pages,
+                                'ai_search_size': ai_search_size,
+                                'storage_account_size': storage_size,
+                                'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                'document_type': 'Group'
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse group document timestamp {timestamp}: {e}")
                 
                 result['group_documents'] = group_document_records
                 debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(group_document_records)} group document records")
@@ -1634,62 +1698,64 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         
         # Public Documents
         if 'public_documents' in charts:
-            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting public document records...")
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting public document records from activity logs...")
             try:
-                public_containers = [
-                    ('public_documents', cosmos_public_documents_container)
-                ]
+                public_docs_query = """
+                    SELECT c.timestamp, c.created_at, c.user_id, c.document.document_id,
+                           c.document.file_name, c.document.file_type, c.document.file_size_bytes,
+                           c.document.page_count, c.document_metadata, c.embedding_usage,
+                           c.workspace_context.public_workspace_id
+                    FROM c 
+                    WHERE c.activity_type = 'document_creation'
+                    AND c.workspace_type = 'public'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                """
+                
+                public_docs = list(cosmos_activity_logs_container.query_items(
+                    query=public_docs_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
                 
                 public_document_records = []
-                for container_name, container in public_containers:
-                    docs = list(container.query_items(
-                        query=documents_query,
-                        parameters=parameters,
-                        enable_cross_partition_query=True
-                    ))
+                for doc in public_docs:
+                    user_id = doc.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    timestamp = doc.get('timestamp') or doc.get('created_at')
                     
-                    for doc in docs:
-                        user_id = doc.get('user_id', '')
-                        user_info = get_user_info(user_id)
-                        upload_date = doc.get('upload_date')
-                        
-                        if upload_date:
-                            try:
-                                if isinstance(upload_date, str):
-                                    doc_date = datetime.fromisoformat(upload_date.replace('Z', '+00:00') if 'Z' in upload_date else upload_date)
-                                else:
-                                    doc_date = upload_date
-                                
-                                # Get AI Search size (with caching)
-                                ai_search_size = get_ai_search_size(doc, container)
-                                pages = doc.get('number_of_pages', 0) or 0
-                                
-                                # Get actual storage size from Azure Storage (with caching)
-                                document_id = doc.get('document_id', '') or doc.get('id', '')
-                                public_workspace_id = doc.get('public_workspace_id', '')
-                                storage_size = get_document_storage_size(
-                                    doc,
-                                    container,
-                                    storage_account_public_documents_container_name,
-                                    public_workspace_id,
-                                    document_id
-                                )
-                                
-                                public_document_records.append({
-                                    'display_name': user_info['display_name'],
-                                    'email': user_info['email'],
-                                    'user_id': user_id,
-                                    'document_id': document_id,
-                                    'filename': doc.get('file_name', ''),
-                                    'title': doc.get('title', 'Unknown Title'),
-                                    'page_count': pages,
-                                    'ai_search_size': ai_search_size,
-                                    'storage_account_size': storage_size,
-                                    'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'document_type': 'Public'
-                                })
-                            except Exception as e:
-                                debug_print(f"Could not parse public document upload_date {upload_date}: {e}")
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                            else:
+                                doc_date = timestamp
+                            
+                            document_info = doc.get('document', {})
+                            doc_metadata = doc.get('document_metadata', {})
+                            pages = document_info.get('page_count', 0) or 0
+                            
+                            # Calculate AI Search size (pages × 80KB)
+                            ai_search_size = pages * 80 * 1024 if pages else 0
+                            
+                            # Get file size from activity log
+                            storage_size = document_info.get('file_size_bytes', 0) or 0
+                            
+                            public_document_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'document_id': document_info.get('document_id', ''),
+                                'filename': document_info.get('file_name', ''),
+                                'title': doc_metadata.get('title', 'Unknown Title'),
+                                'page_count': pages,
+                                'ai_search_size': ai_search_size,
+                                'storage_account_size': storage_size,
+                                'upload_date': doc_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                'document_type': 'Public'
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse public document timestamp {timestamp}: {e}")
                 
                 result['public_documents'] = public_document_records
                 debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(public_document_records)} public document records")
@@ -1711,17 +1777,21 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
             result['documents'] = combined_records
             debug_print(f"🔍 [RAW ACTIVITY DEBUG] Combined {len(combined_records)} total document records")
         
-        # 3. Chat Data
+        # 3. Chat Data - From activity_logs container using conversation_creation activity_type
         if 'chats' in charts:
-            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting chat records...")
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting chat records from activity logs...")
             try:
                 conversations_query = """
-                    SELECT c.id, c.user_id, c.title, c.last_updated, c.created_at
+                    SELECT c.timestamp, c.created_at, c.user_id, 
+                           c.conversation.conversation_id as conversation_id, 
+                           c.conversation.title as conversation_title
                     FROM c 
-                    WHERE c.last_updated >= @start_date AND c.last_updated <= @end_date
+                    WHERE c.activity_type = 'conversation_creation'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
                 """
                 
-                conversations = list(cosmos_conversations_container.query_items(
+                conversations = list(cosmos_activity_logs_container.query_items(
                     query=conversations_query,
                     parameters=parameters,
                     enable_cross_partition_query=True
@@ -1731,11 +1801,11 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                 for conv in conversations:
                     user_id = conv.get('user_id', '')
                     user_info = get_user_info(user_id)
-                    conversation_id = conv.get('id', '')
-                    last_updated = conv.get('last_updated')
-                    created_at = conv.get('created_at')
+                    conversation_id = conv.get('conversation_id', '')
+                    conversation_title = conv.get('conversation_title', '')
+                    timestamp = conv.get('timestamp') or conv.get('created_at')
                     
-                    # Get message count and total size for this conversation
+                    # Get message count and total size for this conversation (still from messages container)
                     try:
                         messages_query = """
                             SELECT VALUE COUNT(1)
@@ -1770,37 +1840,27 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
                         message_count = 0
                         total_size = 0
                     
-                    if last_updated:
+                    if timestamp:
                         try:
-                            if isinstance(last_updated, str):
-                                conv_date = datetime.fromisoformat(last_updated.replace('Z', '+00:00') if 'Z' in last_updated else last_updated)
+                            if isinstance(timestamp, str):
+                                conv_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
                             else:
-                                conv_date = last_updated
+                                conv_date = timestamp
                             
-                            # Process created_at date
-                            created_date_str = ''
-                            if created_at:
-                                try:
-                                    if isinstance(created_at, str):
-                                        created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00') if 'Z' in created_at else created_at)
-                                    else:
-                                        created_date = created_at
-                                    created_date_str = created_date.strftime('%Y-%m-%d %H:%M:%S')
-                                except Exception as e:
-                                    debug_print(f"Could not parse conversation created_at {created_at}: {e}")
+                            created_date_str = conv_date.strftime('%Y-%m-%d %H:%M:%S')
                             
                             chat_records.append({
                                 'display_name': user_info['display_name'],
                                 'email': user_info['email'],
                                 'user_id': user_id,
                                 'chat_id': conversation_id,
-                                'chat_title': conv.get('title', ''),
+                                'chat_title': conversation_title,
                                 'message_count': message_count,
                                 'total_size': total_size,
                                 'created_date': created_date_str
                             })
                         except Exception as e:
-                            debug_print(f"Could not parse conversation last_updated {last_updated}: {e}")
+                            debug_print(f"Could not parse conversation timestamp {timestamp}: {e}")
                 
                 result['chats'] = chat_records
                 debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(chat_records)} chat records")
@@ -1808,6 +1868,67 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
             except Exception as e:
                 debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting chat data: {e}")
                 result['chats'] = []
+        
+        # 4. Token Usage Data - From activity_logs container using token_usage activity_type
+        if 'tokens' in charts:
+            debug_print("🔍 [RAW ACTIVITY DEBUG] Getting token usage records from activity logs...")
+            try:
+                tokens_query = """
+                    SELECT c.timestamp, c.created_at, c.user_id, c.token_type,
+                           c.usage.model as model_name,
+                           c.usage.prompt_tokens as prompt_tokens, 
+                           c.usage.completion_tokens as completion_tokens, 
+                           c.usage.total_tokens as total_tokens
+                    FROM c 
+                    WHERE c.activity_type = 'token_usage'
+                    AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                       OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+                """
+                
+                token_activities = list(cosmos_activity_logs_container.query_items(
+                    query=tokens_query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                token_records = []
+                for token_log in token_activities:
+                    user_id = token_log.get('user_id', '')
+                    user_info = get_user_info(user_id)
+                    timestamp = token_log.get('timestamp') or token_log.get('created_at')
+                    token_type = token_log.get('token_type', 'unknown')
+                    
+                    if timestamp:
+                        try:
+                            if isinstance(timestamp, str):
+                                token_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                            else:
+                                token_date = timestamp
+                            
+                            # Handle both chat and embedding tokens
+                            prompt_tokens = token_log.get('prompt_tokens', 0) if token_type == 'chat' else 0
+                            completion_tokens = token_log.get('completion_tokens', 0) if token_type == 'chat' else 0
+                            
+                            token_records.append({
+                                'display_name': user_info['display_name'],
+                                'email': user_info['email'],
+                                'user_id': user_id,
+                                'token_type': token_type,
+                                'model_name': token_log.get('model_name', 'Unknown'),
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': token_log.get('total_tokens', 0),
+                                'timestamp': token_date.strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                        except Exception as e:
+                            debug_print(f"Could not parse token timestamp {timestamp}: {e}")
+                
+                result['tokens'] = token_records
+                debug_print(f"🔍 [RAW ACTIVITY DEBUG] Found {len(token_records)} token usage records")
+                
+            except Exception as e:
+                debug_print(f"❌ [RAW ACTIVITY DEBUG] Error getting token usage data: {e}")
+                result['tokens'] = []
         
         debug_print(f"🔍 [RAW ACTIVITY DEBUG] Returning raw data with {len(result)} chart types")
         return result
@@ -2681,6 +2802,31 @@ def register_route_backend_control_center(app):
                                 record.get('created_date', '')
                             ])
                         debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} chat records")
+                    
+                    elif chart_type == 'tokens':
+                        debug_print(f"🔍 [CSV DEBUG] Writing token usage headers for {chart_type}")
+                        writer.writerow([
+                            'Display Name', 'Email', 'User ID', 'Token Type', 'Model Name', 
+                            'Prompt Tokens', 'Completion Tokens', 'Total Tokens', 'Timestamp'
+                        ])
+                        record_count = 0
+                        for record in raw_data[chart_type]:
+                            record_count += 1
+                            if record_count <= 3:  # Debug first 3 records
+                                debug_print(f"🔍 [CSV DEBUG] Token record {record_count} structure: {list(record.keys())}")
+                                debug_print(f"🔍 [CSV DEBUG] Token record {record_count} data: {record}")
+                            writer.writerow([
+                                record.get('display_name', ''),
+                                record.get('email', ''),
+                                record.get('user_id', ''),
+                                record.get('token_type', ''),
+                                record.get('model_name', ''),
+                                record.get('prompt_tokens', ''),
+                                record.get('completion_tokens', ''),
+                                record.get('total_tokens', ''),
+                                record.get('timestamp', '')
+                            ])
+                        debug_print(f"🔍 [CSV DEBUG] Finished writing {record_count} token usage records")
                 else:
                     debug_print(f"🔍 [CSV DEBUG] No data found for {chart_type} - available keys: {list(raw_data.keys()) if raw_data else 'None'}")
                     
@@ -3039,3 +3185,538 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error getting refresh status: {e}")
             return jsonify({'error': 'Failed to get refresh status'}), 500
+    
+    # Activity Log Migration APIs
+    @app.route('/api/admin/control-center/migrate/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_get_migration_status():
+        """
+        Check if there are conversations and documents that need to be migrated to activity logs.
+        Returns counts of records without the 'added_to_activity_log' flag.
+        """
+        try:
+            migration_status = {
+                'conversations_without_logs': 0,
+                'personal_documents_without_logs': 0,
+                'group_documents_without_logs': 0,
+                'public_documents_without_logs': 0,
+                'total_documents_without_logs': 0,
+                'migration_needed': False,
+                'estimated_total_records': 0
+            }
+            
+            # Check conversations without the flag
+            try:
+                conversations_query = """
+                    SELECT VALUE COUNT(1) 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                conversations_result = list(cosmos_conversations_container.query_items(
+                    query=conversations_query,
+                    enable_cross_partition_query=True
+                ))
+                migration_status['conversations_without_logs'] = conversations_result[0] if conversations_result else 0
+            except Exception as e:
+                current_app.logger.warning(f"Error checking conversations migration status: {e}")
+            
+            # Check personal documents without the flag
+            try:
+                personal_docs_query = """
+                    SELECT VALUE COUNT(1) 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                personal_docs_result = list(cosmos_user_documents_container.query_items(
+                    query=personal_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                migration_status['personal_documents_without_logs'] = personal_docs_result[0] if personal_docs_result else 0
+            except Exception as e:
+                current_app.logger.warning(f"Error checking personal documents migration status: {e}")
+            
+            # Check group documents without the flag
+            try:
+                group_docs_query = """
+                    SELECT VALUE COUNT(1) 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                group_docs_result = list(cosmos_group_documents_container.query_items(
+                    query=group_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                migration_status['group_documents_without_logs'] = group_docs_result[0] if group_docs_result else 0
+            except Exception as e:
+                current_app.logger.warning(f"Error checking group documents migration status: {e}")
+            
+            # Check public documents without the flag
+            try:
+                public_docs_query = """
+                    SELECT VALUE COUNT(1) 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                public_docs_result = list(cosmos_public_documents_container.query_items(
+                    query=public_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                migration_status['public_documents_without_logs'] = public_docs_result[0] if public_docs_result else 0
+            except Exception as e:
+                current_app.logger.warning(f"Error checking public documents migration status: {e}")
+            
+            # Calculate totals
+            migration_status['total_documents_without_logs'] = (
+                migration_status['personal_documents_without_logs'] +
+                migration_status['group_documents_without_logs'] +
+                migration_status['public_documents_without_logs']
+            )
+            
+            migration_status['estimated_total_records'] = (
+                migration_status['conversations_without_logs'] +
+                migration_status['total_documents_without_logs']
+            )
+            
+            migration_status['migration_needed'] = migration_status['estimated_total_records'] > 0
+            
+            return jsonify(migration_status), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting migration status: {e}")
+            return jsonify({'error': 'Failed to get migration status'}), 500
+    
+    @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_migrate_to_activity_logs():
+        """
+        Migrate all conversations and documents without activity logs.
+        This adds activity log records and sets the 'added_to_activity_log' flag.
+        
+        WARNING: This may take a while for large datasets and could impact performance.
+        Recommended to run during off-peak hours.
+        """
+        try:
+            from functions_activity_logging import log_conversation_creation, log_document_creation_transaction
+            
+            results = {
+                'conversations_migrated': 0,
+                'conversations_failed': 0,
+                'personal_documents_migrated': 0,
+                'personal_documents_failed': 0,
+                'group_documents_migrated': 0,
+                'group_documents_failed': 0,
+                'public_documents_migrated': 0,
+                'public_documents_failed': 0,
+                'total_migrated': 0,
+                'total_failed': 0,
+                'errors': []
+            }
+            
+            # Migrate conversations
+            current_app.logger.info("Starting conversation migration...")
+            try:
+                conversations_query = """
+                    SELECT * 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                conversations = list(cosmos_conversations_container.query_items(
+                    query=conversations_query,
+                    enable_cross_partition_query=True
+                ))
+                
+                current_app.logger.info(f"Found {len(conversations)} conversations to migrate")
+                
+                for conv in conversations:
+                    try:
+                        # Create activity log directly to preserve original timestamp
+                        activity_log = {
+                            'id': str(uuid.uuid4()),
+                            'activity_type': 'conversation_creation',
+                            'user_id': conv.get('user_id'),
+                            'timestamp': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
+                            'created_at': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
+                            'conversation': {
+                                'conversation_id': conv.get('id'),
+                                'title': conv.get('title', 'Untitled'),
+                                'context': conv.get('context', []),
+                                'tags': conv.get('tags', [])
+                            },
+                            'workspace_type': 'personal',
+                            'workspace_context': {}
+                        }
+                        
+                        # Save to activity logs container
+                        cosmos_activity_logs_container.upsert_item(activity_log)
+                        
+                        # Add flag to conversation
+                        conv['added_to_activity_log'] = True
+                        cosmos_conversations_container.upsert_item(conv)
+                        
+                        results['conversations_migrated'] += 1
+                        
+                    except Exception as conv_error:
+                        results['conversations_failed'] += 1
+                        error_msg = f"Failed to migrate conversation {conv.get('id')}: {str(conv_error)}"
+                        current_app.logger.error(error_msg)
+                        results['errors'].append(error_msg)
+                        
+            except Exception as e:
+                error_msg = f"Error during conversation migration: {str(e)}"
+                current_app.logger.error(error_msg)
+                results['errors'].append(error_msg)
+            
+            # Migrate personal documents
+            current_app.logger.info("Starting personal documents migration...")
+            try:
+                personal_docs_query = """
+                    SELECT * 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                personal_docs = list(cosmos_user_documents_container.query_items(
+                    query=personal_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                
+                for doc in personal_docs:
+                    try:
+                        # Create activity log directly to preserve original timestamp
+                        activity_log = {
+                            'id': str(uuid.uuid4()),
+                            'user_id': doc.get('user_id'),
+                            'activity_type': 'document_creation',
+                            'workspace_type': 'personal',
+                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'document': {
+                                'document_id': doc.get('id'),
+                                'file_name': doc.get('file_name', 'Unknown'),
+                                'file_type': doc.get('file_type', 'unknown'),
+                                'file_size_bytes': doc.get('file_size', 0),
+                                'page_count': doc.get('number_of_pages', 0),
+                                'version': doc.get('version', 1)
+                            },
+                            'embedding_usage': {
+                                'total_tokens': doc.get('embedding_tokens', 0),
+                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
+                            },
+                            'document_metadata': {
+                                'author': doc.get('author'),
+                                'title': doc.get('title'),
+                                'subject': doc.get('subject'),
+                                'publication_date': doc.get('publication_date'),
+                                'keywords': doc.get('keywords', []),
+                                'abstract': doc.get('abstract')
+                            },
+                            'workspace_context': {}
+                        }
+                        
+                        # Save to activity logs container
+                        cosmos_activity_logs_container.upsert_item(activity_log)
+                        
+                        # Add flag to document
+                        doc['added_to_activity_log'] = True
+                        cosmos_user_documents_container.upsert_item(doc)
+                        
+                        results['personal_documents_migrated'] += 1
+                        
+                    except Exception as doc_error:
+                        results['personal_documents_failed'] += 1
+                        error_msg = f"Failed to migrate personal document {doc.get('id')}: {str(doc_error)}"
+                        current_app.logger.error(error_msg)
+                        results['errors'].append(error_msg)
+                        
+            except Exception as e:
+                error_msg = f"Error during personal documents migration: {str(e)}"
+                current_app.logger.error(error_msg)
+                results['errors'].append(error_msg)
+            
+            # Migrate group documents
+            current_app.logger.info("Starting group documents migration...")
+            try:
+                group_docs_query = """
+                    SELECT * 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                group_docs = list(cosmos_group_documents_container.query_items(
+                    query=group_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                
+                for doc in group_docs:
+                    try:
+                        # Create activity log directly to preserve original timestamp
+                        activity_log = {
+                            'id': str(uuid.uuid4()),
+                            'user_id': doc.get('user_id'),
+                            'activity_type': 'document_creation',
+                            'workspace_type': 'group',
+                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'document': {
+                                'document_id': doc.get('id'),
+                                'file_name': doc.get('file_name', 'Unknown'),
+                                'file_type': doc.get('file_type', 'unknown'),
+                                'file_size_bytes': doc.get('file_size', 0),
+                                'page_count': doc.get('number_of_pages', 0),
+                                'version': doc.get('version', 1)
+                            },
+                            'embedding_usage': {
+                                'total_tokens': doc.get('embedding_tokens', 0),
+                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
+                            },
+                            'document_metadata': {
+                                'author': doc.get('author'),
+                                'title': doc.get('title'),
+                                'subject': doc.get('subject'),
+                                'publication_date': doc.get('publication_date'),
+                                'keywords': doc.get('keywords', []),
+                                'abstract': doc.get('abstract')
+                            },
+                            'workspace_context': {
+                                'group_id': doc.get('group_id')
+                            }
+                        }
+                        
+                        # Save to activity logs container
+                        cosmos_activity_logs_container.upsert_item(activity_log)
+                        
+                        # Add flag to document
+                        doc['added_to_activity_log'] = True
+                        cosmos_group_documents_container.upsert_item(doc)
+                        
+                        results['group_documents_migrated'] += 1
+                        
+                    except Exception as doc_error:
+                        results['group_documents_failed'] += 1
+                        error_msg = f"Failed to migrate group document {doc.get('id')}: {str(doc_error)}"
+                        current_app.logger.error(error_msg)
+                        results['errors'].append(error_msg)
+                        
+            except Exception as e:
+                error_msg = f"Error during group documents migration: {str(e)}"
+                current_app.logger.error(error_msg)
+                results['errors'].append(error_msg)
+            
+            # Migrate public documents
+            current_app.logger.info("Starting public documents migration...")
+            try:
+                public_docs_query = """
+                    SELECT * 
+                    FROM c 
+                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
+                """
+                public_docs = list(cosmos_public_documents_container.query_items(
+                    query=public_docs_query,
+                    enable_cross_partition_query=True
+                ))
+                
+                for doc in public_docs:
+                    try:
+                        # Create activity log directly to preserve original timestamp
+                        activity_log = {
+                            'id': str(uuid.uuid4()),
+                            'user_id': doc.get('user_id'),
+                            'activity_type': 'document_creation',
+                            'workspace_type': 'public',
+                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
+                            'document': {
+                                'document_id': doc.get('id'),
+                                'file_name': doc.get('file_name', 'Unknown'),
+                                'file_type': doc.get('file_type', 'unknown'),
+                                'file_size_bytes': doc.get('file_size', 0),
+                                'page_count': doc.get('number_of_pages', 0),
+                                'version': doc.get('version', 1)
+                            },
+                            'embedding_usage': {
+                                'total_tokens': doc.get('embedding_tokens', 0),
+                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
+                            },
+                            'document_metadata': {
+                                'author': doc.get('author'),
+                                'title': doc.get('title'),
+                                'subject': doc.get('subject'),
+                                'publication_date': doc.get('publication_date'),
+                                'keywords': doc.get('keywords', []),
+                                'abstract': doc.get('abstract')
+                            },
+                            'workspace_context': {
+                                'public_workspace_id': doc.get('public_workspace_id')
+                            }
+                        }
+                        
+                        # Save to activity logs container
+                        cosmos_activity_logs_container.upsert_item(activity_log)
+                        
+                        # Add flag to document
+                        doc['added_to_activity_log'] = True
+                        cosmos_public_documents_container.upsert_item(doc)
+                        
+                        results['public_documents_migrated'] += 1
+                        
+                    except Exception as doc_error:
+                        results['public_documents_failed'] += 1
+                        error_msg = f"Failed to migrate public document {doc.get('id')}: {str(doc_error)}"
+                        current_app.logger.error(error_msg)
+                        results['errors'].append(error_msg)
+                        
+            except Exception as e:
+                error_msg = f"Error during public documents migration: {str(e)}"
+                current_app.logger.error(error_msg)
+                results['errors'].append(error_msg)
+            
+            # Calculate totals
+            results['total_migrated'] = (
+                results['conversations_migrated'] +
+                results['personal_documents_migrated'] +
+                results['group_documents_migrated'] +
+                results['public_documents_migrated']
+            )
+            
+            results['total_failed'] = (
+                results['conversations_failed'] +
+                results['personal_documents_failed'] +
+                results['group_documents_failed'] +
+                results['public_documents_failed']
+            )
+            
+            current_app.logger.info(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
+            
+            return jsonify(results), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error during migration: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Migration failed: {str(e)}'}), 500
+
+    @app.route('/api/admin/control-center/activity-logs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_get_activity_logs():
+        """
+        Get paginated and filtered activity logs from cosmos_activity_logs_container.
+        Supports search and filtering by activity type.
+        """
+        try:
+            # Get query parameters
+            page = int(request.args.get('page', 1))
+            per_page = int(request.args.get('per_page', 50))
+            search_term = request.args.get('search', '').strip().lower()
+            activity_type_filter = request.args.get('activity_type_filter', 'all').strip()
+            
+            # Build query conditions
+            query_conditions = []
+            parameters = []
+            
+            # Filter by activity type if not 'all'
+            if activity_type_filter and activity_type_filter != 'all':
+                query_conditions.append("c.activity_type = @activity_type")
+                parameters.append({"name": "@activity_type", "value": activity_type_filter})
+            
+            # Build WHERE clause (empty if no conditions)
+            where_clause = " WHERE " + " AND ".join(query_conditions) if query_conditions else ""
+            
+            # Get total count for pagination
+            count_query = f"SELECT VALUE COUNT(1) FROM c{where_clause}"
+            total_items_result = list(cosmos_activity_logs_container.query_items(
+                query=count_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            total_items = total_items_result[0] if total_items_result and isinstance(total_items_result[0], int) else 0
+            
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
+            
+            # Get paginated results
+            logs_query = f"""
+                SELECT * FROM c{where_clause}
+                ORDER BY c.timestamp DESC
+                OFFSET {offset} LIMIT {per_page}
+            """
+            
+            current_app.logger.info(f"Activity logs query: {logs_query}")
+            current_app.logger.info(f"Query parameters: {parameters}")
+            
+            logs = list(cosmos_activity_logs_container.query_items(
+                query=logs_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            # Apply search filter in Python (after fetching from Cosmos)
+            if search_term:
+                filtered_logs = []
+                for log in logs:
+                    # Search in various fields
+                    searchable_text = ' '.join([
+                        str(log.get('activity_type', '')),
+                        str(log.get('user_id', '')),
+                        str(log.get('login_method', '')),
+                        str(log.get('conversation', {}).get('title', '')),
+                        str(log.get('document', {}).get('file_name', '')),
+                        str(log.get('token_type', '')),
+                        str(log.get('workspace_type', ''))
+                    ]).lower()
+                    
+                    if search_term in searchable_text:
+                        filtered_logs.append(log)
+                
+                logs = filtered_logs
+                # Recalculate total_items for filtered results
+                total_items = len(logs)
+                total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
+            
+            # Get unique user IDs from logs
+            user_ids = set(log.get('user_id') for log in logs if log.get('user_id'))
+            
+            # Fetch user information for display names/emails
+            user_map = {}
+            if user_ids:
+                for user_id in user_ids:
+                    try:
+                        user_doc = cosmos_user_settings_container.read_item(
+                            item=user_id,
+                            partition_key=user_id
+                        )
+                        user_map[user_id] = {
+                            'email': user_doc.get('email', ''),
+                            'display_name': user_doc.get('display_name', '')
+                        }
+                    except:
+                        user_map[user_id] = {
+                            'email': '',
+                            'display_name': ''
+                        }
+            
+            return jsonify({
+                'logs': logs,
+                'user_map': user_map,
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total_items': total_items,
+                    'total_pages': total_pages,
+                    'has_prev': page > 1,
+                    'has_next': page < total_pages
+                }
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting activity logs: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to retrieve activity logs'}), 500

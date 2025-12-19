@@ -5,10 +5,16 @@ for analytics and monitoring purposes.
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 from functions_appinsights import log_event
 from config import cosmos_activity_logs_container
+
+# Debug print function for logging
+def debug_print(message):
+    """Print debug messages to console."""
+    print(message)
 
 def log_chat_activity(
     user_id: str,

@@ -227,6 +227,10 @@ def register_route_backend_chats(app):
                     title='New Conversation',
                     workspace_type='personal'
                 )
+                
+                # Mark as logged to activity logs to prevent duplicate migration
+                conversation_item['added_to_activity_log'] = True
+                cosmos_conversations_container.upsert_item(conversation_item)
             else:
                 try:
                     conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
@@ -253,6 +257,10 @@ def register_route_backend_chats(app):
                         title='New Conversation',
                         workspace_type='personal'
                     )
+                    
+                    # Mark as logged to activity logs to prevent duplicate migration
+                    conversation_item['added_to_activity_log'] = True
+                    cosmos_conversations_container.upsert_item(conversation_item)
                 except Exception as e:
                     debug_print(f"Error reading conversation {conversation_id}: {e}")
                     return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
