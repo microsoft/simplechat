@@ -9,9 +9,9 @@ from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,
     cache_search_results,
-    debug_print,
     DEBUG_ENABLED
 )
+from functions_debug import *
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown")
         Same results list with normalized scores (original score preserved)
     """
     if not results or len(results) == 0:
-        debug_print(f"[DEBUG] No results to normalize from {index_name}", "NORMALIZE")
+        debug_print(f"No results to normalize from {index_name}", "NORMALIZE")
         return results
     
     scores = [r['score'] for r in results]
@@ -63,7 +63,7 @@ def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown")
     # Log normalized distribution
     normalized_scores = [r['score'] for r in results]
     debug_print(
-        f"[DEBUG] Score distribution AFTER normalization ({index_name})",
+        f"Score distribution AFTER normalization ({index_name})",
         "NORMALIZE",
         index=index_name,
         count=len(results),
@@ -107,7 +107,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     )
     if cached_results is not None:
         debug_print(
-            "[DEBUG] Returning CACHED search results",
+            "Returning CACHED search results",
             "SEARCH",
             query=query[:40],
             scope=doc_scope,
@@ -118,7 +118,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     
     # Cache miss - proceed with search
     debug_print(
-        "[DEBUG] Cache MISS - Executing Azure AI Search",
+        "Cache MISS - Executing Azure AI Search",
         "SEARCH",
         query=query[:40],
         scope=doc_scope,
@@ -126,7 +126,17 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     )
     logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
     
-    query_embedding = generate_embedding(query)
+    # Unpack tuple from generate_embedding (returns embedding, token_usage)
+    result = generate_embedding(query)
+    if result is None:
+        return None
+    
+    # Handle both tuple (new) and single value (backward compatibility)
+    if isinstance(result, tuple):
+        query_embedding, _ = result  # Ignore token_usage for search
+    else:
+        query_embedding = result
+    
     if query_embedding is None:
         return None
     
@@ -261,7 +271,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
         public_results_final = extract_search_results(public_results, top_n)
         
         debug_print(
-            "[DEBUG] Extracted raw results from indexes",
+            "Extracted raw results from indexes",
             "SEARCH",
             user_count=len(user_results_final),
             group_count=len(group_results_final),
@@ -277,7 +287,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
         results = user_results_normalized + group_results_normalized + public_results_normalized
         
         debug_print(
-            "[DEBUG] Merged results from all indexes",
+            "Merged results from all indexes",
             "SEARCH",
             total_count=len(results)
         )
@@ -403,7 +413,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     if results:
         scores = [r['score'] for r in results]
         debug_print(
-            "[DEBUG] Results BEFORE final sorting",
+            "Results BEFORE final sorting",
             "SORT",
             total_results=len(results),
             min_score=f"{min(scores):.4f}",
@@ -417,7 +427,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             if os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1':
                 for i, r in enumerate(results[:5]):
                     debug_print(
-                        f"[DEBUG] Pre-sort #{i+1}",
+                        f"Pre-sort #{i+1}",
                         "SORT",
                         file=r['file_name'][:30],
                         score=f"{r['score']:.4f}",
@@ -441,7 +451,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     
     # Log post-sort results
     debug_print(
-        f"[DEBUG] Results AFTER sorting (top {top_n})",
+        f"Results AFTER sorting (top {top_n})",
         "SORT",
         final_count=len(results)
     )
@@ -452,7 +462,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
         if os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1':
             for i, r in enumerate(results[:5]):
                 debug_print(
-                    f"[DEBUG] Final #{i+1}",
+                    f"Final #{i+1}",
                     "SORT",
                     file=r['file_name'][:30],
                     score=f"{r['score']:.4f}",
@@ -472,7 +482,7 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     )
     
     debug_print(
-        "[DEBUG] Search complete - returning results",
+        "Search complete - returning results",
         "SEARCH",
         query=query[:40],
         final_result_count=len(results)

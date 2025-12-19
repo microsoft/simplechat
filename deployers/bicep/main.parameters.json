@@ -15,10 +15,10 @@
       "value": "${AZURE_ENV_NAME}"
     },
     "specialTags": {
-        "value": {
-            "Project": "SimpleChat",
-            "SystemOwner": "Steve Carroll"
-        }
+      "value": {
+        "Project": "SimpleChat",
+        "SystemOwner": "Steve Carroll"
+      }
     },
     "enterpriseAppClientId": {
       "value": "${ENTERPRISE_APP_CLIENT_ID}"
@@ -26,20 +26,11 @@
     "enterpriseAppClientSecret": {
       "value": "${ENTERPRISE_APP_CLIENT_SECRET}"
     },
-    "existingAcrResourceName": {
-      "value": "${EXISTING_ACR_RESOURCE_NAME}"
-    },
-    "existingAcrResourceGroup": {
-        "value": "${EXISTING_ACR_RESOURCE_GROUP}"
-    },
-    "existingOpenAIResourceName": {
-      "value": "${EXISTING_OPENAI_RESOURCE_NAME}"
-    },
-    "existingOpenAIResourceGroupName": {
-        "value": "${EXISTING_OPENAI_RESOURCE_GROUP}"
-    },
     "imageName": {
       "value": "${CONTAINER_IMAGE_NAME}"
+    },
+    "authenticationType": {
+      "value": "${AUTHENTICATION_TYPE}"
     }
   }
 }

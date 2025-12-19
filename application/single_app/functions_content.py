@@ -22,12 +22,12 @@ def extract_content_with_azure_di(file_path):
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
         
         # Debug logging for troubleshooting
-        debug_print(f"[DEBUG] Starting Azure DI extraction for: {os.path.basename(file_path)}")
-        debug_print(f"[DEBUG] AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
+        debug_print(f"Starting Azure DI extraction for: {os.path.basename(file_path)}")
+        debug_print(f"AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
 
         if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
             # Required format for Document Intelligence API version 2024-11-30
-            debug_print("[DEBUG] Using US Government/Custom environment with base64Source")
+            debug_print("Using US Government/Custom environment with base64Source")
             with open(file_path, 'rb') as f:
                 file_bytes = f.read()
                 base64_source = base64.b64encode(file_bytes).decode('utf-8')
@@ -38,9 +38,9 @@ def extract_content_with_azure_di(file_path):
                 model_id="prebuilt-read",
                 body=analyze_request
             )
-            debug_print("[DEBUG] Successfully started analysis with base64Source")
+            debug_print("Successfully started analysis with base64Source")
         else:
-            debug_print("[DEBUG] Using Public cloud environment")
+            debug_print("Using Public cloud environment")
             with open(file_path, 'rb') as f:
                 # For stable API 1.0.2, the file needs to be passed as part of the body
                 file_content = f.read()
@@ -53,9 +53,9 @@ def extract_content_with_azure_di(file_path):
                         body=file_content,
                         content_type="application/pdf"
                     )
-                    debug_print("[DEBUG] Successfully started analysis with body as bytes")
+                    debug_print("Successfully started analysis with body as bytes")
                 except Exception as e1:
-                    debug_print(f"[DEBUG] Method 1 failed: {e1}")
+                    debug_print(f"Method 1 failed: {e1}")
                     
                     try:
                         # Method 2: Use base64 format for consistency
@@ -65,7 +65,7 @@ def extract_content_with_azure_di(file_path):
                             model_id="prebuilt-read",
                             body=analyze_request
                         )
-                        debug_print("[DEBUG] Successfully started analysis with base64Source in body")
+                        debug_print("Successfully started analysis with base64Source in body")
                     except Exception as e2:
                         debug_print(f"[ERROR] Both methods failed. Method 1: {e1}, Method 2: {e2}")
                         raise e1
@@ -362,7 +362,17 @@ def generate_embedding(
             )
 
             embedding = response.data[0].embedding
-            return embedding
+            
+            # Capture token usage for embedding tracking
+            token_usage = None
+            if hasattr(response, 'usage') and response.usage:
+                token_usage = {
+                    'prompt_tokens': response.usage.prompt_tokens,
+                    'total_tokens': response.usage.total_tokens,
+                    'model_deployment_name': embedding_model
+                }
+            
+            return embedding, token_usage
 
         except RateLimitError as e:
             retries += 1

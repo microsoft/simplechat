@@ -155,7 +155,7 @@ def register_enhanced_citations_routes(app):
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
-        debug_print(f"[DEBUG]:: Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
+        debug_print(f"Enhanced citations PDF request - doc_id: {doc_id}, page: {page_number}, show_all: {show_all}")
 
         user_id = get_current_user_id()
         if not user_id:
@@ -339,7 +339,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         page_number: Current page number
         show_all: If True, show all pages instead of just ±1 pages around current
     """
-    debug_print(f"[DEBUG]:: serve_enhanced_citation_pdf_content called with show_all: {show_all}")
+    debug_print(f"serve_enhanced_citation_pdf_content called with show_all: {show_all}")
     
     import io
     import uuid
@@ -437,7 +437,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             
             # When show_all is True, allow iframe embedding
             if show_all:
-                debug_print(f"[DEBUG]:: Setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"Setting CSP headers for iframe embedding (show_all={show_all})")
                 headers['Content-Security-Policy'] = (
                     "default-src 'self'; "
                     "frame-ancestors 'self'; "  # Allow embedding in same origin
@@ -445,7 +445,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
                 )
                 headers['X-Frame-Options'] = 'SAMEORIGIN'  # Allow same-origin framing
             else:
-                debug_print(f"[DEBUG]:: NOT setting CSP headers for iframe embedding (show_all={show_all})")
+                debug_print(f"NOT setting CSP headers for iframe embedding (show_all={show_all})")
             
             response = Response(
                 extracted_content,

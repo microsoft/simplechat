@@ -367,8 +367,50 @@
             </div>
             <button type="button" class="btn btn-outline-primary btn-sm" id="refreshDataBtn" onclick="refreshControlCenterData()">
                 <i class="bi bi-arrow-clockwise me-1"></i>
-                <span id="refreshBtnText">Refresh Data</span>
+                <span id="refreshBtnText">Refresh user, group, public workspace data</span>
             </button>
+        </div>
+    </div>
+    
+    <!-- Activity Log Migration Banner -->
+    <div id="migrationBanner" class="alert alert-warning alert-dismissible fade show" role="alert" style="display: none;">
+        <div class="d-flex align-items-start">
+            <div class="flex-grow-1">
+                <h5 class="alert-heading">
+                    <i class="bi bi-database-exclamation me-2"></i>
+                    Activity Log Migration Required
+                </h5>
+                <p class="mb-2" id="migrationMessage">
+                    We found <strong id="migrationConversationCount">0</strong> conversations and 
+                    <strong id="migrationDocumentCount">0</strong> documents that need to be added to activity logs 
+                    for improved reporting and performance.
+                </p>
+                <p class="mb-3">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <strong>Note:</strong> This migration may take a while for large datasets and could temporarily affect system performance. 
+                        We recommend running this during off-peak hours.
+                    </small>
+                </p>
+                <div class="d-flex align-items-center gap-3">
+                    <button type="button" class="btn btn-warning" id="migrateBannerBtn" onclick="performMigration()">
+                        <i class="bi bi-arrow-repeat me-1"></i>
+                        Migrate Now
+                    </button>
+                    <div id="migrationProgress" style="display: none;" class="flex-grow-1">
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="progress flex-grow-1" style="height: 25px;">
+                                <div id="migrationProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                    <span id="migrationProgressText">0%</span>
+                                </div>
+                            </div>
+                            <small class="text-muted" id="migrationStatusText">Initializing...</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     </div>
     
@@ -398,6 +440,12 @@
             <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces"
                 type="button" role="tab" aria-controls="workspaces" aria-selected="false">
                 <i class="bi bi-folder2-open me-2"></i>Public Workspaces
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="activity-logs-tab" data-bs-toggle="tab" data-bs-target="#activity-logs"
+                type="button" role="tab" aria-controls="activity-logs" aria-selected="false">
+                <i class="bi bi-clock-history me-2"></i>Activity Logs
             </button>
         </li>
     </ul>
@@ -512,6 +560,7 @@
                                     <div class="d-flex justify-content-between align-items-center flex-wrap">
                                         <h5 class="mb-0">
                                             <i class="bi bi-graph-up me-2"></i>Activity Trends
+                                            <small>Real-time, does not require refresh</small>
                                         </h5>
                                         <div class="d-flex align-items-center gap-2">
                                             <!-- Date Range Buttons -->
@@ -601,6 +650,24 @@
                                         <div class="card-body">
                                             <div class="chart-container" style="height: 300px; position: relative;">
                                                 <canvas id="documentsChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Token Usage Chart -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="card-title mb-0">
+                                                <i class="bi bi-cpu me-2 text-info"></i>Token Usage
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="chart-container" style="height: 300px; position: relative;">
+                                                <canvas id="tokensChart"></canvas>
                                             </div>
                                         </div>
                                     </div>
@@ -899,6 +966,93 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <!-- Activity Logs Tab -->
+                        <div class="tab-pane fade" id="activity-logs" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-clock-history me-2"></i>Activity Logs
+                                </h5>
+                            </div>
+
+                            <!-- Activity Logs Controls -->
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="activityLogsSearchInput" 
+                                               placeholder="Search logs...">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <select class="form-select" id="activityTypeFilterSelect">
+                                        <option value="all">All Activity Types</option>
+                                        <option value="user_login">User Login</option>
+                                        <option value="conversation_creation">Conversation Creation</option>
+                                        <option value="document_creation">Document Creation</option>
+                                        <option value="token_usage">Token Usage</option>
+                                        <option value="conversation_deletion">Conversation Deletion</option>
+                                        <option value="conversation_archival">Conversation Archival</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select" id="activityLogsPerPageSelect">
+                                        <option value="10">10 per page</option>
+                                        <option value="50" selected>50 per page</option>
+                                        <option value="100">100 per page</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3 text-end">
+                                    <button type="button" class="btn btn-outline-success" id="exportActivityLogsBtn" title="Export logs as CSV">
+                                        <i class="bi bi-download me-1"></i>Export
+                                    </button>
+                                    <button type="button" class="btn btn-outline-primary" id="refreshActivityLogsBtn">
+                                        <i class="bi bi-arrow-clockwise"></i>Reload
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Activity Logs Table -->
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover user-table" id="activityLogsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th>Timestamp</th>
+                                                    <th>Activity Type</th>
+                                                    <th>User</th>
+                                                    <th>Details</th>
+                                                    <th>Workspace Type</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="activityLogsTableBody">
+                                                <tr>
+                                                    <td colspan="5" class="text-center py-4">
+                                                        <div class="spinner-border text-primary" role="status">
+                                                            <span class="visually-hidden">Loading...</span>
+                                                        </div>
+                                                        <div class="mt-2">Loading activity logs...</div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="text-muted small" id="activityLogsPaginationInfo">
+                                            <!-- Pagination info will be populated by JavaScript -->
+                                        </div>
+                                        <nav aria-label="Activity logs pagination">
+                                            <ul class="pagination mb-0" id="activityLogsPagination">
+                                                <!-- Pagination controls will be populated by JavaScript -->
+                                            </ul>
+                                        </nav>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1093,6 +1247,12 @@
                                 <i class="bi bi-globe me-2" style="color: #006400;"></i>Public Documents
                             </label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="tokens" id="exportTokens" checked>
+                            <label class="form-check-label" for="exportTokens">
+                                <i class="bi bi-cpu me-2 text-info"></i>Token Usage
+                            </label>
+                        </div>
                     </div>
                     
                     <div class="mb-4">
@@ -1138,6 +1298,7 @@
                             <li><strong>Personal Documents:</strong> Display name, email, user ID, personal document details, sizes, upload date</li>
                         <li><strong>Group Documents:</strong> Display name, email, user ID, group document details, sizes, upload date</li>
                             <li><strong>Public Documents:</strong> Display name, email, user ID, public document details, sizes, upload date</li>
+                            <li><strong>Token Usage:</strong> Display name, email, user ID, token type (chat/embedding), model name, prompt tokens, completion tokens, total tokens, timestamp</li>
                         </ul>
                     </div>
                 </div>
