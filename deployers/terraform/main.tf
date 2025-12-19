@@ -160,6 +160,12 @@ variable "param_create_entra_security_groups" {
   default     = true # Default from script
 }
 
+variable "param_base_name_sg" {
+  description = "Base name for security groups (e.g., lantern-ess-simple-chat). If not provided, defaults to param_base_name."
+  type        = string
+  default     = ""
+}
+
 # ACR Credentials (assumed to be available for Terraform)
 variable "acr_username" {
   description = "Username for the Azure Container Registry."
@@ -190,6 +196,7 @@ locals {
   search_service_name         = "${var.param_base_name}-${var.param_environment}-search"
   storage_account_base        = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name        = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
+  security_group_base_name    = var.param_base_name_sg != "" ? var.param_base_name_sg : var.param_base_name
 
   acr_base_url                = var.global_which_azure_platform == "AzureUSGovernment" ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"
   param_registry_server   = var.global_which_azure_platform == "AzureUSGovernment" ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
@@ -225,43 +232,92 @@ data "azurerm_container_registry" "acrregistry" {
 }
 
 # --- Entra ID Security Groups ---
+# Alternative: Manual Group Creation Script
+# If you prefer to create security groups manually or Terraform group creation fails due to permissions,
+# you can use the Azure CLI commands below. Save these commands to a shell script and execute it:
+#
+# #!/bin/bash
+# # Create Admins group
+# az ad group create \
+#   --display-name "lantern-ess-simple-chat-admins-dev" \
+#   --mail-nickname "lantern-ess-simple-chat-admins-dev" \
+#   --description "Security group for lantern ess-simple-chat dev environment - Admin users"
+#
+# # Create Users group
+# az ad group create \
+#   --display-name "lantern-ess-simple-chat-users-dev" \
+#   --mail-nickname "lantern-ess-simple-chat-users-dev" \
+#   --description "Security group for lantern ess-simple-chat dev environment - Standard users"
+#
+# # Create CreateGroup group
+# az ad group create \
+#   --display-name "lantern-ess-simple-chat-create-group-dev" \
+#   --mail-nickname "lantern-ess-simple-chat-create-group-dev" \
+#   --description "Security group for lantern ess-simple-chat dev environment - Users who can create groups"
+#
+# # Create SafetyViolationAdmin group
+# az ad group create \
+#   --display-name "lantern-ess-simple-chat-safety-violation-admin-dev" \
+#   --mail-nickname "lantern-ess-simple-chat-safety-violation-admin-dev" \
+#   --description "Security group for lantern ess-simple-chat dev environment - Safety violation admins"
+#
+# # Create FeedbackAdmin group
+# az ad group create \
+#   --display-name "lantern-ess-simple-chat-feedback-admin-dev" \
+#   --mail-nickname "lantern-ess-simple-chat-feedback-admin-dev" \
+#   --description "Security group for lantern ess-simple-chat dev environment - Feedback admins"
+#
+# echo ""
+# echo "✅ All groups created successfully!"
+# echo ""
+# echo "Listing created groups:"
+# az ad group list --filter "startswith(displayName,'lantern-ess-simple-chat')" --query "[].{Name:displayName, ObjectId:id}" --output table
+#
+# Note: The Terraform resources will create groups using the pattern:
+#   ${var.param_base_name_sg}-{role}-${var.param_environment}
+# Example: lantern-ess-simple-chat-admins-dev
+#
+# Set param_base_name_sg = "lantern-ess-simple-chat" to match this naming convention.
+# If param_base_name_sg is not set, it defaults to param_base_name.
+# To use manually created groups instead, set param_create_entra_security_groups = false in terraform.tfvars
+
 resource "azuread_group" "simplechat_admins" {
   count        = var.param_create_entra_security_groups ? 1 : 0
-  display_name = "${var.param_base_name}-${var.param_environment}-sg-Admins"
-  mail_nickname = "${var.param_base_name}-${var.param_environment}-sg-Admins"
-  description  = "Security group for ${var.param_base_name} ${var.param_environment} environment"
+  display_name = "${local.security_group_base_name}-admins-${var.param_environment}"
+  mail_nickname = "${local.security_group_base_name}-admins-${var.param_environment}"
+  description  = "Security group for ${local.security_group_base_name} ${var.param_environment} environment - Admin users"
   security_enabled = true
 }
 
 resource "azuread_group" "simplechat_users" {
   count        = var.param_create_entra_security_groups ? 1 : 0
-  display_name = "${var.param_base_name}-${var.param_environment}-sg-Users"
-  mail_nickname = "${var.param_base_name}-${var.param_environment}-sg-Users"
-  description  = "Security group for ${var.param_base_name} ${var.param_environment} environment"
+  display_name = "${local.security_group_base_name}-users-${var.param_environment}"
+  mail_nickname = "${local.security_group_base_name}-users-${var.param_environment}"
+  description  = "Security group for ${local.security_group_base_name} ${var.param_environment} environment - Standard users"
   security_enabled = true
 }
 
 resource "azuread_group" "simplechat_creategroup" {
   count        = var.param_create_entra_security_groups ? 1 : 0
-  display_name = "${var.param_base_name}-${var.param_environment}-sg-CreateGroup"
-  mail_nickname = "${var.param_base_name}-${var.param_environment}-sg-CreateGroup"
-  description  = "Security group for ${var.param_base_name} ${var.param_environment} environment"
+  display_name = "${local.security_group_base_name}-create-group-${var.param_environment}"
+  mail_nickname = "${local.security_group_base_name}-create-group-${var.param_environment}"
+  description  = "Security group for ${local.security_group_base_name} ${var.param_environment} environment - Users who can create groups"
   security_enabled = true
 }
 
 resource "azuread_group" "simplechat_safetyviolationadmin" {
   count        = var.param_create_entra_security_groups ? 1 : 0
-  display_name = "${var.param_base_name}-${var.param_environment}-sg-SafetyViolationAdmin"
-  mail_nickname = "${var.param_base_name}-${var.param_environment}-sg-SafetyViolationAdmin"
-  description  = "Security group for ${var.param_base_name} ${var.param_environment} environment"
+  display_name = "${local.security_group_base_name}-safety-violation-admin-${var.param_environment}"
+  mail_nickname = "${local.security_group_base_name}-safety-violation-admin-${var.param_environment}"
+  description  = "Security group for ${local.security_group_base_name} ${var.param_environment} environment - Safety violation admins"
   security_enabled = true
 }
 
 resource "azuread_group" "simplechat_feedbackadmin" {
   count        = var.param_create_entra_security_groups ? 1 : 0
-  display_name = "${var.param_base_name}-${var.param_environment}-sg-FeedbackAdmin"
-  mail_nickname = "${var.param_base_name}-${var.param_environment}-sg-FeedbackAdmin"
-  description  = "Security group for ${var.param_base_name} ${var.param_environment} environment"
+  display_name = "${local.security_group_base_name}-feedback-admin-${var.param_environment}"
+  mail_nickname = "${local.security_group_base_name}-feedback-admin-${var.param_environment}"
+  description  = "Security group for ${local.security_group_base_name} ${var.param_environment} environment - Feedback admins"
   security_enabled = true
 }
 
@@ -367,10 +423,10 @@ resource "azurerm_role_assignment" "kv_secrets_user_managed_identity" {
 # --- App Service Plan ---
 resource "azurerm_service_plan" "asp" {
   name                = local.app_service_plan_name
-  location            = "eastus2" # Override: North Central US has zero App Service quota
+  location            = local.rg_location
   resource_group_name = local.rg_name
   os_type             = "Linux" # Script uses --is-linux
-  sku_name            = "F1" # Free tier - no quota required (limited to 60 min/day)
+  sku_name            = "B1" # Free tier - no quota required (limited to 60 min/day)
   # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3"
   # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1"
   # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2"
@@ -381,9 +437,10 @@ resource "azurerm_service_plan" "asp" {
 # --- App Service (Web App) ---
 resource "azurerm_linux_web_app" "app" {
   name                = local.app_service_name
-  location            = "eastus2" # Must match App Service Plan location
+  location            = local.rg_location
   resource_group_name = local.rg_name
   service_plan_id     = azurerm_service_plan.asp.id
+  https_only          = true
   ftp_publish_basic_authentication_enabled = false
   webdeploy_publish_basic_authentication_enabled = false
 
@@ -518,33 +575,58 @@ data "azuread_service_principal" "msgraph" {
 }
 
 ##################################################################
-# Add "Expose an API" Permissions (User.Read, Profile, email)
+# Microsoft Graph API Permissions (Delegated)
+# These permissions allow the application to act on behalf of signed-in users
 ##################################################################
 resource "azuread_application_api_access" "api_permissions" {
   api_client_id = data.azuread_application_published_app_ids.well_known.result["MicrosoftGraph"]
   application_id   = azuread_application.app_registration.id
   scope_ids = [
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["User.Read"],
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["profile"],
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["email"],
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["Group.Read.All"],
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["offline_access"],
-    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["openid"]
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["User.Read"],           # Read signed-in user's profile
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["profile"],             # View user's basic profile
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["email"],               # View user's email address
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["Group.Read.All"],      # Read all groups
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["offline_access"],      # Maintain access to data
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["openid"],              # Sign in users
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["User.ReadBasic.All"],  # Read all users' basic profiles (enables user search/autocomplete)
+    data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["People.Read"],         # Read user's relevant people list (for user suggestions)
   ]
 }
 
 ##################################################################
-# **** Not working in Azure Government ****
-# Grant admin consent - this is a manual step in the script for sovereign clouds.
-# "azuread_application" "app_registration"
-# "azuread_service_principal" "app_registration_sp"
-# COMMENTED OUT: Requires Global Admin permissions - grant consent manually in Azure Portal
+# Admin Consent for API Permissions
+##################################################################
+# COMMENTED OUT: This resource doesn't work reliably in Azure Government
+# and requires Global Administrator permissions.
+#
+# MANUAL STEP REQUIRED AFTER TERRAFORM APPLY:
+# You must manually grant admin consent using ONE of these methods:
+#
+# METHOD 1 - Azure Portal (Recommended):
+#   1. Navigate to Azure Portal > Entra ID > App Registrations
+#   2. Find your app registration: ${var.param_base_name}-${var.param_environment}-ar
+#   3. Go to "API Permissions"
+#   4. Click "Grant admin consent for {your-tenant-name}"
+#   5. Confirm the consent prompt
+#
+# METHOD 2 - Azure CLI:
+#   az ad app permission admin-consent --id <APPLICATION_ID>
+#
+# METHOD 3 - PowerShell:
+#   Connect-MgGraph -Scopes "Application.ReadWrite.All", "DelegatedPermissionGrant.ReadWrite.All"
+#   New-MgOauth2PermissionGrant -ClientId <SERVICE_PRINCIPAL_ID> -ConsentType "AllPrincipals" -ResourceId <MSGRAPH_SP_ID> -Scope "User.Read profile email Group.Read.All offline_access openid User.ReadBasic.All People.Read"
+#
+# Permissions requiring admin consent:
+#   - Group.Read.All (read all groups)
+#   - User.ReadBasic.All (enables user search/autocomplete)
 ##################################################################
 # resource "azuread_service_principal_delegated_permission_grant" "delegatedpermissiongrant" {
 #   service_principal_object_id          = azuread_service_principal.app_registration_sp.object_id
 #   resource_service_principal_object_id = data.azuread_service_principal.msgraph.object_id
-#   claim_values                         = ["User.Read", "profile", "email", "Group.Read.All", "offline_access", "openid"]
-# }##################################################################
+#   claim_values                         = ["User.Read", "profile", "email", "Group.Read.All", "offline_access", "openid", "User.ReadBasic.All", "People.Read"]
+# }
+
+##################################################################
 # Entra App Registration App Roles
 ##################################################################
 resource "azuread_application_app_role" "app_registration_admin" {
