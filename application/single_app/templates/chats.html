@@ -525,12 +525,43 @@
             </div>
             <div class="modal-body">
                 <p>Generate a new response for this message.</p>
+                
+                <!-- Mode selection toggle -->
                 <div class="mb-3">
+                    <div class="btn-group w-100" role="group" aria-label="Retry mode selection">
+                        <input type="radio" class="btn-check" name="retry-mode" id="retry-mode-model" value="model" checked>
+                        <label class="btn btn-outline-primary" for="retry-mode-model">
+                            <i class="bi bi-cpu me-1"></i>Model
+                        </label>
+                        
+                        {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                        <input type="radio" class="btn-check" name="retry-mode" id="retry-mode-agent" value="agent">
+                        <label class="btn btn-outline-primary" for="retry-mode-agent">
+                            <i class="bi bi-robot me-1"></i>Agent
+                        </label>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Model selection -->
+                <div id="retry-model-container" class="mb-3">
                     <label for="retry-model-select" class="form-label">Model</label>
                     <select id="retry-model-select" class="form-select">
                         <!-- Options will be populated from #model-select -->
                     </select>
                 </div>
+                
+                <!-- Agent selection -->
+                {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                <div id="retry-agent-container" class="mb-3" style="display: none;">
+                    <label for="retry-agent-select" class="form-label">Agent</label>
+                    <select id="retry-agent-select" class="form-select">
+                        <!-- Options will be populated from #agent-select -->
+                    </select>
+                </div>
+                {% endif %}
+                
+                <!-- Reasoning effort -->
                 <div id="retry-reasoning-container" class="mb-3" style="display: none;">
                     <label class="form-label">Reasoning Effort</label>
                     <div id="retry-reasoning-levels" class="d-flex flex-column-reverse gap-2">
@@ -559,7 +590,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <p>Edit your message and regenerate the response. Your original model and settings will be preserved.</p>
+                <p>Edit your message and regenerate the response. Your original model/agent and settings will be preserved.</p>
                 <div class="mb-3">
                     <label for="edit-message-content" class="form-label">Message</label>
                     <textarea id="edit-message-content" class="form-control" rows="6" placeholder="Edit your message..."></textarea>

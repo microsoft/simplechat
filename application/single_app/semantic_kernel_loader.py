@@ -1109,7 +1109,22 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
     # Early check: Get user settings to see if agents are enabled and if an agent is selected
     user_settings = get_user_settings(user_id).get('settings', {})
     enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+    
+    # Check if request has forced agent enablement (e.g., retry with specific agent)
+    from flask import g
+    force_enable_agents = getattr(g, 'force_enable_agents', False)
+    request_agent_name = getattr(g, 'request_agent_name', None)
+    
+    if force_enable_agents:
+        enable_agents = True
+        log_event(f"[SK Loader] Force enabling agents due to request agent_info (agent: {request_agent_name})", level=logging.INFO)
+    
     selected_agent = user_settings.get('selected_agent')
+    
+    # Override selected_agent if request specifies one
+    if request_agent_name:
+        selected_agent = request_agent_name
+        log_event(f"[SK Loader] Using agent from request: {request_agent_name}", level=logging.INFO)
     
     # If agents are disabled or no agent is selected, skip agent loading entirely
     if not enable_agents:

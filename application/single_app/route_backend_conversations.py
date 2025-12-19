@@ -1367,6 +1367,7 @@ def register_route_backend_conversations(app):
             data = request.get_json() or {}
             selected_model = data.get('model')
             reasoning_effort = data.get('reasoning_effort')
+            agent_info = data.get('agent_info')  # Get agent info if provided
             
             # Find the original message
             query = "SELECT * FROM c WHERE c.id = @message_id"
@@ -1529,6 +1530,15 @@ def register_route_backend_conversations(app):
                 'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
                 'retry_thread_attempt': new_attempt  # Pass attempt number
             }
+            
+            # Add agent_info to chat request if provided (for agent-based retry)
+            if agent_info:
+                chat_request['agent_info'] = agent_info
+                print(f"🤖 Retry - Using agent: {agent_info.get('display_name')} ({agent_info.get('name')})")
+            elif original_metadata.get('agent_selection'):
+                # Use original agent selection if no new agent specified
+                chat_request['agent_info'] = original_metadata.get('agent_selection')
+                print(f"🤖 Retry - Using original agent from metadata")
             
             print(f"🔍 Retry - Chat request params: retry_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
             
@@ -1738,6 +1748,20 @@ def register_route_backend_conversations(app):
                 'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
                 'retry_thread_attempt': new_attempt  # Pass attempt number
             }
+            
+            # Include agent_info from original metadata if present (for agent-based edits)
+            if original_metadata.get('agent_selection'):
+                agent_selection = original_metadata.get('agent_selection')
+                chat_request['agent_info'] = {
+                    'name': agent_selection.get('selected_agent'),
+                    'display_name': agent_selection.get('agent_display_name'),
+                    'id': agent_selection.get('agent_id'),
+                    'is_global': agent_selection.get('is_global', False),
+                    'is_group': agent_selection.get('is_group', False),
+                    'group_id': agent_selection.get('group_id'),
+                    'group_name': agent_selection.get('group_name')
+                }
+                print(f"🤖 Edit - Using agent: {chat_request['agent_info'].get('display_name')} ({chat_request['agent_info'].get('name')})")
             
             print(f"🔍 Edit - Chat request params: edited_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
             

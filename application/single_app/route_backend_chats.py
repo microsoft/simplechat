@@ -1784,7 +1784,19 @@ def register_route_backend_chats(app):
             user_settings = get_user_settings(user_id).get('settings', {})
             per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+            
+            # Check if agent_info is provided in request (e.g., from retry with agent selection)
+            request_agent_info = data.get('agent_info')
+            force_enable_agents = bool(request_agent_info)  # Force enable agents if agent_info provided
+            
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+            # Override user setting if agent explicitly requested via agent_info
+            if force_enable_agents:
+                user_enable_agents = True
+                g.force_enable_agents = True  # Store in Flask g for SK loader to check
+                g.request_agent_name = request_agent_info.get('name') if isinstance(request_agent_info, dict) else request_agent_info
+                log_event(f"[SKChat] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
+            
             enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
             redis_client = None
             # --- Semantic Kernel state management (per-user mode) ---
@@ -1818,9 +1830,19 @@ def register_route_backend_chats(app):
             if enable_semantic_kernel and user_enable_agents:
             # PATCH: Use new agent selection logic
                 agent_name_to_select = None
-                if per_user_semantic_kernel:
+                
+                # Priority 1: Use agent_info from request if provided (e.g., retry with specific agent)
+                if request_agent_info:
+                    # Extract agent name or create dict format expected by selection logic
+                    agent_name_to_select = request_agent_info if isinstance(request_agent_info, dict) else {'name': request_agent_info}
+                    if isinstance(agent_name_to_select, dict):
+                        agent_name_to_select = agent_name_to_select.get('name')
+                    log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
+                # Priority 2: Use user settings
+                elif per_user_semantic_kernel:
                     agent_name_to_select = user_settings.get('selected_agent')
                     log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
+                # Priority 3: Use global settings
                 else:
                     global_selected_agent_info = settings.get('global_selected_agent')
                     if global_selected_agent_info:

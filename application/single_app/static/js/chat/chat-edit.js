@@ -33,14 +33,28 @@ export function handleEditButtonClick(messageDiv, messageId, messageType) {
         .then(metadata => {
             console.log('📊 Original message metadata:', metadata);
             
+            // Store metadata for later use in executeMessageEdit
+            window.pendingMessageEdit.metadata = metadata;
+            
             // Display original settings in modal
             const settingsInfoDiv = document.getElementById('edit-original-settings-info');
             if (settingsInfoDiv) {
-                const modelName = metadata?.model_selection?.selected_model || 'Default model';
+                const agentSelection = metadata?.agent_selection;
+                const modelName = metadata?.model_selection?.selected_model;
                 const reasoningEffort = metadata?.reasoning_effort;
                 const docSearchEnabled = metadata?.document_search?.enabled || false;
                 
-                let settingsHtml = `<small class="text-muted">Original settings: <strong>${modelName}</strong>`;
+                let settingsHtml = '<small class="text-muted">Original settings: ';
+                
+                // Show agent if used, otherwise show model
+                if (agentSelection && (agentSelection.agent_display_name || agentSelection.selected_agent)) {
+                    const agentName = agentSelection.agent_display_name || agentSelection.selected_agent;
+                    settingsHtml += `<strong>🤖 ${agentName}</strong>`;
+                } else if (modelName) {
+                    settingsHtml += `<strong>${modelName}</strong>`;
+                } else {
+                    settingsHtml += '<strong>Default model</strong>';
+                }
                 
                 if (reasoningEffort) {
                     settingsHtml += `, Reasoning: <strong>${reasoningEffort}</strong>`;
@@ -50,7 +64,7 @@ export function handleEditButtonClick(messageDiv, messageId, messageType) {
                     settingsHtml += `, <strong>Document search enabled</strong>`;
                 }
                 
-                settingsHtml += `</small>`;
+                settingsHtml += '</small>';
                 settingsInfoDiv.innerHTML = settingsHtml;
             }
         })
