@@ -9,7 +9,7 @@ def get_settings(use_cosmos=False):
     import secrets
     default_settings = {
         # External health check
-        'enable_external_healthcheck': False,
+        'enable_external_healthcheck': True,
         # Security settings
         'enable_appinsights_global_logging': False,
         'enable_debug_logging': False,
