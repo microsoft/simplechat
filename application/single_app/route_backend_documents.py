@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_documents import *
 from functions_settings import *
 from utils_cache import invalidate_personal_search_cache
+from functions_debug import *
 from functions_activity_logging import log_document_upload
 import os
 import requests
@@ -355,8 +356,8 @@ def register_route_backend_documents(app):
         # --- 3) First query: get total count based on filters ---
         try:
             count_query_str = f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}"
-            # debug_print(f"[DEBUG]: Count Query: {count_query_str}") # Optional Debugging
-            # debug_print(f"[DEBUG]: Count Params: {query_params}")    # Optional Debugging
+            # debug_print(f"Count Query: {count_query_str}") # Optional Debugging
+            # debug_print(f"Count Params: {query_params}")    # Optional Debugging
             count_items = list(cosmos_user_documents_container.query_items(
                 query=count_query_str,
                 parameters=query_params,
@@ -380,8 +381,8 @@ def register_route_backend_documents(app):
                 ORDER BY c._ts DESC
                 OFFSET {offset} LIMIT {page_size}
             """
-            # debug_print(f"[DEBUG]: Data Query: {data_query_str}") # Optional Debugging
-            # debug_print(f"[DEBUG]: Data Params: {query_params}")    # Optional Debugging
+            # debug_print(f"Data Query: {data_query_str}") # Optional Debugging
+            # debug_print(f"Data Params: {query_params}")    # Optional Debugging
             docs = list(cosmos_user_documents_container.query_items(
                 query=data_query_str,
                 parameters=query_params,

@@ -342,10 +342,12 @@ def _test_multimodal_vision_connection(payload):
                     api_key=api_key
                 )
 
-        # Test vision analysis with simple prompt
-        response = gpt_client.chat.completions.create(
-            model=vision_model,
-            messages=[
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        api_params = {
+            "model": vision_model,
+            "messages": [
                 {
                     "role": "user",
                     "content": [
@@ -361,9 +363,17 @@ def _test_multimodal_vision_connection(payload):
                         }
                     ]
                 }
-            ],
-            max_tokens=50
-        )
+            ]
+        }
+        
+        # Use max_completion_tokens for o-series and gpt-5 models, max_tokens for others
+        if ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower):
+            api_params["max_completion_tokens"] = 50
+        else:
+            api_params["max_tokens"] = 50
+        
+        # Test vision analysis with simple prompt
+        response = gpt_client.chat.completions.create(**api_params)
 
         result = response.choices[0].message.content
 

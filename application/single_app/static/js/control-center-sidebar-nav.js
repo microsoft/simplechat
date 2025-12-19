@@ -155,6 +155,14 @@ function showControlCenterTab(tabId) {
         targetPane.classList.add('show', 'active');
     }
     
+    // Load tab-specific data when Activity Logs tab is shown
+    if (tabId === 'activity-logs' && window.controlCenter) {
+        console.log('Activity Logs tab activated via sidebar, loading logs...');
+        setTimeout(() => {
+            window.controlCenter.loadActivityLogs();
+        }, 100);
+    }
+    
     // Update Bootstrap tab buttons (if using top tabs instead of sidebar)
     const targetTabBtn = document.querySelector(`[data-bs-target="#${tabId}"]`);
     if (targetTabBtn) {

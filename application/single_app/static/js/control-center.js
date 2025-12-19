@@ -15,7 +15,14 @@ class ControlCenter {
         this.loginsChart = null;
         this.chatsChart = null;
         this.documentsChart = null;
+        this.tokensChart = null;
         this.currentTrendDays = 30;
+        
+        // Activity Logs state
+        this.activityLogsPage = 1;
+        this.activityLogsPerPage = 50;
+        this.activityLogsSearch = '';
+        this.activityTypeFilter = 'all';
         
         this.init();
     }
@@ -45,6 +52,19 @@ class ControlCenter {
         
         document.getElementById('workspaces-tab')?.addEventListener('click', () => {
             setTimeout(() => this.loadPublicWorkspaces(), 100);
+        });
+        
+        document.getElementById('activity-logs-tab')?.addEventListener('click', () => {
+            console.log('Activity Logs tab clicked!');
+            setTimeout(() => {
+                console.log('Calling loadActivityLogs...');
+                this.loadActivityLogs();
+            }, 100);
+        });
+        
+        // Also use shown.bs.tab as backup
+        document.getElementById('activity-logs-tab')?.addEventListener('shown.bs.tab', () => {
+            console.log('Activity Logs tab shown event fired');
         });
         
         // Search and filter controls
@@ -154,6 +174,18 @@ class ControlCenter {
         document.querySelectorAll('input[name="chatTimeWindow"]').forEach(radio => {
             radio.addEventListener('change', () => this.toggleChatCustomDateRange());
         });
+        
+        // Activity Logs event handlers
+        document.getElementById('activityLogsSearchInput')?.addEventListener('input', 
+            this.debounce(() => this.handleActivityLogsSearchChange(), 300));
+        document.getElementById('activityTypeFilterSelect')?.addEventListener('change', 
+            () => this.handleActivityLogsFilterChange());
+        document.getElementById('activityLogsPerPageSelect')?.addEventListener('change', 
+            (e) => this.handleActivityLogsPerPageChange(e));
+        document.getElementById('exportActivityLogsBtn')?.addEventListener('click', 
+            () => this.exportActivityLogsToCSV());
+        document.getElementById('refreshActivityLogsBtn')?.addEventListener('click', 
+            () => this.loadActivityLogs());
     }
     
     debounce(func, wait) {
@@ -1131,10 +1163,11 @@ class ControlCenter {
             
             if (response.ok) {
                 console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
-                // Render all three charts
+                // Render all four charts
                 this.renderLoginsChart(data.activity_data);
                 this.renderChatsChart(data.activity_data);
                 this.renderDocumentsChart(data.activity_data);  // Now renders both personal and group
+                this.renderTokensChart(data.activity_data);
                 // Ensure main loading overlay is hidden after all charts are created
                 this.showLoading(false);
             } else {
@@ -1337,6 +1370,171 @@ class ControlCenter {
         } catch (error) {
             console.error(`❌ [Frontend Debug] Error creating documents chart:`, error);
             this.showChartError(canvasId, 'documents');
+        }
+    }
+
+    renderTokensChart(activityData) {
+        console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
+        
+        // Render combined chart with embedding and chat tokens
+        this.renderCombinedTokensChart('tokensChart', activityData.tokens || {});
+    }
+
+    renderCombinedTokensChart(canvasId, tokensData) {
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error(`❌ [Frontend Debug] Chart.js is not loaded. Cannot render tokens chart.`);
+            this.showChartError(canvasId, 'tokens');
+            return;
+        }
+        
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) {
+            console.error(`❌ [Frontend Debug] Chart canvas element ${canvasId} not found`);
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error(`❌ [Frontend Debug] Could not get 2D context from ${canvasId} canvas`);
+            return;
+        }
+        
+        // Show canvas
+        canvas.style.display = 'block';
+        
+        // Destroy existing chart if it exists
+        if (this.tokensChart) {
+            console.log('🔍 [Frontend Debug] Destroying existing tokens chart');
+            this.tokensChart.destroy();
+        }
+        
+        // Prepare data from tokens object (format: { "YYYY-MM-DD": { "embedding": count, "chat": count } })
+        const allDates = Object.keys(tokensData).sort();
+        console.log('🔍 [Frontend Debug] Token dates:', allDates);
+        
+        // Format labels for display
+        const labels = allDates.map(dateStr => {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        
+        // Extract embedding and chat token counts
+        const embeddingTokens = allDates.map(date => tokensData[date]?.embedding || 0);
+        const chatTokens = allDates.map(date => tokensData[date]?.chat || 0);
+        
+        console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
+        console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+        
+        // Create datasets
+        const datasets = [
+            {
+                label: 'Embedding Tokens',
+                data: embeddingTokens,
+                backgroundColor: 'rgba(111, 66, 193, 0.2)',
+                borderColor: '#6f42c1',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#6f42c1'
+            },
+            {
+                label: 'Chat Tokens',
+                data: chatTokens,
+                backgroundColor: 'rgba(13, 202, 240, 0.2)',
+                borderColor: '#0dcaf0',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#0dcaf0'
+            }
+        ];
+        
+        console.log(`🔍 [Frontend Debug] Token datasets prepared:`, datasets);
+        
+        // Create new chart
+        try {
+            this.tokensChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 15
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                title: function(context) {
+                                    const dataIndex = context[0].dataIndex;
+                                    const dateStr = allDates[dataIndex];
+                                    const date = new Date(dateStr);
+                                    return date.toLocaleDateString('en-US', { 
+                                        weekday: 'long', 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    });
+                                },
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += context.parsed.y.toLocaleString() + ' tokens';
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            display: true,
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            },
+                            ticks: {
+                                precision: 0,
+                                callback: function(value) {
+                                    return value.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                }
+            });
+            
+            console.log(`✅ [Frontend Debug] Tokens chart created successfully`);
+            
+        } catch (error) {
+            console.error(`❌ [Frontend Debug] Error creating tokens chart:`, error);
+            this.showChartError(canvasId, 'tokens');
         }
     }
 
@@ -1567,6 +1765,7 @@ class ControlCenter {
             if (document.getElementById('exportPersonalDocuments').checked) selectedCharts.push('personal_documents');
             if (document.getElementById('exportGroupDocuments').checked) selectedCharts.push('group_documents');
             if (document.getElementById('exportPublicDocuments').checked) selectedCharts.push('public_documents');
+            if (document.getElementById('exportTokens').checked) selectedCharts.push('tokens');
             
             if (selectedCharts.length === 0) {
                 alert('Please select at least one chart to export.');
@@ -1657,6 +1856,347 @@ class ControlCenter {
             exportBtn.innerHTML = '<i class="bi bi-download me-1"></i>Export CSV';
             exportBtn.disabled = false;
         }
+    }
+    
+    // Activity Logs Methods
+    async loadActivityLogs() {
+        console.log('=== loadActivityLogs CALLED ===');
+        console.log('this:', this);
+        console.log('State:', {
+            activityLogsPage: this.activityLogsPage,
+            activityLogsPerPage: this.activityLogsPerPage,
+            activityLogsSearch: this.activityLogsSearch,
+            activityTypeFilter: this.activityTypeFilter
+        });
+        
+        try {
+            const params = new URLSearchParams({
+                page: this.activityLogsPage,
+                per_page: this.activityLogsPerPage,
+                search: this.activityLogsSearch,
+                activity_type_filter: this.activityTypeFilter
+            });
+
+            const url = `/api/admin/control-center/activity-logs?${params}`;
+            console.log('Fetching from:', url);
+            
+            const response = await fetch(url);
+            console.log('Response received:', response.status);
+            
+            if (!response.ok) {
+                throw new Error('Failed to load activity logs');
+            }
+
+            const data = await response.json();
+            console.log('Activity logs loaded:', data);
+            
+            this.renderActivityLogs(data.logs, data.user_map);
+            this.renderActivityLogsPagination(data.pagination);
+            
+        } catch (error) {
+            console.error('Error loading activity logs:', error);
+            this.showActivityLogsError('Failed to load activity logs. Please try again.');
+        }
+    }
+
+    renderActivityLogs(logs, userMap) {
+        const tbody = document.getElementById('activityLogsTableBody');
+        if (!tbody) return;
+
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center py-4">
+                        <div class="text-muted">No activity logs found</div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = logs.map(log => {
+            const user = userMap[log.user_id] || {};
+            const userName = user.display_name || user.email || log.user_id;
+            const timestamp = new Date(log.timestamp).toLocaleString();
+            const activityType = this.formatActivityType(log.activity_type);
+            const details = this.formatActivityDetails(log);
+            const workspaceType = log.workspace_type || 'N/A';
+
+            return `
+                <tr>
+                    <td>${timestamp}</td>
+                    <td><span class="badge bg-primary">${activityType}</span></td>
+                    <td>${this.escapeHtml(userName)}</td>
+                    <td>${details}</td>
+                    <td>${this.capitalizeFirst(workspaceType)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    formatActivityType(activityType) {
+        const typeMap = {
+            'user_login': 'User Login',
+            'conversation_creation': 'Conversation Created',
+            'document_creation': 'Document Created',
+            'token_usage': 'Token Usage',
+            'conversation_deletion': 'Conversation Deleted',
+            'conversation_archival': 'Conversation Archived'
+        };
+        return typeMap[activityType] || activityType;
+    }
+
+    formatActivityDetails(log) {
+        const activityType = log.activity_type;
+        
+        switch (activityType) {
+            case 'user_login':
+                return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
+                
+            case 'conversation_creation':
+                const convTitle = log.conversation?.title || 'Untitled';
+                const convId = log.conversation?.conversation_id || 'N/A';
+                return `Title: ${this.escapeHtml(convTitle)}<br><small class="text-muted">ID: ${convId}</small>`;
+                
+            case 'document_creation':
+                const fileName = log.document?.file_name || 'Unknown';
+                const fileType = log.document?.file_type || '';
+                return `File: ${this.escapeHtml(fileName)}<br><small class="text-muted">Type: ${fileType}</small>`;
+                
+            case 'token_usage':
+                const tokenType = log.token_type || 'unknown';
+                const totalTokens = log.usage?.total_tokens || 0;
+                const model = log.usage?.model || 'N/A';
+                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
+                
+            case 'conversation_deletion':
+                const delTitle = log.conversation?.title || 'Untitled';
+                const delId = log.conversation?.conversation_id || 'N/A';
+                return `Deleted: ${this.escapeHtml(delTitle)}<br><small class="text-muted">ID: ${delId}</small>`;
+                
+            case 'conversation_archival':
+                const archTitle = log.conversation?.title || 'Untitled';
+                const archId = log.conversation?.conversation_id || 'N/A';
+                return `Archived: ${this.escapeHtml(archTitle)}<br><small class="text-muted">ID: ${archId}</small>`;
+                
+            default:
+                return 'N/A';
+        }
+    }
+
+    renderActivityLogsPagination(pagination) {
+        const paginationInfo = document.getElementById('activityLogsPaginationInfo');
+        const paginationNav = document.getElementById('activityLogsPagination');
+        
+        if (paginationInfo) {
+            const start = (pagination.page - 1) * pagination.per_page + 1;
+            const end = Math.min(pagination.page * pagination.per_page, pagination.total_items);
+            paginationInfo.textContent = `Showing ${start}-${end} of ${pagination.total_items} logs`;
+        }
+        
+        if (paginationNav) {
+            let paginationHtml = '';
+            
+            // Previous button
+            paginationHtml += `
+                <li class="page-item ${!pagination.has_prev ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="window.controlCenter.goToActivityLogsPage(${pagination.page - 1}); return false;">
+                        <i class="bi bi-chevron-left"></i>
+                    </a>
+                </li>
+            `;
+            
+            // Page numbers
+            const startPage = Math.max(1, pagination.page - 2);
+            const endPage = Math.min(pagination.total_pages, pagination.page + 2);
+            
+            if (startPage > 1) {
+                paginationHtml += `
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="window.controlCenter.goToActivityLogsPage(1); return false;">1</a>
+                    </li>
+                `;
+                if (startPage > 2) {
+                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                }
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHtml += `
+                    <li class="page-item ${i === pagination.page ? 'active' : ''}">
+                        <a class="page-link" href="#" onclick="window.controlCenter.goToActivityLogsPage(${i}); return false;">${i}</a>
+                    </li>
+                `;
+            }
+            
+            if (endPage < pagination.total_pages) {
+                if (endPage < pagination.total_pages - 1) {
+                    paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                }
+                paginationHtml += `
+                    <li class="page-item">
+                        <a class="page-link" href="#" onclick="window.controlCenter.goToActivityLogsPage(${pagination.total_pages}); return false;">${pagination.total_pages}</a>
+                    </li>
+                `;
+            }
+            
+            // Next button
+            paginationHtml += `
+                <li class="page-item ${!pagination.has_next ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="window.controlCenter.goToActivityLogsPage(${pagination.page + 1}); return false;">
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                </li>
+            `;
+            
+            paginationNav.innerHTML = paginationHtml;
+        }
+    }
+
+    goToActivityLogsPage(page) {
+        this.activityLogsPage = page;
+        this.loadActivityLogs();
+    }
+
+    handleActivityLogsSearchChange() {
+        const searchInput = document.getElementById('activityLogsSearchInput');
+        this.activityLogsSearch = searchInput ? searchInput.value : '';
+        this.activityLogsPage = 1;
+        this.loadActivityLogs();
+    }
+
+    handleActivityLogsFilterChange() {
+        const filterSelect = document.getElementById('activityTypeFilterSelect');
+        this.activityTypeFilter = filterSelect ? filterSelect.value : 'all';
+        this.activityLogsPage = 1;
+        this.loadActivityLogs();
+    }
+
+    handleActivityLogsPerPageChange(event) {
+        this.activityLogsPerPage = parseInt(event.target.value);
+        this.activityLogsPage = 1;
+        this.loadActivityLogs();
+    }
+
+    async exportActivityLogsToCSV() {
+        try {
+            // Get current filtered data
+            const params = new URLSearchParams({
+                page: 1,
+                per_page: 10000, // Get all for export
+                search: this.activityLogsSearch,
+                activity_type_filter: this.activityTypeFilter
+            });
+
+            const response = await fetch(`/api/admin/control-center/activity-logs?${params}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to load activity logs for export');
+            }
+
+            const data = await response.json();
+            
+            // Convert to CSV
+            const headers = ['Timestamp', 'Activity Type', 'User ID', 'User Email', 'User Name', 'Details', 'Workspace Type'];
+            const csvRows = [headers.join(',')];
+            
+            data.logs.forEach(log => {
+                const user = data.user_map[log.user_id] || {};
+                const timestamp = new Date(log.timestamp).toISOString();
+                const activityType = log.activity_type;
+                const userId = log.user_id;
+                const userEmail = user.email || '';
+                const userName = user.display_name || '';
+                const details = this.getActivityDetailsForCSV(log);
+                const workspaceType = log.workspace_type || '';
+                
+                const row = [
+                    timestamp,
+                    activityType,
+                    userId,
+                    userEmail,
+                    userName,
+                    details,
+                    workspaceType
+                ].map(field => `"${String(field).replace(/"/g, '""')}"`);
+                
+                csvRows.push(row.join(','));
+            });
+            
+            // Download CSV
+            const csvContent = csvRows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `activity_logs_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+        } catch (error) {
+            console.error('Error exporting activity logs:', error);
+            alert('Failed to export activity logs. Please try again.');
+        }
+    }
+
+    getActivityDetailsForCSV(log) {
+        const activityType = log.activity_type;
+        
+        switch (activityType) {
+            case 'user_login':
+                return `Login method: ${log.login_method || log.details?.login_method || 'N/A'}`;
+                
+            case 'conversation_creation':
+                return `Title: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                
+            case 'document_creation':
+                return `File: ${log.document?.file_name || 'Unknown'}, Type: ${log.document?.file_type || ''}`;
+                
+            case 'token_usage':
+                return `Type: ${log.token_type || 'unknown'}, Tokens: ${log.usage?.total_tokens || 0}, Model: ${log.usage?.model || 'N/A'}`;
+                
+            case 'conversation_deletion':
+                return `Deleted: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                
+            case 'conversation_archival':
+                return `Archived: ${log.conversation?.title || 'Untitled'}, ID: ${log.conversation?.conversation_id || 'N/A'}`;
+                
+            default:
+                return 'N/A';
+        }
+    }
+
+    showActivityLogsError(message) {
+        const tbody = document.getElementById('activityLogsTableBody');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center py-4">
+                        <div class="text-danger">
+                            <i class="bi bi-exclamation-triangle me-2"></i>${message}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    capitalizeFirst(str) {
+        if (!str) return '';
+        return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
+    escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
     
     toggleChatCustomDateRange() {
@@ -1777,6 +2317,10 @@ class ControlCenter {
             this.documentsChart.destroy();
             this.documentsChart = null;
         }
+        if (this.tokensChart) {
+            this.tokensChart.destroy();
+            this.tokensChart = null;
+        }
         if (this.personalDocumentsChart) {
             this.personalDocumentsChart.destroy();
             this.personalDocumentsChart = null;
@@ -1789,10 +2333,11 @@ class ControlCenter {
     }
     
     showAllChartsError() {
-        // Show error for all three charts
+        // Show error for all four charts
         this.showChartError('loginsChart', 'logins');
         this.showChartError('chatsChart', 'chats');
         this.showChartError('documentsChart', 'documents');
+        this.showChartError('tokensChart', 'tokens');
         
         // Ensure main loading overlay is hidden when showing error
         this.showLoading(false);
@@ -2620,6 +3165,165 @@ function showAlert(message, type = 'info') {
     }, 5000);
 }
 
+// Activity Log Migration Functions
+async function checkMigrationStatus() {
+    try {
+        const response = await fetch('/api/admin/control-center/migrate/status');
+        if (!response.ok) {
+            throw new Error('Failed to fetch migration status');
+        }
+        
+        const data = await response.json();
+        
+        if (data.migration_needed) {
+            // Update banner with counts
+            document.getElementById('migrationConversationCount').textContent = data.conversations_without_logs.toLocaleString();
+            document.getElementById('migrationDocumentCount').textContent = data.total_documents_without_logs.toLocaleString();
+            
+            // Show the banner
+            const banner = document.getElementById('migrationBanner');
+            if (banner) {
+                banner.style.display = 'block';
+            }
+        } else {
+            // Hide banner if no migration needed
+            const banner = document.getElementById('migrationBanner');
+            if (banner) {
+                banner.style.display = 'none';
+            }
+        }
+        
+        return data;
+    } catch (error) {
+        console.error('Error checking migration status:', error);
+        return null;
+    }
+}
+
+function showMigrationProgress() {
+    const progressDiv = document.getElementById('migrationProgress');
+    const migrateBtn = document.getElementById('migrateBannerBtn');
+    
+    if (progressDiv) {
+        progressDiv.style.display = 'block';
+    }
+    
+    if (migrateBtn) {
+        migrateBtn.disabled = true;
+        migrateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Migrating...';
+    }
+}
+
+function hideMigrationProgress() {
+    const progressDiv = document.getElementById('migrationProgress');
+    const migrateBtn = document.getElementById('migrateBannerBtn');
+    
+    if (progressDiv) {
+        progressDiv.style.display = 'none';
+    }
+    
+    if (migrateBtn) {
+        migrateBtn.disabled = false;
+        migrateBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Migrate Now';
+    }
+}
+
+function updateMigrationProgress(percent, statusText) {
+    const progressBar = document.getElementById('migrationProgressBar');
+    const progressText = document.getElementById('migrationProgressText');
+    const statusTextEl = document.getElementById('migrationStatusText');
+    
+    if (progressBar) {
+        progressBar.style.width = percent + '%';
+        progressBar.setAttribute('aria-valuenow', percent);
+    }
+    
+    if (progressText) {
+        progressText.textContent = percent + '%';
+    }
+    
+    if (statusTextEl && statusText) {
+        statusTextEl.textContent = statusText;
+    }
+}
+
+function hideMigrationBanner() {
+    const banner = document.getElementById('migrationBanner');
+    if (banner) {
+        banner.style.display = 'none';
+    }
+}
+
+async function performMigration() {
+    // Confirm with user
+    if (!confirm('This migration may take several minutes and could affect system performance. Are you sure you want to continue?\n\nRecommended to run during off-peak hours.')) {
+        return;
+    }
+    
+    try {
+        showMigrationProgress();
+        updateMigrationProgress(10, 'Starting migration...');
+        
+        const response = await fetch('/api/admin/control-center/migrate/all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        updateMigrationProgress(50, 'Processing records...');
+        
+        if (!response.ok) {
+            throw new Error('Migration request failed');
+        }
+        
+        const result = await response.json();
+        
+        updateMigrationProgress(90, 'Finalizing...');
+        
+        // Show results
+        setTimeout(() => {
+            updateMigrationProgress(100, 'Migration completed!');
+            
+            setTimeout(() => {
+                hideMigrationProgress();
+                hideMigrationBanner();
+                
+                // Show detailed results
+                const totalMigrated = result.total_migrated || 0;
+                const totalFailed = result.total_failed || 0;
+                
+                let message = `Migration completed successfully!\n\n`;
+                message += `✓ Conversations migrated: ${result.conversations_migrated || 0}\n`;
+                message += `✓ Personal documents migrated: ${result.personal_documents_migrated || 0}\n`;
+                message += `✓ Group documents migrated: ${result.group_documents_migrated || 0}\n`;
+                message += `✓ Public documents migrated: ${result.public_documents_migrated || 0}\n`;
+                message += `\nTotal: ${totalMigrated} records migrated`;
+                
+                if (totalFailed > 0) {
+                    message += `\n\n⚠ ${totalFailed} records failed to migrate (check logs for details)`;
+                }
+                
+                alert(message);
+                
+                // Refresh activity trends to show new data
+                if (window.controlCenter) {
+                    window.controlCenter.loadActivityTrends();
+                }
+            }, 1500);
+        }, 500);
+        
+    } catch (error) {
+        console.error('Migration error:', error);
+        hideMigrationProgress();
+        alert('Migration failed: ' + error.message + '\n\nPlease check the console and server logs for details.');
+    }
+}
+
+// Make migration functions globally accessible
+window.checkMigrationStatus = checkMigrationStatus;
+window.performMigration = performMigration;
+
 // Make refresh function globally accessible for debugging
 window.refreshControlCenterData = refreshControlCenterData;
 window.loadRefreshStatus = loadRefreshStatus;
@@ -2645,5 +3349,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load initial refresh status with a slight delay to ensure elements are rendered
     setTimeout(() => {
         loadRefreshStatus();
+        
+        // Check migration status
+        checkMigrationStatus();
     }, 100);
 });
