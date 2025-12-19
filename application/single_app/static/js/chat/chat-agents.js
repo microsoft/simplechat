@@ -13,6 +13,15 @@ const enableAgentsBtn = document.getElementById("enable-agents-btn");
 const agentSelectContainer = document.getElementById("agent-select-container");
 const modelSelectContainer = document.getElementById("model-select-container");
 
+/**
+ * Check if agents are currently enabled
+ * @returns {boolean} True if agents are active
+ */
+export function areAgentsEnabled() {
+    const enableAgentsBtn = document.getElementById("enable-agents-btn");
+    return enableAgentsBtn && enableAgentsBtn.classList.contains('active');
+}
+
 export async function initializeAgentInteractions() {
     if (enableAgentsBtn && agentSelectContainer) {
         // On load, sync UI with enable_agents setting

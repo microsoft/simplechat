@@ -1794,6 +1794,23 @@
                     
                     <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
                         <hr> 
+                        
+                        <!-- Disable Group Creation Setting -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="disable_group_creation"
+                                name="disable_group_creation"
+                                {% if not settings.enable_group_creation %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="disable_group_creation">
+                                Disable Group Creation
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of role membership."></i>
+                        </div>
+                        <p class="text-muted small mb-3">
+                            When enabled, no users will be able to create new groups, regardless of their role membership. This is a global setting that overrides the 'Require Membership to Create Groups' setting below.
+                        </p>
+                        
                         <div class="form-group form-check form-switch mb-2">
                             <input type="checkbox"
                                 class="form-check-input"
@@ -1983,7 +2000,7 @@
                                 {% endfor %}
                             {% endif %}
                         </select>
-                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision). Only vision-capable models are shown.</div>
+                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision, gpt-5, gpt-5-nano, etc.). Only vision-capable models are shown.</div>
                         
                         <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
                             <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis

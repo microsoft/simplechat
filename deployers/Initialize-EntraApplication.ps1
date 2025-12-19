@@ -41,9 +41,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
+    [ValidateLength(3, 12)]                # Length between 3 and 12
+    [ValidatePattern('^[a-zA-Z0-9]+$')]    # Only letters and numbers
     [string]$AppName,
 
     [Parameter(Mandatory = $true)]
+    [ValidateLength(2, 10)]                # Length between 2 and 10
+    [ValidatePattern('^[a-zA-Z0-9]+$')]    # Only letters and numbers
     [string]$Environment,
 
     [Parameter(Mandatory = $false)]

@@ -6,6 +6,7 @@ from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
+from functions_debug import *
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -122,7 +123,9 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "document_classification": "None",
                 "type": "document_metadata",
                 "user_id": user_id,
-                "shared_user_ids": []
+                "shared_user_ids": [],
+                "embedding_tokens": 0,
+                "embedding_model_deployment_name": None
             }
 
         cosmos_container.upsert_item(document_metadata)
@@ -242,7 +245,14 @@ def save_video_chunk(
         # 1) generate embedding on the transcript text
         try:
             debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
-            embedding = generate_embedding(page_text_content)
+            result = generate_embedding(page_text_content)
+            
+            # Handle both tuple (new) and single value (backward compatibility)
+            if isinstance(result, tuple):
+                embedding, _ = result  # Ignore token_usage for now
+            else:
+                embedding = result
+                
             debug_print(f"[VIDEO CHUNK] Embedding generated successfully")
             print(f"[VideoChunk] EMBEDDING OK for {document_id}@{start_time}", flush=True)
         except Exception as e:
@@ -1490,7 +1500,7 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding = generate_embedding(page_text_content)
+        embedding, token_usage = generate_embedding(page_text_content)
     except Exception as e:
         print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
         raise
@@ -1622,6 +1632,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     except Exception as e:
         print(f"Error uploading chunk document for document {document_id}: {e}")
         raise
+    
+    # Return token usage information for accumulation
+    return token_usage
 
 def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
     """
@@ -2160,6 +2173,39 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             item=document_id,
             partition_key=document_id
         )
+        
+        # Log document deletion transaction before deletion
+        try:
+            from functions_activity_logging import log_document_deletion_transaction
+            
+            # Determine workspace type
+            if public_workspace_id:
+                workspace_type = 'public'
+            elif group_id:
+                workspace_type = 'group'
+            else:
+                workspace_type = 'personal'
+            
+            # Extract file extension from filename
+            file_name = document_item.get('file_name', '')
+            file_ext = os.path.splitext(file_name)[-1].lower() if file_name else None
+            
+            # Log the deletion transaction with document metadata
+            log_document_deletion_transaction(
+                user_id=user_id,
+                document_id=document_id,
+                workspace_type=workspace_type,
+                file_name=file_name,
+                file_type=file_ext,
+                page_count=document_item.get('number_of_pages'),
+                version=document_item.get('version'),
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                document_metadata=document_item  # Store full metadata
+            )
+        except Exception as log_error:
+            print(f"⚠️  Warning: Failed to log document deletion transaction: {log_error}")
+            # Don't fail the deletion if logging fails
 
         if is_public_workspace:
             if document_item.get('public_workspace_id') != public_workspace_id:
@@ -2989,8 +3035,8 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             'analysis': 'detailed analysis'
         } or None if vision analysis is disabled or fails
     """
-    if not settings.get('enable_multimodal_vision', False):
-        return None
+    debug_print(f"[VISION_ANALYSIS_V2] Function entry - document_id: {document_id}, user_id: {user_id}")
+
         
     try:
         # Convert image to base64
@@ -2998,11 +3044,20 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             image_bytes = img_file.read()
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
+        image_size = len(image_bytes)
+        base64_size = len(base64_image)
+        debug_print(f"[VISION_ANALYSIS] Image conversion for {document_id}:")
+        debug_print(f"  Image path: {image_path}")
+        debug_print(f"  Original size: {image_size:,} bytes ({image_size / 1024 / 1024:.2f} MB)")
+        debug_print(f"  Base64 size: {base64_size:,} characters")
+        
         # Determine image mime type
         mime_type = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        debug_print(f"  MIME type: {mime_type}")
         
         # Get vision model settings
         vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
+        debug_print(f"[VISION_ANALYSIS] Vision model selected: {vision_model}")
         
         if not vision_model:
             print(f"Warning: Multi-modal vision enabled but no model selected")
@@ -3010,45 +3065,76 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
         
         # Initialize client (reuse GPT configuration)
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
+        debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
         
         if enable_gpt_apim:
+            api_version = settings.get('azure_apim_gpt_api_version')
+            endpoint = settings.get('azure_apim_gpt_endpoint')
+            debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            
             gpt_client = AzureOpenAI(
-                api_version=settings.get('azure_apim_gpt_api_version'),
-                azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                api_version=api_version,
+                azure_endpoint=endpoint,
                 api_key=settings.get('azure_apim_gpt_subscription_key')
             )
         else:
             # Use managed identity or key
             auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+            api_version = settings.get('azure_openai_gpt_api_version')
+            endpoint = settings.get('azure_openai_gpt_endpoint')
+            
+            debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
+            debug_print(f"  Endpoint: {endpoint}")
+            debug_print(f"  API Version: {api_version}")
+            debug_print(f"  Auth Type: {auth_type}")
+            
             if auth_type == 'managed_identity':
                 token_provider = get_bearer_token_provider(
                     DefaultAzureCredential(), 
                     cognitive_services_scope
                 )
                 gpt_client = AzureOpenAI(
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
                     azure_ad_token_provider=token_provider
                 )
             else:
                 gpt_client = AzureOpenAI(
-                    api_version=settings.get('azure_openai_gpt_api_version'),
-                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
                     api_key=settings.get('azure_openai_gpt_key')
                 )
         
         # Create vision prompt
         print(f"Analyzing image with vision model: {vision_model}")
         
-        response = gpt_client.chat.completions.create(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": """Analyze this image and provide:
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        
+        debug_print(f"[VISION_ANALYSIS] Building API request parameters:")
+        debug_print(f"  Model (lowercase): {vision_model_lower}")
+        
+        # Check which parameter will be used
+        uses_completion_tokens = ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower)
+        debug_print(f"  Uses max_completion_tokens: {uses_completion_tokens}")
+        debug_print(f"  Detection: o1={('o1' in vision_model_lower)}, o3={('o3' in vision_model_lower)}, gpt-5={('gpt-5' in vision_model_lower)}")
+        
+        # Build prompt - GPT-5/reasoning models need explicit JSON instruction when using response_format
+        if uses_completion_tokens:
+            prompt_text = """Analyze this image and respond in JSON format with the following structure:
+{
+  "description": "A detailed description of what you see in the image",
+  "objects": ["list", "of", "objects", "people", "or", "notable", "elements"],
+  "text": "Any visible text extracted from the image (OCR)",
+  "analysis": "Contextual analysis, insights, or interpretation"
+}
+
+Ensure your entire response is valid JSON. Include all four keys even if some are empty strings or empty arrays."""
+        else:
+            prompt_text = """Analyze this image and provide:
 1. A detailed description of what you see
 2. List any objects, people, or notable elements
 3. Extract any visible text (OCR)
@@ -3061,6 +3147,16 @@ Format your response as JSON with these keys:
   "text": "...",
   "analysis": "..."
 }"""
+        
+        api_params = {
+            "model": vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_text
                         },
                         {
                             "type": "image_url",
@@ -3070,37 +3166,129 @@ Format your response as JSON with these keys:
                         }
                     ]
                 }
-            ],
-            max_tokens=1000
-        )
+            ]
+        }
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ About to send request to Azure OpenAI with {vision_model}")
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Using parameter: {'max_completion_tokens' if uses_completion_tokens else 'max_tokens'} = 1000")
+        debug_print(f"[VISION_ANALYSIS] Sending request to Azure OpenAI...")
+        debug_print(f"  Message content types: text + image_url")
+        debug_print(f"  Image data URL prefix: data:{mime_type};base64,... ({base64_size} chars)")
+        
+        response = gpt_client.chat.completions.create(**api_params)
+        
+        debug_print(f"[VISION_ANALYSIS_V2] ⚡ Response received successfully from {vision_model}")
+        
+        debug_print(f"[VISION_ANALYSIS] Response received from {vision_model}")
+        debug_print(f"  Response ID: {response.id if hasattr(response, 'id') else 'N/A'}")
+        debug_print(f"  Model used: {response.model if hasattr(response, 'model') else 'N/A'}")
+        if hasattr(response, 'usage'):
+            debug_print(f"  Token usage: prompt={response.usage.prompt_tokens if hasattr(response.usage, 'prompt_tokens') else 'N/A'}, completion={response.usage.completion_tokens if hasattr(response.usage, 'completion_tokens') else 'N/A'}, total={response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 'N/A'}")
+        
+        # Debug the response structure to understand why content might be empty
+        debug_print(f"[VISION_ANALYSIS] Response object inspection:")
+        debug_print(f"  Response type: {type(response)}")
+        debug_print(f"  Has choices: {hasattr(response, 'choices')}")
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+            debug_print(f"  Number of choices: {len(response.choices)}")
+            debug_print(f"  First choice type: {type(response.choices[0])}")
+            debug_print(f"  Has message: {hasattr(response.choices[0], 'message')}")
+            if hasattr(response.choices[0], 'message'):
+                debug_print(f"  Message type: {type(response.choices[0].message)}")
+                debug_print(f"  Message content type: {type(response.choices[0].message.content)}")
+                debug_print(f"  Message content is None: {response.choices[0].message.content is None}")
+                # Check for refusal
+                if hasattr(response.choices[0].message, 'refusal'):
+                    debug_print(f"  Message refusal: {response.choices[0].message.refusal}")
+                # Check finish reason
+                if hasattr(response.choices[0], 'finish_reason'):
+                    debug_print(f"  Finish reason: {response.choices[0].finish_reason}")
         
         # Parse response
         content = response.choices[0].message.content
         
-        debug_print(f"[VISION_ANALYSIS] Raw response for {document_id}: {content[:500]}...")
+        # Handle None content
+        if content is None:
+            print(f"[VISION_ANALYSIS_V2] ⚠️ Response content is None!")
+            debug_print(f"[VISION_ANALYSIS] ⚠️ Content is None - checking for refusal or error")
+            if hasattr(response.choices[0].message, 'refusal') and response.choices[0].message.refusal:
+                error_msg = f"Model refused to respond: {response.choices[0].message.refusal}"
+            else:
+                error_msg = "Model returned empty content with no refusal message"
+            
+            return {
+                'description': error_msg,
+                'error': error_msg,
+                'model': vision_model,
+                'parse_failed': True
+            }
+        
+        # Additional debugging for empty string case
+        print(f"[VISION_ANALYSIS_V2] ⚡ Content length: {len(content)}, repr: {repr(content[:200])}")
+        debug_print(f"[VISION_ANALYSIS] Raw response received:")
+        debug_print(f"  Length: {len(content)} characters")
+        debug_print(f"  Content repr: {repr(content)}")
+        debug_print(f"  First 500 chars: {content[:500]}...")
+        debug_print(f"  Last 100 chars: ...{content[-100:] if len(content) > 100 else content}")
+        
+        # Check if response looks like JSON
+        is_json_like = content.strip().startswith('{') or content.strip().startswith('[')
+        has_code_fence = '```' in content
+        debug_print(f"  Starts with JSON bracket: {is_json_like}")
+        debug_print(f"  Contains code fence: {has_code_fence}")
         
         # Try to parse as JSON, fallback to raw text
         try:
             # Clean up potential markdown code fences
+            debug_print(f"[VISION_ANALYSIS] Attempting to clean JSON code fences...")
             content_cleaned = clean_json_codeFence(content)
+            debug_print(f"  Cleaned length: {len(content_cleaned)} characters")
+            debug_print(f"  Cleaned first 200 chars: {content_cleaned[:200]}...")
+            
+            debug_print(f"[VISION_ANALYSIS] Attempting to parse as JSON...")
             vision_analysis = json.loads(content_cleaned)
-            debug_print(f"[VISION_ANALYSIS] Parsed JSON successfully for {document_id}")
+            debug_print(f"[VISION_ANALYSIS] ✅ Successfully parsed JSON response!")
+            debug_print(f"  JSON keys: {list(vision_analysis.keys())}")
+            
         except Exception as parse_error:
-            debug_print(f"[VISION_ANALYSIS] Vision response not valid JSON: {parse_error}")
+            debug_print(f"[VISION_ANALYSIS] ❌ JSON parsing failed!")
+            debug_print(f"  Error type: {type(parse_error).__name__}")
+            debug_print(f"  Error message: {str(parse_error)}")
+            debug_print(f"  Content that failed to parse (first 1000 chars): {content[:1000]}")
             print(f"Vision response not valid JSON, using raw text")
+            
             vision_analysis = {
                 'description': content,
-                'raw_response': content
+                'raw_response': content,
+                'parse_error': str(parse_error),
+                'parse_failed': True
             }
+            debug_print(f"[VISION_ANALYSIS] Created fallback structure with raw response")
         
         # Add model info to analysis
         vision_analysis['model'] = vision_model
         
-        debug_print(f"[VISION_ANALYSIS] Complete analysis for {document_id}:")
+        debug_print(f"[VISION_ANALYSIS] Final analysis structure for {document_id}:")
         debug_print(f"  Model: {vision_model}")
-        debug_print(f"  Description: {vision_analysis.get('description', 'N/A')[:200]}...")
-        debug_print(f"  Objects: {vision_analysis.get('objects', [])}")
-        debug_print(f"  Text: {vision_analysis.get('text', 'N/A')[:100]}...")
+        debug_print(f"  Has 'description': {'description' in vision_analysis}")
+        debug_print(f"  Has 'objects': {'objects' in vision_analysis}")
+        debug_print(f"  Has 'text': {'text' in vision_analysis}")
+        debug_print(f"  Has 'analysis': {'analysis' in vision_analysis}")
+        
+        if 'description' in vision_analysis:
+            desc = vision_analysis['description']
+            debug_print(f"  Description length: {len(desc)} chars")
+            debug_print(f"  Description preview: {desc[:200]}...")
+        
+        if 'objects' in vision_analysis:
+            objs = vision_analysis['objects']
+            debug_print(f"  Objects count: {len(objs) if isinstance(objs, list) else 'not a list'}")
+            debug_print(f"  Objects: {objs}")
+        
+        if 'text' in vision_analysis:
+            txt = vision_analysis['text']
+            debug_print(f"  Text length: {len(txt) if txt else 0} chars")
+            debug_print(f"  Text preview: {txt[:100] if txt else 'None'}...")
         
         print(f"Vision analysis completed for document: {document_id}")
         return vision_analysis
@@ -3168,6 +3356,8 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing TXT file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     target_words_per_chunk = 400
 
     if enable_enhanced_citations:
@@ -3218,13 +3408,19 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
                 elif is_group:
                     args["group_id"] = group_id
 
-                save_chunks(**args)
+                token_usage = save_chunks(**args)
                 total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing TXT file {original_filename}: {e}")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
@@ -3233,6 +3429,8 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing XML file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     # Character-based chunking for XML structure preservation
     max_chunk_size_chars = 4000
 
@@ -3299,8 +3497,14 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
         # Final update with actual chunks saved
         if total_chunks_saved != initial_chunk_count:
@@ -3311,7 +3515,7 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
         raise Exception(f"Failed processing XML file {original_filename}: {e}")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
@@ -3320,6 +3524,8 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing YAML file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     # Character-based chunking for YAML structure preservation
     max_chunk_size_chars = 4000
 
@@ -3386,8 +3592,14 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
         # Final update with actual chunks saved
         if total_chunks_saved != initial_chunk_count:
@@ -3398,7 +3610,7 @@ def process_yaml(document_id, user_id, temp_file_path, original_filename, enable
         print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
         raise Exception(f"Failed processing YAML file {original_filename}: {e}")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes LOG files using line-based chunking to maintain log record integrity."""
@@ -3407,6 +3619,8 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
 
     update_callback(status="Processing LOG file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
 
     if enable_enhanced_citations:
@@ -3481,13 +3695,19 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
                 elif is_group:
                     args["group_id"] = group_id
 
-                save_chunks(**args)
+                token_usage = save_chunks(**args)
                 total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing LOG file {original_filename}: {e}")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """
@@ -3567,13 +3787,19 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
                 elif is_group:
                     args["group_id"] = group_id
 
-                save_chunks(**args)
+                token_usage = save_chunks(**args)
                 total_chunks_saved += 1
+                
+                # Accumulate embedding tokens
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing {original_filename}: {e}")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
@@ -3582,6 +3808,8 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing HTML file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     target_chunk_words = 1200 # Target size based on requirement
     min_chunk_words = 600 # Minimum size based on requirement
 
@@ -3659,8 +3887,14 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         # Catch potential BeautifulSoup errors too
@@ -3695,7 +3929,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             print(f"Warning: Error extracting final metadata for HTML document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_md(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes Markdown files."""
@@ -3704,6 +3938,8 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
     update_callback(status="Processing Markdown file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     target_chunk_words = 1200 # Target size based on requirement
     min_chunk_words = 600 # Minimum size based on requirement
 
@@ -3788,8 +4024,14 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
@@ -3823,7 +4065,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             print(f"Warning: Error extracting final metadata for Markdown document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_json(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes JSON files using RecursiveJsonSplitter."""
@@ -3832,6 +4074,8 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
 
     update_callback(status="Processing JSON file...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     # Reflects character count limit for the splitter
     max_chunk_size_chars = 4000 # As per original requirement
 
@@ -3905,8 +4149,14 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
             elif is_group:
                 args["group_id"] = group_id
 
-            save_chunks(**args)
+            token_usage = save_chunks(**args)
             total_chunks_saved += 1 # Increment only when a chunk is actually saved
+            
+            # Accumulate embedding tokens
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get('model_deployment_name')
 
         # Final update with the actual number of chunks saved
         if total_chunks_saved != initial_chunk_count:
@@ -3952,7 +4202,7 @@ def process_json(document_id, user_id, temp_file_path, original_filename, enable
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
     # Return the count of chunks actually saved
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
@@ -3960,6 +4210,8 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
     is_public_workspace = public_workspace_id is not None
 
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     target_chunk_size_chars = 800 # Requirement: "800 size chunk" (assuming characters)
 
     if df.empty:
@@ -4029,10 +4281,16 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
         elif is_group:
             args["group_id"] = group_id
 
-        save_chunks(**args)
+        token_usage = save_chunks(**args)
         total_chunks_saved += 1
+        
+        # Accumulate embedding tokens
+        if token_usage:
+            total_embedding_tokens += token_usage.get('total_tokens', 0)
+            if not embedding_model_name:
+                embedding_model_name = token_usage.get('model_deployment_name')
 
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes CSV, XLSX, or XLS files using pandas."""
@@ -4041,6 +4299,8 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     update_callback(status=f"Processing Tabular file ({file_ext})...")
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
 
     # Upload the original file once if enhanced citations are enabled
     if enable_enhanced_citations:
@@ -4081,7 +4341,15 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             elif is_group:
                 args["group_id"] = group_id
 
-            total_chunks_saved = process_single_tabular_sheet(**args)
+            result = process_single_tabular_sheet(**args)
+            if isinstance(result, tuple) and len(result) == 3:
+                chunks, tokens, model = result
+                total_chunks_saved = chunks
+                total_embedding_tokens += tokens
+                if not embedding_model_name:
+                    embedding_model_name = model
+            else:
+                total_chunks_saved = result
 
         elif file_ext in ('.xlsx', '.xls', '.xlsm'):
             # Process Excel (potentially multiple sheets)
@@ -4115,9 +4383,15 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 elif is_group:
                     args["group_id"] = group_id
 
-                chunks_from_sheet = process_single_tabular_sheet(**args)
-
-                accumulated_total_chunks += chunks_from_sheet
+                result = process_single_tabular_sheet(**args)
+                if isinstance(result, tuple) and len(result) == 3:
+                    chunks, tokens, model = result
+                    accumulated_total_chunks += chunks
+                    total_embedding_tokens += tokens
+                    if not embedding_model_name:
+                        embedding_model_name = model
+                else:
+                    accumulated_total_chunks += result
 
             total_chunks_saved = accumulated_total_chunks # Total across all sheets
 
@@ -4157,12 +4431,16 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             print(f"Warning: Error extracting final metadata for Tabular document {document_id}: {str(e)}")
             update_callback(status=f"Processing complete (metadata extraction warning)")
             
-    return total_chunks_saved
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
+    
+    # --- Token tracking initialization ---
+    total_embedding_tokens = 0
+    embedding_model_name = None
     
     # --- Extracted Metadata logic ---
     doc_title, doc_author, doc_subject, doc_keywords = '', '', None, None
@@ -4386,7 +4664,13 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     elif is_group:
                         args["group_id"] = group_id
 
-                    save_chunks(**args)
+                    token_usage = save_chunks(**args)
+                    
+                    # Accumulate embedding tokens
+                    if token_usage:
+                        total_embedding_tokens += token_usage.get('total_tokens', 0)
+                        if not embedding_model_name:
+                            embedding_model_name = token_usage.get('model_deployment_name')
 
                     total_final_chunks_processed += 1
                 print(f"Saved {num_final_chunks} content chunk(s) from {chunk_effective_filename}.")
@@ -4427,13 +4711,13 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  update_callback(status="Final metadata extraction yielded no new info")
         except Exception as e:
             print(f"Warning: Error extracting final metadata for {document_id}: {str(e)}")
-            # Don't fail the whole process, just update status
+            # Don't fail the whole proc, total_embedding_tokens, embedding_model_nameess, just update status
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
     # Note: Vision analysis now happens BEFORE save_chunks (moved earlier in the flow)
     # This ensures vision_analysis is available in metadata when chunks are being saved
 
-    return total_final_chunks_processed
+    return total_final_chunks_processed, total_embedding_tokens, embedding_model_name
 
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
@@ -4478,7 +4762,7 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     if not chunks:
         print(f"[Error] No WAV chunks produced for '{input_path}'.")
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
-    print(f"[Debug] Produced {len(chunks)} WAV chunks: {chunks}")
+    print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
 
     # Azure Speech SDK helper to get speech config with fresh token
@@ -4527,7 +4811,7 @@ def process_audio_document(
 
     # 1) size guard
     file_size = os.path.getsize(temp_file_path)
-    print(f"[Debug] File size: {file_size} bytes")
+    print(f"File size: {file_size} bytes")
     if file_size > 300 * 1024 * 1024:
         raise ValueError("Audio exceeds 300 MB limit.")
 
@@ -4602,7 +4886,7 @@ def process_audio_document(
     for p in chunk_paths:
         try:
             os.remove(p)
-            print(f"[Debug] Removed chunk: {p}")
+            print(f"Removed chunk: {p}")
         except Exception as e:
             print(f"[Warning] Could not remove chunk {p}: {e}")
 
@@ -4611,7 +4895,7 @@ def process_audio_document(
     words = full_text.split()
     chunk_size = 400
     total_pages = max(1, math.ceil(len(words) / chunk_size))
-    print(f"[Debug] Creating {total_pages} transcript pages")
+    print(f"Creating {total_pages} transcript pages")
 
     for i in range(total_pages):
         page_text = ' '.join(words[i*chunk_size:(i+1)*chunk_size])
@@ -4693,6 +4977,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
 
     total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
     file_ext = '' # Initialize
 
     try:
@@ -4736,23 +5022,60 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             args["group_id"] = group_id
 
         if file_ext == '.txt':
-            total_chunks_saved = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+            # Handle tuple return (chunks, tokens, model_name)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.xml':
-            total_chunks_saved = process_xml(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_xml(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in ('.yaml', '.yml'):
-            total_chunks_saved = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.log':
-            total_chunks_saved = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in ('.doc', '.docm'):
-            total_chunks_saved = process_doc(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_doc(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.html':
-            total_chunks_saved = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.md':
-            total_chunks_saved = process_md(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_md(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext == '.json':
-            total_chunks_saved = process_json(**{k: v for k, v in args.items() if k != "file_ext"})
+            result = process_json(**{k: v for k, v in args.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in tabular_extensions:
-            total_chunks_saved = process_tabular(**args)
+            result = process_tabular(**args)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         elif file_ext in video_extensions:
             total_chunks_saved = process_video_document(
                 document_id=document_id,
@@ -4774,7 +5097,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 public_workspace_id=public_workspace_id
             )
         elif file_ext in di_supported_extensions:
-            total_chunks_saved = process_di_document(**args)
+            result = process_di_document(**args)
+            # Handle tuple return (chunks, tokens, model_name)
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
         else:
             raise ValueError(f"Unsupported file type for processing: {file_ext}")
 
@@ -4793,14 +5121,115 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         # Final update uses the total chunks saved across all steps/sheets
         # For DI types, number_of_pages might have been updated during DI processing,
         # but let's ensure the final update reflects the *saved* chunk count accurately.
-        update_doc_callback(
-             number_of_pages=total_chunks_saved, # Final count of SAVED chunks
-             status=final_status,
-             percentage_complete=100,
-             current_file_chunk=None # Clear current chunk tracking
-         )
+        # Also update embedding token tracking data
+        final_update_args = {
+             "number_of_pages": total_chunks_saved, # Final count of SAVED chunks
+             "status": final_status,
+             "percentage_complete": 100,
+             "current_file_chunk": None # Clear current chunk tracking
+        }
+        
+        # Add embedding token data if available
+        if total_embedding_tokens > 0:
+            final_update_args["embedding_tokens"] = total_embedding_tokens
+        if embedding_model_name:
+            final_update_args["embedding_model_deployment_name"] = embedding_model_name
+            
+        update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved.")
+        print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved and {total_embedding_tokens} embedding tokens used.")
+        
+        # Log document creation transaction to activity_logs container
+        try:
+            from functions_activity_logging import log_document_creation_transaction, log_token_usage
+            
+            # Retrieve final document metadata to capture all extracted fields
+            doc_metadata = get_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            
+            # Determine workspace type
+            if public_workspace_id:
+                workspace_type = 'public'
+            elif group_id:
+                workspace_type = 'group'
+            else:
+                workspace_type = 'personal'
+            
+            # Log the transaction with all available metadata
+            log_document_creation_transaction(
+                user_id=user_id,
+                document_id=document_id,
+                workspace_type=workspace_type,
+                file_name=original_filename,
+                file_type=file_ext,
+                file_size=file_size,
+                page_count=total_chunks_saved,
+                embedding_tokens=total_embedding_tokens,
+                embedding_model=embedding_model_name,
+                version=doc_metadata.get('version') if doc_metadata else None,
+                author=doc_metadata.get('author') if doc_metadata else None,
+                title=doc_metadata.get('title') if doc_metadata else None,
+                subject=doc_metadata.get('subject') if doc_metadata else None,
+                publication_date=doc_metadata.get('publication_date') if doc_metadata else None,
+                keywords=doc_metadata.get('keywords') if doc_metadata else None,
+                abstract=doc_metadata.get('abstract') if doc_metadata else None,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                additional_metadata={
+                    'status': final_status,
+                    'upload_date': doc_metadata.get('upload_date') if doc_metadata else None,
+                    'document_classification': doc_metadata.get('document_classification') if doc_metadata else None
+                }
+            )
+            
+            # Log embedding token usage separately for easy reporting
+            if total_embedding_tokens > 0 and embedding_model_name:
+                log_token_usage(
+                    user_id=user_id,
+                    token_type='embedding',
+                    total_tokens=total_embedding_tokens,
+                    model=embedding_model_name,
+                    workspace_type=workspace_type,
+                    document_id=document_id,
+                    file_name=original_filename,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    additional_context={
+                        'file_type': file_ext,
+                        'page_count': total_chunks_saved
+                    }
+                )
+            
+            # Mark document as logged to activity logs to prevent duplicate migration
+            try:
+                # All document containers use /id as partition key
+                if public_workspace_id:
+                    doc_container = cosmos_public_documents_container
+                elif group_id:
+                    doc_container = cosmos_group_documents_container
+                else:
+                    doc_container = cosmos_user_documents_container
+                
+                # All document containers use document_id (/id) as partition key
+                partition_key = document_id
+                
+                # Read, update, and upsert the document with the flag
+                doc_record = doc_container.read_item(item=document_id, partition_key=partition_key)
+                doc_record['added_to_activity_log'] = True
+                doc_container.upsert_item(doc_record)
+                print(f"✅ Set added_to_activity_log flag for document {document_id}")
+                
+            except Exception as flag_error:
+                print(f"⚠️  Warning: Failed to set added_to_activity_log flag: {flag_error}")
+                # Don't fail if flag setting fails
+                
+        except Exception as log_error:
+            print(f"⚠️  Warning: Failed to log document creation transaction: {log_error}")
+            # Don't fail the document processing if logging fails
 
     except Exception as e:
         error_msg = f"Processing failed: {str(e)}"

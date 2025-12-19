@@ -394,9 +394,17 @@ if (fetchGptBtn) {
             const resp = await fetch('/api/models/gpt');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 gptAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                gptSelected = gptSelected.filter(selected => 
+                    gptAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderGPTModels();
                 updateGptHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No GPT models found'}</p>`;
             }
@@ -441,9 +449,17 @@ if (fetchEmbeddingBtn) {
             const resp = await fetch('/api/models/embedding');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 embeddingAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                embeddingSelected = embeddingSelected.filter(selected => 
+                    embeddingAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderEmbeddingModels();
                 updateEmbeddingHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No embedding models found'}</p>`;
             }
@@ -480,9 +496,17 @@ if (fetchImageBtn) {
             const resp = await fetch('/api/models/image');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 imageAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                imageSelected = imageSelected.filter(selected => 
+                    imageAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderImageModels();
                 updateImageHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No image models found'}</p>`;
             }
