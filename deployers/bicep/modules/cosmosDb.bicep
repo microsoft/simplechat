@@ -5,10 +5,12 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -22,7 +24,6 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
-    disableLocalAuth: true
     capabilities: [
       {
         name: 'EnableServerless'
@@ -69,32 +70,6 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-// grant the managed identity access to cosmos db as a contributor
-resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(cosmosDb.id, managedIdentityId, 'cosmos-contributor')
-  scope: cosmosDb
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'b24988ac-6180-42a0-ab88-20f7382dd24c'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Grant the managed identity Cosmos DB Built-in Data Contributor role
-resource cosmosDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = {
-  name: guid(cosmosDb.id, managedIdentityPrincipalId, 'cosmos-data-contributor')
-  parent: cosmosDb
-  properties: {
-    // Cosmos DB Built-in Data Contributor role definition ID
-    roleDefinitionId: '${cosmosDb.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-    principalId: managedIdentityPrincipalId
-    scope: cosmosDb.id
-  }
-}
-
 // configure diagnostic settings for cosmos db
 resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${cosmosDb.name}-diagnostics')
@@ -107,4 +82,17 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
   }
 }
 
+//=========================================================
+// store cosmos db keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module storeEnterpriseAppSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+  name: 'storeEnterpriseAppSecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'cosmos-db-key'
+    secretValue: cosmosDb.listKeys().primaryMasterKey
+  }
+}
+
 output cosmosDbName string = cosmosDb.name
+output cosmosDbUri string = cosmosDb.properties.documentEndpoint
