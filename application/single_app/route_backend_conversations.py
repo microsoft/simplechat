@@ -7,6 +7,7 @@ from functions_conversation_metadata import get_conversation_metadata
 from flask import Response, request
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 
 def register_route_backend_conversations(app):
 
@@ -313,6 +314,14 @@ def register_route_backend_conversations(app):
             'is_hidden': False
         }
         cosmos_conversations_container.upsert_item(conversation_item)
+        
+        # Log conversation creation
+        log_conversation_creation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            title='New Conversation',
+            workspace_type='personal'
+        )
 
         return jsonify({
             'conversation_id': conversation_id,
@@ -393,6 +402,16 @@ def register_route_backend_conversations(app):
             archived_item = dict(conversation_item)
             archived_item["archived_at"] = datetime.utcnow().isoformat()
             cosmos_archived_conversations_container.upsert_item(archived_item)
+            
+            # Log conversation archival
+            log_conversation_archival(
+                user_id=conversation_item.get('user_id'),
+                conversation_id=conversation_id,
+                title=conversation_item.get('title', 'Untitled'),
+                workspace_type='personal',
+                context=conversation_item.get('context', []),
+                tags=conversation_item.get('tags', [])
+            )
 
         message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
         results = list(cosmos_messages_container.query_items(
@@ -407,6 +426,18 @@ def register_route_backend_conversations(app):
                 cosmos_archived_messages_container.upsert_item(archived_doc)
 
             cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
+        
+        # Log conversation deletion before actual deletion
+        log_conversation_deletion(
+            user_id=conversation_item.get('user_id'),
+            conversation_id=conversation_id,
+            title=conversation_item.get('title', 'Untitled'),
+            workspace_type='personal',
+            context=conversation_item.get('context', []),
+            tags=conversation_item.get('tags', []),
+            is_archived=archiving_enabled,
+            is_bulk_operation=False
+        )
         
         try:
             cosmos_conversations_container.delete_item(
@@ -470,6 +501,16 @@ def register_route_backend_conversations(app):
                     archived_item = dict(conversation_item)
                     archived_item["archived_at"] = datetime.utcnow().isoformat()
                     cosmos_archived_conversations_container.upsert_item(archived_item)
+                    
+                    # Log conversation archival
+                    log_conversation_archival(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        title=conversation_item.get('title', 'Untitled'),
+                        workspace_type='personal',
+                        context=conversation_item.get('context', []),
+                        tags=conversation_item.get('tags', [])
+                    )
                 
                 # Get and archive messages if enabled
                 message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
@@ -485,6 +526,18 @@ def register_route_backend_conversations(app):
                         cosmos_archived_messages_container.upsert_item(archived_message)
                     
                     cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
+                
+                # Log conversation deletion before actual deletion
+                log_conversation_deletion(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    title=conversation_item.get('title', 'Untitled'),
+                    workspace_type='personal',
+                    context=conversation_item.get('context', []),
+                    tags=conversation_item.get('tags', []),
+                    is_archived=archiving_enabled,
+                    is_bulk_operation=True
+                )
                 
                 # Delete the conversation
                 cosmos_conversations_container.delete_item(

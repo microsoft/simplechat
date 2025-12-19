@@ -21,7 +21,7 @@ from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
-from functions_activity_logging import log_chat_activity
+from functions_activity_logging import log_chat_activity, log_conversation_creation
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -219,6 +219,14 @@ def register_route_backend_chats(app):
                     'strict': False
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Log conversation creation
+                log_conversation_creation(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    title='New Conversation',
+                    workspace_type='personal'
+                )
             else:
                 try:
                     conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
@@ -237,6 +245,14 @@ def register_route_backend_chats(app):
                     # Optionally log that a conversation was expected but not found
                     debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    
+                    # Log conversation creation
+                    log_conversation_creation(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        title='New Conversation',
+                        workspace_type='personal'
+                    )
                 except Exception as e:
                     debug_print(f"Error reading conversation {conversation_id}: {e}")
                     return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500

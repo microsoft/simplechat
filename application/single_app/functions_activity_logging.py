@@ -468,6 +468,227 @@ def log_token_usage(
         )
 
 
+def log_conversation_creation(
+    user_id: str,
+    conversation_id: str,
+    title: str,
+    workspace_type: str = 'personal',
+    context: list = None,
+    tags: list = None,
+    group_id: str = None,
+    public_workspace_id: str = None,
+    additional_context: dict = None
+) -> None:
+    """
+    Log conversation creation to the activity_logs container.
+    
+    Args:
+        user_id (str): The ID of the user creating the conversation
+        conversation_id (str): The unique ID of the conversation
+        title (str): The conversation title
+        workspace_type (str, optional): Type of workspace ('personal', 'group', 'public')
+        context (list, optional): Conversation context array
+        tags (list, optional): Conversation tags array
+        group_id (str, optional): Group ID if in group workspace
+        public_workspace_id (str, optional): Public workspace ID if applicable
+        additional_context (dict, optional): Any additional context information
+    """
+    try:
+        # Build activity log
+        activity_log = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'conversation_creation',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'conversation': {
+                'conversation_id': conversation_id,
+                'title': title,
+                'context': context or [],
+                'tags': tags or []
+            },
+            'workspace_type': workspace_type,
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_log['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_log['workspace_context']['public_workspace_id'] = public_workspace_id
+        
+        # Add additional context if provided
+        if additional_context:
+            activity_log['additional_context'] = additional_context
+        
+        # Save to activity logs container
+        cosmos_activity_logs_container.upsert_item(activity_log)
+        
+        debug_print(f"✅ Logged conversation creation: {conversation_id}")
+        
+    except Exception as e:
+        # Non-blocking error handling
+        debug_print(f"⚠️ Error logging conversation creation: {str(e)}")
+        log_to_blob(
+            message=f"Error logging conversation creation: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+
+
+def log_conversation_deletion(
+    user_id: str,
+    conversation_id: str,
+    title: str,
+    workspace_type: str = 'personal',
+    context: list = None,
+    tags: list = None,
+    is_archived: bool = False,
+    is_bulk_operation: bool = False,
+    group_id: str = None,
+    public_workspace_id: str = None,
+    additional_context: dict = None
+) -> None:
+    """
+    Log conversation deletion to the activity_logs container.
+    
+    Args:
+        user_id (str): The ID of the user deleting the conversation
+        conversation_id (str): The unique ID of the conversation
+        title (str): The conversation title
+        workspace_type (str, optional): Type of workspace ('personal', 'group', 'public')
+        context (list, optional): Conversation context array
+        tags (list, optional): Conversation tags array
+        is_archived (bool, optional): Whether the conversation was archived before deletion
+        is_bulk_operation (bool, optional): Whether this is part of a bulk deletion
+        group_id (str, optional): Group ID if in group workspace
+        public_workspace_id (str, optional): Public workspace ID if applicable
+        additional_context (dict, optional): Any additional context information
+    """
+    try:
+        # Build activity log
+        activity_log = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'conversation_deletion',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'conversation': {
+                'conversation_id': conversation_id,
+                'title': title,
+                'context': context or [],
+                'tags': tags or []
+            },
+            'deletion_details': {
+                'is_archived': is_archived,
+                'is_bulk_operation': is_bulk_operation
+            },
+            'workspace_type': workspace_type,
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_log['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_log['workspace_context']['public_workspace_id'] = public_workspace_id
+        
+        # Add additional context if provided
+        if additional_context:
+            activity_log['additional_context'] = additional_context
+        
+        # Save to activity logs container
+        cosmos_activity_logs_container.upsert_item(activity_log)
+        
+        debug_print(f"✅ Logged conversation deletion: {conversation_id} (archived: {is_archived}, bulk: {is_bulk_operation})")
+        
+    except Exception as e:
+        # Non-blocking error handling
+        debug_print(f"⚠️ Error logging conversation deletion: {str(e)}")
+        log_to_blob(
+            message=f"Error logging conversation deletion: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+
+
+def log_conversation_archival(
+    user_id: str,
+    conversation_id: str,
+    title: str,
+    workspace_type: str = 'personal',
+    context: list = None,
+    tags: list = None,
+    group_id: str = None,
+    public_workspace_id: str = None,
+    additional_context: dict = None
+) -> None:
+    """
+    Log conversation archival to the activity_logs container.
+    
+    Args:
+        user_id (str): The ID of the user archiving the conversation
+        conversation_id (str): The unique ID of the conversation
+        title (str): The conversation title
+        workspace_type (str, optional): Type of workspace ('personal', 'group', 'public')
+        context (list, optional): Conversation context array
+        tags (list, optional): Conversation tags array
+        group_id (str, optional): Group ID if in group workspace
+        public_workspace_id (str, optional): Public workspace ID if applicable
+        additional_context (dict, optional): Any additional context information
+    """
+    try:
+        # Build activity log
+        activity_log = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'conversation_archival',
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'conversation': {
+                'conversation_id': conversation_id,
+                'title': title,
+                'context': context or [],
+                'tags': tags or []
+            },
+            'workspace_type': workspace_type,
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_log['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_log['workspace_context']['public_workspace_id'] = public_workspace_id
+        
+        # Add additional context if provided
+        if additional_context:
+            activity_log['additional_context'] = additional_context
+        
+        # Save to activity logs container
+        cosmos_activity_logs_container.upsert_item(activity_log)
+        
+        debug_print(f"✅ Logged conversation archival: {conversation_id}")
+        
+    except Exception as e:
+        # Non-blocking error handling
+        debug_print(f"⚠️ Error logging conversation archival: {str(e)}")
+        log_to_blob(
+            message=f"Error logging conversation archival: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'conversation_id': conversation_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+
+
 def log_user_login(
     user_id: str,
     login_method: str = 'azure_ad'
