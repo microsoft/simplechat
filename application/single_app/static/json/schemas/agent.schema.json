@@ -60,6 +60,11 @@
         "enable_agent_gpt_apim": {
           "type": "boolean"
         },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "minimal", "low", "medium", "high"],
+          "description": "Reasoning effort level for models that support it (e.g., gpt-5, o1, o3)"
+        },
         "default_agent": {
           "type": "boolean",
           "description": "(deprecated) Use selected_agent for agent selection."

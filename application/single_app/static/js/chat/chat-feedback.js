@@ -8,18 +8,9 @@ const feedbackForm = document.getElementById("feedback-form");
 export function renderFeedbackIcons(messageId, conversationId) {
   if (toBoolean(window.enableUserFeedback)) {
     return `
-      <div class="feedback-icons" data-ai-message-id="${messageId}">
-        <i class="bi bi-hand-thumbs-up-fill text-muted me-3 feedback-btn" 
-          data-feedback-type="positive" 
-          data-conversation-id="${conversationId}"
-          title="Thumbs Up"
-          style="cursor:pointer;"></i>
-        <i class="bi bi-hand-thumbs-down-fill text-muted feedback-btn" 
-          data-feedback-type="negative" 
-          data-conversation-id="${conversationId}"
-          title="Thumbs Down"
-          style="cursor:pointer;"></i>
-      </div>
+      <li><hr class="dropdown-divider"></li>
+      <li><a class="dropdown-item feedback-btn" href="#" data-feedback-type="positive" data-conversation-id="${conversationId}" data-ai-message-id="${messageId}"><i class="bi bi-hand-thumbs-up me-2"></i>Thumbs Up</a></li>
+      <li><a class="dropdown-item feedback-btn" href="#" data-feedback-type="negative" data-conversation-id="${conversationId}" data-ai-message-id="${messageId}"><i class="bi bi-hand-thumbs-down me-2"></i>Thumbs Down</a></li>
     `;
   }
   else {
@@ -57,8 +48,10 @@ document.addEventListener("click", function (event) {
   const feedbackBtn = event.target.closest(".feedback-btn");
   if (!feedbackBtn) return;
 
+  event.preventDefault();
+
   const feedbackType = feedbackBtn.getAttribute("data-feedback-type");
-  const messageId = feedbackBtn.closest(".feedback-icons").getAttribute("data-ai-message-id");
+  const messageId = feedbackBtn.getAttribute("data-ai-message-id");
   const conversationId = feedbackBtn.getAttribute("data-conversation-id");
 
   feedbackBtn.classList.add("clicked");
@@ -70,6 +63,11 @@ document.addEventListener("click", function (event) {
       feedbackBtn.classList.remove("clicked");
     }, 500);
   } else {
+    // Remove clicked class immediately for negative feedback since modal will show
+    setTimeout(() => {
+      feedbackBtn.classList.remove("clicked");
+    }, 100);
+    
     const modalEl = new bootstrap.Modal(document.getElementById("feedback-modal"));
     document.getElementById("feedback-ai-response-id").value = messageId;
     document.getElementById("feedback-conversation-id").value = conversationId;

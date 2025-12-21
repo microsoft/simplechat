@@ -394,9 +394,17 @@ if (fetchGptBtn) {
             const resp = await fetch('/api/models/gpt');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 gptAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                gptSelected = gptSelected.filter(selected => 
+                    gptAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderGPTModels();
                 updateGptHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No GPT models found'}</p>`;
             }
@@ -441,9 +449,17 @@ if (fetchEmbeddingBtn) {
             const resp = await fetch('/api/models/embedding');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 embeddingAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                embeddingSelected = embeddingSelected.filter(selected => 
+                    embeddingAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderEmbeddingModels();
                 updateEmbeddingHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No embedding models found'}</p>`;
             }
@@ -480,9 +496,17 @@ if (fetchImageBtn) {
             const resp = await fetch('/api/models/image');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 imageAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                imageSelected = imageSelected.filter(selected => 
+                    imageAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderImageModels();
                 updateImageHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No image models found'}</p>`;
             }
@@ -1519,7 +1543,6 @@ function setupToggles() {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
         enableEnhancedCitation.addEventListener('change', function(){
             toggleEnhancedCitation(this.checked);
-            
             markFormAsModified();
         });
     }
@@ -1626,6 +1649,15 @@ function setupToggles() {
     if (docIntelAuthType) {
         docIntelAuthType.addEventListener('change', function () {
             document.getElementById('azure_document_intelligence_key_container').style.display =
+                (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
+    const speechAuthType = document.getElementById('speech_service_authentication_type');
+    if (speechAuthType) {
+        speechAuthType.addEventListener('change', function () {
+            document.getElementById('speech_service_key_container').style.display =
                 (this.value === 'key') ? 'block' : 'none';
             markFormAsModified();
         });
@@ -2267,12 +2299,14 @@ function setupTestButtons() {
         testKeyVaultBtn.addEventListener('click', async () => {
             const resultDiv = document.getElementById('test_key_vault_result');
             resultDiv.innerHTML = 'Testing Key Vault...';
+
             const payload = {
                 test_type: 'key_vault',
                 vault_name: document.getElementById('key_vault_name').value,
-                client_id: document.getElementById('key_vault_identity').value,
+                client_id: document.getElementById('key_vault_identity').value
             };
-            try {
+
+             try {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2282,10 +2316,68 @@ function setupTestButtons() {
                 if (resp.ok) {
                     resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;
+                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;            }
+        });
+    }
+
+    const testVisionBtn = document.getElementById('test_multimodal_vision_button');
+    if (testVisionBtn) {
+        testVisionBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_multimodal_vision_result');
+            resultDiv.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing Vision Analysis...';
+
+            const visionModel = document.getElementById('multimodal_vision_model').value;
+            
+            if (!visionModel) {
+                resultDiv.innerHTML = '<span class="text-danger">Please select a vision model first</span>';
+                return;
+            }
+
+            const enableApim = document.getElementById('enable_gpt_apim').checked;
+
+            const payload = {
+                test_type: 'multimodal_vision',
+                enable_apim: enableApim,
+                vision_model: visionModel
+            };
+
+            if (enableApim) {
+                payload.apim = {
+                    endpoint: document.getElementById('azure_apim_gpt_endpoint').value,
+                    subscription_key: document.getElementById('azure_apim_gpt_subscription_key').value,
+                    api_version: document.getElementById('azure_apim_gpt_api_version').value,
+                    deployment: visionModel
+                };
+            } else {
+                payload.direct = {
+                    endpoint: document.getElementById('azure_openai_gpt_endpoint').value,
+                    auth_type: document.getElementById('azure_openai_gpt_authentication_type').value,
+                    key: document.getElementById('azure_openai_gpt_key').value,
+                    api_version: document.getElementById('azure_openai_gpt_api_version').value,
+                    deployment: visionModel
+                };
+            }
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.innerHTML = `<div class="alert alert-success mb-0">
+                        <strong><i class="bi bi-check-circle me-1"></i>Success!</strong><br>
+                        ${data.message}<br>
+                        <small class="text-muted">${data.details || ''}</small>
+                    </div>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${data.error || 'Error testing Vision Analysis'}</span>`;
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Error: ${err.message}</span>`;
             }
         });
     }
@@ -2390,10 +2482,91 @@ if (extractToggle) {
   });
 }
 
+// Multi-Modal Vision UI
+const visionToggle = document.getElementById('enable_multimodal_vision');
+const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
+const visionSelect = document.getElementById('multimodal_vision_model');
+
+function populateVisionModels() {
+  if (!visionSelect) return;
+  
+  // remember previously chosen value
+  const prev = visionSelect.getAttribute('data-prev') || '';
+
+  // clear out old options (except the placeholder)
+  visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
+
+  if (document.getElementById('enable_gpt_apim').checked) {
+    // use comma-separated APIM deployments
+    const text = document.getElementById('azure_apim_gpt_deployment').value || '';
+    text.split(',')
+        .map(s => s.trim())
+        .filter(s => s)
+        .forEach(d => {
+          const opt = new Option(d, d);
+          visionSelect.add(opt);
+        });
+  } else {
+    // use direct GPT selected deployments - filter for vision-capable models
+    (window.gptSelected || []).forEach(m => {
+      // Only include models with vision capabilities
+      // Vision-enabled models per Azure OpenAI docs:
+      // - o-series reasoning models (o1, o3, etc.)
+      // - GPT-5 series
+      // - GPT-4.1 series
+      // - GPT-4.5
+      // - GPT-4o series (gpt-4o, gpt-4o-mini)
+      // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
+      const modelNameLower = (m.modelName || '').toLowerCase();
+      const isVisionCapable = 
+        modelNameLower.includes('vision') ||           // gpt-4-vision, gpt-4-turbo-vision
+        modelNameLower.includes('gpt-4o') ||           // gpt-4o, gpt-4o-mini
+        modelNameLower.includes('gpt-4.1') ||          // gpt-4.1 series
+        modelNameLower.includes('gpt-4.5') ||          // gpt-4.5
+        modelNameLower.includes('gpt-5') ||            // gpt-5 series
+        modelNameLower.match(/^o\d+/) ||               // o1, o3, etc. (o-series)
+        modelNameLower.includes('o1-') ||              // o1-preview, o1-mini
+        modelNameLower.includes('o3-');                // o3-mini, etc.
+      
+      if (isVisionCapable) {
+        const label = `${m.deploymentName} (${m.modelName})`;
+        const opt = new Option(label, m.deploymentName);
+        visionSelect.add(opt);
+      }
+    });
+  }
+
+  // restore previous
+  if (prev) {
+    visionSelect.value = prev;
+  }
+}
+
+if (visionToggle && visionModelDiv) {
+  // show/hide the model dropdown
+  visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
+  visionToggle.addEventListener('change', () => {
+    visionModelDiv.style.display = visionToggle.checked ? 'block' : 'none';
+    markFormAsModified();
+  });
+}
+
+// Listen for vision model selection changes
+if (visionSelect) {
+  visionSelect.addEventListener('change', () => {
+    // Update data-prev to remember the selection
+    visionSelect.setAttribute('data-prev', visionSelect.value);
+    markFormAsModified();
+  });
+}
+
 // when APIM‐toggle flips, repopulate
 const apimToggle = document.getElementById('enable_gpt_apim');
 if (apimToggle) {
-  apimToggle.addEventListener('change', populateExtractionModels);
+  apimToggle.addEventListener('change', () => {
+    populateExtractionModels();
+    populateVisionModels();
+  });
 }
 
 // on load, stash previous & populate
@@ -2401,6 +2574,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (extractSelect) {
     extractSelect.setAttribute('data-prev', extractSelect.value);
     populateExtractionModels();
+  }
+  if (visionSelect) {
+    visionSelect.setAttribute('data-prev', visionSelect.value);
+    populateVisionModels();
   }
 });
 
@@ -2945,28 +3122,41 @@ function handleTabNavigation(stepNumber) {
         5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
         6: 'search-extract-tab', // AI Search settings
         7: 'search-extract-tab', // Document Intelligence settings
-        8: 'workspaces-tab',  // Video support
-        9: 'workspaces-tab',  // Audio support
+        8: 'search-extract-tab',  // Video support
+        9: 'search-extract-tab',  // Audio support
         10: 'safety-tab',     // Content safety
-        11: 'system-tab',     // User feedback and archiving (renamed from other-tab)
+        11: 'safety-tab',     // User feedback and archiving (changed from system-tab)
         12: 'citation-tab'    // Enhanced Citations and Image Generation
     };
     
     // Activate the appropriate tab
     const tabId = stepToTab[stepNumber];
     if (tabId) {
-        const tab = document.getElementById(tabId);
-        if (tab) {
-            // Use bootstrap Tab to show the tab
-            const bootstrapTab = new bootstrap.Tab(tab);
-            bootstrapTab.show();
-            
-            // Scroll to the relevant section after a small delay to allow tab to switch
-            setTimeout(() => {
-                // For tabs that need to jump to specific sections
-                scrollToRelevantSection(stepNumber, tabId);
-            }, 300);
+        // Check if we're using sidebar navigation or tab navigation
+        const sidebarToggle = document.getElementById('admin-settings-toggle');
+        
+        if (sidebarToggle) {
+            // Using sidebar navigation - call showAdminTab function
+            const tabName = tabId.replace('-tab', ''); // Remove '-tab' suffix
+            if (typeof showAdminTab === 'function') {
+                showAdminTab(tabName);
+            } else if (typeof window.showAdminTab === 'function') {
+                window.showAdminTab(tabName);
+            }
+        } else {
+            // Using Bootstrap tabs
+            const tab = document.getElementById(tabId);
+            if (tab) {
+                // Use bootstrap Tab to show the tab
+                const bootstrapTab = new bootstrap.Tab(tab);
+                bootstrapTab.show();
+            }
         }
+        
+        // Scroll to the relevant section after a small delay to allow tab to switch
+        setTimeout(() => {
+            scrollToRelevantSection(stepNumber, tabId);
+        }, 300);
     }
 }
 
@@ -2980,14 +3170,41 @@ function scrollToRelevantSection(stepNumber, tabId) {
     let targetElement = null;
     
     switch (stepNumber) {
+        case 1: // App title and logo
+            targetElement = document.getElementById('branding-section');
+            break;
+        case 2: // GPT settings
+            targetElement = document.getElementById('gpt-configuration');
+            break;
+        case 3: // GPT model selection
+            targetElement = document.getElementById('gpt_models_list')?.closest('.mb-3');
+            break;
         case 4: // Workspaces toggle section
-            targetElement = document.getElementById('enable_user_workspace')?.closest('.card');
+            targetElement = document.getElementById('personal-workspaces-section');
+            break;
+        case 5: // Embedding settings
+            targetElement = document.getElementById('embeddings-configuration');
+            break;
+        case 6: // AI Search settings
+            targetElement = document.getElementById('azure-ai-search-section');
+            break;
+        case 7: // Document Intelligence settings
+            targetElement = document.getElementById('document-intelligence-section');
             break;
         case 8: // Video file support
             targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
             break;
         case 9: // Audio file support
             targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
+            break;
+        case 10: // Content safety
+            targetElement = document.getElementById('content-safety-section');
+            break;
+        case 11: // User feedback and archiving
+            targetElement = document.getElementById('user-feedback-section');
+            break;
+        case 12: // Enhanced citations and image generation
+            targetElement = document.getElementById('enhanced-citations-section');
             break;
         default:
             // For other steps, no specific scrolling
@@ -2996,7 +3213,7 @@ function scrollToRelevantSection(stepNumber, tabId) {
     
     // If we found a target element, scroll to it
     if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 
@@ -3134,9 +3351,14 @@ function isStepComplete(stepNumber) {
             
             // Otherwise check settings
             const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
-            const speechKey = document.getElementById('speech_service_key')?.value;
+            const authType = document.getElementById('speech_service_authentication_type').value;
+            const key = document.getElementById('speech_service_key').value;
             
-            return speechEndpoint && speechKey;
+            if (!speechEndpoint || (authType === 'key' && !key)) {
+                 return false;
+            } else {
+                return true;
+            }
             
         case 10: // Content safety - always complete (optional)
         case 11: // User feedback and archiving - always complete (optional)

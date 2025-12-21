@@ -3,6 +3,7 @@
 import os
 import json
 import jsonschema
+from functions_security import is_safe_slug
 
 def load_plugin_schema(plugin_type, schema_dir):
     """
@@ -92,6 +93,9 @@ def get_merged_plugin_settings(plugin_type, current_settings, schema_dir):
     """
     Loads the schema for the plugin_type, merges with current_settings, and returns the merged dict.
     """
+    if not is_safe_slug(plugin_type):
+        # Reject unsafe plugin types to avoid path traversal or unexpected filenames
+        return {}
     result = {}
     # Use plugin_type as base for schema loading (matches actual schema filenames)
     for nested_key, schema_filename in [

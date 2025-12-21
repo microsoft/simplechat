@@ -2,6 +2,7 @@
 // Multi-step modal functionality for agent creation
 import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
+import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 export class AgentModalStepper {
   constructor(isAdmin = false) {
@@ -47,6 +48,9 @@ export class AgentModalStepper {
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+    
+    // Set up model change listener for reasoning effort
+    this.setupModelChangeListener();
   }
 
   setupNameGeneration() {
@@ -59,6 +63,70 @@ export class AgentModalStepper {
         const generatedName = this.generateAgentName(displayName);
         generatedNameInput.value = generatedName;
       });
+    }
+  }
+
+  setupModelChangeListener() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    if (globalModelSelect) {
+      globalModelSelect.addEventListener('change', () => {
+        this.updateReasoningEffortForModel();
+      });
+    }
+  }
+
+  updateReasoningEffortForModel() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    const reasoningEffortSelect = document.getElementById('agent-reasoning-effort');
+    const reasoningEffortGroup = reasoningEffortSelect?.closest('.mb-3');
+    
+    if (!globalModelSelect || !reasoningEffortSelect || !reasoningEffortGroup) {
+      return;
+    }
+    
+    const selectedModel = globalModelSelect.value;
+    if (!selectedModel) {
+      // No model selected, hide reasoning effort
+      reasoningEffortGroup.style.display = 'none';
+      return;
+    }
+    
+    // Get supported levels for the selected model
+    const supportedLevels = getModelSupportedLevels(selectedModel);
+    
+    // If model only supports 'none', hide the field
+    if (supportedLevels.length === 1 && supportedLevels[0] === 'none') {
+      reasoningEffortGroup.style.display = 'none';
+      reasoningEffortSelect.value = ''; // Clear selection
+      return;
+    }
+    
+    // Show the field
+    reasoningEffortGroup.style.display = 'block';
+    
+    // Update available options based on supported levels
+    const currentValue = reasoningEffortSelect.value;
+    const allOptions = reasoningEffortSelect.querySelectorAll('option');
+    
+    // Show/hide options based on supported levels
+    allOptions.forEach(option => {
+      const value = option.value;
+      if (value === '') {
+        // Always show the "inherit" option
+        option.style.display = '';
+        option.disabled = false;
+      } else if (supportedLevels.includes(value)) {
+        option.style.display = '';
+        option.disabled = false;
+      } else {
+        option.style.display = 'none';
+        option.disabled = true;
+      }
+    });
+    
+    // If current value is not supported, reset to inherit
+    if (currentValue && currentValue !== '' && !supportedLevels.includes(currentValue)) {
+      reasoningEffortSelect.value = '';
     }
   }
 
@@ -198,6 +266,9 @@ export class AgentModalStepper {
       
       if (globalModelSelect) {
         agentsCommon.populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+        
+        // Update reasoning effort options based on selected model
+        this.updateReasoningEffortForModel();
       }
     } catch (error) {
       console.error('Failed to load models for agent modal:', error);
@@ -1216,6 +1287,11 @@ export class AgentModalStepper {
         agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
       
+      // Clean up empty reasoning_effort (inherit from model default)
+      if (!agentData.reasoning_effort || agentData.reasoning_effort === '') {
+        delete agentData.reasoning_effort;
+      }
+      
       // Clean up form-specific fields that shouldn't be sent to backend
       const formOnlyFields = ['custom_connection', 'model'];
       formOnlyFields.forEach(field => {
@@ -1265,6 +1341,7 @@ export class AgentModalStepper {
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
       other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
       max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
+      reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
       agent_type: 'local'
     };
     

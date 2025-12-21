@@ -285,6 +285,9 @@ def register_route_backend_settings(app):
             
             elif test_type == 'key_vault':
                 return _test_key_vault_connection(data)
+            
+            elif test_type == 'multimodal_vision':
+                return _test_multimodal_vision_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
@@ -292,6 +295,96 @@ def register_route_backend_settings(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
+def _test_multimodal_vision_connection(payload):
+    """Test multi-modal vision analysis with a sample image."""
+    enable_apim = payload.get('enable_apim', False)
+    vision_model = payload.get('vision_model')
+
+    if not vision_model:
+        return jsonify({'error': 'No vision model specified'}), 400
+
+    # Create a simple test image (1x1 red pixel PNG)
+    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+
+    try:
+        if enable_apim:
+            apim_data = payload.get('apim', {})
+            endpoint = apim_data.get('endpoint')
+            api_version = apim_data.get('api_version')
+            subscription_key = apim_data.get('subscription_key')
+
+            gpt_client = AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=subscription_key
+            )
+        else:
+            direct_data = payload.get('direct', {})
+            endpoint = direct_data.get('endpoint')
+            api_version = direct_data.get('api_version')
+            auth_type = direct_data.get('auth_type', 'key')
+
+            if auth_type == 'managed_identity':
+                token_provider = get_bearer_token_provider(
+                    DefaultAzureCredential(), 
+                    cognitive_services_scope
+                )
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider
+                )
+            else:
+                api_key = direct_data.get('key')
+                gpt_client = AzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=api_key
+                )
+
+        # Determine which token parameter to use based on model type
+        # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
+        vision_model_lower = vision_model.lower()
+        api_params = {
+            "model": vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What color is this image? Just say the color."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{test_image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # Use max_completion_tokens for o-series and gpt-5 models, max_tokens for others
+        if ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower):
+            api_params["max_completion_tokens"] = 50
+        else:
+            api_params["max_tokens"] = 50
+        
+        # Test vision analysis with simple prompt
+        response = gpt_client.chat.completions.create(**api_params)
+
+        result = response.choices[0].message.content
+
+        return jsonify({
+            'message': 'Multi-modal vision connection successful',
+            'details': f'Model responded: {result}'
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
+
 def get_index_client() -> SearchIndexClient:
     """
     Returns a SearchIndexClient wired up based on:
@@ -601,8 +694,7 @@ def _test_azure_ai_search_connection(payload):
         url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
 
         if direct_data.get('auth_type') == 'managed_identity':
-            if AZURE_ENVIRONMENT in ("usgovernment", "custom"): # change credential scopes for US Gov or custom environments
-                credential_scopes=search_resource_manager + "/.default"
+            credential_scopes=search_resource_manager + "/.default"
             arm_scope = credential_scopes
             credential = DefaultAzureCredential()
             arm_token = credential.get_token(arm_scope).token

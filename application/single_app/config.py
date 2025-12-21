@@ -64,6 +64,7 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
+import azure.cognitiveservices.speech as speechsdk
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
@@ -88,7 +89,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.233.176"
+VERSION = "0.233.318"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -121,9 +122,9 @@ CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
 ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
+    'txt', 'pdf', 'doc', 'docm', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
     'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
-    'dvr-ms', 'wav'
+    'dvr-ms', 'wav', 'xml', 'yaml', 'yml', 'log'
 }
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 5000 * 1024 * 1024  # 5000 MB AKA 5 GB
@@ -184,6 +185,7 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
+    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
@@ -236,6 +238,17 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_group_conversations_container_name = "group_conversations"
+cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_group_messages_container_name = "group_messages"
+cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -339,18 +352,6 @@ cosmos_personal_actions_container = cosmos_database.create_container_if_not_exis
     partition_key=PartitionKey(path="/user_id")
 )
 
-cosmos_file_processing_container_name = "group_messages"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/conversation_id")
-)
-
-cosmos_file_processing_container_name = "group_conversations"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/id")
-)
-
 cosmos_group_agents_container_name = "group_agents"
 cosmos_group_agents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_agents_container_name,
@@ -391,7 +392,6 @@ cosmos_search_cache_container_name = "search_cache"
 cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_search_cache_container_name,
     partition_key=PartitionKey(path="/user_id")
-    # No default_ttl - TTL controlled by app logic via admin settings for flexibility
 )
 
 cosmos_activity_logs_container_name = "activity_logs"
@@ -693,11 +693,11 @@ def initialize_clients(settings):
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
-                                print(f"[DEBUG]: Container '{container_name}' does not exist. Creating...")
+                                print(f"Container '{container_name}' does not exist. Creating...")
                                 container_client.create_container()
-                                print(f"[DEBUG]: Container '{container_name}' created successfully.")
+                                print(f"Container '{container_name}' created successfully.")
                             else:
-                                print(f"[DEBUG]: Container '{container_name}' already exists.")
+                                print(f"Container '{container_name}' already exists.")
                         except Exception as container_error:
                             print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:

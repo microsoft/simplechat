@@ -696,3 +696,161 @@ main {
         font-size: 0.875rem !important;
     }
 }
+
+/* ============= Message Masking Styles ============= */
+
+/* Masked content spans */
+.masked-content {
+    text-decoration: line-through;
+    opacity: 0.5;
+    background-color: rgba(255, 193, 7, 0.15);
+    padding: 0 2px;
+    border-radius: 2px;
+    cursor: help;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+}
+
+.masked-content:hover {
+    opacity: 0.7;
+    background-color: rgba(255, 193, 7, 0.25);
+}
+
+/* Fully masked message styling */
+.fully-masked .message-bubble {
+    border: 2px dashed rgba(255, 193, 7, 0.5);
+    opacity: 0.7;
+    background-color: rgba(255, 193, 7, 0.05);
+}
+
+/* Message exclusion badge in footer */
+.message-exclusion-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    background-color: rgba(255, 193, 7, 0.15);
+    color: #5c4503 !important;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    max-width: calc(100% - 1rem);
+    overflow: hidden;
+}
+
+.message-exclusion-badge i {
+    font-size: 1rem;
+    color: #5c4503 !important;
+    flex-shrink: 0;
+}
+
+.message-exclusion-badge .badge-text {
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+/* Hide badge text on narrow message footers - show icon only */
+@container footer (max-width: 350px) {
+    .message-exclusion-badge .badge-text {
+        display: none;
+    }
+    
+    .message-exclusion-badge {
+        gap: 0;
+        padding: 0.25rem 0.5rem;
+    }
+}
+
+/* Ensure message footer supports absolute positioning and container queries */
+.message-footer {
+    container-type: inline-size;
+    container-name: footer;
+}
+
+/* Ensure message footer supports absolute positioning */
+.message-footer {
+    position: relative;
+}
+
+/* Mask button styling */
+.mask-btn {
+    border: none;
+    background: transparent;
+    color: #6c757d;
+    font-size: 0.875rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.mask-btn:hover {
+    color: #ffc107;
+    background-color: rgba(255, 193, 7, 0.1);
+}
+
+/* Make mask button icons same size as other action buttons */
+.mask-btn i {
+    font-size: 1rem;
+    width: 16px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Dark mode styles for masked content */
+[data-bs-theme="dark"] .masked-content {
+    background-color: rgba(255, 193, 7, 0.2);
+}
+
+[data-bs-theme="dark"] .masked-content:hover {
+    opacity: 0.8;
+    background-color: rgba(255, 193, 7, 0.3);
+}
+
+[data-bs-theme="dark"] .fully-masked .message-bubble {
+    border-color: rgba(255, 193, 7, 0.6);
+    background-color: rgba(255, 193, 7, 0.08);
+}
+
+[data-bs-theme="dark"] .message-exclusion-badge {
+    background-color: rgba(255, 193, 7, 0.15);
+    color: #ffc107;
+}
+
+[data-bs-theme="dark"] .mask-btn {
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .mask-btn:hover {
+    color: #ffc107;
+    background-color: rgba(255, 193, 7, 0.15);
+}
+
+/* Dark mode styles for links in messages */
+[data-bs-theme="dark"] .message-bubble a,
+[data-bs-theme="dark"] .user-message a,
+[data-bs-theme="dark"] .assistant-message a,
+[data-bs-theme="dark"] .message-content a {
+    color: #66b3ff !important; /* Brighter blue for better visibility */
+    text-decoration: underline;
+}
+
+[data-bs-theme="dark"] .message-bubble a:hover,
+[data-bs-theme="dark"] .user-message a:hover,
+[data-bs-theme="dark"] .assistant-message a:hover,
+[data-bs-theme="dark"] .message-content a:hover {
+    color: #99ccff !important; /* Even lighter blue on hover */
+    text-decoration: underline;
+}
+
+[data-bs-theme="dark"] .message-bubble a:visited,
+[data-bs-theme="dark"] .user-message a:visited,
+[data-bs-theme="dark"] .assistant-message a:visited,
+[data-bs-theme="dark"] .message-content a:visited {
+    color: #b399ff !important; /* Purple-ish for visited links */
+}
