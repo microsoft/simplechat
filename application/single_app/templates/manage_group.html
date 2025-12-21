@@ -16,6 +16,11 @@
     <!-- Group name, description, etc. loaded via JS -->
   </div>
 
+  <!-- Group Status Alert (shown for locked, upload_disabled, inactive) -->
+  <div class="alert alert-warning" id="group-status-alert" style="display: none">
+    <div id="group-status-content"></div>
+  </div>
+
   <!-- If user is Owner, show "Owner Actions" -->
   <div id="ownerActionsContainer" style="display: none">
     <h5>Owner Actions</h5>
@@ -99,14 +104,23 @@
       </tbody>
     </table>
 
-    <!-- Add member button (Owner/Admin only) -->
-    <button
-      class="btn btn-success btn-sm mb-3"
-      id="addMemberBtn"
-      style="display: none"
-    >
-      Add Member
-    </button>
+    <!-- Add member buttons (Owner/Admin only) -->
+    <div class="mb-3">
+      <button
+        class="btn btn-success btn-sm"
+        id="addMemberBtn"
+        style="display: none"
+      >
+        <i class="bi bi-person-plus me-1"></i>Add Member
+      </button>
+      <button
+        class="btn btn-primary btn-sm ms-2"
+        id="addBulkMemberBtn"
+        style="display: none"
+      >
+        <i class="bi bi-upload me-1"></i>Add Bulk Members
+      </button>
+    </div>
   </div>
 
   <div id="pendingRequestsSection" style="display: none">
@@ -286,6 +300,122 @@
         </div>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- CSV Bulk Upload Modal -->
+<div class="modal fade" id="csvBulkUploadModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Bulk Member Import (CSV)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="csvModalClose"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Stage 1: File Selection -->
+        <div id="csvStage1">
+          <p class="text-muted">Upload a CSV file to add multiple members at once.</p>
+          
+          <div class="mb-3">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="csvExampleBtn">
+              <i class="bi bi-download me-1"></i>Download Example CSV
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-info ms-2" id="csvConfigBtn">
+              <i class="bi bi-info-circle me-1"></i>CSV Format Info
+            </button>
+          </div>
+
+          <div class="mb-3">
+            <label for="csvFileInput" class="form-label">Select CSV File</label>
+            <input type="file" class="form-control" id="csvFileInput" accept=".csv">
+            <small class="text-muted">Maximum 1,000 members per upload</small>
+          </div>
+
+          <!-- Validation Results -->
+          <div id="csvValidationResults" class="alert alert-info" style="display: none;">
+            <h6><i class="bi bi-check-circle me-1"></i>File Validation</h6>
+            <div id="csvValidationDetails"></div>
+          </div>
+
+          <div id="csvErrorDetails" class="alert alert-danger" style="display: none;">
+            <h6><i class="bi bi-exclamation-triangle me-1"></i>Validation Errors</h6>
+            <div id="csvErrorList"></div>
+          </div>
+        </div>
+
+        <!-- Stage 2: Upload Progress -->
+        <div id="csvStage2" style="display: none;">
+          <div class="text-center mb-3">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Uploading...</span>
+            </div>
+            <p class="mt-2"><strong>Uploading Members...</strong></p>
+          </div>
+          
+          <div class="progress mb-2" style="height: 25px;">
+            <div id="csvProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+              <span id="csvProgressText">0%</span>
+            </div>
+          </div>
+          
+          <div class="text-center">
+            <small id="csvStatusText" class="text-muted">Preparing upload...</small>
+          </div>
+        </div>
+
+        <!-- Stage 3: Summary -->
+        <div id="csvStage3" style="display: none;">
+          <div class="alert alert-success">
+            <h6><i class="bi bi-check-circle me-1"></i>Upload Complete</h6>
+            <div id="csvSummary"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="csvCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="csvNextBtn" disabled>Next</button>
+        <button type="button" class="btn btn-success" id="csvDoneBtn" style="display: none;">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CSV Format Info Modal -->
+<div class="modal fade" id="csvFormatInfoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>CSV Format Information</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <h6>Required Columns (in this exact order):</h6>
+        <ol>
+          <li><strong>userId</strong> - Azure AD Object ID (GUID format)</li>
+          <li><strong>displayName</strong> - User's display name</li>
+          <li><strong>email</strong> - User's email address</li>
+          <li><strong>role</strong> - Member role: user, admin, or document_manager</li>
+        </ol>
+        
+        <h6 class="mt-3">Rules:</h6>
+        <ul>
+          <li>Header row must be: <code>userId,displayName,email,role</code></li>
+          <li>Maximum 1,000 rows (excluding header)</li>
+          <li>Each userId must be a valid GUID</li>
+          <li>Each email must be a valid email address</li>
+          <li>Valid roles: user, admin, document_manager (case-insensitive)</li>
+          <li>Duplicates will be skipped automatically</li>
+        </ul>
+        
+        <h6 class="mt-3">Example:</h6>
+        <pre class="bg-light p-2 rounded"><code>userId,displayName,email,role
+00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com,admin</code></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -112,7 +112,8 @@ def register_route_backend_groups(app):
                     "name": g.get("name", "Untitled Group"), # Provide default name
                     "description": g.get("description", ""),
                     "userRole": role,
-                    "isActive": (g["id"] == db_active_group_id)
+                    "isActive": (g["id"] == db_active_group_id),
+                    "status": g.get("status", "active")  # Include group status
                 })
 
             return jsonify({
@@ -384,6 +385,7 @@ def register_route_backend_groups(app):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
+        user_email = user_info.get("email", "unknown")
 
         group_doc = find_group_by_id(group_id)
         
@@ -402,16 +404,56 @@ def register_route_backend_groups(app):
         if get_user_role_in_group(group_doc, new_user_id):
             return jsonify({"error": "User is already a member"}), 400
 
+        # Get role from request, default to 'user'
+        member_role = data.get("role", "user").lower()
+        
+        # Validate role
+        valid_roles = ['admin', 'document_manager', 'user']
+        if member_role not in valid_roles:
+            return jsonify({"error": f"Invalid role. Must be: {', '.join(valid_roles)}"}), 400
+
         new_member_doc = {
             "userId": new_user_id,
             "email": data.get("email", ""),
             "displayName": data.get("displayName", "New User")
         }
         group_doc["users"].append(new_member_doc)
+        
+        # Add to appropriate role array
+        if member_role == 'admin':
+            if new_user_id not in group_doc.get('admins', []):
+                group_doc.setdefault('admins', []).append(new_user_id)
+        elif member_role == 'document_manager':
+            if new_user_id not in group_doc.get('documentManagers', []):
+                group_doc.setdefault('documentManagers', []).append(new_user_id)
+        
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
 
         cosmos_groups_container.upsert_item(group_doc)
-        return jsonify({"message": "Member added"}), 200
+        
+        # Log activity for member addition
+        try:
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': 'group_member_added',
+                'action': 'add_member_directly',
+                'timestamp': datetime.utcnow().isoformat(),
+                'added_by_user_id': user_id,
+                'added_by_email': user_email,
+                'added_by_role': role,
+                'group_id': group_id,
+                'group_name': group_doc.get('name', 'Unknown'),
+                'member_user_id': new_user_id,
+                'member_email': new_member_doc.get('email', ''),
+                'member_name': new_member_doc.get('displayName', ''),
+                'member_role': member_role,
+                'description': f"{role} {user_email} added member {new_member_doc.get('displayName', '')} ({new_member_doc.get('email', '')}) to group {group_doc.get('name', group_id)} as {member_role}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+        except Exception as log_error:
+            current_app.logger.error(f"Failed to log member addition activity: {log_error}")
+        
+        return jsonify({"message": "Member added", "success": True}), 200
 
     @app.route("/api/groups/<group_id>/members/<member_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
@@ -505,6 +547,7 @@ def register_route_backend_groups(app):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
+        user_email = user_info.get("email", "unknown")
         
         group_doc = find_group_by_id(group_id)
         
@@ -524,6 +567,15 @@ def register_route_backend_groups(app):
         if not target_role:
             return jsonify({"error": "Member is not in the group"}), 404
 
+        # Get member details for logging
+        member_name = "Unknown"
+        member_email = "unknown"
+        for u in group_doc.get("users", []):
+            if u.get("userId") == member_id:
+                member_name = u.get("displayName", "Unknown")
+                member_email = u.get("email", "unknown")
+                break
+
         if member_id in group_doc.get("admins", []):
             group_doc["admins"].remove(member_id)
         if member_id in group_doc.get("documentManagers", []):
@@ -538,6 +590,29 @@ def register_route_backend_groups(app):
 
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_groups_container.upsert_item(group_doc)
+
+        # Log activity for role change
+        try:
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_member_role_changed',
+                'action': 'update_member_role',
+                'timestamp': datetime.utcnow().isoformat(),
+                'changed_by_user_id': user_id,
+                'changed_by_email': user_email,
+                'changed_by_role': current_role,
+                'group_id': group_id,
+                'group_name': group_doc.get('name', 'Unknown'),
+                'member_user_id': member_id,
+                'member_email': member_email,
+                'member_name': member_name,
+                'old_role': target_role,
+                'new_role': new_role,
+                'description': f"{current_role} {user_email} changed {member_name} ({member_email}) role from {target_role} to {new_role} in group {group_doc.get('name', group_id)}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+        except Exception as log_error:
+            current_app.logger.error(f"Failed to log role change activity: {log_error}")
 
         return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
 
