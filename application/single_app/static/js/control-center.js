@@ -2,6 +2,139 @@
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
+// Group Table Sorter - similar to user table but for groups
+class GroupTableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.currentSort = { column: null, direction: 'asc' };
+        this.initializeSorting();
+    }
+
+    initializeSorting() {
+        if (!this.table) return;
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.getAttribute('data-sort');
+                this.sortTable(sortKey, header);
+            });
+        });
+    }
+
+    sortTable(sortKey, headerElement) {
+        const tbody = this.table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr')).filter(row => 
+            !row.querySelector('td[colspan]') // Exclude loading/empty rows
+        );
+
+        // Toggle sort direction
+        if (this.currentSort.column === sortKey) {
+            this.currentSort.direction = this.currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSort.direction = 'asc';
+        }
+        this.currentSort.column = sortKey;
+
+        // Remove sorting classes from all headers
+        this.table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Add sorting class to current header
+        headerElement.classList.add(this.currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+        // Sort rows
+        const sortedRows = rows.sort((a, b) => {
+            let aValue = this.getCellValue(a, sortKey);
+            let bValue = this.getCellValue(b, sortKey);
+
+            // Handle different data types
+            if (sortKey === 'members' || sortKey === 'documents') {
+                // Numeric sorting for numbers and dates
+                aValue = this.parseNumericValue(aValue);
+                bValue = this.parseNumericValue(bValue);
+                
+                if (this.currentSort.direction === 'asc') {
+                    return aValue - bValue;
+                } else {
+                    return bValue - aValue;
+                }
+            } else {
+                // String sorting for text values
+                const result = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+                return this.currentSort.direction === 'asc' ? result : -result;
+            }
+        });
+
+        // Clear tbody and append sorted rows
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+    }
+
+    getCellValue(row, sortKey) {
+        const cellIndex = this.getColumnIndex(sortKey);
+        if (cellIndex === -1) return '';
+        
+        const cell = row.cells[cellIndex];
+        if (!cell) return '';
+
+        // Extract text content, handling different cell structures
+        let value = '';
+        
+        switch (sortKey) {
+            case 'name':
+                // Extract group name
+                const nameElement = cell.querySelector('.fw-bold') || cell;
+                value = nameElement.textContent.trim();
+                break;
+            case 'owner':
+                // Extract owner name
+                value = cell.textContent.trim();
+                break;
+            case 'members':
+                // Extract member count
+                const memberText = cell.textContent.trim();
+                const memberMatch = memberText.match(/(\d+)/);
+                value = memberMatch ? memberMatch[1] : '0';
+                break;
+            case 'status':
+                // Extract status from badge
+                const statusBadge = cell.querySelector('.group-status-badge, .badge');
+                value = statusBadge ? statusBadge.textContent.trim() : cell.textContent.trim();
+                break;
+            case 'documents':
+                // Extract document count
+                const docText = cell.textContent.trim();
+                const docMatch = docText.match(/(\d+)/);
+                value = docMatch ? docMatch[1] : '0';
+                break;
+            default:
+                value = cell.textContent.trim();
+        }
+        
+        return value;
+    }
+
+    getColumnIndex(sortKey) {
+        const headers = this.table.querySelectorAll('th');
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i].getAttribute('data-sort') === sortKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    parseNumericValue(value) {
+        if (!value || value === '' || value.toLowerCase() === 'never') return 0;
+        
+        // Extract numeric value from string
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[1]) : 0;
+    }
+}
+
 class ControlCenter {
     constructor() {
         this.currentPage = 1;
@@ -2498,20 +2631,30 @@ class ControlCenter {
     
     createGroupRow(group) {
         // Format storage size
-        const storageSize = group.activity?.document_metrics?.storage_account_size || 0;
+        const storageSize = group.metrics?.document_metrics?.storage_account_size || group.activity?.document_metrics?.storage_account_size || 0;
         const storageSizeFormatted = storageSize > 0 ? this.formatBytes(storageSize) : '0 B';
         
         // Format AI search size
-        const aiSearchSize = group.activity?.document_metrics?.ai_search_size || 0;
+        const aiSearchSize = group.metrics?.document_metrics?.ai_search_size || group.activity?.document_metrics?.ai_search_size || 0;
         const aiSearchSizeFormatted = aiSearchSize > 0 ? this.formatBytes(aiSearchSize) : '0 B';
         
         // Get document metrics
-        const totalDocs = group.activity?.document_metrics?.total_documents || 0;
+        const totalDocs = group.metrics?.document_metrics?.total_documents || group.activity?.document_metrics?.total_documents || 0;
         
         // Get group info
-        const memberCount = group.member_count || 0;
+        const memberCount = group.member_count || (group.users ? group.users.length : 0);
         const ownerName = group.owner?.displayName || group.owner?.display_name || 'Unknown';
         const ownerEmail = group.owner?.email || '';
+        
+        // Get status and format badge
+        const status = group.status || 'active';
+        const statusConfig = {
+            'active': { class: 'bg-success', text: 'Active' },
+            'locked': { class: 'bg-warning text-dark', text: 'Locked' },
+            'upload_disabled': { class: 'bg-info text-dark', text: 'Upload Disabled' },
+            'inactive': { class: 'bg-secondary', text: 'Inactive' }
+        };
+        const statusInfo = statusConfig[status] || statusConfig['active'];
         
         return `
             <tr>
@@ -2528,17 +2671,16 @@ class ControlCenter {
                     <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
-                    <div class="text-muted small">${memberCount} members</div>
+                    <div><strong>${memberCount}</strong> member${memberCount === 1 ? '' : 's'}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
+                    <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
                 </td>
                 <td>
                     <div><strong>Total Docs:</strong> ${totalDocs}</div>
                     <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
                     <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
-                    ${group.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                    ${storageSize > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
                 </td>
                 <td>
                     <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.manageGroup('${group.id}')">
@@ -2558,9 +2700,14 @@ class ControlCenter {
     }
     
     manageGroup(groupId) {
-        // Placeholder for group management - can be implemented later
-        console.log('Managing group:', groupId);
-        alert('Group management functionality would open here');
+        // Call the GroupManager's manageGroup function
+        console.log('ControlCenter.manageGroup() redirecting to GroupManager.manageGroup()');
+        if (typeof window.GroupManager !== 'undefined' && window.GroupManager.manageGroup) {
+            window.GroupManager.manageGroup(groupId);
+        } else {
+            console.error('GroupManager not found or manageGroup method not available');
+            alert('Group management functionality is not available');
+        }
     }
 
     // Public Workspaces Management Methods

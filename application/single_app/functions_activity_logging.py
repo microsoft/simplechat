@@ -744,3 +744,84 @@ def log_user_login(
             },
             level=logging.ERROR
         )
+
+
+def log_group_status_change(
+    group_id: str,
+    group_name: str,
+    old_status: str,
+    new_status: str,
+    changed_by_user_id: str,
+    changed_by_email: str,
+    reason: Optional[str] = None
+) -> None:
+    """
+    Log group status change to activity_logs container for audit trail.
+    
+    Args:
+        group_id (str): The ID of the group whose status is changing
+        group_name (str): The name of the group
+        old_status (str): Previous status value
+        new_status (str): New status value
+        changed_by_user_id (str): User ID of admin who made the change
+        changed_by_email (str): Email of admin who made the change
+        reason (str, optional): Optional reason for the status change
+    """
+    
+    try:
+        import uuid
+        
+        # Create status change activity record
+        status_change_activity = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'group_status_change',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'group': {
+                'group_id': group_id,
+                'group_name': group_name
+            },
+            'status_change': {
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_at': datetime.utcnow().isoformat()
+            },
+            'changed_by': {
+                'user_id': changed_by_user_id,
+                'email': changed_by_email
+            },
+            'workspace_type': 'group',
+            'workspace_context': {
+                'group_id': group_id
+            }
+        }
+        
+        # Add reason if provided
+        if reason:
+            status_change_activity['status_change']['reason'] = reason
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=status_change_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Group status changed: {group_name} ({group_id}) from '{old_status}' to '{new_status}' by {changed_by_email}",
+            extra=status_change_activity,
+            level=logging.INFO
+        )
+        
+        print(f"✅ Group status change logged: {group_id} -> {new_status}")
+        
+    except Exception as e:
+        # Log error but don't break the status update flow
+        log_event(
+            message=f"Error logging group status change: {str(e)}",
+            extra={
+                'group_id': group_id,
+                'new_status': new_status,
+                'changed_by_user_id': changed_by_user_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        print(f"⚠️  Warning: Failed to log group status change: {str(e)}")

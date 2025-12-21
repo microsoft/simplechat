@@ -42,6 +42,12 @@ def register_route_backend_group_documents(app):
         if not group_doc:
             return jsonify({'error': 'Active group not found'}), 404
 
+        # Check if group status allows uploads
+        from functions_group import check_group_status_allows_operation
+        allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
         role = get_user_role_in_group(group_doc, user_id)
         if role not in ["Owner", "Admin", "DocumentManager"]:
             return jsonify({'error': 'You do not have permission to upload documents'}), 403
@@ -424,6 +430,12 @@ def register_route_backend_group_documents(app):
         group_doc = find_group_by_id(active_group_id)
         if not group_doc:
             return jsonify({'error': 'Active group not found'}), 404
+
+        # Check if group status allows deletions
+        from functions_group import check_group_status_allows_operation
+        allowed, reason = check_group_status_allows_operation(group_doc, 'delete')
+        if not allowed:
+            return jsonify({'error': reason}), 403
 
         role = get_user_role_in_group(group_doc, user_id)
         if role not in ["Owner", "Admin", "DocumentManager"]:

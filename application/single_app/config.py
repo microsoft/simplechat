@@ -64,7 +64,6 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
-import azure.cognitiveservices.speech as speechsdk
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
@@ -89,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.233.318"
+VERSION = "0.234.022"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -185,7 +184,6 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
-    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:

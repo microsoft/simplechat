@@ -742,12 +742,13 @@ def enhance_group_with_activity(group, force_refresh=False):
             'owner_name': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
             'owner_email': owner_info.get('email', ''),
             'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
-            'member_count': len(users_list) + (1 if owner_info else 0),
+            'member_count': len(users_list),  # Owner is already included in users_list
             'document_count': 0,  # Will be updated from database
             'storage_size': 0,  # Will be updated from storage account
             'last_activity': None,  # Will be updated from group_documents
             'recent_activity_count': 0,  # Will be calculated
-            'status': 'active',  # default - can be determined by business logic
+            'status': group.get('status', 'active'),  # Read from group document, default to 'active'
+            'statusHistory': group.get('statusHistory', []),  # Include status change history
             
             # Keep nested structure for backward compatibility
             'activity': {
@@ -757,7 +758,7 @@ def enhance_group_with_activity(group, force_refresh=False):
                     'storage_account_size': 0  # Actual file sizes from storage
                 },
                 'member_metrics': {
-                    'total_members': len(users_list) + (1 if owner_info else 0),
+                    'total_members': len(users_list),  # Owner is already included in users_list
                     'admin_count': len(group.get('admins', [])),
                     'document_manager_count': len(group.get('documentManagers', [])),
                     'pending_count': len(group.get('pendingUsers', []))
@@ -2367,40 +2368,94 @@ def register_route_backend_control_center(app):
     @control_center_admin_required
     def api_update_group_status(group_id):
         """
-        Update group status (active, locked, inactive, etc.)
+        Update group status (active, locked, upload_disabled, inactive)
+        Tracks who made the change and when, logs to activity_logs
         """
         try:
             data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
                 
-            status = data.get('status')
-            if not status:
+            new_status = data.get('status')
+            reason = data.get('reason')  # Optional reason for the status change
+            
+            if not new_status:
                 return jsonify({'error': 'Status is required'}), 400
+            
+            # Validate status values
+            valid_statuses = ['active', 'locked', 'upload_disabled', 'inactive']
+            if new_status not in valid_statuses:
+                return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
                 
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
             except:
                 return jsonify({'error': 'Group not found'}), 404
-                
-            # Update group status (you may need to implement your own status logic)
-            group['status'] = status
-            group['modifiedDate'] = datetime.utcnow().isoformat()
             
-            # Update in database
-            cosmos_groups_container.upsert_item(group)
-            
-            # Log admin action
+            # Get admin user info
             admin_user = session.get('user', {})
-            log_event("[ControlCenter] Group Status Update", {
-                "admin_user": admin_user.get('preferred_username', 'unknown'),
-                "group_id": group_id,
-                "group_name": group.get('name'),
-                "new_status": status
-            })
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
             
-            return jsonify({'message': 'Group status updated successfully'}), 200
+            # Get old status for logging
+            old_status = group.get('status', 'active')  # Default to 'active' if not set
+            
+            # Only update and log if status actually changed
+            if old_status != new_status:
+                # Update group status
+                group['status'] = new_status
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                
+                # Add status change metadata
+                if 'statusHistory' not in group:
+                    group['statusHistory'] = []
+                
+                group['statusHistory'].append({
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'changed_by_user_id': admin_user_id,
+                    'changed_by_email': admin_email,
+                    'changed_at': datetime.utcnow().isoformat(),
+                    'reason': reason
+                })
+                
+                # Update in database
+                cosmos_groups_container.upsert_item(group)
+                
+                # Log to activity_logs container for audit trail
+                from functions_activity_logging import log_group_status_change
+                log_group_status_change(
+                    group_id=group_id,
+                    group_name=group.get('name', 'Unknown'),
+                    old_status=old_status,
+                    new_status=new_status,
+                    changed_by_user_id=admin_user_id,
+                    changed_by_email=admin_email,
+                    reason=reason
+                )
+                
+                # Log admin action (legacy logging)
+                log_event("[ControlCenter] Group Status Update", {
+                    "admin_user": admin_email,
+                    "admin_user_id": admin_user_id,
+                    "group_id": group_id,
+                    "group_name": group.get('name'),
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "reason": reason
+                })
+                
+                return jsonify({
+                    'message': 'Group status updated successfully',
+                    'old_status': old_status,
+                    'new_status': new_status
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Group status unchanged',
+                    'status': new_status
+                }), 200
             
         except Exception as e:
             current_app.logger.error(f"Error updating group status: {e}")
@@ -2508,6 +2563,390 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error deleting group: {e}")
             return jsonify({'error': 'Failed to delete group'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_get_group_members_admin(group_id):
+        """
+        Get list of group members for ownership transfer selection
+        """
+        try:
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Get member list with user details
+            members = []
+            for member in group.get('users', []):
+                # Skip the current owner from the list
+                if member.get('userId') == group.get('owner', {}).get('id'):
+                    continue
+                    
+                members.append({
+                    'userId': member.get('userId'),
+                    'email': member.get('email', 'No email'),
+                    'displayName': member.get('displayName', 'Unknown User')
+                })
+            
+            return jsonify({'members': members}), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting group members: {e}")
+            return jsonify({'error': 'Failed to retrieve group members'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_take_group_ownership(group_id):
+        """
+        Admin takes ownership of a group, demoting current owner to regular member
+        """
+        try:
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            if not admin_user_id:
+                return jsonify({'error': 'Could not identify admin user'}), 400
+            
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            old_owner_email = old_owner.get('email', 'unknown')
+            
+            # Update owner to admin
+            group['owner'] = {
+                'id': admin_user_id,
+                'email': admin_email,
+                'displayName': admin_display_name
+            }
+            
+            # Remove admin from any special roles (admins, documentManagers) if present
+            if admin_user_id in group.get('admins', []):
+                group['admins'].remove(admin_user_id)
+            if admin_user_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(admin_user_id)
+            
+            # Ensure admin is in the users list
+            admin_in_users = False
+            for member in group.get('users', []):
+                if member.get('userId') == admin_user_id:
+                    admin_in_users = True
+                    break
+            
+            if not admin_in_users:
+                group.setdefault('users', []).append({
+                    'userId': admin_user_id,
+                    'email': admin_email,
+                    'displayName': admin_display_name
+                })
+            
+            # Demote old owner to regular member
+            if old_owner_id:
+                # Ensure old owner is in users list
+                old_owner_in_users = False
+                for member in group.get('users', []):
+                    if member.get('userId') == old_owner_id:
+                        old_owner_in_users = True
+                        break
+                
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner.get('displayName', old_owner_email)
+                    })
+                
+                # Remove old owner from special roles
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            # Update modification timestamp
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save group
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'action': 'admin_take_ownership',
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user_id,
+                'admin_email': admin_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': admin_user_id,
+                'new_owner_email': admin_email,
+                'description': f"Admin {admin_email} took ownership of group {group.get('name', group_id)} from {old_owner_email}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Take Group Ownership", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "old_owner": old_owner_email,
+                "new_owner": admin_email
+            })
+            
+            return jsonify({
+                'message': 'Ownership transferred successfully',
+                'new_owner': admin_email,
+                'old_owner': old_owner_email
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error taking group ownership: {e}")
+            return jsonify({'error': 'Failed to take ownership'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_transfer_group_ownership(group_id):
+        """
+        Admin transfers group ownership to another member
+        """
+        try:
+            data = request.get_json()
+            new_owner_user_id = data.get('newOwnerId')
+            
+            if not new_owner_user_id:
+                return jsonify({'error': 'Missing newOwnerId'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Find the new owner in members list
+            new_owner_member = None
+            for member in group.get('users', []):
+                if member.get('userId') == new_owner_user_id:
+                    new_owner_member = member
+                    break
+            
+            if not new_owner_member:
+                return jsonify({'error': 'Selected user is not a member of this group'}), 400
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            old_owner_email = old_owner.get('email', 'unknown')
+            
+            new_owner_email = new_owner_member.get('email', 'unknown')
+            new_owner_display_name = new_owner_member.get('displayName', new_owner_email)
+            
+            # Update owner
+            group['owner'] = {
+                'id': new_owner_user_id,
+                'email': new_owner_email,
+                'displayName': new_owner_display_name
+            }
+            
+            # Remove new owner from special roles
+            if new_owner_user_id in group.get('admins', []):
+                group['admins'].remove(new_owner_user_id)
+            if new_owner_user_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(new_owner_user_id)
+            
+            # Demote old owner to regular member
+            if old_owner_id:
+                # Ensure old owner is in users list
+                old_owner_in_users = False
+                for member in group.get('users', []):
+                    if member.get('userId') == old_owner_id:
+                        old_owner_in_users = True
+                        break
+                
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner.get('displayName', old_owner_email)
+                    })
+                
+                # Remove old owner from special roles
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            # Update modification timestamp
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save group
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'action': 'admin_transfer_ownership',
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
+                'admin_email': admin_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': new_owner_user_id,
+                'new_owner_email': new_owner_email,
+                'description': f"Admin {admin_email} transferred ownership of group {group.get('name', group_id)} from {old_owner_email} to {new_owner_email}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Transfer Group Ownership", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "old_owner": old_owner_email,
+                "new_owner": new_owner_email
+            })
+            
+            return jsonify({
+                'message': 'Ownership transferred successfully',
+                'new_owner': new_owner_email,
+                'old_owner': old_owner_email
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error transferring group ownership: {e}")
+            return jsonify({'error': 'Failed to transfer ownership'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_add_group_member(group_id):
+        """
+        Admin adds a member to a group (used by both single add and CSV bulk upload)
+        """
+        try:
+            data = request.get_json()
+            user_id = data.get('userId')
+            # Support both 'name' (from CSV) and 'displayName' (from single add form)
+            name = data.get('displayName') or data.get('name')
+            email = data.get('email')
+            role = data.get('role', 'user').lower()
+            
+            if not user_id or not name or not email:
+                return jsonify({'error': 'Missing required fields: userId, name/displayName, email'}), 400
+            
+            # Validate role
+            valid_roles = ['admin', 'document_manager', 'user']
+            if role not in valid_roles:
+                return jsonify({'error': f'Invalid role. Must be: {", ".join(valid_roles)}'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Check if user already exists (skip duplicate)
+            existing_user = False
+            for member in group.get('users', []):
+                if member.get('userId') == user_id:
+                    existing_user = True
+                    break
+            
+            if existing_user:
+                return jsonify({
+                    'message': f'User {email} already exists in group',
+                    'skipped': True
+                }), 200
+            
+            # Add user to users array
+            group.setdefault('users', []).append({
+                'userId': user_id,
+                'email': email,
+                'displayName': name
+            })
+            
+            # Add to appropriate role array
+            if role == 'admin':
+                if user_id not in group.get('admins', []):
+                    group.setdefault('admins', []).append(user_id)
+            elif role == 'document_manager':
+                if user_id not in group.get('documentManagers', []):
+                    group.setdefault('documentManagers', []).append(user_id)
+            
+            # Update modification timestamp
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save group
+            cosmos_groups_container.upsert_item(group)
+            
+            # Determine the action source (single add vs bulk CSV)
+            source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
+            action_type = 'admin_add_member_single' if source == 'single' else 'admin_add_member_csv'
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': 'group_member_added',
+                'action': action_type,
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
+                'admin_email': admin_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'member_user_id': user_id,
+                'member_email': email,
+                'member_name': name,
+                'member_role': role,
+                'source': source,
+                'description': f"Admin {admin_email} added member {name} ({email}) to group {group.get('name', group_id)} as {role}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Add Group Member", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "member_email": email,
+                "member_role": role
+            })
+            
+            return jsonify({
+                'message': f'Member {email} added successfully',
+                'skipped': False
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error adding group member: {e}")
+            return jsonify({'error': 'Failed to add member'}), 500
 
     # Public Workspaces API
     @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])

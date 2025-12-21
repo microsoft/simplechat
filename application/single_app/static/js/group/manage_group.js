@@ -58,6 +58,25 @@ $(document).ready(function () {
     }
   });
 
+  // CSV Bulk Upload Events
+  $("#addBulkMemberBtn").on("click", function () {
+    $("#csvBulkUploadModal").modal("show");
+  });
+
+  $("#csvExampleBtn").on("click", downloadCsvExample);
+  $("#csvConfigBtn").on("click", showCsvConfig);
+  $("#csvFileInput").on("change", handleCsvFileSelect);
+  $("#csvNextBtn").on("click", startCsvUpload);
+  $("#csvDoneBtn").on("click", function () {
+    resetCsvModal();
+    loadMembers();
+  });
+
+  // Reset CSV modal when closed
+  $("#csvBulkUploadModal").on("hidden.bs.modal", function () {
+    resetCsvModal();
+  });
+
   $("#transferOwnershipBtn").on("click", function () {
     $.get(`/api/groups/${groupId}/members`, function (members) {
       let options = "";
@@ -154,8 +173,14 @@ function loadGroupInfo(doneCallback) {
       </p>
     `);
 
+    // Update group status alert if not active
+    updateGroupStatusAlert(group.status || 'active');
+
     const admins = group.admins || [];
     const docManagers = group.documentManagers || [];
+    const groupStatus = group.status || 'active';
+    const isGroupEditable = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+    const isGroupLocked = (groupStatus === 'locked' || groupStatus === 'inactive');
 
     if (userId === group.owner?.id) {
       currentUserRole = "Owner";
@@ -172,12 +197,31 @@ function loadGroupInfo(doneCallback) {
       $("#editGroupName").val(group.name);
       $("#editGroupDescription").val(group.description);
       $("#ownerActionsContainer").show();
+      
+      // Disable editing for locked/inactive groups
+      if (isGroupLocked) {
+        $("#editGroupName").prop('readonly', true);
+        $("#editGroupDescription").prop('readonly', true);
+        $("#editGroupForm button[type='submit']").hide();
+      } else {
+        $("#editGroupName").prop('readonly', false);
+        $("#editGroupDescription").prop('readonly', false);
+        $("#editGroupForm button[type='submit']").show();
+      }
     } else {
       $("#leaveGroupContainer").show();
     }
 
     if (currentUserRole === "Admin" || currentUserRole === "Owner") {
-      $("#addMemberBtn").show();
+      // Show/hide member management buttons based on group status
+      if (isGroupLocked) {
+        $("#addMemberBtn").hide();
+        $("#addBulkMemberBtn").hide();
+      } else {
+        $("#addMemberBtn").show();
+        $("#addBulkMemberBtn").show();
+      }
+      
       $("#pendingRequestsSection").show();
 
       loadPendingRequests();
@@ -493,4 +537,318 @@ function addMemberDirectly() {
       alert("Failed to add member directly.");
     },
   });
+}
+
+// Function to update group status alert box
+function updateGroupStatusAlert(status) {
+  const alertBox = $("#group-status-alert");
+  const contentDiv = $("#group-status-content");
+  
+  if (!status || status === 'active') {
+    alertBox.hide();
+    return;
+  }
+  
+  const statusInfo = {
+    'locked': {
+      icon: '🔒',
+      title: 'Locked (Read-only)',
+      description: 'Group is in read-only mode.',
+      blocks: 'New document uploads and deletions, creating/editing/deleting prompts, agents, and actions',
+      allows: 'Viewing existing documents, chat and search, using existing prompts/agents/actions'
+    },
+    'upload_disabled': {
+      icon: '📁',
+      title: 'Upload Disabled',
+      description: 'Restrict new content but allow other operations.',
+      blocks: 'New document uploads',
+      allows: 'Document deletions (cleanup), full chat and search functionality, creating/editing/deleting prompts, agents, and actions'
+    },
+    'inactive': {
+      icon: '⭕',
+      title: 'Inactive',
+      description: 'Group is completely disabled.',
+      blocks: 'ALL operations (uploads, deletions, chat, document access, creating/editing/deleting prompts, agents, and actions)',
+      allows: 'Only admin viewing of group information'
+    }
+  };
+  
+  const info = statusInfo[status];
+  if (info) {
+    contentDiv.html(`
+      <strong>${info.icon} ${info.title}:</strong> ${info.description}<br>
+      <strong>• Blocks:</strong> ${info.blocks}<br>
+      <strong>• Allows:</strong> ${info.allows}
+    `);
+    alertBox.show();
+  } else {
+    alertBox.hide();
+  }
+}
+
+// ============================================================================
+// CSV Bulk Member Upload Functions
+// ============================================================================
+
+let csvParsedData = [];
+
+function downloadCsvExample() {
+  const csvContent = `userId,displayName,email,role
+00000000-0000-0000-0000-000000000001,John Smith,john.smith@contoso.com,user
+00000000-0000-0000-0000-000000000002,Jane Doe,jane.doe@contoso.com,admin
+00000000-0000-0000-0000-000000000003,Bob Johnson,bob.johnson@contoso.com,document_manager`;
+  
+  const blob = new Blob([csvContent], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'bulk_members_example.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
+
+function showCsvConfig() {
+  const modal = new bootstrap.Modal(document.getElementById('csvFormatInfoModal'));
+  modal.show();
+}
+
+function validateGuid(guid) {
+  const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return guidRegex.test(guid);
+}
+
+function validateEmail(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+function handleCsvFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) {
+    $("#csvNextBtn").prop("disabled", true);
+    $("#csvValidationResults").hide();
+    $("#csvErrorDetails").hide();
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+    $("#csvErrorDetails").hide();
+    $("#csvValidationResults").hide();
+
+    // Validate header
+    if (lines.length < 2) {
+      showCsvError("CSV must contain at least a header row and one data row");
+      return;
+    }
+
+    const header = lines[0].toLowerCase().trim();
+    if (header !== "userid,displayname,email,role") {
+      showCsvError("Invalid header. Expected: userId,displayName,email,role");
+      return;
+    }
+
+    // Validate row count
+    const dataRows = lines.slice(1);
+    if (dataRows.length > 1000) {
+      showCsvError(`Too many rows. Maximum 1,000 members allowed (found ${dataRows.length})`);
+      return;
+    }
+
+    // Parse and validate rows
+    csvParsedData = [];
+    const errors = [];
+    const validRoles = ['user', 'admin', 'document_manager'];
+    
+    for (let i = 0; i < dataRows.length; i++) {
+      const rowNum = i + 2; // +2 because header is row 1
+      const row = dataRows[i].split(',');
+      
+      if (row.length !== 4) {
+        errors.push(`Row ${rowNum}: Expected 4 columns, found ${row.length}`);
+        continue;
+      }
+
+      const userId = row[0].trim();
+      const displayName = row[1].trim();
+      const email = row[2].trim();
+      const role = row[3].trim().toLowerCase();
+
+      if (!userId || !displayName || !email || !role) {
+        errors.push(`Row ${rowNum}: All fields are required`);
+        continue;
+      }
+
+      if (!validateGuid(userId)) {
+        errors.push(`Row ${rowNum}: Invalid GUID format for userId`);
+        continue;
+      }
+
+      if (!validateEmail(email)) {
+        errors.push(`Row ${rowNum}: Invalid email format`);
+        continue;
+      }
+
+      if (!validRoles.includes(role)) {
+        errors.push(`Row ${rowNum}: Invalid role '${role}'. Must be: user, admin, or document_manager`);
+        continue;
+      }
+
+      csvParsedData.push({ userId, displayName, email, role });
+    }
+
+    if (errors.length > 0) {
+      showCsvError(`Found ${errors.length} validation error(s):\n` + errors.slice(0, 10).join('\n') + 
+                   (errors.length > 10 ? `\n... and ${errors.length - 10} more` : ''));
+      return;
+    }
+
+    // Show validation success
+    const sampleRows = csvParsedData.slice(0, 3);
+    $("#csvValidationDetails").html(`
+      <p><strong>✓ Valid CSV file detected</strong></p>
+      <p>Total members to add: <strong>${csvParsedData.length}</strong></p>
+      <p>Sample data (first 3):</p>
+      <ul class="mb-0">
+        ${sampleRows.map(row => `<li>${row.displayName} (${row.email})</li>`).join('')}
+      </ul>
+    `);
+    $("#csvValidationResults").show();
+    $("#csvNextBtn").prop("disabled", false);
+  };
+
+  reader.readAsText(file);
+}
+
+function showCsvError(message) {
+  $("#csvErrorList").html(`<pre class="mb-0">${escapeHtml(message)}</pre>`);
+  $("#csvErrorDetails").show();
+  $("#csvNextBtn").prop("disabled", true);
+  csvParsedData = [];
+}
+
+function startCsvUpload() {
+  if (csvParsedData.length === 0) {
+    alert("No valid data to upload");
+    return;
+  }
+
+  // Switch to stage 2
+  $("#csvStage1").hide();
+  $("#csvStage2").show();
+  $("#csvNextBtn").hide();
+  $("#csvCancelBtn").hide();
+  $("#csvModalClose").hide();
+
+  // Upload members
+  uploadCsvMembers();
+}
+
+async function uploadCsvMembers() {
+  let successCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+  const failures = [];
+
+  for (let i = 0; i < csvParsedData.length; i++) {
+    const member = csvParsedData[i];
+    const progress = Math.round(((i + 1) / csvParsedData.length) * 100);
+    
+    updateCsvProgress(progress, `Processing ${i + 1} of ${csvParsedData.length}: ${member.displayName}`);
+
+    try {
+      const response = await fetch(`/api/groups/${groupId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: member.userId,
+          displayName: member.displayName,
+          email: member.email,
+          role: member.role
+        })
+      });
+
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        successCount++;
+      } else if (data.error && data.error.includes('already a member')) {
+        skippedCount++;
+      } else {
+        failedCount++;
+        failures.push(`${member.displayName}: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      failedCount++;
+      failures.push(`${member.displayName}: ${error.message}`);
+    }
+  }
+
+  // Show summary
+  showCsvSummary(successCount, failedCount, skippedCount, failures);
+}
+
+function updateCsvProgress(percentage, statusText) {
+  $("#csvProgressBar").css("width", percentage + "%");
+  $("#csvProgressBar").attr("aria-valuenow", percentage);
+  $("#csvProgressText").text(percentage + "%");
+  $("#csvStatusText").text(statusText);
+}
+
+function showCsvSummary(successCount, failedCount, skippedCount, failures) {
+  $("#csvStage2").hide();
+  $("#csvStage3").show();
+  $("#csvDoneBtn").show();
+
+  let summaryHtml = `
+    <p><strong>Upload Summary:</strong></p>
+    <ul>
+      <li>✅ Successfully added: <strong>${successCount}</strong></li>
+      <li>⏭️ Skipped (already members): <strong>${skippedCount}</strong></li>
+      <li>❌ Failed: <strong>${failedCount}</strong></li>
+    </ul>
+  `;
+
+  if (failures.length > 0) {
+    summaryHtml += `
+      <hr>
+      <p><strong>Failed Members:</strong></p>
+      <ul class="text-danger">
+        ${failures.slice(0, 10).map(f => `<li>${escapeHtml(f)}</li>`).join('')}
+        ${failures.length > 10 ? `<li><em>... and ${failures.length - 10} more</em></li>` : ''}
+      </ul>
+    `;
+  }
+
+  $("#csvSummary").html(summaryHtml);
+}
+
+function resetCsvModal() {
+  // Reset to stage 1
+  $("#csvStage1").show();
+  $("#csvStage2").hide();
+  $("#csvStage3").hide();
+  $("#csvNextBtn").show();
+  $("#csvNextBtn").prop("disabled", true);
+  $("#csvCancelBtn").show();
+  $("#csvDoneBtn").hide();
+  $("#csvModalClose").show();
+  $("#csvValidationResults").hide();
+  $("#csvErrorDetails").hide();
+  $("#csvFileInput").val('');
+  csvParsedData = [];
+  
+  // Reset progress
+  updateCsvProgress(0, 'Ready');
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }

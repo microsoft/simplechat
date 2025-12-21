@@ -450,12 +450,22 @@ def register_route_backend_chats(app):
                         group_doc = find_group_by_id(active_group_id)
                         debug_print(f"Workspace search group lookup result: {group_doc}")
                         
-                        if group_doc and group_doc.get('name'):
-                            group_name = group_doc.get('name')
-                            user_metadata['workspace_search']['group_name'] = group_name
-                            debug_print(f"Workspace search - set group_name to: {group_name}")
+                        if group_doc:
+                            # Check if group status allows chat operations
+                            from functions_group import check_group_status_allows_operation
+                            allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                            
+                            if group_doc.get('name'):
+                                group_name = group_doc.get('name')
+                                user_metadata['workspace_search']['group_name'] = group_name
+                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                            else:
+                                debug_print(f"Workspace search - no name for group: {active_group_id}")
+                                user_metadata['workspace_search']['group_name'] = None
                         else:
-                            debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Workspace search - no group found for id: {active_group_id}")
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
