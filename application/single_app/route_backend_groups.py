@@ -435,7 +435,6 @@ def register_route_backend_groups(app):
         try:
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'activity_type': 'group_member_added',
                 'action': 'add_member_directly',
                 'timestamp': datetime.utcnow().isoformat(),
                 'added_by_user_id': user_id,
@@ -481,10 +480,12 @@ def register_route_backend_groups(app):
                                         "Transfer ownership or delete the group."}), 403
 
             removed = False
+            removed_member_info = None
             updated_users = []
             for u in group_doc["users"]:
                 if u["userId"] == member_id:
                     removed = True
+                    removed_member_info = u
                     continue
                 updated_users.append(u)
 
@@ -499,6 +500,28 @@ def register_route_backend_groups(app):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                # Log activity for self-removal
+                try:
+                    user_email = user_info.get("email", "unknown")
+                    activity_record = {
+                        'id': str(uuid.uuid4()),
+                        'type': 'group_member_removed',
+                        'action': 'member_left_group',
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'removed_by_user_id': user_id,
+                        'removed_by_email': user_email,
+                        'removed_by_role': 'Member',
+                        'group_id': group_id,
+                        'group_name': group_doc.get('name', 'Unknown'),
+                        'member_user_id': member_id,
+                        'member_email': removed_member_info.get('email', '') if removed_member_info else '',
+                        'member_name': removed_member_info.get('displayName', '') if removed_member_info else '',
+                        'description': f"Member {user_email} left group {group_doc.get('name', group_id)}"
+                    }
+                    cosmos_activity_logs_container.create_item(body=activity_record)
+                except Exception as log_error:
+                    current_app.logger.error(f"Failed to log member removal activity: {log_error}")
+                
                 return jsonify({"message": "You have left the group"}), 200
             else:
                 return jsonify({"error": "You are not in this group"}), 404
@@ -512,10 +535,12 @@ def register_route_backend_groups(app):
                 return jsonify({"error": "Cannot remove the group owner"}), 403
 
             removed = False
+            removed_member_info = None
             updated_users = []
             for u in group_doc["users"]:
                 if u["userId"] == member_id:
                     removed = True
+                    removed_member_info = u
                     continue
                 updated_users.append(u)
             group_doc["users"] = updated_users
@@ -529,6 +554,28 @@ def register_route_backend_groups(app):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                # Log activity for admin/owner removal
+                try:
+                    user_email = user_info.get("email", "unknown")
+                    activity_record = {
+                        'id': str(uuid.uuid4()),
+                        'type': 'group_member_removed',
+                        'action': 'admin_removed_member',
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'removed_by_user_id': user_id,
+                        'removed_by_email': user_email,
+                        'removed_by_role': role,
+                        'group_id': group_id,
+                        'group_name': group_doc.get('name', 'Unknown'),
+                        'member_user_id': member_id,
+                        'member_email': removed_member_info.get('email', '') if removed_member_info else '',
+                        'member_name': removed_member_info.get('displayName', '') if removed_member_info else '',
+                        'description': f"{role} {user_email} removed member {removed_member_info.get('displayName', '')} ({removed_member_info.get('email', '')}) from group {group_doc.get('name', group_id)}"
+                    }
+                    cosmos_activity_logs_container.create_item(body=activity_record)
+                except Exception as log_error:
+                    current_app.logger.error(f"Failed to log member removal activity: {log_error}")
+                
                 return jsonify({"message": "User removed"}), 200
             else:
                 return jsonify({"error": "User not found in group"}), 404

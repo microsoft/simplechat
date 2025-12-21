@@ -271,21 +271,48 @@ def register_route_backend_public_documents(app):
         if role not in ['Owner','Admin','DocumentManager']:
             return jsonify({'error':'Access denied'}), 403
         data = request.get_json() or {}
+        
+        # Track which fields were updated
+        updated_fields = {}
+        
         try:
             if 'title' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, title=data['title'])
+                updated_fields['title'] = data['title']
             if 'abstract' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, abstract=data['abstract'])
+                updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 kws = data['keywords'] if isinstance(data['keywords'],list) else [k.strip() for k in data['keywords'].split(',')]
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, keywords=kws)
+                updated_fields['keywords'] = kws
             if 'authors' in data:
                 auths = data['authors'] if isinstance(data['authors'],list) else [data['authors']]
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, authors=auths)
+                updated_fields['authors'] = auths
             if 'publication_date' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, publication_date=data['publication_date'])
+                updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, document_classification=data['document_classification'])
+                updated_fields['document_classification'] = data['document_classification']
+            
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                from functions_documents import get_document
+                from functions_activity_logging import log_document_metadata_update_transaction
+                doc = get_document(user_id, doc_id, public_workspace_id=active_ws)
+                if doc:
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=doc_id,
+                        workspace_type='public',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type'),
+                        public_workspace_id=active_ws
+                    )
+            
             return jsonify({'message':'Metadata updated'}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500

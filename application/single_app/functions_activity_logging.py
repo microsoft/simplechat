@@ -370,6 +370,90 @@ def log_document_deletion_transaction(
         print(f"⚠️  Warning: Failed to log document deletion transaction: {str(e)}")
 
 
+def log_document_metadata_update_transaction(
+    user_id: str,
+    document_id: str,
+    workspace_type: str,
+    file_name: str,
+    updated_fields: dict,
+    file_type: Optional[str] = None,
+    group_id: Optional[str] = None,
+    public_workspace_id: Optional[str] = None,
+    additional_metadata: Optional[dict] = None
+) -> None:
+    """
+    Log document metadata update transaction to activity_logs container.
+    This creates a permanent record of metadata modifications.
+    
+    Args:
+        user_id (str): The ID of the user who updated the metadata
+        document_id (str): The ID of the updated document
+        workspace_type (str): Type of workspace ('personal', 'group', 'public')
+        file_name (str): Name of the document file
+        updated_fields (dict): Dictionary of fields that were updated with their new values
+        file_type (str, optional): File extension/type (.pdf, .docx, etc.)
+        group_id (str, optional): Group ID if group workspace
+        public_workspace_id (str, optional): Public workspace ID if public workspace
+        additional_metadata (dict, optional): Any additional metadata to store
+    """
+    
+    try:
+        import uuid
+        
+        # Create metadata update activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'document_metadata_update',
+            'workspace_type': workspace_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'document': {
+                'document_id': document_id,
+                'file_name': file_name,
+                'file_type': file_type
+            },
+            'updated_fields': updated_fields,
+            'workspace_context': {}
+        }
+        
+        # Add workspace-specific context
+        if workspace_type == 'group' and group_id:
+            activity_record['workspace_context']['group_id'] = group_id
+        elif workspace_type == 'public' and public_workspace_id:
+            activity_record['workspace_context']['public_workspace_id'] = public_workspace_id
+            
+        # Add any additional metadata
+        if additional_metadata:
+            activity_record['additional_metadata'] = additional_metadata
+            
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Document metadata update transaction logged: {file_name} for user {user_id}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        print(f"✅ Document metadata update transaction logged to activity_logs: {document_id}")
+        
+    except Exception as e:
+        # Log error but don't break the document update flow
+        log_event(
+            message=f"Error logging document metadata update transaction: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'document_id': document_id,
+                'workspace_type': workspace_type,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        print(f"⚠️  Warning: Failed to log document metadata update transaction: {str(e)}")
+
+
 def log_token_usage(
     user_id: str,
     token_type: str,

@@ -3181,7 +3181,7 @@ window.GroupManager = {
     searchUsersForAdd: function() {
         const searchTerm = document.getElementById('ccUserSearchTerm').value.trim();
         if (!searchTerm || searchTerm.length < 2) {
-            showToast('Please enter at least 2 characters to search', 'warning');
+            window.controlCenter.showToast('Please enter at least 2 characters to search', 'warning');
             return;
         }
         
@@ -3215,7 +3215,7 @@ window.GroupManager = {
             })
             .catch(error => {
                 console.error('Error searching users:', error);
-                showToast('Failed to search users', 'error');
+                window.controlCenter.showToast('Failed to search users', 'error');
             })
             .finally(() => {
                 searchBtn.disabled = false;
@@ -3224,22 +3224,44 @@ window.GroupManager = {
     },
     
     renderUserSearchResults: function(users) {
-        const resultsHtml = users.map(user => `
-            <tr>
-                <td>${this.escapeHtml(user.display_name || 'N/A')}</td>
-                <td><small class="text-muted">${this.escapeHtml(user.email || 'N/A')}</small></td>
-                <td><small class="font-monospace">${this.escapeHtml(user.user_id || 'N/A')}</small></td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-primary" 
-                            onclick="GroupManager.selectUserForAdd('${this.escapeHtml(user.user_id || '')}', '${this.escapeHtml(user.display_name || '')}', '${this.escapeHtml(user.email || '')}')">
-                        <i class="bi bi-check-circle me-1"></i>Select
-                    </button>
-                </td>
-            </tr>
-        `).join('');
+        let html = '';
+        if (!users || users.length === 0) {
+            html = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted">
+                        <i class="bi bi-search me-1"></i> No results found
+                    </td>
+                </tr>
+            `;
+        } else {
+            users.forEach(user => {
+                const userId = this.escapeJsString(user.id || '');
+                const displayName = this.escapeJsString(user.displayName || '');
+                const email = this.escapeJsString(user.email || '');
+                
+                html += `
+                    <tr>
+                        <td>${this.escapeHtml(user.displayName || '(no name)')}</td>
+                        <td>${this.escapeHtml(user.email || '')}</td>
+                        <td><small class="font-monospace">${this.escapeHtml(user.id || '')}</small></td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-primary" 
+                                    onclick="GroupManager.selectUserForAdd('${userId}', '${displayName}', '${email}')">
+                                <i class="bi bi-check-circle me-1"></i>Select
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
         
-        document.getElementById('ccSearchResults').innerHTML = resultsHtml;
+        document.getElementById('ccSearchResults').innerHTML = html;
         document.getElementById('ccSearchResultsContainer').style.display = 'block';
+    },
+    
+    escapeJsString: function(str) {
+        if (!str) return '';
+        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     },
     
     selectUserForAdd: function(userId, displayName, email) {
@@ -3249,8 +3271,10 @@ window.GroupManager = {
         
         // Hide search results after selection
         document.getElementById('ccSearchResultsContainer').style.display = 'none';
+        document.getElementById('ccUserSearchTerm').value = '';
+        document.getElementById('ccSearchResultsContainer').style.display = 'none';
         
-        showToast('User selected. Choose a role and click Add Member.', 'success');
+        window.controlCenter.showToast('User selected. Choose a role and click Add Member.', 'success');
     },
     
     addMemberDirectly: function() {
@@ -3261,33 +3285,33 @@ window.GroupManager = {
         
         // Validate required fields
         if (!userId) {
-            showToast('User ID is required', 'warning');
+            window.controlCenter.showToast('User ID is required', 'warning');
             return;
         }
         if (!displayName) {
-            showToast('Display Name is required', 'warning');
+            window.controlCenter.showToast('Display Name is required', 'warning');
             return;
         }
         if (!email) {
-            showToast('Email is required', 'warning');
+            window.controlCenter.showToast('Email is required', 'warning');
             return;
         }
         if (!role) {
-            showToast('Role is required', 'warning');
+            window.controlCenter.showToast('Role is required', 'warning');
             return;
         }
         
         // Validate GUID format for user ID
         const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (!guidRegex.test(userId)) {
-            showToast('User ID must be a valid GUID format', 'warning');
+            window.controlCenter.showToast('User ID must be a valid GUID format', 'warning');
             return;
         }
         
         // Validate email format
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            showToast('Invalid email format', 'warning');
+            window.controlCenter.showToast('Invalid email format', 'warning');
             return;
         }
         
@@ -3310,24 +3334,31 @@ window.GroupManager = {
                 source: 'single'  // Indicate this is a single member add
             })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to add member');
+            }
+            return response.json();
+        })
         .then(data => {
-            if (data.success) {
-                showToast(`Successfully added ${displayName} as ${role}`, 'success');
+            // API returns {message: "...", skipped: []} on success or {error: "..."} on failure
+            if (data.error) {
+                window.controlCenter.showToast(data.error, 'error');
+            } else {
+                window.controlCenter.showToast(`Successfully added ${displayName} as ${role}`, 'success');
                 
                 // Close modal
-                const modal = bootstrap.Modal.getInstance(document.getElementById('addMemberDirectlyModal'));
+                const modalElement = document.getElementById('addMemberDirectlyModal');
+                const modal = bootstrap.Modal.getInstance(modalElement) || new bootstrap.Modal(modalElement);
                 modal.hide();
                 
                 // Refresh member list
                 GroupManager.loadGroupMembers();
-            } else {
-                showToast(data.error || 'Failed to add member', 'error');
             }
         })
         .catch(error => {
             console.error('Error adding member:', error);
-            showToast('Failed to add member', 'error');
+            window.controlCenter.showToast('Failed to add member', 'error');
         })
         .finally(() => {
             submitBtn.disabled = false;
