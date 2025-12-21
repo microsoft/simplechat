@@ -909,3 +909,88 @@ def log_group_status_change(
             level=logging.ERROR
         )
         print(f"⚠️  Warning: Failed to log group status change: {str(e)}")
+
+
+def log_group_member_deleted(
+    removed_by_user_id: str,
+    removed_by_email: str,
+    removed_by_role: str,
+    member_user_id: str,
+    member_email: str,
+    member_name: str,
+    group_id: str,
+    group_name: str,
+    action: str,
+    description: Optional[str] = None
+) -> None:
+    """
+    Log group member deletion/removal transaction to activity_logs container.
+    This creates a permanent record when users are removed from groups.
+    
+    Args:
+        removed_by_user_id (str): ID of user performing the removal
+        removed_by_email (str): Email of user performing the removal
+        removed_by_role (str): Role of user performing the removal (Owner, Admin, Member)
+        member_user_id (str): ID of the member being removed
+        member_email (str): Email of the member being removed
+        member_name (str): Display name of the member being removed
+        group_id (str): ID of the group
+        group_name (str): Name of the group
+        action (str): Specific action ('member_left_group' or 'admin_removed_member')
+        description (str, optional): Human-readable description of the action
+    """
+    
+    try:
+        import uuid
+        
+        # Create group member deletion activity log record
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': removed_by_user_id,  # Person who performed the action (for partitioning)
+            'activity_type': 'group_member_deleted',
+            'action': action,
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'removed_by': {
+                'user_id': removed_by_user_id,
+                'email': removed_by_email,
+                'role': removed_by_role
+            },
+            'removed_member': {
+                'user_id': member_user_id,
+                'email': member_email,
+                'name': member_name
+            },
+            'group': {
+                'group_id': group_id,
+                'group_name': group_name
+            },
+            'description': description or f"{removed_by_role} removed member from group"
+        }
+        
+        # Save to activity_logs container for permanent record
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Group member deleted: {member_name} ({member_email}) removed from {group_name}",
+            extra=activity_record,
+            level=logging.INFO
+        )
+        
+        print(f"✅ Group member deletion logged to activity_logs: {member_user_id} from group {group_id}")
+        
+    except Exception as e:
+        # Log error but don't break the member removal flow
+        log_event(
+            message=f"Error logging group member deletion: {str(e)}",
+            extra={
+                'removed_by_user_id': removed_by_user_id,
+                'member_user_id': member_user_id,
+                'group_id': group_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        print(f"⚠️  Warning: Failed to log group member deletion: {str(e)}")
+

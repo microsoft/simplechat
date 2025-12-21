@@ -501,26 +501,24 @@ def register_route_backend_groups(app):
 
             if removed:
                 # Log activity for self-removal
-                try:
-                    user_email = user_info.get("email", "unknown")
-                    activity_record = {
-                        'id': str(uuid.uuid4()),
-                        'type': 'group_member_removed',
-                        'action': 'member_left_group',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'removed_by_user_id': user_id,
-                        'removed_by_email': user_email,
-                        'removed_by_role': 'Member',
-                        'group_id': group_id,
-                        'group_name': group_doc.get('name', 'Unknown'),
-                        'member_user_id': member_id,
-                        'member_email': removed_member_info.get('email', '') if removed_member_info else '',
-                        'member_name': removed_member_info.get('displayName', '') if removed_member_info else '',
-                        'description': f"Member {user_email} left group {group_doc.get('name', group_id)}"
-                    }
-                    cosmos_activity_logs_container.create_item(body=activity_record)
-                except Exception as log_error:
-                    current_app.logger.error(f"Failed to log member removal activity: {log_error}")
+                from functions_activity_logging import log_group_member_deleted
+                user_email = user_info.get("email", "unknown")
+                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
+                member_email = removed_member_info.get('email', '') if removed_member_info else ''
+                description = f"Member {user_email} left group {group_doc.get('name', group_id)}"
+                
+                log_group_member_deleted(
+                    removed_by_user_id=user_id,
+                    removed_by_email=user_email,
+                    removed_by_role='Member',
+                    member_user_id=member_id,
+                    member_email=member_email,
+                    member_name=member_name,
+                    group_id=group_id,
+                    group_name=group_doc.get('name', 'Unknown'),
+                    action='member_left_group',
+                    description=description
+                )
                 
                 return jsonify({"message": "You have left the group"}), 200
             else:
@@ -555,26 +553,24 @@ def register_route_backend_groups(app):
 
             if removed:
                 # Log activity for admin/owner removal
-                try:
-                    user_email = user_info.get("email", "unknown")
-                    activity_record = {
-                        'id': str(uuid.uuid4()),
-                        'type': 'group_member_removed',
-                        'action': 'admin_removed_member',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'removed_by_user_id': user_id,
-                        'removed_by_email': user_email,
-                        'removed_by_role': role,
-                        'group_id': group_id,
-                        'group_name': group_doc.get('name', 'Unknown'),
-                        'member_user_id': member_id,
-                        'member_email': removed_member_info.get('email', '') if removed_member_info else '',
-                        'member_name': removed_member_info.get('displayName', '') if removed_member_info else '',
-                        'description': f"{role} {user_email} removed member {removed_member_info.get('displayName', '')} ({removed_member_info.get('email', '')}) from group {group_doc.get('name', group_id)}"
-                    }
-                    cosmos_activity_logs_container.create_item(body=activity_record)
-                except Exception as log_error:
-                    current_app.logger.error(f"Failed to log member removal activity: {log_error}")
+                from functions_activity_logging import log_group_member_deleted
+                user_email = user_info.get("email", "unknown")
+                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
+                member_email = removed_member_info.get('email', '') if removed_member_info else ''
+                description = f"{role} {user_email} removed member {member_name} ({member_email}) from group {group_doc.get('name', group_id)}"
+                
+                log_group_member_deleted(
+                    removed_by_user_id=user_id,
+                    removed_by_email=user_email,
+                    removed_by_role=role,
+                    member_user_id=member_id,
+                    member_email=member_email,
+                    member_name=member_name,
+                    group_id=group_id,
+                    group_name=group_doc.get('name', 'Unknown'),
+                    action='admin_removed_member',
+                    description=description
+                )
                 
                 return jsonify({"message": "User removed"}), 200
             else:
