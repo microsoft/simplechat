@@ -609,7 +609,7 @@
               <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
             {% endif %}
             <!-- Notification badge - positioned at bottom-right corner -->
-            <span id="sidebar-notification-badge" class="position-absolute badge rounded-circle bg-danger" style="display: none; font-size: 0.65rem; padding: 0.35em 0.5em; bottom: -2px; right: -2px; min-width: 18px; height: 18px; line-height: 1; border: 2px solid white;">
+            <span id="sidebar-notification-badge" class="position-absolute badge rounded-circle bg-danger d-flex align-items-center justify-content-center" style="display: none !important; font-size: 0.6rem; font-weight: 700; bottom: -2px; right: -2px; width: 18px; height: 18px; padding: 0; line-height: 1; border: 2px solid white;">
               0
             </span>
           </div>

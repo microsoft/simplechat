@@ -42,12 +42,12 @@
         const sidebarCountBadge = document.getElementById('sidebar-notification-count-badge');
         
         if (count > 0) {
-            const displayCount = count > 9 ? '9+' : count.toString();
+            const displayCount = count > 9 ? '+' : count.toString();
             
             // Update top nav avatar badge
             if (badge) {
                 badge.textContent = displayCount;
-                badge.style.display = 'block';
+                badge.style.display = 'flex';
             }
             
             // Update top nav menu badge
@@ -59,7 +59,7 @@
             // Update sidebar avatar badge
             if (sidebarBadge) {
                 sidebarBadge.textContent = displayCount;
-                sidebarBadge.style.display = 'block';
+                sidebarBadge.style.display = 'flex';
             }
             
             // Update sidebar menu badge
