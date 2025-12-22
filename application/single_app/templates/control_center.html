@@ -347,6 +347,90 @@
             height: 100% !important;
         }
         
+        /* Activity Timeline Styles */
+        .activity-item {
+            transition: all 0.2s ease;
+            background: var(--bs-body-bg);
+        }
+        
+        .activity-item:hover {
+            background: rgba(var(--bs-primary-rgb), 0.05);
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .activity-icon {
+            flex-shrink: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(var(--bs-secondary-rgb), 0.1);
+        }
+        
+        .activity-item .text-success {
+            color: var(--bs-success) !important;
+        }
+        
+        .activity-item .text-danger {
+            color: var(--bs-danger) !important;
+        }
+        
+        .activity-item .text-warning {
+            color: var(--bs-warning) !important;
+        }
+        
+        .activity-item .text-info {
+            color: var(--bs-info) !important;
+        }
+        
+        .activity-item .text-primary {
+            color: var(--bs-primary) !important;
+        }
+        
+        .activity-item .text-secondary {
+            color: var(--bs-secondary) !important;
+        }
+        
+        [data-bs-theme="dark"] .activity-item {
+            border-color: var(--bs-border-color) !important;
+        }
+        
+        [data-bs-theme="dark"] .activity-item:hover {
+            background: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        
+        .timeline-container {
+            position: relative;
+        }
+        
+        .timeline-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-track {
+            background: var(--bs-light);
+            border-radius: 4px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-thumb {
+            background: var(--bs-secondary);
+            border-radius: 4px;
+        }
+        
+        .timeline-container::-webkit-scrollbar-thumb:hover {
+            background: var(--bs-dark);
+        }
+        
+        [data-bs-theme="dark"] .timeline-container::-webkit-scrollbar-track {
+            background: var(--bs-dark);
+        }
+        
+        [data-bs-theme="dark"] .timeline-container::-webkit-scrollbar-thumb {
+            background: var(--bs-secondary);
+        }
 
     </style>
 {% endblock %}
@@ -2119,6 +2203,14 @@ window.GroupManager = {
         // Member management modal
         document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
         
+        // Activity timeline modal
+        document.getElementById('viewActivityBtn')?.addEventListener('click', () => {
+            const groupId = document.getElementById('groupManagementModal').getAttribute('data-group-id');
+            if (groupId) {
+                GroupManager.viewActivity(groupId);
+            }
+        });
+        
         // CSV bulk upload
         document.getElementById('addBulkMemberBtn')?.addEventListener('click', () => {
             const csvModal = new bootstrap.Modal(document.getElementById('csvBulkUploadModal'));
@@ -2542,9 +2634,75 @@ window.GroupManager = {
     },
 
     // View group activity
-    viewActivity: function(groupId) {
-        console.log('Viewing activity for group:', groupId);  
-        alert(`Activity view for ${groupId} would open here`);
+    viewActivity: async function(groupId) {
+        console.log('[Activity] viewActivity called with groupId:', groupId);
+        
+        try {
+            // Set the current group ID for loading activity
+            GroupManager.currentGroupId = groupId;
+            console.log('[Activity] Set currentGroupId to:', groupId);
+            
+            // Fetch group details to get the name
+            console.log('[Activity] Fetching group details...');
+            const groupResponse = await fetch(`/api/admin/control-center/groups/${groupId}`);
+            if (!groupResponse.ok) {
+                throw new Error('Failed to fetch group details');
+            }
+            const group = await groupResponse.json();
+            console.log('[Activity] Group details:', group.name);
+            
+            // Set the group name in the modal
+            const groupNameElement = document.getElementById('activityGroupName');
+            if (groupNameElement) {
+                groupNameElement.textContent = `${group.name || 'Unknown Group'} - Activity Timeline`;
+                console.log('[Activity] Set group name in modal');
+            } else {
+                console.error('[Activity] activityGroupName element not found');
+            }
+            
+            // Show the modal
+            console.log('[Activity] Showing modal...');
+            const modalElement = document.getElementById('groupActivityModal');
+            if (!modalElement) {
+                console.error('[Activity] Modal element not found!');
+                throw new Error('Activity modal element not found');
+            }
+            
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+            console.log('[Activity] Modal shown');
+            
+            // Load initial activity (default: 30 days)
+            console.log('[Activity] Starting to load activity data...');
+            await GroupManager.loadGroupActivity(groupId, 30);
+            console.log('[Activity] Activity data load complete');
+            
+            // Set up time range change listener
+            const timeRangeSelect = document.getElementById('activityTimeRange');
+            if (timeRangeSelect) {
+                timeRangeSelect.onchange = async function(e) {
+                    console.log('[Activity] Time range changed to:', e.target.value);
+                    await GroupManager.loadGroupActivity(groupId, e.target.value);
+                };
+            } else {
+                console.error('[Activity] Time range select not found');
+            }
+            
+            // Set up export button
+            const exportBtn = document.getElementById('exportActivityBtn');
+            if (exportBtn) {
+                exportBtn.onclick = function() {
+                    console.log('[Activity] Export button clicked');
+                    GroupManager.exportGroupActivity(groupId);
+                };
+            } else {
+                console.error('[Activity] Export button not found');
+            }
+            
+        } catch (error) {
+            console.error('[Activity] Error in viewActivity:', error);
+            alert(`Error loading group activity: ${error.message}`);
+        }
     },
 
     // Show bulk action modal
@@ -3364,6 +3522,264 @@ window.GroupManager = {
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-person-plus me-1"></i>Add Member';
         });
+    },
+    
+    // Load group activity from API
+    loadGroupActivity: async function(groupId, days) {
+        console.log(`[Activity] Loading activity for group ${groupId}, days: ${days}`);
+        const timeline = document.getElementById('activityTimeline');
+        
+        if (!timeline) {
+            console.error('[Activity] Timeline element not found!');
+            return;
+        }
+        
+        // Show loading state
+        timeline.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="mt-2">Loading activity...</div>
+            </div>
+        `;
+        
+        try {
+            console.log(`[Activity] Fetching from API: /api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            
+            console.log(`[Activity] API response status: ${response.status}`);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[Activity] API error:', errorText);
+                throw new Error(`Failed to fetch group activity: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`[Activity] Received ${data.activities?.length || 0} activities`);
+            const activities = data.activities || [];
+            
+            if (activities.length === 0) {
+                console.log('[Activity] No activities found');
+                timeline.innerHTML = `
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                        <p class="mt-3">No activity found for the selected time range</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Render timeline
+            console.log('[Activity] Rendering activities...');
+            timeline.innerHTML = activities.map(activity => GroupManager.renderActivityItem(activity)).join('');
+            console.log('[Activity] Activities rendered successfully');
+            
+        } catch (error) {
+            console.error('[Activity] Error loading group activity:', error);
+            timeline.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Error loading activity: ${GroupManager.escapeHtml(error.message)}
+                </div>
+            `;
+        }
+    },
+    
+    // Render a single activity item
+    renderActivityItem: function(activity) {
+        const timestamp = new Date(activity.timestamp);
+        const relativeTime = GroupManager.getRelativeTime(timestamp);
+        const formattedTime = timestamp.toLocaleString();
+        
+        // Build activity-specific content
+        let content = '';
+        let title = '';
+        
+        switch (activity.type) {
+            case 'document_creation':
+                title = 'Document Uploaded';
+                const doc = activity.document || {};
+                const sizeStr = GroupManager.formatFileSize(doc.file_size_bytes);
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(doc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">
+                        ${doc.file_type || 'Unknown type'} • ${sizeStr}
+                        ${doc.page_count ? ` • ${doc.page_count} pages` : ''}
+                    </div>
+                `;
+                break;
+                
+            case 'document_deletion':
+                title = 'Document Deleted';
+                const delDoc = activity.document || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(delDoc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">${delDoc.file_type || 'Unknown type'}</div>
+                `;
+                break;
+                
+            case 'document_metadata_update':
+                title = 'Document Updated';
+                const updDoc = activity.document || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(updDoc.file_name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">Metadata updated</div>
+                `;
+                break;
+                
+            case 'group_member_added':
+                title = 'Member Added';
+                const addedMember = activity.member || {};
+                const addedBy = activity.added_by || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(addedMember.name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">
+                        ${GroupManager.escapeHtml(addedMember.email || '')}
+                        ${addedMember.role ? ` • Role: ${addedMember.role}` : ''}
+                    </div>
+                    ${addedBy.email ? `<div class="text-muted small">Added by: ${GroupManager.escapeHtml(addedBy.email)}</div>` : ''}
+                `;
+                break;
+                
+            case 'group_member_deleted':
+                title = 'Member Removed';
+                const removedMember = activity.member || {};
+                const removedBy = activity.removed_by || {};
+                content = `
+                    <div><strong>${GroupManager.escapeHtml(removedMember.name || 'Unknown')}</strong></div>
+                    <div class="text-muted small">${GroupManager.escapeHtml(removedMember.email || '')}</div>
+                    ${removedBy.email ? `<div class="text-muted small">Removed by: ${GroupManager.escapeHtml(removedBy.email)}</div>` : ''}
+                `;
+                break;
+                
+            case 'group_status_change':
+                title = 'Status Changed';
+                const statusChange = activity.status_change || {};
+                content = `
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-secondary">${GroupManager.formatStatus(statusChange.from_status)}</span>
+                        <i class="bi bi-arrow-right"></i>
+                        <span class="badge bg-${GroupManager.getStatusColor(statusChange.to_status)}">${GroupManager.formatStatus(statusChange.to_status)}</span>
+                    </div>
+                `;
+                break;
+                
+            case 'conversation_creation':
+                title = 'Conversation Started';
+                content = `<div class="text-muted small">New chat conversation initiated</div>`;
+                break;
+                
+            default:
+                title = activity.type || 'Activity';
+                content = `<div class="text-muted small">${GroupManager.escapeHtml(activity.description || 'No details available')}</div>`;
+        }
+        
+        return `
+            <div class="activity-item mb-3 p-3 border rounded">
+                <div class="d-flex align-items-start gap-3">
+                    <div class="activity-icon">
+                        <i class="bi bi-${activity.icon || 'circle'} text-${activity.color || 'secondary'}" style="font-size: 1.5rem;"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <h6 class="mb-0">${title}</h6>
+                            <small class="text-muted" title="${formattedTime}">${relativeTime}</small>
+                        </div>
+                        ${content}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+    
+    // Helper: Format file size
+    formatFileSize: function(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let size = bytes;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex++;
+        }
+        return `${size.toFixed(1)} ${units[unitIndex]}`;
+    },
+    
+    // Helper: Get relative time string
+    getRelativeTime: function(date) {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+        if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+        return `${Math.floor(diffDays / 365)}y ago`;
+    },
+    
+    // Helper: Format status name
+    formatStatus: function(status) {
+        if (!status) return 'Unknown';
+        return status.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    },
+    
+    // Helper: Get Bootstrap color for status
+    getStatusColor: function(status) {
+        const colorMap = {
+            'active': 'success',
+            'locked': 'warning',
+            'upload_disabled': 'info',
+            'inactive': 'secondary'
+        };
+        return colorMap[status] || 'secondary';
+    },
+    
+    // Export group activity
+    exportGroupActivity: async function(groupId) {
+        try {
+            const days = document.getElementById('activityTimeRange').value;
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/activity?days=${days}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch activity data');
+            }
+            
+            const data = await response.json();
+            const activities = data.activities || [];
+            
+            // Convert to CSV
+            const csvLines = ['Timestamp,Type,Description'];
+            activities.forEach(activity => {
+                const timestamp = new Date(activity.timestamp).toISOString();
+                const type = activity.type || 'unknown';
+                const description = (activity.description || '').replace(/"/g, '""');
+                csvLines.push(`"${timestamp}","${type}","${description}"`);
+            });
+            
+            const csvContent = csvLines.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `group_${groupId}_activity_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            window.controlCenter.showToast('Activity exported successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error exporting activity:', error);
+            window.controlCenter.showToast('Failed to export activity', 'error');
+        }
     }
 };
 

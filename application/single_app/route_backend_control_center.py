@@ -2914,7 +2914,6 @@ def register_route_backend_control_center(app):
             # Log to activity logs
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'activity_type': 'group_member_added',
                 'action': action_type,
                 'timestamp': datetime.utcnow().isoformat(),
                 'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
@@ -2947,6 +2946,216 @@ def register_route_backend_control_center(app):
         except Exception as e:
             current_app.logger.error(f"Error adding group member: {e}")
             return jsonify({'error': 'Failed to add member'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_get_group_activity(group_id):
+        """
+        Get activity timeline for a specific group from activity logs
+        Returns document creation/deletion, member changes, status changes, and conversations
+        """
+        try:
+            # Get time range filter (default: last 30 days)
+            days = request.args.get('days', '30')
+            
+            # Calculate date filter
+            cutoff_date = None
+            if days != 'all':
+                try:
+                    days_int = int(days)
+                    cutoff_date = (datetime.utcnow() - timedelta(days=days_int)).isoformat()
+                except ValueError:
+                    pass
+            
+            # Build queries - use two separate queries to avoid nested property access issues
+            # Query 1: Activities with c.group.group_id (member/status changes)
+            # Query 2: Activities with c.workspace_context.group_id (document operations)
+            
+            time_filter = "AND c.timestamp >= @cutoff_date" if cutoff_date else ""
+            
+            # Query 1: Member and status activities
+            query1 = f"""
+                SELECT 
+                    c.id,
+                    c.activity_type,
+                    c.timestamp,
+                    c.user_id,
+                    c.action,
+                    c.description,
+                    c.group,
+                    c.added_by,
+                    c.added_member,
+                    c.removed_by,
+                    c.removed_member,
+                    c.status_change
+                FROM c
+                WHERE c.activity_type IN ('group_member_added', 'group_member_deleted', 'group_status_change')
+                AND c.group.group_id = @group_id
+                {time_filter}
+            """
+            
+            # Query 2: Document activities
+            query2 = f"""
+                SELECT 
+                    c.id,
+                    c.activity_type,
+                    c.timestamp,
+                    c.user_id,
+                    c.action,
+                    c.description,
+                    c.document,
+                    c.workspace_context
+                FROM c
+                WHERE c.activity_type IN ('document_creation', 'document_deletion', 'document_metadata_update')
+                AND c.workspace_context.group_id = @group_id
+                {time_filter}
+            """
+            
+            # Log the queries for debugging
+            current_app.logger.info(f"[Group Activity] Querying for group: {group_id}, days: {days}")
+            current_app.logger.debug(f"[Group Activity] Query 1: {query1}")
+            current_app.logger.debug(f"[Group Activity] Query 2: {query2}")
+            
+            parameters = [
+                {"name": "@group_id", "value": group_id}
+            ]
+            
+            if cutoff_date:
+                parameters.append({"name": "@cutoff_date", "value": cutoff_date})
+            
+            current_app.logger.debug(f"[Group Activity] Parameters: {parameters}")
+            
+            # Execute both queries
+            activities = []
+            
+            try:
+                # Query 1: Member and status activities
+                activities1 = list(cosmos_activity_logs_container.query_items(
+                    query=query1,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                current_app.logger.debug(f"[Group Activity] Query 1 returned {len(activities1)} activities")
+                activities.extend(activities1)
+            except Exception as e:
+                current_app.logger.warning(f"[Group Activity] Query 1 failed: {e}")
+            
+            try:
+                # Query 2: Document activities
+                activities2 = list(cosmos_activity_logs_container.query_items(
+                    query=query2,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                current_app.logger.debug(f"[Group Activity] Query 2 returned {len(activities2)} activities")
+                activities.extend(activities2)
+            except Exception as e:
+                current_app.logger.warning(f"[Group Activity] Query 2 failed: {e}")
+            
+            # Sort combined results by timestamp descending
+            activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            
+            # Format activities for timeline display
+            formatted_activities = []
+            for activity in activities:
+                formatted = {
+                    'id': activity.get('id'),
+                    'type': activity.get('activity_type'),
+                    'timestamp': activity.get('timestamp'),
+                    'user_id': activity.get('user_id'),
+                    'description': activity.get('description', '')
+                }
+                
+                # Add type-specific details
+                activity_type = activity.get('activity_type')
+                
+                if activity_type == 'document_creation':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type'),
+                        'file_size_bytes': doc.get('file_size_bytes'),
+                        'page_count': doc.get('page_count')
+                    }
+                    formatted['icon'] = 'file-earmark-plus'
+                    formatted['color'] = 'success'
+                
+                elif activity_type == 'document_deletion':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type')
+                    }
+                    formatted['icon'] = 'file-earmark-minus'
+                    formatted['color'] = 'danger'
+                
+                elif activity_type == 'document_metadata_update':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name')
+                    }
+                    formatted['icon'] = 'pencil-square'
+                    formatted['color'] = 'info'
+                
+                elif activity_type == 'group_member_added':
+                    added_by = activity.get('added_by', {})
+                    added_member = activity.get('added_member', {})
+                    formatted['member'] = {
+                        'name': added_member.get('name'),
+                        'email': added_member.get('email'),
+                        'role': added_member.get('role')
+                    }
+                    formatted['added_by'] = {
+                        'email': added_by.get('email'),
+                        'role': added_by.get('role')
+                    }
+                    formatted['icon'] = 'person-plus'
+                    formatted['color'] = 'primary'
+                
+                elif activity_type == 'group_member_deleted':
+                    removed_by = activity.get('removed_by', {})
+                    removed_member = activity.get('removed_member', {})
+                    formatted['member'] = {
+                        'name': removed_member.get('name'),
+                        'email': removed_member.get('email')
+                    }
+                    formatted['removed_by'] = {
+                        'email': removed_by.get('email'),
+                        'role': removed_by.get('role')
+                    }
+                    formatted['icon'] = 'person-dash'
+                    formatted['color'] = 'warning'
+                
+                elif activity_type == 'group_status_change':
+                    status_change = activity.get('status_change', {})
+                    formatted['status_change'] = {
+                        'from_status': status_change.get('from_status'),
+                        'to_status': status_change.get('to_status')
+                    }
+                    formatted['icon'] = 'shield-lock'
+                    formatted['color'] = 'secondary'
+                
+                elif activity_type == 'conversation_creation':
+                    formatted['icon'] = 'chat-dots'
+                    formatted['color'] = 'info'
+                
+                formatted_activities.append(formatted)
+            
+            return jsonify({
+                'group_id': group_id,
+                'activities': formatted_activities,
+                'count': len(formatted_activities),
+                'time_range_days': days
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error fetching group activity: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
     # Public Workspaces API
     @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
