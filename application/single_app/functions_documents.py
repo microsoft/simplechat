@@ -5228,6 +5228,82 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 # Don't fail if flag setting fails
                 
         except Exception as log_error:
+            print(f"Error logging document creation transaction: {log_error}")
+            # Don't fail the entire process if logging fails
+        
+        # Create notification for document processing completion
+        try:
+            from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
+            
+            notification_title = f"Document ready: {original_filename}"
+            notification_message = f"Your document has been processed successfully with {total_chunks_saved} chunks."
+            
+            # Determine workspace type and create appropriate notification
+            if public_workspace_id:
+                # Notification for all public workspace members
+                create_public_workspace_notification(
+                    public_workspace_id=public_workspace_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/public_workspace',
+                    link_context={
+                        'workspace_type': 'public',
+                        'public_workspace_id': public_workspace_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for public workspace {public_workspace_id}")
+                
+            elif group_id:
+                # Notification for all group members
+                create_group_notification(
+                    group_id=group_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/group_workspace',
+                    link_context={
+                        'workspace_type': 'group',
+                        'group_id': group_id,
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for group {group_id}")
+                
+            else:
+                # Personal notification for the uploader
+                create_notification(
+                    user_id=user_id,
+                    notification_type='document_processing_complete',
+                    title=notification_title,
+                    message=notification_message,
+                    link_url='/workspace',
+                    link_context={
+                        'workspace_type': 'personal',
+                        'document_id': document_id
+                    },
+                    metadata={
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunks': total_chunks_saved
+                    }
+                )
+                print(f"📢 Created notification for user {user_id}")
+                
+        except Exception as notif_error:
+            print(f"⚠️  Warning: Failed to create notification: {notif_error}")
+            # Don't fail the entire process if notification creation fails
             print(f"⚠️  Warning: Failed to log document creation transaction: {log_error}")
             # Don't fail the document processing if logging fails
 
