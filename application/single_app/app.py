@@ -36,6 +36,7 @@ from route_frontend_group_workspaces import *
 from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_notifications import *
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -50,6 +51,7 @@ from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
 from route_backend_control_center import *
+from route_backend_notifications import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
@@ -413,6 +415,9 @@ register_route_frontend_safety(app)
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
 
+# ------------------- Notifications Routes --------------
+register_route_frontend_notifications(app)
+
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
 
@@ -451,6 +456,9 @@ register_route_backend_group_prompts(app)
 
 # ------------------- API Control Center Routes ---------
 register_route_backend_control_center(app)
+
+# ------------------- API Notifications Routes ----------
+register_route_backend_notifications(app)
 
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)

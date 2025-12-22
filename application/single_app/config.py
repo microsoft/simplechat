@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.234.031"
+VERSION = "0.234.032"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -390,6 +390,13 @@ cosmos_activity_logs_container_name = "activity_logs"
 cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_activity_logs_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_notifications_container_name = "notifications"
+cosmos_notifications_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_notifications_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document
 )
 
 def ensure_custom_logo_file_exists(app, settings):

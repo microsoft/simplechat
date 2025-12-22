@@ -17,21 +17,37 @@ let isLoading = false;
             const sidebar = document.getElementById('sidebar-profile-avatar');
             
             if (topNav && userProfileImage) {
+                // Preserve notification badge if it exists
+                const existingBadge = topNav.querySelector('#notification-badge');
+                
                 const img = document.createElement('img');
                 img.src = userProfileImage;
                 img.alt = 'Profile';
                 img.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; object-fit: cover;';
                 topNav.innerHTML = '';
                 topNav.appendChild(img);
+                
+                // Re-append badge if it existed
+                if (existingBadge) {
+                    topNav.appendChild(existingBadge);
+                }
             }
             
             if (sidebar && userProfileImage) {
+                // Preserve notification badge if it exists
+                const existingBadge = sidebar.querySelector('#sidebar-notification-badge');
+                
                 const img = document.createElement('img');
                 img.src = userProfileImage;
                 img.alt = 'Profile';
                 img.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; object-fit: cover;';
                 sidebar.innerHTML = '';
                 sidebar.appendChild(img);
+                
+                // Re-append badge if it existed
+                if (existingBadge) {
+                    sidebar.appendChild(existingBadge);
+                }
             }
         }
         
@@ -151,6 +167,9 @@ function updateTopNavAvatar() {
     const avatarElement = document.getElementById('top-nav-profile-avatar');
     if (!avatarElement) return;
     
+    // Preserve notification badge if it exists
+    const existingBadge = avatarElement.querySelector('#notification-badge');
+    
     if (userProfileImage) {
         const img = document.createElement('img');
         img.src = userProfileImage;
@@ -165,6 +184,11 @@ function updateTopNavAvatar() {
         avatarElement.innerHTML = '';
         avatarElement.appendChild(img);
         avatarElement.style.backgroundColor = 'transparent';
+        
+        // Re-append badge if it existed
+        if (existingBadge) {
+            avatarElement.appendChild(existingBadge);
+        }
     } else {
         // Keep the existing initials display, but use cached name if possible
         const nameElement = avatarElement.parentElement.querySelector('.fw-semibold');
@@ -176,6 +200,11 @@ function updateTopNavAvatar() {
             avatarElement.style.width = '28px';
             avatarElement.style.height = '28px';
             avatarElement.style.backgroundColor = '#6c757d';
+            
+            // Re-append badge if it existed
+            if (existingBadge) {
+                avatarElement.appendChild(existingBadge);
+            }
         }
     }
 }
@@ -186,6 +215,9 @@ function updateTopNavAvatar() {
 function updateSidebarAvatar() {
     const sidebarAvatar = document.getElementById('sidebar-profile-avatar');
     if (!sidebarAvatar) return;
+    
+    // Preserve notification badge if it exists
+    const existingBadge = sidebarAvatar.querySelector('#sidebar-notification-badge');
     
     if (userProfileImage) {
         const img = document.createElement('img');
@@ -201,6 +233,11 @@ function updateSidebarAvatar() {
         sidebarAvatar.innerHTML = '';
         sidebarAvatar.appendChild(img);
         sidebarAvatar.style.backgroundColor = 'transparent';
+        
+        // Re-append badge if it existed
+        if (existingBadge) {
+            sidebarAvatar.appendChild(existingBadge);
+        }
     } else {
         // Get initials for sidebar
         const nameElement = document.querySelector('#sidebar-user-account .fw-semibold');
@@ -212,6 +249,11 @@ function updateSidebarAvatar() {
             sidebarAvatar.style.width = '28px';
             sidebarAvatar.style.height = '28px';
             sidebarAvatar.style.backgroundColor = '#6c757d';
+            
+            // Re-append badge if it existed
+            if (existingBadge) {
+                sidebarAvatar.appendChild(existingBadge);
+            }
         }
     }
 }
