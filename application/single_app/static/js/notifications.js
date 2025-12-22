@@ -47,6 +47,7 @@
             // Update top nav avatar badge
             if (badge) {
                 badge.textContent = displayCount;
+                badge.classList.add('d-flex');
                 badge.style.display = 'flex';
             }
             
@@ -59,6 +60,7 @@
             // Update sidebar avatar badge
             if (sidebarBadge) {
                 sidebarBadge.textContent = displayCount;
+                sidebarBadge.classList.add('d-flex');
                 sidebarBadge.style.display = 'flex';
             }
             
@@ -70,6 +72,7 @@
         } else {
             // Hide all badges
             if (badge) {
+                badge.classList.remove('d-flex');
                 badge.style.display = 'none';
             }
             
@@ -78,6 +81,7 @@
             }
             
             if (sidebarBadge) {
+                sidebarBadge.classList.remove('d-flex');
                 sidebarBadge.style.display = 'none';
             }
             
