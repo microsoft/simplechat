@@ -5246,7 +5246,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                     notification_type='document_processing_complete',
                     title=notification_title,
                     message=notification_message,
-                    link_url='/public_workspace',
+                    link_url='/public_directory',
                     link_context={
                         'workspace_type': 'public',
                         'public_workspace_id': public_workspace_id,
@@ -5267,7 +5267,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                     notification_type='document_processing_complete',
                     title=notification_title,
                     message=notification_message,
-                    link_url='/group_workspace',
+                    link_url='/group_workspaces',
                     link_context={
                         'workspace_type': 'group',
                         'group_id': group_id,
