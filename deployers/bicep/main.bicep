@@ -29,28 +29,22 @@ param appName string
 @maxLength(10)
 param environment string
 
-@description('Optional object containing additional tags to apply to all resources.')
-param specialTags object = {}
-
 @minLength(1)
 @maxLength(64)
 @description('Name of the AZD environment')
 param azdEnvironmentName string
 
-@description('''Enable diagnostic logging for resources deployed in the resource group. 
-- All content will be sent to the deployed Log Analytics workspace
-- Default is false''')
-param enableDiagLogging bool
-
-@description('''Enable enterprise application (Azure AD App Registration) configuration.
-- Enables SSO, conditional access, and centralized identity management
-- Default is true''')
-param enableEnterpriseApp bool = true
+@description('''The name of the container image to deploy to the web app.
+- should be in the format <repository>:<tag>''')
+param imageName string
 
 @description('''Azure AD Application Client ID for enterprise authentication.
-- Required if enableEnterpriseApp is true
 - Should be the client ID of the registered Azure AD application''')
 param enterpriseAppClientId string
+
+@description('''Azure AD Application Service Principal Id for the enterprise application.
+- Should be the Service Principal ID of the registered Azure AD application''')
+param enterpriseAppServicePrincipalId string
 
 @description('''Azure AD Application Client Secret for enterprise authentication.
 - Required if enableEnterpriseApp is true
@@ -59,19 +53,62 @@ param enterpriseAppClientId string
 @secure()
 param enterpriseAppClientSecret string
 
-@description('''Use existing Azure Container Registry
+//----------------
+// configurations
+@description('''Authentication type for resources that support Managed Identity or Key authentication.
+- Key: Use access keys for authentication (application keys will be stored in Key Vault)
+- managed_identity: Use Managed Identity for authentication''')
+@allowed([
+  'key'
+  'managed_identity'
+])
+param authenticationType string
+
+@description('''Configure permissions (based on authenticationType) for the deployed web application to access required resources.
+''')
+param configureApplicationPermissions bool
+
+@description('Optional object containing additional tags to apply to all resources.')
+param specialTags object = {}
+
+@description('''Enable diagnostic logging for resources deployed in the resource group. 
+- All content will be sent to the deployed Log Analytics workspace
 - Default is false''')
-param useExistingAcr bool
+param enableDiagLogging bool
 
-@description('''The name of the existing Azure Container Registry containing the container image to deploy to the web app.
-- Required if useExistingAcr is true
-- should be in the format <registry-name>
-- Do not include any domain suffix such as .azurecr.io''')
-param existingAcrResourceName string
+@description('''Array of GPT model names to deploy to the OpenAI resource.''')
+param gptModels array = [
+  {
+    modelName: 'gpt-4.1'
+    modelVersion: '2025-04-14'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+  {
+    modelName: 'gpt-4o'
+    modelVersion: '2024-11-20'
+    skuName: 'GlobalStandard'
+    skuCapacity: 100
+  }
+]
 
-@description('''The name of the Azure Container Registry resource group.
-- Required if useExistingAcr is true''')
-param existingAcrResourceGroup string
+@description('''Array of embedding model names to deploy to the OpenAI resource.''')
+param embeddingModels array = [
+  {
+    modelName: 'text-embedding-3-small'
+    modelVersion: '1'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+  {
+    modelName: 'text-embedding-3-large'
+    modelVersion: '1'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+]
+//----------------
+// optional services
 
 @description('''Enable deployment of Content Safety service and related resources.
 - Default is false''')
@@ -85,43 +122,19 @@ param deployRedisCache bool
 - Default is false''')
 param deploySpeechService bool
 
-@description('''Use existing Azure OpenAI resource''')
-param useExistingOpenAISvc bool
-
-@description('''Existing Azure OpenAI Resource Group Name
-- Required if useExistingOpenAISvc is true''')
-param existingOpenAIResourceGroupName string
-
-@description('''Existing Azure OpenAI Resource Name
-- Required if useExistingOpenAISvc is true''')
-param existingOpenAIResourceName string
-
-@description('''The name of the container image to deploy to the web app.
-- should be in the format <repository>:<tag>''')
-param imageName string
-
-@description('''Unauthenticated client action for enterprise application.
-- RedirectToLoginPage: Redirect unauthenticated users to login
-- Return401: Return 401 Unauthorized for unauthenticated requests
-- AllowAnonymous: Allow anonymous access''')
-@allowed([
-  'AllowAnonymous'
-  'RedirectToLoginPage'
-  'Return401'
-  'Return403'
-])
-param unauthenticatedClientAction string = 'RedirectToLoginPage'
+@description('''Enable deployment of Azure Video Indexer service and related resources.
+- Default is false''')
+param deployVideoIndexerService bool
 
 //=========================================================
 // variable declarations for the main deployment 
 //=========================================================
-
 var rgName = '${appName}-${environment}-rg'
 var requiredTags = { application: appName, environment: environment, 'azd-env-name': azdEnvironmentName }
 var tags = union(requiredTags, specialTags)
 var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurecr.us'
+var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
-var acrName = useExistingAcr ? existingAcrResourceName : toLower('${appName}${environment}acr')
 var containerImageName = '${containerRegistry}/${imageName}'
 
 //=========================================================
@@ -134,10 +147,10 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
 }
 
 //=========================================================
-// Create managed identity
+// Create log analytics workspace 
 //=========================================================
-module managedIdentity 'modules/managedIdentity.bicep' = {
-  name: 'managedIdentity'
+module logAnalytics 'modules/logAnalyticsWorkspace.bicep' = {
+  name: 'logAnalytics'
   scope: rg
   params: {
     location: location
@@ -148,16 +161,17 @@ module managedIdentity 'modules/managedIdentity.bicep' = {
 }
 
 //=========================================================
-// Create log analytics workspace 
+// Create application insights
 //=========================================================
-module logAnalytics 'modules/logAnalytics.bicep' = {
-  name: 'logAnalytics'
+module applicationInsights 'modules/applicationInsights.bicep' = {
+  name: 'applicationInsights'
   scope: rg
   params: {
     location: location
     appName: appName
     environment: environment
     tags: tags
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
   }
 }
 
@@ -172,46 +186,21 @@ module keyVault 'modules/keyVault.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
-    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-    enableEnterpriseApp: enableEnterpriseApp
-    enterpriseAppClientId: enterpriseAppClientId
-    enterpriseAppClientSecret: enterpriseAppClientSecret
-  }
-}
-
-//=========================================================
-// Create application insights
-//=========================================================
-module appInsights 'modules/appInsights.bicep' = {
-  name: 'appInsights'
-  scope: rg
-  params: {
-    location: location
-    appName: appName
-    environment: environment
-    tags: tags
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
   }
 }
 
 //=========================================================
-// Create storage account
+// Store enterprise app client secret in key vault
 //=========================================================
-module storageAccount 'modules/storageAccount.bicep' = {
-  name: 'storageAccount'
+module storeEnterpriseAppSecret 'modules/keyVault-Secrets.bicep' = if (!empty(enterpriseAppClientSecret)) {
+  name: 'storeEnterpriseAppSecret'
   scope: rg
   params: {
-    location: location
-    appName: appName
-    environment: environment
-    tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
-    enableDiagLogging: enableDiagLogging
-    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    keyVaultName: keyVault.outputs.keyVaultName
+    secretName: 'enterprise-app-client-secret'
+    secretValue: enterpriseAppClientSecret
   }
 }
 
@@ -226,55 +215,31 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Create Document Intelligence resource
+// Create Azure Container Registry
 //=========================================================
-module docIntel 'modules/documentIntelligence.bicep' = {
-  name: 'docIntel'
-  scope: rg
-  params: {
-    location: location
-    appName: appName
-    environment: environment
-    tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
-    enableDiagLogging: enableDiagLogging
-    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-  }
-}
-
-//=========================================================
-// Create or get Azure Container Registry
-//=========================================================
-module acr_create 'modules/azureContainerRegistry.bicep' = if (!useExistingAcr) {
-  name: 'azureContainerRegistry_create'
+module acr 'modules/azureContainerRegistry.bicep' = {
+  name: 'azureContainerRegistry'
   scope: rg
   params: {
     location: location
     acrName: acrName
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-  }
-}
 
-module acr_existing 'modules/azureContainerRegistry-existing.bicep' = if (useExistingAcr) {
-  name: 'acr-existing'
-  scope: rg
-  params: {
-    acrName: existingAcrResourceName
-    acrResourceGroup: existingAcrResourceGroup
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
@@ -289,72 +254,75 @@ module searchService 'modules/search.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Create or get Optional Resource - OpenAI Service
+// Create Document Intelligence resource
 //=========================================================
-module openAI_create 'modules/openAI.bicep' = if (!useExistingOpenAISvc) {
-  name: 'openAICreate'
+module docIntel 'modules/documentIntelligence.bicep' = {
+  name: 'docIntel'
   scope: rg
   params: {
     location: location
     appName: appName
     environment: environment
     tags: tags
-    //managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-  }
-}
 
-module openAI_existing 'modules/openAI-existing.bicep' = if (useExistingOpenAISvc) {
-  name: 'openAIExisting'
-  scope: resourceGroup(useExistingOpenAISvc ? existingOpenAIResourceGroupName : rgName)
-  params: {
-    openAIName: existingOpenAIResourceName
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Create Optional Resource - Content Safety
+// Create storage account
 //=========================================================
-module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
-  name: 'contentSafety'
+module storageAccount 'modules/storageAccount.bicep' = {
+  name: 'storageAccount'
   scope: rg
   params: {
     location: location
     appName: appName
     environment: environment
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Create Optional Resource - Redis Cache
+// Create - OpenAI Service
 //=========================================================
-module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
-  name: 'redisCache'
+module openAI 'modules/openAI.bicep' = {
+  name: 'openAI'
   scope: rg
   params: {
     location: location
     appName: appName
     environment: environment
     tags: tags
-    //managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    //managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
+
+    gptModels: gptModels
+    embeddingModels: embeddingModels
   }
 }
 
@@ -385,10 +353,7 @@ module appService 'modules/appService.bicep' = {
     appName: appName
     environment: environment
     tags: tags
-    #disable-next-line BCP318 // expect one value to be null
-    acrName: useExistingAcr ? acr_existing.outputs.acrName : acr_create.outputs.acrName
-    managedIdentityId: managedIdentity.outputs.resourceId
-    managedIdentityClientId: managedIdentity.outputs.clientId
+    acrName: acr.outputs.acrName
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
     appServicePlanId: appServicePlan.outputs.appServicePlanId
@@ -396,52 +361,58 @@ module appService 'modules/appService.bicep' = {
     azurePlatform: cloudEnvironment
     cosmosDbName: cosmosDB.outputs.cosmosDbName
     searchServiceName: searchService.outputs.searchServiceName
-    #disable-next-line BCP318 // expect one value to be null
-    openAiServiceName: useExistingOpenAISvc ? openAI_existing.outputs.openAIName : openAI_create.outputs.openAIName
-    #disable-next-line BCP318 // expect one value to be null
-    openAiResourceGroupName: useExistingOpenAISvc
-      ? existingOpenAIResourceGroupName
-      #disable-next-line BCP318 // expect one value to be null
-      : openAI_create.outputs.openAIResourceGroup
+    openAiServiceName: openAI.outputs.openAIName
+    openAiResourceGroupName: openAI.outputs.openAIResourceGroup
     documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
-    appInsightsName: appInsights.outputs.appInsightsName
+    appInsightsName: applicationInsights.outputs.appInsightsName
     enterpriseAppClientId: enterpriseAppClientId
-    enterpriseAppClientSecret: ''
+    enterpriseAppClientSecret: enterpriseAppClientSecret
+    authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
   }
 }
 
 //=========================================================
-// Create Enterprise Application Configuration
+// configure optional services
 //=========================================================
-module enterpriseApp 'modules/enterpriseApplication.bicep' = if (enableEnterpriseApp) {
-  name: 'enterpriseApplication'
+
+//=========================================================
+// Create Optional Resource - Content Safety
+//=========================================================
+module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
+  name: 'contentSafety'
   scope: rg
   params: {
+    location: location
     appName: appName
     environment: environment
-    redirectUri: 'https://${appService.outputs.defaultHostName}'
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Configure App Service Authentication with Enterprise App
+// Create Optional Resource - Redis Cache
 //=========================================================
-module appServiceAuth 'modules/appServiceAuthentication.bicep' = if (enableEnterpriseApp && !empty(enterpriseAppClientId)) {
-  name: 'appServiceAuthentication'
+module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
+  name: 'redisCache'
   scope: rg
-  dependsOn: [
-    enterpriseApp
-  ]
   params: {
-    webAppName: appService.outputs.name
-    clientId: enterpriseAppClientId
-    // Use the auto-generated secret URI if no manual secret was provided, otherwise use the manual one
-    clientSecretKeyVaultUri: !empty(enterpriseAppClientSecret) ? keyVault.outputs.enterpriseAppClientSecretUri : ''
-    tenantId: tenant().tenantId
-    enableAuthentication: enableEnterpriseApp
-    unauthenticatedClientAction: unauthenticatedClientAction
-    tokenStoreEnabled: true
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
@@ -456,25 +427,49 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
     appName: appName
     environment: environment
     tags: tags
-    managedIdentityPrincipalId: managedIdentity.outputs.principalId
-    managedIdentityId: managedIdentity.outputs.resourceId
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    keyVault: keyVault.outputs.keyVaultName
+    authenticationType: authenticationType
+    configureApplicationPermissions: configureApplicationPermissions
   }
 }
 
 //=========================================================
-// Resource to Configure Enterprise App Permissions
+// Create Optional Resource - Video Indexer Service
 //=========================================================
-module enterpriseAppPermissions 'modules/enterpriseAppPermissions.bicep' = if (enableEnterpriseApp) {
-  name: 'enterpriseAppPermissions'
+module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexerService) {
+  name: 'videoIndexerService'
   scope: rg
   params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+
+    storageAccount: storageAccount.outputs.name
+    openAiServiceName: openAI.outputs.openAIName
+  }
+}
+
+//=========================================================
+// configure permissions for managed identity to access resources
+//=========================================================
+module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationPermissions) {
+  name: 'setPermissions'
+  scope: rg
+  params: {
+
     webAppName: appService.outputs.name
+    authenticationType: authenticationType
+    enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
     keyVaultName: keyVault.outputs.keyVaultName
     cosmosDBName: cosmosDB.outputs.cosmosDbName
-    #disable-next-line BCP318 // expect one value to be null
-    openAIName: useExistingOpenAISvc ? '' : openAI_create.outputs.openAIName
+    acrName: acr.outputs.acrName
+    openAIName: openAI.outputs.openAIName
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
     #disable-next-line BCP318 // expect one value to be null
@@ -482,18 +477,47 @@ module enterpriseAppPermissions 'modules/enterpriseAppPermissions.bicep' = if (e
     searchServiceName: searchService.outputs.searchServiceName
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
   }
 }
 
-
 //=========================================================
-// Outputs for deployment of container image
+// output values
 //=========================================================
-
+// output required for both predeploy and postprovision scripts in azure.yaml
 output var_rgName string = rgName
-output var_acrName string = useExistingAcr ? existingAcrResourceName : toLower('${appName}${environment}acr')
-output var_containerRegistry string = containerRegistry
-output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1] 
-output var_specialImage bool = contains(imageName, ':') ? split(imageName, ':')[1] != 'latest' : false
+
+// output values required for predeploy script in azure.yaml
 output var_webService string = appService.outputs.name
+output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
+output var_imageTag string = split(imageName, ':')[1]
+output var_containerRegistry string = containerRegistry
+output var_acrName string = toLower('${appName}${environment}acr')
+
+// output values required for postprovision script in azure.yaml
+output var_configureApplication bool = configureApplicationPermissions
+output var_keyVaultUri string = keyVault.outputs.keyVaultUri
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
+output var_subscriptionId string = subscription().subscriptionId
+output var_authenticationType string = toLower(authenticationType)
+output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
+output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
+output var_openAIGPTModels array = gptModels
+output var_openAIEmbeddingModels array = embeddingModels
+output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+output var_deploymentLocation string = rg.location
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
+output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
+output var_videoIndexerName string = deployVideoIndexerService
+#disable-next-line BCP318 // expect one value to be null
+  ? videoIndexerService.outputs.videoIndexerServiceName
+  : ''
+output var_videoIndexerAccountId string = deployVideoIndexerService
+#disable-next-line BCP318 // expect one value to be null
+  ? videoIndexerService.outputs.videoIndexerAccountId
+  : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''

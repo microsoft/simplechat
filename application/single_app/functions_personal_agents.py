@@ -49,6 +49,9 @@ def get_personal_agents(user_id):
             cleaned_agent.setdefault('is_global', False)
             cleaned_agent.setdefault('is_group', False)
             cleaned_agent.setdefault('agent_type', 'local')
+            # Remove empty reasoning_effort to prevent validation errors
+            if cleaned_agent.get('reasoning_effort') == '':
+                cleaned_agent.pop('reasoning_effort', None)
             cleaned_agents.append(cleaned_agent)
         return cleaned_agents
         
@@ -84,6 +87,9 @@ def get_personal_agent(user_id, agent_id):
         cleaned_agent.setdefault('is_global', False)
         cleaned_agent.setdefault('is_group', False)
         cleaned_agent.setdefault('agent_type', 'local')
+        # Remove empty reasoning_effort to prevent validation errors
+        if cleaned_agent.get('reasoning_effort') == '':
+            cleaned_agent.pop('reasoning_effort', None)
         return cleaned_agent
     except exceptions.CosmosResourceNotFoundError:
         current_app.logger.warning(f"Agent {agent_id} not found for user {user_id}")
@@ -123,8 +129,13 @@ def save_personal_agent(user_id, agent_data):
         agent_data.setdefault('azure_agent_apim_gpt_deployment', '')
         agent_data.setdefault('azure_agent_apim_gpt_api_version', '')
         agent_data.setdefault('enable_agent_gpt_apim', False)
+        agent_data.setdefault('reasoning_effort', '')
         agent_data.setdefault('actions_to_load', [])
         agent_data.setdefault('other_settings', {})
+        
+        # Remove empty reasoning_effort to avoid schema validation errors
+        if agent_data.get('reasoning_effort') == '':
+            agent_data.pop('reasoning_effort', None)
         agent_data['is_global'] = False
         agent_data['is_group'] = False
         agent_data.setdefault('agent_type', 'local')

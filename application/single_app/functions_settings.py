@@ -135,6 +135,11 @@ def get_settings(use_cosmos=False):
         # Metadata Extraction
         'enable_extract_meta_data': False,
         'metadata_extraction_model': '',
+        
+        # Multimodal Vision
+        'enable_multimodal_vision': False,
+        'multimodal_vision_model': '',
+        
         'enable_summarize_content_history_for_search': False,
         'number_of_historical_messages_to_summarize': 10,
         'enable_summarize_content_history_beyond_conversation_history_limit': False,
@@ -220,16 +225,21 @@ def get_settings(use_cosmos=False):
         'file_timer_unit': 'hours',
         'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
+        
+        # Streaming settings
+        'streamingEnabled': False,
+        
+        # Reasoning effort settings (per-model)
+        'reasoningEffortSettings': {},
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': video_indexer_endpoint,
         'video_indexer_location': '',
         'video_indexer_account_id': '',
-        'video_indexer_api_key': '',
         'video_indexer_resource_group': '',
         'video_indexer_subscription_id': '',
         'video_indexer_account_name': '',
-        'video_indexer_arm_api_version': '2021-11-10-preview',
+        'video_indexer_arm_api_version': '2024-01-01',
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service
@@ -543,7 +553,8 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
-    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
+    sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
 
 
     try:
@@ -697,5 +708,69 @@ def enabled_required(setting_key):
     return decorator
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing the substring "key" or specific sensitive URLs
-    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}
+    # Exclude any key containing "key", "base64", "storage_account_url"
+    return {k: v for k, v in full_settings.items() 
+            if "key" not in k.lower() and "storage_account_url" not in k.lower()}
+
+def sanitize_settings_for_logging(full_settings: dict) -> dict:
+    # Exclude any key containing "key", "base64", "storage_account_url"
+    return {k: v for k, v in full_settings.items() 
+            if "key" not in k.lower() and "base64" not in k.lower() and "image" not in k.lower() and "storage_account_url" not in k.lower()}
+
+# Search history management functions
+def get_user_search_history(user_id):
+    """Get user's search history from their settings document"""
+    try:
+        doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        return doc.get('search_history', [])
+    except exceptions.CosmosResourceNotFoundError:
+        return []
+    except Exception as e:
+        print(f"Error getting search history: {e}")
+        return []
+
+def add_search_to_history(user_id, search_term):
+    """Add a search term to user's history, maintaining max 20 items"""
+    try:
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        except exceptions.CosmosResourceNotFoundError:
+            doc = {'id': user_id, 'settings': {}}
+        
+        search_history = doc.get('search_history', [])
+        
+        # Remove if already exists (deduplicate)
+        search_history = [item for item in search_history if item.get('term') != search_term]
+        
+        # Add new search at beginning
+        search_history.insert(0, {
+            'term': search_term,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Trim to 20 items
+        search_history = search_history[:20]
+        
+        doc['search_history'] = search_history
+        cosmos_user_settings_container.upsert_item(body=doc)
+        
+        return search_history
+    except Exception as e:
+        print(f"Error adding search to history: {e}")
+        return []
+
+def clear_user_search_history(user_id):
+    """Clear all search history for a user"""
+    try:
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        except exceptions.CosmosResourceNotFoundError:
+            doc = {'id': user_id, 'settings': {}}
+        
+        doc['search_history'] = []
+        cosmos_user_settings_container.upsert_item(body=doc)
+        
+        return True
+    except Exception as e:
+        print(f"Error clearing search history: {e}")
+        return False
