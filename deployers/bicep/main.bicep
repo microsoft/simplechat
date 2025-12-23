@@ -76,6 +76,10 @@ param specialTags object = {}
 - Default is false''')
 param enableDiagLogging bool
 
+@description('''Enable private endpoints and virtual network integration for deployed resources. 
+- Default is false''')
+param enablePrivateNetworking bool
+
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
   {
@@ -136,6 +140,7 @@ var acrCloudSuffix = cloudEnvironment == 'AzureCloud' ? '.azurecr.io' : '.azurec
 var acrName = toLower('${appName}${environment}acr')
 var containerRegistry = '${acrName}${acrCloudSuffix}'
 var containerImageName = '${containerRegistry}/${imageName}'
+var vNetName = '${appName}-${environment}-vnet'
 
 //=========================================================
 // Resource group deployment
@@ -145,6 +150,28 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   location: location
   tags: tags
 }
+
+//=========================================================
+// Create Virtual Network if private networking is enabled
+//=========================================================
+module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking) {
+  name: 'virtualNetwork'
+  scope: rg
+  params: {
+    location: location
+    vNetName: vNetName
+    addressSpaces: ['10.0.0.0/25']
+    subnetConfigs: [
+      {
+        name: 'privateEndpoints'
+        addressPrefix: '10.0.0.0/26'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+    ]
+    tags: tags
+  }
+} 
 
 //=========================================================
 // Create log analytics workspace 
