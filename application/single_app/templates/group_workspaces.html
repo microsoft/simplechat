@@ -436,6 +436,26 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
         <!-- End Metadata Filters -->
 
+        <!-- Bulk Actions Bar (shown when documents are selected) -->
+        <div id="groupBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <strong><span id="groupSelectedCount">0</span> document(s) selected</strong>
+            </div>
+            <div>
+              <button type="button" class="btn btn-sm btn-danger me-2" id="group-delete-selected-btn">
+                <i class="bi bi-trash me-1"></i>Delete Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-warning me-2" id="group-remove-selected-btn">
+                <i class="bi bi-x-circle me-1"></i>Remove Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary" id="group-clear-selection-btn">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Documents List Table -->
         <table class="table table-striped" id="group-documents-table">
           <thead>
@@ -444,17 +464,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <!-- Expand -->
               <th>File Name</th>
               <th>Title</th>
-              <th>Actions
-                <span id="group-bulk-actions" style="display: none; margin-left: 20px;">
-                  <!-- Bulk action buttons will appear here when documents are selected -->
-                  <button id="group-delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
-                    <i class="bi bi-trash"></i> Delete
-                  </button>
-                  <button id="group-remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
-                    <i class="bi bi-x-circle"></i> Remove
-                  </button>
-                </span>
-              </th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1401,55 +1411,37 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function updateGroupBulkActionButtons() {
+    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
+    const selectedCountSpan = document.getElementById("groupSelectedCount");
     const deleteBtn = document.getElementById("group-delete-selected-btn");
     const removeBtn = document.getElementById("group-remove-selected-btn");
-    const bulkActions = document.getElementById("group-bulk-actions");
     
     if (groupSelectedDocuments.size > 0) {
-      // Show bulk actions container
-      if (bulkActions) bulkActions.style.display = "inline-block";
+      // Show bulk actions bar with count
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = "block";
+      }
+      if (selectedCountSpan) {
+        selectedCountSpan.textContent = groupSelectedDocuments.size;
+      }
       
       // Check if user can manage documents (delete permission)
       const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
       
-      // For group documents, we need to determine if any selected documents
-      // require different actions based on user permissions
-      let hasOwnedDocuments = false;
-      let hasNonOwnedDocuments = false;
-      
-      // Check ownership of selected documents
-      Array.from(groupSelectedDocuments).forEach(docId => {
-        const docRow = document.getElementById(`group-doc-row-${docId}`);
-        if (docRow && docRow.__docData) {
-          const doc = docRow.__docData;
-          // In group context, we check if user has management permissions
-          // rather than individual document ownership
-          if (canManage) {
-            hasOwnedDocuments = true;
-          } else {
-            hasNonOwnedDocuments = true;
-          }
-        }
-      });
-      
-      // Delete button: Show only if user has management permissions for group documents
+      // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
-        deleteBtn.style.display = (canManage && hasOwnedDocuments) ? "inline-block" : "none";
+        deleteBtn.style.display = canManage ? "inline-block" : "none";
       }
       
-      // Remove button: Show for non-managers or when user wants to "remove from group"
-      // In group context, this could mean removing the document from the group
-      // but keeping it in the system (if supported by backend)
+      // Remove button is available for group documents
       if (removeBtn) {
-        // For now, hide remove button as group documents are typically deleted, not removed
-        // This can be adjusted based on backend implementation
-        removeBtn.style.display = "none";
+        removeBtn.style.display = "inline-block";
       }
     } else {
-      // No documents selected - hide everything
-      if (deleteBtn) deleteBtn.style.display = "none";
-      if (removeBtn) removeBtn.style.display = "none";
-      if (bulkActions) bulkActions.style.display = "none";
+      // Hide bulk actions bar
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = "none";
+      }
     }
   }
 
@@ -1457,6 +1449,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const table = document.getElementById("group-documents-table");
     const checkboxes = document.querySelectorAll('.document-checkbox');
     const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
     
     groupSelectionMode = !groupSelectionMode;
     
@@ -1472,12 +1465,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       expandContainers.forEach(container => {
         container.style.display = 'none';
       });
-      
-      // Show bulk actions
-      const bulkActions = document.getElementById("group-bulk-actions");
-      if (bulkActions) {
-        bulkActions.style.display = 'inline-block';
-      }
     } else {
       // Exit selection mode
       table.classList.remove("selection-mode");
@@ -1492,19 +1479,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
         container.style.display = 'inline-block';
       });
       
-      // Hide bulk actions and buttons
-      const bulkActions = document.getElementById("group-bulk-actions");
-      if (bulkActions) {
-        bulkActions.style.display = 'none';
+      // Hide bulk actions bar
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = 'none';
       }
-      const deleteBtn = document.getElementById("group-delete-selected-btn");
-      const removeBtn = document.getElementById("group-remove-selected-btn");
-      if (deleteBtn) deleteBtn.style.display = 'none';
-      if (removeBtn) removeBtn.style.display = 'none';
       
       // Clear selected documents
       groupSelectedDocuments.clear();
     }
+  }
+
+  // Clear group selection
+  function clearGroupSelection() {
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = false;
+    });
+    groupSelectedDocuments.clear();
+    updateGroupBulkActionButtons();
   }
 
   function deleteGroupSelectedDocuments() {
@@ -1662,12 +1654,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Add event listeners for bulk action buttons
     const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
+    const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
     
     if (groupDeleteSelectedBtn) {
       groupDeleteSelectedBtn.addEventListener("click", deleteGroupSelectedDocuments);
     }
     if (groupRemoveSelectedBtn) {
       groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
+    }
+    if (groupClearSelectionBtn) {
+      groupClearSelectionBtn.addEventListener("click", clearGroupSelection);
     }
 
     // Load initial data

@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
+from functions_approvals import *
 from functions_documents import update_document
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
@@ -2166,6 +2167,81 @@ def register_route_backend_control_center(app):
             current_app.logger.error(f"Error updating user file uploads: {e}")
             return jsonify({'error': 'Failed to update user file upload permissions'}), 500
     
+    @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_delete_user_documents_admin(user_id):
+        """
+        Create an approval request to delete all documents for a user.
+        Requires approval from another admin.
+        
+        Body:
+            reason (str): Explanation for deleting documents (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for document deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate user exists by trying to get their data from Cosmos
+            try:
+                user_doc = cosmos_user_settings_container.read_item(
+                    item=user_id,
+                    partition_key=user_id
+                )
+                user_email = user_doc.get('email', 'unknown')
+                user_name = user_doc.get('display_name', user_email)
+            except Exception:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Create approval request using user_id as both group_id (for partition) and storing user_id in metadata
+            from functions_approvals import create_approval_request, TYPE_DELETE_USER_DOCUMENTS
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_USER_DOCUMENTS,
+                group_id=user_id,  # Using user_id as partition key for user-related approvals
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'user_id': user_id,
+                    'user_name': user_name,
+                    'user_email': user_email
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete User Documents Request Created", {
+                "admin_user": admin_email,
+                "user_id": user_id,
+                "user_email": user_email,
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Document deletion request created successfully. Awaiting approval from another admin.',
+                'approval_id': approval['id']
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error creating user document deletion request: {e}")
+            log_event("[ControlCenter] Delete User Documents Request Failed", {
+                "error": str(e),
+                "user_id": user_id
+            })
+            return jsonify({'error': str(e)}), 500
+    
     @app.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -2493,76 +2569,128 @@ def register_route_backend_control_center(app):
     @control_center_admin_required
     def api_delete_group_admin(group_id):
         """
-        Delete a group and optionally its documents
+        Create an approval request to delete a group and all its documents.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting the group (required)
         """
         try:
             data = request.get_json() or {}
-            delete_documents = data.get('delete_documents', True)  # Default to True for safety
+            reason = data.get('reason', '').strip()
             
-            # Get the group first
+            if not reason:
+                return jsonify({'error': 'Reason is required for group deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
             except:
                 return jsonify({'error': 'Group not found'}), 404
-                
-            # Initialize docs list
-            docs_to_delete = []
             
-            # If requested, delete all group documents
-            if delete_documents:
-                # Delete from group_documents container
-                docs_query = "SELECT c.id FROM c WHERE c.group_id = @group_id"
-                docs_params = [{"name": "@group_id", "value": group_id}]
-                
-                docs_to_delete = list(cosmos_group_documents_container.query_items(
-                    query=docs_query,
-                    parameters=docs_params,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in docs_to_delete:
-                    try:
-                        cosmos_group_documents_container.delete_item(
-                            item=doc['id'], 
-                            partition_key=doc['id']
-                        )
-                    except Exception as doc_e:
-                        current_app.logger.warning(f"Failed to delete document {doc['id']}: {doc_e}")
-                
-                # Delete files from Azure Storage
-                try:
-                    storage_client = CLIENTS.get("storage_account_office_docs_client")
-                    if storage_client:
-                        container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
-                        group_folder_prefix = f"group-documents/{group_id}/"
-                        
-                        blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
-                        for blob in blob_list:
-                            try:
-                                container_client.delete_blob(blob.name)
-                            except Exception as blob_e:
-                                current_app.logger.warning(f"Failed to delete blob {blob.name}: {blob_e}")
-                except Exception as storage_e:
-                    current_app.logger.warning(f"Error deleting storage files for group {group_id}: {storage_e}")
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_GROUP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'group_name': group.get('name'),
+                    'owner_id': group.get('owner', {}).get('id'),
+                    'owner_email': group.get('owner', {}).get('email')
+                }
+            )
             
-            # Delete the group
-            cosmos_groups_container.delete_item(item=group_id, partition_key=group_id)
-            
-            # Log admin action
-            admin_user = session.get('user', {})
-            log_event("[ControlCenter] Group Deletion", {
-                "admin_user": admin_user.get('preferred_username', 'unknown'),
+            # Log event
+            log_event("[ControlCenter] Delete Group Request Created", {
+                "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
-                "deleted_documents": delete_documents,
-                "document_count": len(docs_to_delete)
+                "approval_id": approval['id'],
+                "reason": reason
             })
             
-            return jsonify({'message': 'Group deleted successfully'}), 200
+            return jsonify({
+                'success': True,
+                'message': 'Group deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error deleting group: {e}")
-            return jsonify({'error': 'Failed to delete group'}), 500
+            current_app.logger.error(f"Error creating group deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_delete_group_documents_admin(group_id):
+        """
+        Create an approval request to delete all documents in a group.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting documents (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for document deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate group exists
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_DOCUMENTS,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'group_name': group.get('name')
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete Documents Request Created", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Document deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error creating document deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -2606,7 +2734,11 @@ def register_route_backend_control_center(app):
     @control_center_admin_required
     def api_admin_take_group_ownership(group_id):
         """
-        Admin takes ownership of a group, demoting current owner to regular member
+        Create an approval request for admin to take ownership of a group.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for taking ownership (required)
         """
         try:
             admin_user = session.get('user', {})
@@ -2617,107 +2749,52 @@ def register_route_backend_control_center(app):
             if not admin_user_id:
                 return jsonify({'error': 'Could not identify admin user'}), 400
             
-            # Get the group
+            # Get request body
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
+            # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
             except:
                 return jsonify({'error': 'Group not found'}), 404
             
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            old_owner_email = old_owner.get('email', 'unknown')
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_TAKE_OWNERSHIP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'old_owner_id': group.get('owner', {}).get('id'),
+                    'old_owner_email': group.get('owner', {}).get('email')
+                }
+            )
             
-            # Update owner to admin
-            group['owner'] = {
-                'id': admin_user_id,
-                'email': admin_email,
-                'displayName': admin_display_name
-            }
-            
-            # Remove admin from any special roles (admins, documentManagers) if present
-            if admin_user_id in group.get('admins', []):
-                group['admins'].remove(admin_user_id)
-            if admin_user_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(admin_user_id)
-            
-            # Ensure admin is in the users list
-            admin_in_users = False
-            for member in group.get('users', []):
-                if member.get('userId') == admin_user_id:
-                    admin_in_users = True
-                    break
-            
-            if not admin_in_users:
-                group.setdefault('users', []).append({
-                    'userId': admin_user_id,
-                    'email': admin_email,
-                    'displayName': admin_display_name
-                })
-            
-            # Demote old owner to regular member
-            if old_owner_id:
-                # Ensure old owner is in users list
-                old_owner_in_users = False
-                for member in group.get('users', []):
-                    if member.get('userId') == old_owner_id:
-                        old_owner_in_users = True
-                        break
-                
-                if not old_owner_in_users:
-                    group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner.get('displayName', old_owner_email)
-                    })
-                
-                # Remove old owner from special roles
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            # Update modification timestamp
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            
-            # Save group
-            cosmos_groups_container.upsert_item(group)
-            
-            # Log to activity logs
-            activity_record = {
-                'id': str(uuid.uuid4()),
-                'type': 'group_ownership_change',
-                'action': 'admin_take_ownership',
-                'timestamp': datetime.utcnow().isoformat(),
-                'admin_user_id': admin_user_id,
-                'admin_email': admin_email,
-                'group_id': group_id,
-                'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
-                'old_owner_email': old_owner_email,
-                'new_owner_id': admin_user_id,
-                'new_owner_email': admin_email,
-                'description': f"Admin {admin_email} took ownership of group {group.get('name', group_id)} from {old_owner_email}"
-            }
-            cosmos_activity_logs_container.create_item(body=activity_record)
-            
-            # Log to Application Insights
-            log_event("[ControlCenter] Admin Take Group Ownership", {
+            # Log event
+            log_event("[ControlCenter] Take Ownership Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
-                "old_owner": old_owner_email,
-                "new_owner": admin_email
+                "approval_id": approval['id'],
+                "reason": reason
             })
             
             return jsonify({
-                'message': 'Ownership transferred successfully',
-                'new_owner': admin_email,
-                'old_owner': old_owner_email
+                'success': True,
+                'message': 'Ownership transfer request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error taking group ownership: {e}")
-            return jsonify({'error': 'Failed to take ownership'}), 500
+            current_app.logger.error(f"Error creating take ownership request: {e}")
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2726,17 +2803,28 @@ def register_route_backend_control_center(app):
     @control_center_admin_required
     def api_admin_transfer_group_ownership(group_id):
         """
-        Admin transfers group ownership to another member
+        Create an approval request to transfer group ownership to another member.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            newOwnerId (str): User ID of the new owner (required)
+            reason (str): Explanation for ownership transfer (required)
         """
         try:
             data = request.get_json()
             new_owner_user_id = data.get('newOwnerId')
+            reason = data.get('reason', '').strip()
             
             if not new_owner_user_id:
                 return jsonify({'error': 'Missing newOwnerId'}), 400
             
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
             admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
             admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
             
             # Get the group
             try:
@@ -2754,90 +2842,43 @@ def register_route_backend_control_center(app):
             if not new_owner_member:
                 return jsonify({'error': 'Selected user is not a member of this group'}), 400
             
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            old_owner_email = old_owner.get('email', 'unknown')
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_TRANSFER_OWNERSHIP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'new_owner_id': new_owner_user_id,
+                    'new_owner_email': new_owner_member.get('email'),
+                    'new_owner_name': new_owner_member.get('displayName'),
+                    'old_owner_id': group.get('owner', {}).get('id'),
+                    'old_owner_email': group.get('owner', {}).get('email')
+                }
+            )
             
-            new_owner_email = new_owner_member.get('email', 'unknown')
-            new_owner_display_name = new_owner_member.get('displayName', new_owner_email)
-            
-            # Update owner
-            group['owner'] = {
-                'id': new_owner_user_id,
-                'email': new_owner_email,
-                'displayName': new_owner_display_name
-            }
-            
-            # Remove new owner from special roles
-            if new_owner_user_id in group.get('admins', []):
-                group['admins'].remove(new_owner_user_id)
-            if new_owner_user_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(new_owner_user_id)
-            
-            # Demote old owner to regular member
-            if old_owner_id:
-                # Ensure old owner is in users list
-                old_owner_in_users = False
-                for member in group.get('users', []):
-                    if member.get('userId') == old_owner_id:
-                        old_owner_in_users = True
-                        break
-                
-                if not old_owner_in_users:
-                    group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner.get('displayName', old_owner_email)
-                    })
-                
-                # Remove old owner from special roles
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            # Update modification timestamp
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            
-            # Save group
-            cosmos_groups_container.upsert_item(group)
-            
-            # Log to activity logs
-            activity_record = {
-                'id': str(uuid.uuid4()),
-                'type': 'group_ownership_change',
-                'action': 'admin_transfer_ownership',
-                'timestamp': datetime.utcnow().isoformat(),
-                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
-                'admin_email': admin_email,
-                'group_id': group_id,
-                'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
-                'old_owner_email': old_owner_email,
-                'new_owner_id': new_owner_user_id,
-                'new_owner_email': new_owner_email,
-                'description': f"Admin {admin_email} transferred ownership of group {group.get('name', group_id)} from {old_owner_email} to {new_owner_email}"
-            }
-            cosmos_activity_logs_container.create_item(body=activity_record)
-            
-            # Log to Application Insights
-            log_event("[ControlCenter] Admin Transfer Group Ownership", {
+            # Log event
+            log_event("[ControlCenter] Transfer Ownership Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
-                "old_owner": old_owner_email,
-                "new_owner": new_owner_email
+                "new_owner": new_owner_member.get('email'),
+                "approval_id": approval['id'],
+                "reason": reason
             })
             
             return jsonify({
-                'message': 'Ownership transferred successfully',
-                'new_owner': new_owner_email,
-                'old_owner': old_owner_email
+                'success': True,
+                'message': 'Ownership transfer request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error transferring group ownership: {e}")
-            return jsonify({'error': 'Failed to transfer ownership'}), 500
+            current_app.logger.error(f"Error creating transfer ownership request: {e}")
+            return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2909,12 +2950,12 @@ def register_route_backend_control_center(app):
             
             # Determine the action source (single add vs bulk CSV)
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
-            action_type = 'admin_add_member_single' if source == 'single' else 'admin_add_member_csv'
+            action_type = 'add_member_directly' if source == 'single' else 'admin_add_member_csv'
             
             # Log to activity logs
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'action': action_type,
+                'activity_type': action_type,
                 'timestamp': datetime.utcnow().isoformat(),
                 'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
                 'admin_email': admin_email,
@@ -4367,4 +4408,871 @@ def register_route_backend_control_center(app):
             current_app.logger.error(f"Error getting activity logs: {e}")
             import traceback
             traceback.print_exc()
+            return jsonify({'error': 'Failed to fetch activity logs'}), 500
+
+    # ============================================================================
+    # APPROVAL WORKFLOW ENDPOINTS
+    # ============================================================================
+
+    @app.route('/api/admin/control-center/approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_get_approvals():
+        """
+        Get approval requests visible to the current user.
+        
+        Query Parameters:
+            page (int): Page number (default: 1)
+            page_size (int): Items per page (default: 20)
+            status (str): Filter by status (pending, approved, denied, all)
+            action_type (str): Filter by action type
+            search (str): Search by group name or reason
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            # Get user roles from session
+            user_roles = user.get('roles', [])
+            
+            # Get query parameters
+            page = int(request.args.get('page', 1))
+            page_size = int(request.args.get('page_size', 20))
+            status_filter = request.args.get('status', 'all')
+            action_type_filter = request.args.get('action_type', 'all')
+            search_query = request.args.get('search', '')
+            
+            # Determine include_completed based on status filter
+            include_completed = (status_filter == 'all' or status_filter in ['approved', 'denied'])
+            
+            # Map action_type to request_type_filter
+            request_type_filter = None if action_type_filter == 'all' else action_type_filter
+            
+            # Fetch approvals
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=page,
+                per_page=page_size,
+                include_completed=include_completed,
+                request_type_filter=request_type_filter
+            )
+            
+            # Add can_approve field to each approval
+            approvals_with_permission = []
+            for approval in result.get('approvals', []):
+                approval_copy = dict(approval)
+                # User can approve if they didn't create the request OR if they're the only admin
+                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approvals_with_permission.append(approval_copy)
+            
+            # Rename fields to match frontend expectations
+            return jsonify({
+                'success': True,
+                'approvals': approvals_with_permission,
+                'total_count': result.get('total', 0),
+                'page': result.get('page', 1),
+                'page_size': result.get('per_page', page_size),
+                'total_pages': result.get('total_pages', 0)
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error fetching approvals: {e}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_get_approval_by_id(approval_id):
+        """
+        Get a single approval request by ID.
+        
+        Query Parameters:
+            group_id (str): Group ID (partition key)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            group_id = request.args.get('group_id')
+            if not group_id:
+                return jsonify({'error': 'group_id query parameter is required'}), 400
+            
+            # Get the approval
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
+            
+            # Add can_approve field
+            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            
+            return jsonify(approval), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error fetching approval {approval_id}: {e}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_approve_request(approval_id):
+        """
+        Approve an approval request and execute the action.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str, optional): Approval comment
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            # Approve the request
+            approval = approve_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                approver_id=user_id,
+                approver_email=user_email,
+                approver_name=user_name,
+                comment=comment
+            )
+            
+            # Execute the approved action
+            execution_result = _execute_approved_action(approval, user_id, user_email, user_name)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request approved and executed',
+                'approval': approval,
+                'execution_result': execution_result
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error approving request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_admin_deny_request(approval_id):
+        """
+        Deny an approval request.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str): Reason for denial (required)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
+            
+            # Deny the request
+            approval = deny_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                denier_id=user_id,
+                denier_email=user_email,
+                denier_name=user_name,
+                comment=comment,
+                auto_denied=False
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request denied',
+                'approval': approval
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error denying request: {e}")
+            return jsonify({'error': str(e)}), 500
+    
+    # New standalone approvals API endpoints (accessible to all users with permissions)
+    @app.route('/api/approvals', methods=['GET'])
+    @login_required
+    def api_get_approvals():
+        """
+        Get approval requests visible to the current user (admins, control center admins, and group owners).
+        
+        Query Parameters:
+            page (int): Page number (default: 1)
+            page_size (int): Items per page (default: 20)
+            status (str): Filter by status (pending, approved, denied, all)
+            action_type (str): Filter by action type
+            search (str): Search by group name or reason
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_roles = user.get('roles', [])
+            
+            # Get query parameters
+            page = int(request.args.get('page', 1))
+            page_size = int(request.args.get('page_size', 20))
+            status_filter = request.args.get('status', 'pending')
+            action_type_filter = request.args.get('action_type', 'all')
+            search_query = request.args.get('search', '')
+            
+            # Determine include_completed based on status filter
+            include_completed = (status_filter == 'all' or status_filter in ['approved', 'denied'])
+            
+            # Map action_type to request_type_filter
+            request_type_filter = None if action_type_filter == 'all' else action_type_filter
+            
+            # Fetch approvals
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=page,
+                per_page=page_size,
+                include_completed=include_completed,
+                request_type_filter=request_type_filter
+            )
+            
+            # Add can_approve field to each approval
+            approvals_with_permission = []
+            for approval in result.get('approvals', []):
+                approval_copy = dict(approval)
+                # User can approve if they didn't create the request
+                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approvals_with_permission.append(approval_copy)
+            
+            return jsonify({
+                'success': True,
+                'approvals': approvals_with_permission,
+                'total_count': result.get('total', 0),
+                'page': result.get('page', 1),
+                'page_size': result.get('per_page', page_size),
+                'total_pages': result.get('total_pages', 0)
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error fetching approvals: {e}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_get_approval_by_id(approval_id):
+        """
+        Get a single approval request by ID.
+        
+        Query Parameters:
+            group_id (str): Group ID (partition key)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            group_id = request.args.get('group_id')
+            if not group_id:
+                return jsonify({'error': 'group_id query parameter is required'}), 400
+            
+            # Get the approval
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
+            
+            # Add can_approve field
+            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            
+            return jsonify(approval), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error fetching approval {approval_id}: {e}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_approve_request(approval_id):
+        """
+        Approve an approval request and execute the action.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str, optional): Approval comment
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            # Approve the request
+            approval = approve_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                approver_id=user_id,
+                approver_email=user_email,
+                approver_name=user_name,
+                comment=comment
+            )
+            
+            # Execute the approved action
+            execution_result = _execute_approved_action(approval, user_id, user_email, user_name)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request approved and executed',
+                'approval': approval,
+                'execution_result': execution_result
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error approving request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>/deny', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_deny_request(approval_id):
+        """
+        Deny an approval request.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str): Reason for denial (required)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
+            
+            # Deny the request
+            approval = deny_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                denier_id=user_id,
+                denier_email=user_email,
+                denier_name=user_name,
+                comment=comment,
+                auto_denied=False
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request denied',
+                'approval': approval
+            }), 200
+            
+        except Exception as e:
+            current_app.logger.error(f"Error denying request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def _execute_approved_action(approval, executor_id, executor_email, executor_name):
+        """
+        Execute the action specified in an approved request.
+        
+        Args:
+            approval: Approved request document
+            executor_id: User ID executing the action
+            executor_email: Email of executor
+            executor_name: Display name of executor
+        
+        Returns:
+            Result dictionary with success status and message
+        """
+        try:
+            request_type = approval['request_type']
+            group_id = approval['group_id']
+            
+            if request_type == TYPE_TAKE_OWNERSHIP:
+                # Execute take ownership
+                result = _execute_take_ownership(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_TRANSFER_OWNERSHIP:
+                # Execute transfer ownership
+                result = _execute_transfer_ownership(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_DOCUMENTS:
+                # Execute delete documents
+                result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_GROUP:
+                # Execute delete group
+                result = _execute_delete_group(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_USER_DOCUMENTS:
+                # Execute delete user documents
+                result = _execute_delete_user_documents(approval, executor_id, executor_email, executor_name)
+            
+            else:
+                result = {'success': False, 'message': f'Unknown request type: {request_type}'}
+            
+            # Mark approval as executed
+            mark_approval_executed(
+                approval_id=approval['id'],
+                group_id=group_id,
+                success=result['success'],
+                result_message=result['message']
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Mark as failed
+            mark_approval_executed(
+                approval_id=approval['id'],
+                group_id=approval['group_id'],
+                success=False,
+                result_message=f"Execution error: {str(e)}"
+            )
+            raise
+
+    def _execute_take_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute admin take ownership action."""
+        try:
+            group_id = approval['group_id']
+            requester_id = approval['requester_id']
+            requester_email = approval['requester_email']
+            
+            # Get the group
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            old_owner_email = old_owner.get('email', 'unknown')
+            
+            # Update owner to requester (the admin who requested)
+            group['owner'] = {
+                'id': requester_id,
+                'email': requester_email,
+                'displayName': approval['requester_name']
+            }
+            
+            # Remove requester from special roles if present
+            if requester_id in group.get('admins', []):
+                group['admins'].remove(requester_id)
+            if requester_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(requester_id)
+            
+            # Ensure requester is in users list
+            requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
+            if not requester_in_users:
+                group.setdefault('users', []).append({
+                    'userId': requester_id,
+                    'email': requester_email,
+                    'displayName': approval['requester_name']
+                })
+            
+            # Demote old owner to regular member
+            if old_owner_id:
+                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner.get('displayName', old_owner_email)
+                    })
+                
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'activity_type': 'admin_take_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': requester_id,
+                'admin_email': requester_email,
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': requester_id,
+                'new_owner_email': requester_email,
+                'approval_id': approval['id'],
+                'description': f"Admin {requester_email} took ownership (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f'Ownership transferred to {requester_email}'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to take ownership: {str(e)}'}
+
+    def _execute_transfer_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute transfer ownership action."""
+        try:
+            group_id = approval['group_id']
+            new_owner_id = approval['metadata'].get('new_owner_id')
+            
+            if not new_owner_id:
+                return {'success': False, 'message': 'new_owner_id not found in approval metadata'}
+            
+            # Get the group
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            
+            # Find new owner in members
+            new_owner_member = None
+            for member in group.get('users', []):
+                if member.get('userId') == new_owner_id:
+                    new_owner_member = member
+                    break
+            
+            if not new_owner_member:
+                return {'success': False, 'message': 'New owner not found in group members'}
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            
+            # Update owner
+            group['owner'] = {
+                'id': new_owner_id,
+                'email': new_owner_member.get('email'),
+                'displayName': new_owner_member.get('displayName')
+            }
+            
+            # Remove new owner from special roles
+            if new_owner_id in group.get('admins', []):
+                group['admins'].remove(new_owner_id)
+            if new_owner_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(new_owner_id)
+            
+            # Demote old owner to member
+            if old_owner_id:
+                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner.get('email'),
+                        'displayName': old_owner.get('displayName')
+                    })
+                
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'activity_type': 'transfer_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner.get('email'),
+                'new_owner_id': new_owner_id,
+                'new_owner_email': new_owner_member.get('email'),
+                'approval_id': approval['id'],
+                'description': f"Ownership transferred to {new_owner_member.get('email')} (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f"Ownership transferred to {new_owner_member.get('email')}"
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to transfer ownership: {str(e)}'}
+
+    def _execute_delete_documents(approval, executor_id, executor_email, executor_name):
+        """Execute delete all documents action."""
+        try:
+            group_id = approval['group_id']
+            
+            # Query all documents for this group
+            query = "SELECT * FROM c WHERE c.group_id = @group_id"
+            parameters = [{"name": "@group_id", "value": group_id}]
+            
+            documents = list(cosmos_group_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            deleted_count = 0
+            
+            for doc in documents:
+                try:
+                    # Delete blob from Azure Storage
+                    blob_path = f"group-workspaces/{group_id}/{doc['id']}/{doc.get('file_name', '')}"
+                    blob_client = blob_service_client.get_blob_client(
+                        container=app.config.get('AZURE_STORAGE_CONTAINER_NAME', 'documents'),
+                        blob=blob_path
+                    )
+                    
+                    if blob_client.exists():
+                        blob_client.delete_blob()
+                    
+                    # Delete document from Cosmos
+                    cosmos_group_documents_container.delete_item(
+                        item=doc['id'],
+                        partition_key=group_id
+                    )
+                    
+                    deleted_count += 1
+                    
+                except Exception as doc_error:
+                    current_app.logger.error(f"Error deleting document {doc['id']}: {doc_error}")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_documents_deletion',
+                'activity_type': 'delete_all_documents_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': approval['group_name'],
+                'documents_deleted': deleted_count,
+                'approval_id': approval['id'],
+                'description': f"All documents deleted from group (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f'Deleted {deleted_count} documents'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to delete documents: {str(e)}'}
+
+    def _execute_delete_group(approval, executor_id, executor_email, executor_name):
+        """Execute delete entire group action."""
+        try:
+            group_id = approval['group_id']
+            
+            # First delete all documents
+            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+            
+            # Delete group conversations (optional - could keep for audit)
+            try:
+                query = "SELECT * FROM c WHERE c.group_id = @group_id"
+                parameters = [{"name": "@group_id", "value": group_id}]
+                
+                conversations = list(cosmos_group_conversations_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                for conv in conversations:
+                    cosmos_group_conversations_container.delete_item(
+                        item=conv['id'],
+                        partition_key=group_id
+                    )
+            except Exception as conv_error:
+                current_app.logger.error(f"Error deleting conversations: {conv_error}")
+            
+            # Delete group messages (optional)
+            try:
+                messages = list(cosmos_group_messages_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                for msg in messages:
+                    cosmos_group_messages_container.delete_item(
+                        item=msg['id'],
+                        partition_key=group_id
+                    )
+            except Exception as msg_error:
+                current_app.logger.error(f"Error deleting messages: {msg_error}")
+            
+            # Finally, delete the group itself
+            cosmos_groups_container.delete_item(
+                item=group_id,
+                partition_key=group_id
+            )
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_deletion',
+                'activity_type': 'delete_group_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': approval['group_name'],
+                'approval_id': approval['id'],
+                'description': f"Group completely deleted (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': 'Group completely deleted'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to delete group: {str(e)}'}
+
+    def _execute_delete_user_documents(approval, executor_id, executor_email, executor_name):
+        """Execute delete all user documents action."""
+        try:
+            user_id = approval['metadata'].get('user_id')
+            user_email = approval['metadata'].get('user_email', 'unknown')
+            user_name = approval['metadata'].get('user_name', user_email)
+            
+            if not user_id:
+                return {'success': False, 'message': 'User ID not found in approval metadata'}
+            
+            # Query all personal documents for this user
+            query = "SELECT * FROM c WHERE c.user_id = @user_id AND (NOT IS_DEFINED(c.group_id) OR c.group_id = null)"
+            parameters = [{"name": "@user_id", "value": user_id}]
+            
+            documents = list(cosmos_user_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            deleted_count = 0
+            
+            for doc in documents:
+                try:
+                    # Delete blob from Azure Storage
+                    blob_path = f"{user_id}/{doc['id']}/{doc.get('file_name', '')}"
+                    blob_client = blob_service_client.get_blob_client(
+                        container=app.config.get('AZURE_STORAGE_CONTAINER_NAME', 'documents'),
+                        blob=blob_path
+                    )
+                    
+                    if blob_client.exists():
+                        blob_client.delete_blob()
+                    
+                    # Delete from AI Search index if enabled
+                    if app.config.get('AZURE_SEARCH_ENDPOINT'):
+                        try:
+                            from functions_documents import delete_document_chunks
+                            delete_document_chunks(doc['id'])
+                        except Exception as search_error:
+                            current_app.logger.error(f"Error deleting from AI Search: {search_error}")
+                    
+                    # Delete document from Cosmos
+                    cosmos_user_documents_container.delete_item(
+                        item=doc['id'],
+                        partition_key=user_id
+                    )
+                    
+                    deleted_count += 1
+                    
+                except Exception as doc_error:
+                    current_app.logger.error(f"Error deleting user document {doc['id']}: {doc_error}")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'user_documents_deletion',
+                'activity_type': 'delete_all_user_documents_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'target_user_id': user_id,
+                'target_user_email': user_email,
+                'target_user_name': user_name,
+                'documents_deleted': deleted_count,
+                'approval_id': approval['id'],
+                'description': f"All documents deleted for user {user_name} ({user_email}) - approved by {executor_email}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to AppInsights
+            log_event("[ControlCenter] User Documents Deleted (Approved)", {
+                "executor": executor_email,
+                "user_id": user_id,
+                "user_email": user_email,
+                "documents_deleted": deleted_count,
+                "approval_id": approval['id']
+            })
+            
+            return {
+                'success': True,
+                'message': f'Deleted {deleted_count} documents for user {user_name}'
+            }
+            
+        except Exception as e:
+            current_app.logger.error(f"Error deleting user documents: {e}")
+            return {'success': False, 'message': f'Failed to delete user documents: {str(e)}'}
+
             return jsonify({'error': 'Failed to retrieve activity logs'}), 500

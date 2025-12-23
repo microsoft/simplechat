@@ -8,9 +8,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 def register_route_frontend_notifications(app):
 
     @app.route("/notifications")
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def notifications():

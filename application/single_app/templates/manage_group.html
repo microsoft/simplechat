@@ -91,9 +91,32 @@
       </div>
     </div>
 
+    <!-- Bulk Actions Bar (shown when members are selected) -->
+    <div id="bulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+      <div class="d-flex align-items-center justify-content-between">
+        <div>
+          <strong><span id="selectedCount">0</span> member(s) selected</strong>
+        </div>
+        <div>
+          <button type="button" class="btn btn-sm btn-primary me-2" id="bulkAssignRoleBtn">
+            <i class="bi bi-person-badge me-1"></i>Assign Role
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" id="bulkRemoveMembersBtn">
+            <i class="bi bi-person-dash me-1"></i>Remove Selected
+          </button>
+          <button type="button" class="btn btn-sm btn-secondary ms-2" id="clearSelectionBtn">
+            Clear Selection
+          </button>
+        </div>
+      </div>
+    </div>
+
     <table class="table table-sm" id="membersTable">
       <thead>
         <tr>
+          <th style="width: 40px;">
+            <input type="checkbox" id="selectAllMembers" class="form-check-input" title="Select all members">
+          </th>
           <th>Name</th>
           <th>Role</th>
           <th>Actions</th>
@@ -297,6 +320,88 @@
             Cancel
           </button>
           <button type="submit" class="btn btn-primary btn-sm">Transfer</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Bulk Assign Role Modal -->
+<div class="modal fade" id="bulkAssignRoleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="bulkAssignRoleForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Assign Role to Multiple Members</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <p>You are about to assign a role to <strong><span id="bulkRoleCount">0</span> member(s)</strong>.</p>
+          <div class="mb-3">
+            <label for="bulkRoleSelect" class="form-label">Select Role</label>
+            <select id="bulkRoleSelect" class="form-select">
+              <option value="User">User</option>
+              <option value="DocumentManager">Document Manager</option>
+              <option value="Admin">Admin</option>
+            </select>
+          </div>
+          <div class="alert alert-info">
+            <small><i class="bi bi-info-circle me-1"></i>This action will update the role for all selected members.</small>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary btn-sm">Assign Role</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Bulk Remove Members Confirmation Modal -->
+<div class="modal fade" id="bulkRemoveMembersModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="bulkRemoveMembersForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Remove Multiple Members</h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Warning:</strong> You are about to remove <strong><span id="bulkRemoveCount">0</span> member(s)</strong> from this group.
+          </div>
+          <p>This action cannot be undone. Removed members will lose access to group conversations and resources.</p>
+          <div id="bulkRemoveMembersList" class="mb-2" style="max-height: 200px; overflow-y: auto;">
+            <!-- Will be populated with list of members to be removed -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-bs-dismiss="modal"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-danger btn-sm">Remove Members</button>
         </div>
       </div>
     </form>

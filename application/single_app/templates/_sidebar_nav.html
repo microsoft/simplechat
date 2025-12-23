@@ -279,6 +279,11 @@
                   <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Control Center</span>
                 </a>
               </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center" href="{{ url_for('approvals') }}">
+                  <i class="bi bi-check-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Approval Requests</span>
+                </a>
+              </li>
             </ul>
           </li>
           <li class="nav-item">
@@ -647,6 +652,11 @@
             <a class="dropdown-item" href="{{ url_for('notifications') }}">
               <i class="bi bi-bell me-2"></i>Notifications
               <span id="sidebar-notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('approvals') }}">
+              <i class="bi bi-check-circle me-2"></i>Approval Requests
             </a>
           </li>
           <li><hr class="dropdown-divider"></li>

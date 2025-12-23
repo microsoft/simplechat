@@ -62,13 +62,14 @@ def create_notification(
     message='',
     link_url='',
     link_context=None,
-    metadata=None
+    metadata=None,
+    assignment=None
 ):
     """
     Create a notification for personal, group, or public workspace scope.
     
     Args:
-        user_id (str, optional): User ID for personal notifications
+        user_id (str, optional): User ID for personal notifications (deprecated if using assignment)
         group_id (str, optional): Group ID for group-scoped notifications
         public_workspace_id (str, optional): Public workspace ID for workspace notifications
         notification_type (str): Type of notification (must be in NOTIFICATION_TYPES)
@@ -77,21 +78,37 @@ def create_notification(
         link_url (str): URL to navigate to when clicked
         link_context (dict, optional): Additional context for navigation
         metadata (dict, optional): Flexible metadata for type-specific data
+        assignment (dict, optional): Role and ownership-based assignment:
+            {
+                'roles': ['Admin', 'ControlCenterAdmin'],  # Users with these roles see notification
+                'personal_workspace_owner_id': 'user123',   # Personal workspace owner
+                'group_owner_id': 'user456',                # Group owner
+                'public_workspace_owner_id': 'user789'      # Public workspace owner
+            }
+            If any role matches or any owner ID matches user's ID, notification is visible.
         
     Returns:
         dict: Created notification document or None on error
     """
     try:
-        # Determine scope
+        # Determine scope and partition key
         scope = 'personal'
         partition_key = user_id
         
-        if group_id:
-            scope = 'group'
-            partition_key = group_id
-        elif public_workspace_id:
-            scope = 'public_workspace'
-            partition_key = public_workspace_id
+        # If assignment is provided, always use assignment partition for role-based notifications
+        if assignment:
+            # Assignment-based notifications always use the special assignment partition
+            # This allows role-based filtering across all users
+            scope = 'assignment'
+            partition_key = 'assignment-notifications'
+        else:
+            # Legacy behavior - partition by specific workspace
+            if group_id:
+                scope = 'group'
+                partition_key = group_id
+            elif public_workspace_id:
+                scope = 'public_workspace'
+                partition_key = public_workspace_id
         
         if not partition_key:
             current_app.logger.error("create_notification: No partition key provided")
@@ -116,7 +133,8 @@ def create_notification(
             'dismissed_by': [],
             'link_url': link_url or '',
             'link_context': link_context or {},
-            'metadata': metadata or {}
+            'metadata': metadata or {},
+            'assignment': assignment or None
         }
         
         # Create in Cosmos with partition key based on scope
@@ -199,9 +217,10 @@ def create_public_workspace_notification(
     )
 
 
-def get_user_notifications(user_id, page=1, per_page=20, include_read=True, include_dismissed=False):
+def get_user_notifications(user_id, page=1, per_page=20, include_read=True, include_dismissed=False, user_roles=None):
     """
     Fetch notifications visible to a user from personal, group, and public workspace scopes.
+    Supports assignment-based notifications that target users by roles and/or ownership.
     
     Args:
         user_id (str): User's unique identifier
@@ -209,6 +228,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
         per_page (int): Items per page
         include_read (bool): Include notifications already read by user
         include_dismissed (bool): Include notifications dismissed by user
+        user_roles (list, optional): User's roles for assignment-based notifications
         
     Returns:
         dict: {
@@ -264,6 +284,41 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
                 enable_cross_partition_query=True
             ))
             all_notifications.extend(workspace_notifications)
+        
+        # 4. Fetch assignment-based notifications
+        assignment_query = "SELECT * FROM c WHERE c.scope = 'assignment'"
+        assignment_notifications = list(cosmos_notifications_container.query_items(
+            query=assignment_query,
+            enable_cross_partition_query=True
+        ))
+        
+        # Filter assignment notifications based on user's roles and ownership
+        for notif in assignment_notifications:
+            assignment = notif.get('assignment')
+            if not assignment:
+                continue
+            
+            # Check if user matches assignment criteria
+            user_matches = False
+            
+            # Check roles
+            if user_roles and assignment.get('roles'):
+                for role in assignment.get('roles', []):
+                    if role in user_roles:
+                        user_matches = True
+                        break
+            
+            # Check ownership IDs
+            if not user_matches:
+                if assignment.get('personal_workspace_owner_id') == user_id:
+                    user_matches = True
+                elif assignment.get('group_owner_id') == user_id:
+                    user_matches = True
+                elif assignment.get('public_workspace_owner_id') == user_id:
+                    user_matches = True
+            
+            if user_matches:
+                all_notifications.append(notif)
         
         # Filter based on read/dismissed status
         filtered_notifications = []

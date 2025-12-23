@@ -255,6 +255,10 @@ class ControlCenter {
         // User management modal
         document.getElementById('saveUserChangesBtn')?.addEventListener('click', 
             () => this.saveUserChanges());
+        document.getElementById('deleteUserDocumentsBtn')?.addEventListener('click',
+            () => this.deleteUserDocuments());
+        document.getElementById('confirmDeleteUserDocumentsBtn')?.addEventListener('click',
+            () => this.confirmDeleteUserDocuments());
         
         // Modal controls
         document.getElementById('accessStatusSelect')?.addEventListener('change', 
@@ -472,18 +476,9 @@ class ControlCenter {
     }
     
     renderChatMetrics(chatMetrics) {
-        if (!chatMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalConversations = chatMetrics.total_conversations || 0;
-        const totalMessages = chatMetrics.total_messages || 0;
-        const messageSize = chatMetrics.total_message_size || 0;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalConversations === 0 && totalMessages === 0 && messageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
+        const totalConversations = chatMetrics?.total_conversations || 0;
+        const totalMessages = chatMetrics?.total_messages || 0;
+        const messageSize = chatMetrics?.total_message_size || 0;
         
         return `
             <div class="small">
@@ -495,21 +490,12 @@ class ControlCenter {
     }
     
     renderDocumentMetrics(docMetrics) {
-        if (!docMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalDocs = docMetrics.total_documents || 0;
-        const aiSearchSize = docMetrics.ai_search_size || 0;
-        const storageSize = docMetrics.storage_account_size || 0;
+        const totalDocs = docMetrics?.total_documents || 0;
+        const aiSearchSize = docMetrics?.ai_search_size || 0;
+        const storageSize = docMetrics?.storage_account_size || 0;
         // Always get enhanced citation setting from app settings, not user data
         const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
-        const personalWorkspace = docMetrics.personal_workspace_enabled;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
+        const personalWorkspace = docMetrics?.personal_workspace_enabled;
         
         let html = `
             <div class="small">
@@ -534,20 +520,11 @@ class ControlCenter {
     }
     
     renderGroupDocumentMetrics(docMetrics) {
-        if (!docMetrics) {
-            return '<div class="small text-muted">No data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        const totalDocs = docMetrics.total_documents || 0;
-        const aiSearchSize = docMetrics.ai_search_size || 0;
-        const storageSize = docMetrics.storage_account_size || 0;
+        const totalDocs = docMetrics?.total_documents || 0;
+        const aiSearchSize = docMetrics?.ai_search_size || 0;
+        const storageSize = docMetrics?.storage_account_size || 0;
         // Always get enhanced citation setting from app settings, not user data
         const enhancedCitation = (typeof appSettings !== 'undefined' && appSettings.enable_enhanced_citations) || false;
-        
-        // If all values are zero/empty, show refresh message
-        if (totalDocs === 0 && aiSearchSize === 0 && storageSize === 0) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
         
         let html = `
             <div class="small">
@@ -565,19 +542,10 @@ class ControlCenter {
     }
     
     renderLoginActivity(loginMetrics) {
-        if (!loginMetrics) {
-            return '<div class="small text-muted">No login data<br><em>Use Refresh Data button</em></div>';
-        }
+        const totalLogins = loginMetrics?.total_logins || 0;
+        const lastLogin = loginMetrics?.last_login;
         
-        const totalLogins = loginMetrics.total_logins || 0;
-        const lastLogin = loginMetrics.last_login;
-        
-        // If no logins recorded and no last login, show refresh message
-        if (totalLogins === 0 && !lastLogin) {
-            return '<div class="small text-muted">No cached data<br><em>Use Refresh Data button</em></div>';
-        }
-        
-        let lastLoginFormatted = 'Never';
+        let lastLoginFormatted = 'None';
         if (lastLogin) {
             try {
                 const date = new Date(lastLogin);
@@ -588,7 +556,7 @@ class ControlCenter {
                     year: 'numeric'
                 });
             } catch {
-                lastLoginFormatted = 'Invalid date';
+                lastLoginFormatted = 'None';
             }
         }
         
@@ -774,13 +742,23 @@ class ControlCenter {
             // Extract user info from table row
             const nameCell = cells[1];
             const userName = nameCell.querySelector('.fw-semibold')?.textContent || 'Unknown User';
-            const userEmail = nameCell.querySelector('.text-muted')?.textContent || '';
+            const userEmail = nameCell.querySelectorAll('.text-muted')[0]?.textContent || '';
+            
+            // Extract document count from cell 6 (Document Metrics column)
+            const docMetricsCell = cells[6];
+            const totalDocsText = docMetricsCell?.querySelector('div > div:first-child')?.textContent || '';
+            const docCount = totalDocsText.match(/Total Docs:\s*(\d+)/)?.[1] || '0';
+            
+            // Extract last login from cell 4 (Login Activity column)
+            const loginActivityCell = cells[4];
+            const lastLoginText = loginActivityCell?.querySelector('div > div:first-child')?.textContent || '';
+            const lastLogin = lastLoginText.replace('Last Login:', '').trim() || 'None';
             
             // Populate modal
             document.getElementById('modalUserName').textContent = userName;
             document.getElementById('modalUserEmail').textContent = userEmail;
-            document.getElementById('modalUserDocuments').textContent = cells[4]?.textContent.split('\n')[0] || '0 docs';
-            document.getElementById('modalUserLastActivity').textContent = cells[4]?.textContent.split('\n')[1]?.replace('Last: ', '') || 'Unknown';
+            document.getElementById('modalUserDocuments').textContent = `${docCount} docs`;
+            document.getElementById('modalUserLastActivity').textContent = lastLogin;
             
             // Set current user
             this.currentUser = { id: userId, name: userName, email: userEmail };
@@ -815,6 +793,66 @@ class ControlCenter {
         const group = document.getElementById('fileUploadDateTimeGroup');
         if (select && group) {
             group.style.display = select.value === 'deny_until' ? 'block' : 'none';
+        }
+    }
+    
+    deleteUserDocuments() {
+        if (!this.currentUser) {
+            this.showError('No user selected');
+            return;
+        }
+        
+        // Clear previous reason and show confirmation modal
+        document.getElementById('deleteUserDocumentsReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteUserDocumentsModal'));
+        deleteModal.show();
+    }
+    
+    async confirmDeleteUserDocuments() {
+        if (!this.currentUser) {
+            this.showError('No user selected');
+            return;
+        }
+        
+        const reason = document.getElementById('deleteUserDocumentsReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteUserDocumentsBtn');
+        
+        if (!reason) {
+            this.showError('Please provide a reason for deleting this user\'s documents');
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/users/${this.currentUser.id}/delete-documents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to create document deletion request');
+            }
+            
+            // Close both modals
+            bootstrap.Modal.getInstance(document.getElementById('deleteUserDocumentsModal')).hide();
+            bootstrap.Modal.getInstance(document.getElementById('userManagementModal')).hide();
+            
+            this.showSuccess('Document deletion request created successfully. It requires approval from another admin.');
+            
+            // Refresh user list
+            this.loadUsers();
+            
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     }
     
@@ -2662,7 +2700,7 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
                 </td>
                 <td>
-                    <div><strong>${this.escapeHtml(group.name || 'Unnamed Group')}</strong></div>
+                    <div class="fw-semibold">${this.escapeHtml(group.name || 'Unnamed Group')}</div>
                     <div class="text-muted small">${this.escapeHtml(group.description || 'No description')}</div>
                     <div class="text-muted small">ID: ${group.id}</div>
                 </td>
@@ -2671,19 +2709,21 @@ class ControlCenter {
                     <div class="text-muted small">${this.escapeHtml(ownerEmail)}</div>
                 </td>
                 <td>
-                    <div><strong>${memberCount}</strong> member${memberCount === 1 ? '' : 's'}</div>
+                    <div class="small"><strong>${memberCount}</strong> member${memberCount === 1 ? '' : 's'}</div>
                 </td>
                 <td>
                     <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
                 </td>
                 <td>
-                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
-                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
-                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
-                    ${storageSize > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                    <div class="small">
+                        <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                        <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                        <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                        ${storageSize > 0 ? '<div class="text-muted">(Enhanced)</div>' : ''}
+                    </div>
                 </td>
                 <td>
-                    <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.manageGroup('${group.id}')">
+                    <button class="btn btn-outline-primary btn-sm" onclick="GroupManager.manageGroup('${group.id}')">
                         <i class="bi bi-gear me-1"></i>Manage
                     </button>
                 </td>
@@ -2700,10 +2740,10 @@ class ControlCenter {
     }
     
     manageGroup(groupId) {
-        // Call the GroupManager's manageGroup function
+        // Call the GroupManager's manageGroup function directly
         console.log('ControlCenter.manageGroup() redirecting to GroupManager.manageGroup()');
-        if (typeof window.GroupManager !== 'undefined' && window.GroupManager.manageGroup) {
-            window.GroupManager.manageGroup(groupId);
+        if (typeof GroupManager !== 'undefined' && GroupManager.manageGroup) {
+            GroupManager.manageGroup(groupId);
         } else {
             console.error('GroupManager not found or manageGroup method not available');
             alert('Group management functionality is not available');
@@ -2850,7 +2890,7 @@ class ControlCenter {
                     <input type="checkbox" class="form-check-input public-workspace-checkbox" value="${workspace.id}">
                 </td>
                 <td>
-                    <div><strong>${workspace.name || 'Unnamed Workspace'}</strong></div>
+                    <div class="fw-semibold">${workspace.name || 'Unnamed Workspace'}</div>
                     <div class="text-muted small">${workspace.description || 'No description'}</div>
                     <div class="text-muted small">ID: ${workspace.id}</div>
                 </td>
@@ -2859,16 +2899,18 @@ class ControlCenter {
                     <div class="text-muted small">${ownerEmail}</div>
                 </td>
                 <td>
-                    <span class="badge bg-light text-dark">${memberCount} member${memberCount !== 1 ? 's' : ''}</span>
+                    <div class="small"><strong>${memberCount}</strong> member${memberCount !== 1 ? 's' : ''}</div>
                 </td>
                 <td>
                     <span class="badge bg-success">Active</span>
                 </td>
                 <td>
-                    <div><strong>Total Docs:</strong> ${totalDocs}</div>
-                    <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
-                    <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
-                    ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted small">(Enhanced)</div>' : ''}
+                    <div class="small">
+                        <div><strong>Total Docs:</strong> ${totalDocs}</div>
+                        <div><strong>AI Search:</strong> ${aiSearchSizeFormatted}</div>
+                        <div><strong>Storage:</strong> ${storageSizeFormatted}</div>
+                        ${workspace.activity?.document_metrics?.storage_account_size > 0 ? '<div class="text-muted">(Enhanced)</div>' : ''}
+                    </div>
                 </td>
                 <td>
                     <button class="btn btn-outline-primary btn-sm" onclick="window.controlCenter.managePublicWorkspace('${workspace.id}')">

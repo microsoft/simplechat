@@ -9,9 +9,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 def register_route_backend_notifications(app):
 
     @app.route("/api/notifications", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_get_notifications():
@@ -26,6 +24,8 @@ def register_route_backend_notifications(app):
         """
         try:
             user_id = get_current_user_id()
+            user = session.get('user', {})
+            user_roles = user.get('roles', [])
             
             # Get query parameters
             page = int(request.args.get('page', 1))
@@ -42,7 +42,8 @@ def register_route_backend_notifications(app):
                 page=page,
                 per_page=per_page,
                 include_read=include_read,
-                include_dismissed=include_dismissed
+                include_dismissed=include_dismissed,
+                user_roles=user_roles
             )
             
             return jsonify({
@@ -58,9 +59,7 @@ def register_route_backend_notifications(app):
             }), 500
 
     @app.route("/api/notifications/count", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_get_notification_count():
@@ -84,9 +83,7 @@ def register_route_backend_notifications(app):
             }), 500
 
     @app.route("/api/notifications/<notification_id>/read", methods=["POST"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_mark_notification_read(notification_id):
@@ -116,9 +113,7 @@ def register_route_backend_notifications(app):
             }), 500
 
     @app.route("/api/notifications/<notification_id>/dismiss", methods=["DELETE"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_dismiss_notification(notification_id):
@@ -148,9 +143,7 @@ def register_route_backend_notifications(app):
             }), 500
 
     @app.route("/api/notifications/mark-all-read", methods=["POST"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_mark_all_read():
@@ -175,9 +168,7 @@ def register_route_backend_notifications(app):
             }), 500
 
     @app.route("/api/notifications/settings", methods=["POST"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def api_update_notification_settings():

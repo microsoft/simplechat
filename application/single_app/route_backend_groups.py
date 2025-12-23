@@ -435,7 +435,7 @@ def register_route_backend_groups(app):
         try:
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'action': 'add_member_directly',
+                'activity_type': 'add_member_directly',
                 'timestamp': datetime.utcnow().isoformat(),
                 'added_by_user_id': user_id,
                 'added_by_email': user_email,
@@ -639,7 +639,7 @@ def register_route_backend_groups(app):
             activity_record = {
                 'id': str(uuid.uuid4()),
                 'type': 'group_member_role_changed',
-                'action': 'update_member_role',
+                'activity_type': 'update_member_role',
                 'timestamp': datetime.utcnow().isoformat(),
                 'changed_by_user_id': user_id,
                 'changed_by_email': user_email,

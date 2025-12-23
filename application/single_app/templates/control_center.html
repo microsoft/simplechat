@@ -1230,9 +1230,45 @@
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-danger me-auto" id="deleteUserDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Delete All Documents
+                    </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="saveUserChangesBtn">
                         <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Delete User Documents Confirmation Modal -->
+    <div class="modal fade" id="deleteUserDocumentsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete All User Documents
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Warning:</strong> This will create an approval request to permanently delete ALL documents for this user.
+                        This action cannot be undone after approval.
+                    </div>
+                    <div class="mb-3">
+                        <label for="deleteUserDocumentsReason" class="form-label">Reason (Required)</label>
+                        <textarea class="form-control" id="deleteUserDocumentsReason" rows="3" 
+                                  placeholder="Explain why this user's documents need to be deleted..."></textarea>
+                        <div class="form-text">This reason will be visible to approvers and logged in the activity log.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteUserDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
                     </button>
                 </div>
             </div>
@@ -1565,6 +1601,15 @@
                                         </select>
                                         <div class="form-text">Only current group members can become the owner.</div>
                                     </div>
+                                    <div class="mb-3" id="ownershipReasonGroup" style="display: none;">
+                                        <label class="form-label">Reason for Ownership Change <span class="text-danger">*</span></label>
+                                        <textarea class="form-control" id="groupOwnershipReason" rows="3" 
+                                                  placeholder="Explain why this ownership change is necessary..."></textarea>
+                                        <div class="form-text text-info">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Ownership changes require approval from the group owner or another admin.
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1584,7 +1629,7 @@
                                             <small class="text-muted">Add/remove members and assign roles</small>
                                         </div>
                                         <div class="col-md-6 mb-3">
-                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn" data-bs-toggle="modal" data-bs-target="#groupActivityModal">
+                                            <button type="button" class="btn btn-secondary w-100" id="viewActivityBtn">
                                                 <i class="bi bi-activity me-2"></i>View Group Activity
                                             </button>
                                             <small class="text-muted">See detailed group activity timeline</small>
@@ -1966,6 +2011,70 @@
         </div>
     </div>
 
+    <!-- Delete All Documents Confirmation Modal -->
+    <div class="modal fade" id="deleteDocumentsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete All Documents
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        <strong>This action requires approval from the group owner or another admin.</strong>
+                    </p>
+                    <p>Please provide a reason for deleting all documents in this group:</p>
+                    <textarea class="form-control" id="deleteDocumentsReason" rows="3" 
+                              placeholder="Enter your reason here..." required></textarea>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This will create an approval request. Once approved, all documents will be permanently deleted.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmDeleteDocumentsBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Group Confirmation Modal -->
+    <div class="modal fade" id="deleteGroupModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Delete Entire Group
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3">
+                        <strong>This action requires approval from the group owner or another admin.</strong>
+                    </p>
+                    <p>Please provide a reason for deleting this group:</p>
+                    <textarea class="form-control" id="deleteGroupReason" rows="3" 
+                              placeholder="Enter your reason here..." required></textarea>
+                    <div class="alert alert-danger mt-3 mb-0">
+                        <i class="bi bi-exclamation-circle me-2"></i>
+                        <strong>Warning:</strong> This will create an approval request. Once approved, the group, all members, and all documents will be permanently deleted. This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteGroupBtn">
+                        <i class="bi bi-trash me-1"></i>Submit Request
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none" style="background: rgba(0,0,0,0.5); z-index: 9999;">
         <div class="d-flex justify-content-center align-items-center h-100">
@@ -2174,7 +2283,8 @@ window.GroupManager = {
     // Initialize group management functionality
     init: function() {
         this.bindEvents();
-        this.loadGroups();
+        // Note: loadGroups is now handled by window.controlCenter.loadGroups()
+        // which provides enhanced formatting with description, group ID, and better metrics
     },
 
     // Bind event handlers
@@ -2199,6 +2309,8 @@ window.GroupManager = {
         document.getElementById('saveGroupChangesBtn')?.addEventListener('click', this.saveGroupChanges);
         document.getElementById('deleteDocumentsBtn')?.addEventListener('click', this.deleteDocuments);
         document.getElementById('deleteGroupBtn')?.addEventListener('click', this.deleteGroup);
+        document.getElementById('confirmDeleteDocumentsBtn')?.addEventListener('click', () => this.confirmDeleteDocuments());
+        document.getElementById('confirmDeleteGroupBtn')?.addEventListener('click', () => this.confirmDeleteGroup());
         
         // Member management modal
         document.getElementById('manageMembersBtn')?.addEventListener('click', this.loadGroupMembers);
@@ -2207,6 +2319,8 @@ window.GroupManager = {
         document.getElementById('viewActivityBtn')?.addEventListener('click', () => {
             const groupId = document.getElementById('groupManagementModal').getAttribute('data-group-id');
             if (groupId) {
+                // Prevent the default modal toggle behavior
+                event.preventDefault();
                 GroupManager.viewActivity(groupId);
             }
         });
@@ -2230,6 +2344,35 @@ window.GroupManager = {
             GroupManager.resetCsvModal();
         });
         
+        // Reset group management modal when closed
+        document.getElementById('groupManagementModal')?.addEventListener('hidden.bs.modal', () => {
+            document.getElementById('groupOwnershipSelect').value = '';
+            document.getElementById('groupOwnershipReason').value = '';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
+            document.getElementById('transferUserGroup').style.display = 'none';
+        });
+        
+        // Clean up activity modal when closed
+        document.getElementById('groupActivityModal')?.addEventListener('hidden.bs.modal', () => {
+            // Clear the timeline
+            const timeline = document.getElementById('activityTimeline');
+            if (timeline) {
+                timeline.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><div class="mt-2">Loading activity...</div></div>';
+            }
+            
+            // Only remove backdrops if no other modals are open
+            const openModals = document.querySelectorAll('.modal.show');
+            if (openModals.length === 0) {
+                // No other modals are open, safe to clean up
+                document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                    backdrop.remove();
+                });
+                document.body.classList.remove('modal-open');
+                document.body.style.overflow = '';
+                document.body.style.paddingRight = '';
+            }
+        });
+        
         // Single member add
         document.getElementById('addSingleMemberBtn')?.addEventListener('click', () => {
             GroupManager.openAddMemberModal();
@@ -2250,73 +2393,12 @@ window.GroupManager = {
     },
 
     // Load groups data from backend API
+    // Delegates to window.controlCenter.loadGroups() for enhanced formatting
     loadGroups: async function() {
-        const tbody = document.getElementById('groupsTableBody');
-        if (!tbody) return;
-
-        // Show loading state
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="8" class="text-center py-4">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <div class="mt-2">Loading groups...</div>
-                </td>
-            </tr>
-        `;
-
-        try {
-            // Get current filter values
-            const searchTerm = document.getElementById('groupSearchInput')?.value || '';
-            const statusFilter = document.getElementById('groupStatusFilterSelect')?.value || 'all';
-
-            // Build API URL with filters
-            const params = new URLSearchParams({
-                page: 1,
-                per_page: 100, // Get more groups for now
-                search: searchTerm,
-                status_filter: statusFilter
-            });
-
-            const response = await fetch(`/api/admin/control-center/groups?${params}`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            
-            if (data.groups && data.groups.length > 0) {
-                tbody.innerHTML = data.groups.map(group => this.createGroupRow(group)).join('');
-            } else {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="8" class="text-center py-4">
-                            <i class="bi bi-collection" style="font-size: 2rem; color: var(--bs-secondary);"></i>
-                            <div class="mt-2">No groups found</div>
-                        </td>
-                    </tr>
-                `;
-            }
-
-            // Initialize sorting after data is loaded
-            if (!window.groupTableSorter) {
-                window.groupTableSorter = new GroupTableSorter('groupsTable');
-            }
-
-        } catch (error) {
-            console.error('Error loading groups:', error);
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="8" class="text-center py-4 text-danger">
-                        <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
-                        <div class="mt-2">Error loading groups: ${error.message}</div>
-                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="GroupManager.loadGroups()">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Retry
-                        </button>
-                    </td>
-                </tr>
-            `;
+        if (window.controlCenter && typeof window.controlCenter.loadGroups === 'function') {
+            return window.controlCenter.loadGroups();
+        } else {
+            console.error('window.controlCenter.loadGroups() not available');
         }
     },
 
@@ -2331,77 +2413,6 @@ window.GroupManager = {
     applyPendingGlobalSettings: function() {
         // This function is kept for backward compatibility but no longer needed
         // Initial state is now set directly in HTML template
-    },
-
-    // Create group table row from API data
-    createGroupRow: function(group) {
-        const statusClass = `group-status-${(group.status || 'active').replace('_', '-')}`;
-        const statusText = {
-            'active': 'Active',
-            'locked': 'Locked',
-            'upload_disabled': 'Upload Disabled',
-            'inactive': 'Inactive'
-        }[group.status || 'active'] || 'Unknown';
-
-        // Format storage size
-        const formatStorageSize = (sizeBytes) => {
-            if (!sizeBytes || sizeBytes === 0) return '0 B';
-            
-            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-            let size = sizeBytes;
-            let unitIndex = 0;
-            
-            while (size >= 1024 && unitIndex < units.length - 1) {
-                size /= 1024;
-                unitIndex++;
-            }
-            
-            return `${size.toFixed(1)} ${units[unitIndex]}`;
-        };
-
-        // Format date or show "Never"
-        const formatDate = (dateStr) => {
-            if (!dateStr) return 'Never';
-            try {
-                const date = new Date(dateStr);
-                return date.toLocaleDateString();
-            } catch (e) {
-                return 'Never';
-            }
-        };
-
-        // Get member count - prioritize member_count, fallback to members array length
-        const memberCount = group.member_count || (group.members ? group.members.length : 0);
-
-        return `
-            <tr data-group-id="${group.id}">
-                <td>
-                    <input type="checkbox" class="form-check-input group-checkbox" value="${group.id}">
-                </td>
-                <td>
-                    <div class="fw-bold">${group.name || 'Unnamed Group'}</div>
-                </td>
-                <td>
-                    <div>${group.owner_name || group.created_by || 'Unknown'}</div>
-                    <small class="text-muted">${group.owner_email || ''}</small>
-                </td>
-                <td>
-                    ${memberCount} members
-                </td>
-                <td>
-                    <span class="badge group-status-badge ${statusClass}">${statusText}</span>
-                </td>
-                <td>
-                    ${window.controlCenter ? window.controlCenter.renderGroupDocumentMetrics(group.activity?.document_metrics) : `<div class="small">${group.document_count || 0} docs</div>`}
-                </td>
-                <td>
-                    <button type="button" class="btn btn-sm btn-outline-primary" 
-                            onclick="GroupManager.manageGroup('${group.id}')" title="Manage Group">
-                        <i class="bi bi-gear me-1"></i>Manage
-                    </button>
-                </td>
-            </tr>
-        `;
     },
 
     // Handle search functionality
@@ -2527,6 +2538,8 @@ window.GroupManager = {
             // Reset ownership select to default
             document.getElementById('groupOwnershipSelect').value = '';
             document.getElementById('transferUserGroup').style.display = 'none';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
+            document.getElementById('groupOwnershipReason').value = '';
             
             // Load group members for ownership transfer dropdown
             await GroupManager.loadGroupMembersForTransfer(groupId);
@@ -2728,10 +2741,17 @@ window.GroupManager = {
     // Handle ownership change
     handleOwnershipChange: function(event) {
         const transferUserGroup = document.getElementById('transferUserGroup');
+        const ownershipReasonGroup = document.getElementById('ownershipReasonGroup');
+        
         if (event.target.value === 'transfer') {
             transferUserGroup.style.display = 'block';
+            ownershipReasonGroup.style.display = 'block';
+        } else if (event.target.value === 'admin') {
+            transferUserGroup.style.display = 'none';
+            ownershipReasonGroup.style.display = 'block';
         } else {
             transferUserGroup.style.display = 'none';
+            ownershipReasonGroup.style.display = 'none';
         }
     },
     
@@ -2798,10 +2818,18 @@ window.GroupManager = {
         const status = document.getElementById('groupStatusSelect').value;
         const ownership = document.getElementById('groupOwnershipSelect').value;
         const newOwnerId = document.getElementById('groupNewOwnerSelect').value;
+        const ownershipReason = document.getElementById('groupOwnershipReason').value.trim();
         const saveButton = document.getElementById('saveGroupChangesBtn');
         
         if (!groupId) {
             alert('Error: No group ID found');
+            return;
+        }
+        
+        // Validate ownership change reason if ownership action selected
+        if ((ownership === 'admin' || ownership === 'transfer') && !ownershipReason) {
+            alert('Please provide a reason for the ownership change');
+            document.getElementById('groupOwnershipReason').focus();
             return;
         }
         
@@ -2814,7 +2842,8 @@ window.GroupManager = {
         console.log('Saving changes for group:', groupId, {
             status,
             ownership,
-            newOwnerId
+            newOwnerId,
+            reason: ownershipReason
         });
         
         // Disable button during save
@@ -2824,7 +2853,7 @@ window.GroupManager = {
         }
         
         try {
-            // Update group status
+            // Update group status (immediate)
             const statusResponse = await fetch(`/api/admin/control-center/groups/${groupId}/status`, {
                 method: 'PUT',
                 headers: {
@@ -2832,7 +2861,7 @@ window.GroupManager = {
                 },
                 body: JSON.stringify({
                     status: status,
-                    reason: '' // Optional: could add a reason field to the modal
+                    reason: ''
                 })
             });
             
@@ -2844,50 +2873,59 @@ window.GroupManager = {
             const statusResult = await statusResponse.json();
             console.log('Group status updated:', statusResult);
             
-            // Handle ownership changes
+            // Handle ownership changes (creates approval request)
             if (ownership === 'admin') {
-                // Admin takes ownership
+                // Admin takes ownership - create approval request
                 const ownershipResponse = await fetch(`/api/admin/control-center/groups/${groupId}/take-ownership`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({
+                        reason: ownershipReason
+                    })
                 });
                 
                 if (!ownershipResponse.ok) {
                     const errorData = await ownershipResponse.json();
-                    throw new Error(errorData.error || 'Failed to take ownership');
+                    throw new Error(errorData.error || 'Failed to request ownership');
                 }
                 
                 const ownershipResult = await ownershipResponse.json();
-                console.log('Ownership taken:', ownershipResult);
-                alert(`Group settings saved successfully!\nOwnership transferred from ${ownershipResult.old_owner} to ${ownershipResult.new_owner}`);
+                console.log('Ownership request created:', ownershipResult);
+                alert(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${ownershipResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`);
                 
             } else if (ownership === 'transfer') {
-                // Transfer ownership to another user
+                // Transfer ownership to another user - create approval request
                 const transferResponse = await fetch(`/api/admin/control-center/groups/${groupId}/transfer-ownership`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        newOwnerId: newOwnerId
+                        newOwnerId: newOwnerId,
+                        reason: ownershipReason
                     })
                 });
                 
                 if (!transferResponse.ok) {
                     const errorData = await transferResponse.json();
-                    throw new Error(errorData.error || 'Failed to transfer ownership');
+                    throw new Error(errorData.error || 'Failed to request ownership transfer');
                 }
                 
                 const transferResult = await transferResponse.json();
-                console.log('Ownership transferred:', transferResult);
-                alert(`Group settings saved successfully!\nOwnership transferred from ${transferResult.old_owner} to ${transferResult.new_owner}`);
+                console.log('Transfer request created:', transferResult);
+                alert(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${transferResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`);
                 
             } else {
                 // No ownership change
                 alert('Group settings saved successfully!');
             }
+            
+            // Reset form fields
+            document.getElementById('groupOwnershipSelect').value = '';
+            document.getElementById('groupOwnershipReason').value = '';
+            document.getElementById('ownershipReasonGroup').style.display = 'none';
             
             // Close modal and refresh groups
             bootstrap.Modal.getInstance(modal).hide();
@@ -2911,40 +2949,143 @@ window.GroupManager = {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
-        if (confirm('Are you sure you want to delete ALL documents in this group? This action cannot be undone.')) {
-            console.log('Deleting documents for group:', groupId);
-            alert('All documents would be deleted from this group.');
+        if (!groupId) {
+            alert('Error: No group ID found');
+            return;
+        }
+        
+        // Clear previous reason and show modal
+        document.getElementById('deleteDocumentsReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteDocumentsModal'));
+        deleteModal.show();
+    },
+    
+    // Confirm delete documents (called from modal)
+    confirmDeleteDocuments: async function() {
+        const groupModal = document.getElementById('groupManagementModal');
+        const groupId = groupModal.getAttribute('data-group-id');
+        const reason = document.getElementById('deleteDocumentsReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteDocumentsBtn');
+        
+        if (!reason) {
+            window.controlCenter.showToast('Please provide a reason for this action.', 'warning');
+            document.getElementById('deleteDocumentsReason').focus();
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}/delete-documents`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    reason: reason
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create document deletion request');
+            }
+            
+            const result = await response.json();
+            console.log('Document deletion request created:', result);
+            
+            // Close delete modal
+            bootstrap.Modal.getInstance(document.getElementById('deleteDocumentsModal')).hide();
+            
+            // Show success message
+            window.controlCenter.showToast(
+                `Document deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the group owner or another admin.`,
+                'success'
+            );
+            
+        } catch (error) {
+            console.error('Error creating document deletion request:', error);
+            window.controlCenter.showToast('Error creating deletion request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     },
 
     // Delete entire group
-    deleteGroup: async function() {
+    deleteGroup: function() {
         const modal = document.getElementById('groupManagementModal');
         const groupId = modal.getAttribute('data-group-id');
         
         if (!groupId) {
-            alert('No group selected for deletion');
+            window.controlCenter.showToast('No group selected for deletion', 'error');
             return;
         }
         
-        if (confirm('Are you sure you want to DELETE this entire group? This will permanently remove the group, all members, and all documents. This action cannot be undone.')) {
-            try {
-                const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
-                    method: 'DELETE'
-                });
-                
-                if (response.ok) {
-                    alert('Group deleted successfully!');
-                    bootstrap.Modal.getInstance(modal).hide();
-                    this.loadGroups(); // Refresh the groups list
-                } else {
-                    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                    alert(`Error deleting group: ${error.error || 'Unknown error'}`);
-                }
-            } catch (error) {
-                console.error('Error deleting group:', error);
-                alert(`Error deleting group: ${error.message}`);
+        // Clear previous reason and show modal
+        document.getElementById('deleteGroupReason').value = '';
+        const deleteModal = new bootstrap.Modal(document.getElementById('deleteGroupModal'));
+        deleteModal.show();
+    },
+    
+    // Confirm delete group (called from modal)
+    confirmDeleteGroup: async function() {
+        const groupModal = document.getElementById('groupManagementModal');
+        const groupId = groupModal.getAttribute('data-group-id');
+        const reason = document.getElementById('deleteGroupReason').value.trim();
+        const confirmBtn = document.getElementById('confirmDeleteGroupBtn');
+        
+        if (!reason) {
+            window.controlCenter.showToast('Please provide a reason for this action.', 'warning');
+            document.getElementById('deleteGroupReason').focus();
+            return;
+        }
+        
+        // Disable button during request
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting...';
+        
+        try {
+            const response = await fetch(`/api/admin/control-center/groups/${groupId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    reason: reason
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create group deletion request');
             }
+            
+            const result = await response.json();
+            console.log('Group deletion request created:', result);
+            
+            // Close delete modal
+            bootstrap.Modal.getInstance(document.getElementById('deleteGroupModal')).hide();
+            
+            // Close group management modal
+            bootstrap.Modal.getInstance(groupModal).hide();
+            
+            // Show success message
+            window.controlCenter.showToast(
+                `Group deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the group owner or another admin.`,
+                'success'
+            );
+            
+        } catch (error) {
+            console.error('Error creating group deletion request:', error);
+            window.controlCenter.showToast('Error creating deletion request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
         }
     },
 
@@ -3785,7 +3926,7 @@ window.GroupManager = {
 
 // Initialize table sorting when the page loads
 document.addEventListener('DOMContentLoaded', function() {
-    // Ensure GroupManager is available globally
+    // Ensure managers are available globally
     window.GroupManager = GroupManager;
     
     // Wait a bit for the control center to load

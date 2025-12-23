@@ -244,6 +244,26 @@ def before_first_request():
     timer_thread.start()
     print("Logging timer background task started.")
 
+    # Background task to check for expired approval requests
+    def check_expired_approvals():
+        """Background task that checks for expired approval requests and auto-denies them"""
+        while True:
+            try:
+                from functions_approvals import auto_deny_expired_approvals
+                denied_count = auto_deny_expired_approvals()
+                if denied_count > 0:
+                    print(f"Auto-denied {denied_count} expired approval request(s).")
+            except Exception as e:
+                print(f"Error in approval expiration check: {e}")
+            
+            # Check every 6 hours (21600 seconds)
+            time.sleep(21600)
+
+    # Start the approval expiration check thread
+    approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
+    approval_thread.start()
+    print("Approval expiration background task started.")
+
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
     per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
@@ -332,6 +352,7 @@ app.jinja_env.filters['markdown'] = markdown_filter
 
 # =================== Default Routes =====================
 @app.route('/')
+@swagger_route(security=get_auth_security())
 def index():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
@@ -345,14 +366,17 @@ def index():
     return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
 
 @app.route('/robots933456.txt')
+@swagger_route(security=get_auth_security())
 def robots():
     return send_from_directory('static', 'robots.txt')
 
 @app.route('/favicon.ico')
+@swagger_route(security=get_auth_security())
 def favicon():
     return send_from_directory('static', 'favicon.ico')
 
 @app.route('/static/js/<path:filename>')
+@swagger_route(security=get_auth_security())
 def serve_js_modules(filename):
     """Serve JavaScript modules with correct MIME type."""
     from flask import send_from_directory, Response
@@ -365,10 +389,12 @@ def serve_js_modules(filename):
         return send_from_directory('static/js', filename)
 
 @app.route('/acceptable_use_policy.html')
+@swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
 
 @app.route('/api/semantic-kernel/plugins')
+@swagger_route(security=get_auth_security())
 def list_semantic_kernel_plugins():
     """Test endpoint: List loaded Semantic Kernel plugins and their functions."""
     global kernel

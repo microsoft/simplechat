@@ -149,6 +149,11 @@
                 <span id="notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
               </a>
             </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('approvals') }}">
+                <i class="bi bi-check-circle me-2"></i>Approval Requests
+              </a>
+            </li>
             <li><hr class="dropdown-divider"></li>
             {% if app_settings.enable_group_workspaces %}
             <li>

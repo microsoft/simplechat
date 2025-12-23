@@ -9,12 +9,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from functions_appinsights import log_event
+from functions_debug import debug_print
 from config import cosmos_activity_logs_container
-
-# Debug print function for logging
-def debug_print(message):
-    """Print debug messages to console."""
-    print(message)
 
 def log_chat_activity(
     user_id: str,
@@ -58,6 +54,7 @@ def log_chat_activity(
             },
             level=logging.INFO
         )
+        debug_print(f"Logged chat activity: {message_type} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the chat flow
@@ -70,6 +67,7 @@ def log_chat_activity(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging chat activity for user {user_id}: {str(e)}")
 
 
 def log_user_activity(
@@ -104,6 +102,7 @@ def log_user_activity(
             extra=activity_data,
             level=logging.INFO
         )
+        debug_print(f"Logged user activity: {activity_type} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the user flow
@@ -116,6 +115,7 @@ def log_user_activity(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging user activity for user {user_id}: {str(e)}")
 
 
 def log_document_upload(
@@ -151,6 +151,7 @@ def log_document_upload(
             },
             level=logging.INFO
         )
+        debug_print(f"Logged document upload for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the upload flow
@@ -163,6 +164,7 @@ def log_document_upload(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging document upload for user {user_id}: {str(e)}")
 
 
 def log_document_creation_transaction(
@@ -265,8 +267,8 @@ def log_document_creation_transaction(
             extra=activity_record,
             level=logging.INFO
         )
-        
-        print(f"✅ Document creation transaction logged to activity_logs: {document_id}")
+        debug_print(f"Logged document creation transaction: {document_id} for user {user_id}")
+
         
     except Exception as e:
         # Log error but don't break the document creation flow
@@ -280,7 +282,7 @@ def log_document_creation_transaction(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log document creation transaction: {str(e)}")
+        debug_print(f"Error logging document creation transaction for user {user_id}: {str(e)}")
 
 
 def log_document_deletion_transaction(
@@ -353,7 +355,7 @@ def log_document_deletion_transaction(
             level=logging.INFO
         )
         
-        print(f"✅ Document deletion transaction logged to activity_logs: {document_id}")
+        debug_print(f"Logged document deletion transaction: {document_id} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the document deletion flow
@@ -367,7 +369,7 @@ def log_document_deletion_transaction(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log document deletion transaction: {str(e)}")
+        debug_print(f"Error logging document deletion transaction for user {user_id}: {str(e)}")
 
 
 def log_document_metadata_update_transaction(
@@ -437,7 +439,7 @@ def log_document_metadata_update_transaction(
             level=logging.INFO
         )
         
-        print(f"✅ Document metadata update transaction logged to activity_logs: {document_id}")
+        debug_print(f"Logged document metadata update transaction: {document_id} for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the document update flow
@@ -451,7 +453,7 @@ def log_document_metadata_update_transaction(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log document metadata update transaction: {str(e)}")
+        debug_print(f"Error logging document metadata update transaction for user {user_id}: {str(e)}")
 
 
 def log_token_usage(
@@ -543,6 +545,7 @@ def log_token_usage(
             extra=activity_record,
             level=logging.INFO
         )
+        debug_print(f"Logged token usage: {token_type} - {total_tokens} tokens for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the flow
@@ -556,6 +559,7 @@ def log_token_usage(
             },
             level=logging.ERROR
         )
+        debug_print(f"Error logging token usage for user {user_id}: {str(e)}")
 
 
 def log_conversation_creation(
@@ -618,7 +622,7 @@ def log_conversation_creation(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation creation: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation creation: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -697,7 +701,7 @@ def log_conversation_deletion(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation deletion: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation deletion: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -768,7 +772,7 @@ def log_conversation_archival(
     except Exception as e:
         # Non-blocking error handling
         debug_print(f"⚠️ Error logging conversation archival: {str(e)}")
-        log_to_blob(
+        log_event(
             message=f"Error logging conversation archival: {str(e)}",
             extra={
                 'user_id': user_id,
@@ -816,6 +820,7 @@ def log_user_login(
             extra=login_activity,
             level=logging.INFO
         )
+        debug_print(f"✅ User login activity logged for user {user_id}")
         
     except Exception as e:
         # Log error but don't break the login flow
@@ -828,6 +833,7 @@ def log_user_login(
             },
             level=logging.ERROR
         )
+        debug_print(f"⚠️  Warning: Failed to log user login activity for user {user_id}: {str(e)}")
 
 
 def log_group_status_change(
@@ -894,7 +900,7 @@ def log_group_status_change(
             level=logging.INFO
         )
         
-        print(f"✅ Group status change logged: {group_id} -> {new_status}")
+        debug_print(f"✅ Group status change logged: {group_id} -> {new_status}")
         
     except Exception as e:
         # Log error but don't break the status update flow
@@ -908,7 +914,7 @@ def log_group_status_change(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log group status change: {str(e)}")
+        debug_print(f"⚠️  Warning: Failed to log group status change: {str(e)}")
 
 
 def log_group_member_deleted(
@@ -948,7 +954,6 @@ def log_group_member_deleted(
             'id': str(uuid.uuid4()),
             'user_id': removed_by_user_id,  # Person who performed the action (for partitioning)
             'activity_type': 'group_member_deleted',
-            'action': action,
             'timestamp': datetime.utcnow().isoformat(),
             'created_at': datetime.utcnow().isoformat(),
             'removed_by': {
@@ -978,7 +983,7 @@ def log_group_member_deleted(
             level=logging.INFO
         )
         
-        print(f"✅ Group member deletion logged to activity_logs: {member_user_id} from group {group_id}")
+        debug_print(f"✅ Group member deletion logged to activity_logs: {member_user_id} from group {group_id}")
         
     except Exception as e:
         # Log error but don't break the member removal flow
@@ -992,5 +997,5 @@ def log_group_member_deleted(
             },
             level=logging.ERROR
         )
-        print(f"⚠️  Warning: Failed to log group member deletion: {str(e)}")
+        debug_print(f"⚠️  Warning: Failed to log group member deletion: {str(e)}")
 

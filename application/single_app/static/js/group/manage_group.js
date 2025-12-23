@@ -77,6 +77,63 @@ $(document).ready(function () {
     resetCsvModal();
   });
 
+  // Bulk Actions Events
+  $("#selectAllMembers").on("change", function () {
+    const isChecked = $(this).prop("checked");
+    $(".member-checkbox").prop("checked", isChecked);
+    updateBulkActionsBar();
+  });
+
+  $(document).on("change", ".member-checkbox", function () {
+    updateBulkActionsBar();
+    updateSelectAllCheckbox();
+  });
+
+  $("#clearSelectionBtn").on("click", function () {
+    $(".member-checkbox").prop("checked", false);
+    $("#selectAllMembers").prop("checked", false);
+    updateBulkActionsBar();
+  });
+
+  $("#bulkAssignRoleBtn").on("click", function () {
+    const selectedMembers = getSelectedMembers();
+    if (selectedMembers.length === 0) {
+      alert("Please select at least one member");
+      return;
+    }
+    $("#bulkRoleCount").text(selectedMembers.length);
+    $("#bulkAssignRoleModal").modal("show");
+  });
+
+  $("#bulkAssignRoleForm").on("submit", function (e) {
+    e.preventDefault();
+    bulkAssignRole();
+  });
+
+  $("#bulkRemoveMembersBtn").on("click", function () {
+    const selectedMembers = getSelectedMembers();
+    if (selectedMembers.length === 0) {
+      alert("Please select at least one member");
+      return;
+    }
+    
+    // Populate the list of members to be removed
+    let membersList = "<ul class='list-unstyled'>";
+    selectedMembers.forEach(member => {
+      membersList += `<li>• ${member.name} (${member.email})</li>`;
+    });
+    membersList += "</ul>";
+    
+    $("#bulkRemoveCount").text(selectedMembers.length);
+    $("#bulkRemoveMembersList").html(membersList);
+    $("#bulkRemoveMembersModal").modal("show");
+  });
+
+  $("#bulkRemoveMembersForm").on("submit", function (e) {
+    e.preventDefault();
+    bulkRemoveMembers();
+  });
+
   $("#transferOwnershipBtn").on("click", function () {
     $.get(`/api/groups/${groupId}/members`, function (members) {
       let options = "";
@@ -295,8 +352,18 @@ function loadMembers(searchTerm, roleFilter) {
   $.get(url, function (members) {
     let rows = "";
     members.forEach((m) => {
+      const isOwner = m.role === "Owner";
+      const checkboxHtml = isOwner || (currentUserRole !== "Owner" && currentUserRole !== "Admin") 
+        ? '<input type="checkbox" class="form-check-input" disabled>' 
+        : `<input type="checkbox" class="form-check-input member-checkbox" 
+                   data-user-id="${m.userId}" 
+                   data-user-name="${m.displayName || '(no name)'}"
+                   data-user-email="${m.email || ''}"
+                   data-user-role="${m.role}">`;
+      
       rows += `
       <tr>
+        <td>${checkboxHtml}</td>
         <td>
           ${m.displayName || "(no name)"}<br/>
           <small>${m.email || ""}</small>
@@ -307,10 +374,14 @@ function loadMembers(searchTerm, roleFilter) {
     `;
     });
     $("#membersTable tbody").html(rows);
+    
+    // Reset selection UI
+    $("#selectAllMembers").prop("checked", false);
+    updateBulkActionsBar();
   }).fail(function (err) {
     console.error(err);
     $("#membersTable tbody").html(
-      "<tr><td colspan='3' class='text-danger'>Failed to load members</td></tr>"
+      "<tr><td colspan='4' class='text-danger'>Failed to load members</td></tr>"
     );
   });
 }
@@ -851,4 +922,152 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ============================================================================
+// Bulk Actions Functions
+// ============================================================================
+
+function getSelectedMembers() {
+  const selected = [];
+  $(".member-checkbox:checked").each(function () {
+    selected.push({
+      userId: $(this).data("user-id"),
+      name: $(this).data("user-name"),
+      email: $(this).data("user-email"),
+      role: $(this).data("user-role")
+    });
+  });
+  return selected;
+}
+
+function updateBulkActionsBar() {
+  const selectedCount = $(".member-checkbox:checked").length;
+  if (selectedCount > 0) {
+    $("#selectedCount").text(selectedCount);
+    $("#bulkActionsBar").show();
+  } else {
+    $("#bulkActionsBar").hide();
+  }
+}
+
+function updateSelectAllCheckbox() {
+  const totalCheckboxes = $(".member-checkbox").length;
+  const checkedCheckboxes = $(".member-checkbox:checked").length;
+  
+  if (totalCheckboxes > 0 && checkedCheckboxes === totalCheckboxes) {
+    $("#selectAllMembers").prop("checked", true);
+    $("#selectAllMembers").prop("indeterminate", false);
+  } else if (checkedCheckboxes > 0) {
+    $("#selectAllMembers").prop("checked", false);
+    $("#selectAllMembers").prop("indeterminate", true);
+  } else {
+    $("#selectAllMembers").prop("checked", false);
+    $("#selectAllMembers").prop("indeterminate", false);
+  }
+}
+
+async function bulkAssignRole() {
+  const selectedMembers = getSelectedMembers();
+  const newRole = $("#bulkRoleSelect").val();
+  
+  if (selectedMembers.length === 0) {
+    alert("No members selected");
+    return;
+  }
+
+  // Close modal and show progress
+  $("#bulkAssignRoleModal").modal("hide");
+  
+  let successCount = 0;
+  let failedCount = 0;
+  const failures = [];
+
+  for (let i = 0; i < selectedMembers.length; i++) {
+    const member = selectedMembers[i];
+    
+    try {
+      const response = await fetch(`/api/groups/${groupId}/members/${member.userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole })
+      });
+
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        successCount++;
+      } else {
+        failedCount++;
+        failures.push(`${member.name}: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      failedCount++;
+      failures.push(`${member.name}: ${error.message}`);
+    }
+  }
+
+  // Show summary
+  let message = `Role assignment complete:\n✅ Success: ${successCount}\n❌ Failed: ${failedCount}`;
+  if (failures.length > 0) {
+    message += "\n\nFailed members:\n" + failures.slice(0, 5).join("\n");
+    if (failures.length > 5) {
+      message += `\n... and ${failures.length - 5} more`;
+    }
+  }
+  alert(message);
+
+  // Reload members and clear selection
+  loadMembers();
+}
+
+async function bulkRemoveMembers() {
+  const selectedMembers = getSelectedMembers();
+  
+  if (selectedMembers.length === 0) {
+    alert("No members selected");
+    return;
+  }
+
+  // Close modal
+  $("#bulkRemoveMembersModal").modal("hide");
+  
+  let successCount = 0;
+  let failedCount = 0;
+  const failures = [];
+
+  for (let i = 0; i < selectedMembers.length; i++) {
+    const member = selectedMembers[i];
+    
+    try {
+      const response = await fetch(`/api/groups/${groupId}/members/${member.userId}`, {
+        method: 'DELETE'
+      });
+
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        successCount++;
+      } else {
+        failedCount++;
+        failures.push(`${member.name}: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      failedCount++;
+      failures.push(`${member.name}: ${error.message}`);
+    }
+  }
+
+  // Show summary
+  let message = `Member removal complete:\n✅ Success: ${successCount}\n❌ Failed: ${failedCount}`;
+  if (failures.length > 0) {
+    message += "\n\nFailed removals:\n" + failures.slice(0, 5).join("\n");
+    if (failures.length > 5) {
+      message += `\n... and ${failures.length - 5} more`;
+    }
+  }
+  alert(message);
+
+  // Reload members and clear selection
+  loadMembers();
 }

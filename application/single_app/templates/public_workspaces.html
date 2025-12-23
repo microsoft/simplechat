@@ -152,6 +152,23 @@
 
         <!-- Removed duplicate filter row outside the collapsible area -->
 
+        <!-- Bulk Actions Bar (shown when documents are selected) -->
+        <div id="publicBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <strong><span id="publicSelectedCount">0</span> document(s) selected</strong>
+            </div>
+            <div>
+              <button type="button" class="btn btn-sm btn-danger" id="public-delete-selected-btn">
+                <i class="bi bi-trash me-1"></i>Delete Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary ms-2" id="public-clear-selection-btn">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+
         <table class="table table-striped" id="public-documents-table">
           <thead>
             <tr>

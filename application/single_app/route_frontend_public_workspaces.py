@@ -7,9 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_public_workspaces(app):
     @app.route("/my_public_workspaces", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -32,9 +30,7 @@ def register_route_frontend_public_workspaces(app):
         )
 
     @app.route("/public_workspaces/<workspace_id>", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -49,9 +45,7 @@ def register_route_frontend_public_workspaces(app):
         )
     
     @app.route("/public_workspaces", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -93,9 +87,7 @@ def register_route_frontend_public_workspaces(app):
         )
 
     @app.route("/public_directory", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
@@ -114,9 +106,7 @@ def register_route_frontend_public_workspaces(app):
         )
 
     @app.route('/set_active_public_workspace', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")

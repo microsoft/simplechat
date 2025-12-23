@@ -35,6 +35,34 @@ def register_route_frontend_control_center(app):
             current_app.logger.error(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")
             return redirect(url_for('admin_settings'))
+    
+    @app.route('/approvals', methods=['GET'])
+    @login_required
+    def approvals():
+        """
+        Approval Requests page accessible to group owners, admins, and control center admins.
+        Shows approval requests based on user's role and permissions.
+        """
+        try:
+            # Get settings for configuration data
+            settings = get_settings()
+            public_settings = sanitize_settings_for_user(settings)
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
+            
+            return render_template('approvals.html', 
+                                 app_settings=public_settings, 
+                                 settings=public_settings,
+                                 user_settings=user_settings)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            current_app.logger.error(f"Error loading approvals: {e}\n{error_trace}")
+            print(f"ERROR IN APPROVALS ROUTE: {e}\n{error_trace}")
+            flash(f"Error loading approvals: {str(e)}", "error")
+            return redirect(url_for('index'))
 
 def get_control_center_statistics():
     """

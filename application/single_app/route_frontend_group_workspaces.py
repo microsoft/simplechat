@@ -7,9 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_group_workspaces(app):
     @app.route('/group_workspaces', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
@@ -72,9 +70,7 @@ def register_route_frontend_group_workspaces(app):
         )
 
     @app.route('/set_active_group', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")

@@ -38,9 +38,7 @@ def get_kernel_agents():
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chat_api():
@@ -3601,9 +3599,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
         )
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def mask_message_api(message_id):
