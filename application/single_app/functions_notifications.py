@@ -19,6 +19,7 @@ from flask import current_app
 import logging
 from config import cosmos_notifications_container
 from functions_group import find_group_by_id
+from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
 
 # Constants
@@ -111,12 +112,12 @@ def create_notification(
                 partition_key = public_workspace_id
         
         if not partition_key:
-            current_app.logger.error("create_notification: No partition key provided")
+            debug_print("create_notification: No partition key provided")
             return None
         
         # Validate notification type
         if notification_type not in NOTIFICATION_TYPES:
-            current_app.logger.warning(f"Unknown notification type: {notification_type}")
+            debug_print(f"Unknown notification type: {notification_type}")
         
         notification_doc = {
             'id': str(uuid.uuid4()),
@@ -140,7 +141,7 @@ def create_notification(
         # Create in Cosmos with partition key based on scope
         cosmos_notifications_container.create_item(notification_doc)
         
-        current_app.logger.info(
+        debug_print(
             f"Notification created: {notification_doc['id']} "
             f"[{scope}] [{notification_type}] for partition: {partition_key}"
         )
@@ -148,7 +149,7 @@ def create_notification(
         return notification_doc
         
     except Exception as e:
-        current_app.logger.error(f"Error creating notification: {e}")
+        debug_print(f"Error creating notification: {e}")
         return None
 
 
@@ -363,7 +364,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
         }
         
     except Exception as e:
-        current_app.logger.error(f"Error fetching notifications for user {user_id}: {e}")
+        debug_print(f"Error fetching notifications for user {user_id}: {e}")
         return {
             'notifications': [],
             'total': 0,
@@ -396,7 +397,7 @@ def get_unread_notification_count(user_id):
         return min(result['total'], 10)  # Cap at 10 for display purposes
         
     except Exception as e:
-        current_app.logger.error(f"Error counting unread notifications for {user_id}: {e}")
+        debug_print(f"Error counting unread notifications for {user_id}: {e}")
         return 0
 
 
@@ -423,7 +424,7 @@ def mark_notification_read(notification_id, user_id):
         ))
         
         if not notifications:
-            current_app.logger.warning(f"Notification {notification_id} not found")
+            debug_print(f"Notification {notification_id} not found")
             return False
         
         notification = notifications[0]
@@ -432,7 +433,7 @@ def mark_notification_read(notification_id, user_id):
         partition_key = notification.get('user_id') or notification.get('group_id') or notification.get('public_workspace_id')
         
         if not partition_key:
-            current_app.logger.error(f"No partition key found for notification {notification_id}")
+            debug_print(f"No partition key found for notification {notification_id}")
             return False
         
         # Add user to read_by if not already present
@@ -442,12 +443,12 @@ def mark_notification_read(notification_id, user_id):
             notification['read_by'] = read_by
             
             cosmos_notifications_container.upsert_item(notification)
-            current_app.logger.info(f"Notification {notification_id} marked read by {user_id}")
+            debug_print(f"Notification {notification_id} marked read by {user_id}")
         
         return True
         
     except Exception as e:
-        current_app.logger.error(f"Error marking notification {notification_id} as read: {e}")
+        debug_print(f"Error marking notification {notification_id} as read: {e}")
         return False
 
 
@@ -474,7 +475,7 @@ def dismiss_notification(notification_id, user_id):
         ))
         
         if not notifications:
-            current_app.logger.warning(f"Notification {notification_id} not found")
+            debug_print(f"Notification {notification_id} not found")
             return False
         
         notification = notifications[0]
@@ -483,7 +484,7 @@ def dismiss_notification(notification_id, user_id):
         partition_key = notification.get('user_id') or notification.get('group_id') or notification.get('public_workspace_id')
         
         if not partition_key:
-            current_app.logger.error(f"No partition key found for notification {notification_id}")
+            debug_print(f"No partition key found for notification {notification_id}")
             return False
         
         # Add user to dismissed_by
@@ -493,12 +494,12 @@ def dismiss_notification(notification_id, user_id):
             notification['dismissed_by'] = dismissed_by
             
             cosmos_notifications_container.upsert_item(notification)
-            current_app.logger.info(f"Notification {notification_id} dismissed by {user_id}")
+            debug_print(f"Notification {notification_id} dismissed by {user_id}")
         
         return True
         
     except Exception as e:
-        current_app.logger.error(f"Error dismissing notification {notification_id}: {e}")
+        debug_print(f"Error dismissing notification {notification_id}: {e}")
         return False
 
 
@@ -527,11 +528,11 @@ def mark_all_read(user_id):
             if mark_notification_read(notification['id'], user_id):
                 count += 1
         
-        current_app.logger.info(f"Marked {count} notifications as read for user {user_id}")
+        debug_print(f"Marked {count} notifications as read for user {user_id}")
         return count
         
     except Exception as e:
-        current_app.logger.error(f"Error marking all notifications as read for {user_id}: {e}")
+        debug_print(f"Error marking all notifications as read for {user_id}: {e}")
         return 0
 
 
@@ -570,9 +571,9 @@ def delete_notification(notification_id):
             partition_key=partition_key
         )
         
-        current_app.logger.info(f"Notification {notification_id} permanently deleted")
+        debug_print(f"Notification {notification_id} permanently deleted")
         return True
         
     except Exception as e:
-        current_app.logger.error(f"Error deleting notification {notification_id}: {e}")
+        debug_print(f"Error deleting notification {notification_id}: {e}")
         return False
