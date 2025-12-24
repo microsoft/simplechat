@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_group import *
+from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):
@@ -450,7 +451,7 @@ def register_route_backend_groups(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
         except Exception as log_error:
-            current_app.logger.error(f"Failed to log member addition activity: {log_error}")
+            debug_print(f"Failed to log member addition activity: {log_error}")
         
         return jsonify({"message": "Member added", "success": True}), 200
 
@@ -655,7 +656,7 @@ def register_route_backend_groups(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
         except Exception as log_error:
-            current_app.logger.error(f"Failed to log role change activity: {log_error}")
+            debug_print(f"Failed to log role change activity: {log_error}")
 
         return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
 

@@ -141,7 +141,8 @@ def get_pending_approvals(
     page: int = 1,
     per_page: int = 20,
     include_completed: bool = False,
-    request_type_filter: Optional[str] = None
+    request_type_filter: Optional[str] = None,
+    status_filter: str = 'pending'
 ) -> Dict[str, Any]:
     """
     Get approval requests that the user is eligible to approve.
@@ -153,6 +154,7 @@ def get_pending_approvals(
         per_page: Items per page
         include_completed: Include approved/denied/executed requests
         request_type_filter: Filter by request type
+        status_filter: Filter by specific status ('pending', 'approved', 'denied', 'executed', 'all')
     
     Returns:
         Dictionary with approvals list, total count, and pagination info
@@ -163,9 +165,11 @@ def get_pending_approvals(
         parameters = []
         
         # Status filter
-        if not include_completed:
+        if status_filter != 'all':
+            # If specific status requested (pending, approved, denied, executed)
             query_parts.append("AND c.status = @status")
-            parameters.append({"name": "@status", "value": STATUS_PENDING})
+            parameters.append({"name": "@status", "value": status_filter})
+        # else: 'all' means no status filter
         
         # Request type filter
         if request_type_filter:
@@ -177,6 +181,10 @@ def get_pending_approvals(
         
         query = " ".join(query_parts)
         
+        debug_print(f"📋 [GET_APPROVALS] Query: {query}")
+        debug_print(f"📋 [GET_APPROVALS] Parameters: {parameters}")
+        debug_print(f"📋 [GET_APPROVALS] status_filter: {status_filter}")
+        
         # Execute cross-partition query (we need to see all groups)
         items = list(cosmos_approvals_container.query_items(
             query=query,
@@ -184,11 +192,23 @@ def get_pending_approvals(
             enable_cross_partition_query=True
         ))
         
-        # Filter by user eligibility (can't do in Cosmos query due to complex logic)
+        debug_print(f"📋 [GET_APPROVALS] Found {len(items)} total items from query")
+        
+        # Filter by user eligibility
+        # For pending requests: check if user can approve
+        # For completed requests: check if user has visibility (was involved or is admin/owner)
         eligible_approvals = []
         for approval in items:
-            if _can_user_approve(approval, user_id, user_roles):
-                eligible_approvals.append(approval)
+            if status_filter == 'pending':
+                # For pending requests, check if user can approve
+                if _can_user_approve(approval, user_id, user_roles):
+                    eligible_approvals.append(approval)
+            else:
+                # For completed requests, check if user has visibility
+                if _can_user_view(approval, user_id, user_roles):
+                    eligible_approvals.append(approval)
+        
+        debug_print(f"📋 [GET_APPROVALS] After eligibility filter: {len(eligible_approvals)} approvals")
         
         # Paginate
         total_count = len(eligible_approvals)
@@ -539,6 +559,52 @@ def auto_deny_expired_approvals() -> int:
         })
         debug_print(f"Error in auto_deny_expired_approvals: {e}")
         return 0
+
+
+def _can_user_view(
+    approval: Dict[str, Any],
+    user_id: str,
+    user_roles: List[str]
+) -> bool:
+    """
+    Check if a user can view a specific approval request (including completed ones).
+    
+    Visibility rules (more permissive than approval rights):
+    - User is the requester, OR
+    - User is the approver, OR
+    - User is the group owner, OR
+    - User is the personal workspace owner (for user document operations), OR
+    - User has 'ControlCenterAdmin' role, OR
+    - User has 'Admin' role
+    
+    Args:
+        approval: Approval request document
+        user_id: User ID to check
+        user_roles: List of roles the user has
+    
+    Returns:
+        True if user can view, False otherwise
+    """
+    # Check if user was involved in the request
+    is_requester = approval.get('requester_id') == user_id
+    is_approver = approval.get('approved_by_id') == user_id
+    
+    # Check if user is the group owner
+    is_group_owner = approval.get('group_owner_id') == user_id
+    
+    # Check if user is the personal workspace owner (for user document deletion)
+    is_personal_workspace_owner = False
+    if approval.get('request_type') == TYPE_DELETE_USER_DOCUMENTS:
+        target_user_id = approval.get('metadata', {}).get('user_id')
+        is_personal_workspace_owner = target_user_id == user_id
+    
+    # Check if user has admin roles
+    has_control_center_admin = 'ControlCenterAdmin' in user_roles
+    has_admin = 'Admin' in user_roles or 'admin' in user_roles
+    
+    # User can view if they meet any of these criteria
+    return (is_requester or is_approver or is_group_owner or 
+            is_personal_workspace_owner or has_control_center_admin or has_admin)
 
 
 def _can_user_approve(

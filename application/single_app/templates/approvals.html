@@ -277,12 +277,9 @@ window.ApprovalManager = {
             // Build query params
             const params = new URLSearchParams({
                 page: this.currentPage,
-                page_size: this.pageSize
+                page_size: this.pageSize,
+                status: this.currentFilters.status || 'pending'
             });
-            
-            if (this.currentFilters.status && this.currentFilters.status !== 'all') {
-                params.append('status', this.currentFilters.status);
-            }
             
             if (this.currentFilters.actionType && this.currentFilters.actionType !== 'all') {
                 params.append('action_type', this.currentFilters.actionType);
@@ -355,6 +352,8 @@ window.ApprovalManager = {
             } else {
                 statusBadge = '<span class="badge bg-danger">Denied</span>';
             }
+        } else if (approval.status === 'executed') {
+            statusBadge = '<span class="badge bg-primary">Executed</span>';
         }
         
         // Request type badge

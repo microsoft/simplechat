@@ -1073,10 +1073,18 @@
                                         <option value="all">All Activity Types</option>
                                         <option value="user_login">User Login</option>
                                         <option value="conversation_creation">Conversation Creation</option>
-                                        <option value="document_creation">Document Creation</option>
-                                        <option value="token_usage">Token Usage</option>
                                         <option value="conversation_deletion">Conversation Deletion</option>
                                         <option value="conversation_archival">Conversation Archival</option>
+                                        <option value="document_creation">Document Creation</option>
+                                        <option value="document_deletion">Document Deletion</option>
+                                        <option value="document_metadata_update">Document Metadata Update</option>
+                                        <option value="token_usage">Token Usage</option>
+                                        <option value="group_status_change">Group Status Change</option>
+                                        <option value="group_member_deleted">Group Member Deleted</option>
+                                        <option value="add_member_directly">Add Member Directly</option>
+                                        <option value="admin_take_ownership_approved">Admin Take Ownership (Approved)</option>
+                                        <option value="delete_group_approved">Delete Group (Approved)</option>
+                                        <option value="delete_all_documents_approved">Delete All Documents (Approved)</option>
                                     </select>
                                 </div>
                                 <div class="col-md-2">
@@ -2893,7 +2901,7 @@ window.GroupManager = {
                 
                 const ownershipResult = await ownershipResponse.json();
                 console.log('Ownership request created:', ownershipResult);
-                alert(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${ownershipResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`);
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${ownershipResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
                 
             } else if (ownership === 'transfer') {
                 // Transfer ownership to another user - create approval request
@@ -2915,11 +2923,11 @@ window.GroupManager = {
                 
                 const transferResult = await transferResponse.json();
                 console.log('Transfer request created:', transferResult);
-                alert(`Ownership transfer request submitted!\n\nStatus: Pending Approval\nApproval ID: ${transferResult.approval_id}\n\nThe request requires approval from the group owner or another admin.`);
+                window.controlCenter.showToast(`Ownership transfer request submitted!<br><br>Status: Pending Approval<br>Approval ID: ${transferResult.approval_id}<br><br>The request requires approval from the group owner or another admin.`, 'success');
                 
             } else {
                 // No ownership change
-                alert('Group settings saved successfully!');
+                window.controlCenter.showToast('Group settings saved successfully!', 'success');
             }
             
             // Reset form fields

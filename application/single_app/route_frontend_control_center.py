@@ -7,6 +7,7 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 import json
+from functions_debug import debug_print
 
 def register_route_frontend_control_center(app):
     @app.route('/admin/control-center', methods=['GET'])
@@ -32,7 +33,7 @@ def register_route_frontend_control_center(app):
                                  settings=public_settings,
                                  statistics=stats)
         except Exception as e:
-            current_app.logger.error(f"Error loading control center: {e}")
+            debug_print(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")
             return redirect(url_for('admin_settings'))
     
@@ -59,7 +60,7 @@ def register_route_frontend_control_center(app):
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            current_app.logger.error(f"Error loading approvals: {e}\n{error_trace}")
+            debug_print(f"Error loading approvals: {e}\n{error_trace}")
             print(f"ERROR IN APPROVALS ROUTE: {e}\n{error_trace}")
             flash(f"Error loading approvals: {str(e)}", "error")
             return redirect(url_for('index'))
@@ -94,7 +95,7 @@ def get_control_center_statistics():
             ))
             stats['total_users'] = user_result[0] if user_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get user count: {e}")
+            debug_print(f"Could not get user count: {e}")
         
         # Get active users in last 30 days using lastUpdated
         try:
@@ -111,7 +112,7 @@ def get_control_center_statistics():
             ))
             stats['active_users_30_days'] = active_users_result[0] if active_users_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get active users count: {e}")
+            debug_print(f"Could not get active users count: {e}")
         
         # Get total groups count
         try:
@@ -122,7 +123,7 @@ def get_control_center_statistics():
             ))
             stats['total_groups'] = groups_result[0] if groups_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get groups count: {e}")
+            debug_print(f"Could not get groups count: {e}")
         
         # Get groups created in last 30 days using createdDate
         try:
@@ -139,7 +140,7 @@ def get_control_center_statistics():
             ))
             stats['locked_groups'] = new_groups_result[0] if new_groups_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get new groups count: {e}")
+            debug_print(f"Could not get new groups count: {e}")
             
         # Get total public workspaces count
         try:
@@ -150,7 +151,7 @@ def get_control_center_statistics():
             ))
             stats['total_public_workspaces'] = workspaces_result[0] if workspaces_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get public workspaces count: {e}")
+            debug_print(f"Could not get public workspaces count: {e}")
             
         # Get public workspaces created in last 30 days using createdDate
         try:
@@ -167,7 +168,7 @@ def get_control_center_statistics():
             ))
             stats['hidden_workspaces'] = new_workspaces_result[0] if new_workspaces_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get new public workspaces count: {e}")
+            debug_print(f"Could not get new public workspaces count: {e}")
         
         # Get blocked users count
         try:
@@ -181,7 +182,7 @@ def get_control_center_statistics():
             ))
             stats['blocked_users'] = blocked_result[0] if blocked_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get blocked users count: {e}")
+            debug_print(f"Could not get blocked users count: {e}")
         
         # Get recent activity (last 24 hours)
         try:
@@ -228,7 +229,7 @@ def get_control_center_statistics():
             stats['recent_activity_24h']['documents'] = recent_docs[0] if recent_docs else 0
             
         except Exception as e:
-            current_app.logger.warning(f"Could not get recent activity: {e}")
+            debug_print(f"Could not get recent activity: {e}")
         
         # Add alerts for blocked users
         if stats['blocked_users'] > 0:
@@ -241,7 +242,7 @@ def get_control_center_statistics():
         return stats
         
     except Exception as e:
-        current_app.logger.error(f"Error getting control center statistics: {e}")
+        debug_print(f"Error getting control center statistics: {e}")
         return {
             'total_users': 0,
             'active_users_30_days': 0,

@@ -5,6 +5,7 @@ from functions_authentication import *
 from functions_settings import *
 from functions_notifications import *
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
 
 def register_route_backend_notifications(app):
 
@@ -52,7 +53,7 @@ def register_route_backend_notifications(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching notifications: {e}")
+            debug_print(f"Error fetching notifications: {e}")
             return jsonify({
                 'success': False,
                 'error': 'Failed to fetch notifications'
@@ -76,7 +77,7 @@ def register_route_backend_notifications(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching notification count: {e}")
+            debug_print(f"Error fetching notification count: {e}")
             return jsonify({
                 'success': False,
                 'count': 0
@@ -106,7 +107,7 @@ def register_route_backend_notifications(app):
                 }), 400
             
         except Exception as e:
-            current_app.logger.error(f"Error marking notification as read: {e}")
+            debug_print(f"Error marking notification as read: {e}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error'
@@ -136,7 +137,7 @@ def register_route_backend_notifications(app):
                 }), 400
             
         except Exception as e:
-            current_app.logger.error(f"Error dismissing notification: {e}")
+            debug_print(f"Error dismissing notification: {e}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error'
@@ -161,7 +162,7 @@ def register_route_backend_notifications(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error marking all notifications as read: {e}")
+            debug_print(f"Error marking all notifications as read: {e}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error'
@@ -202,7 +203,7 @@ def register_route_backend_notifications(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error updating notification settings: {e}")
+            debug_print(f"Error updating notification settings: {e}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error'

@@ -6,7 +6,9 @@ from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
-from functions_documents import update_document
+from functions_documents import update_document, delete_document, delete_document_chunks
+from functions_group import delete_group
+from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 import json
@@ -99,7 +101,7 @@ def enhance_user_with_activity(user, force_refresh=False):
             cached_metrics = user.get('settings', {}).get('metrics')
             if cached_metrics and cached_metrics.get('calculated_at'):
                 try:
-                    current_app.logger.debug(f"Using cached metrics for user {user.get('id')}")
+                    debug_print(f"Using cached metrics for user {user.get('id')}")
                     # Use cached data regardless of age when not forcing refresh
                     if 'login_metrics' in cached_metrics:
                         enhanced['activity']['login_metrics'] = cached_metrics['login_metrics']
@@ -113,14 +115,14 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
                     return enhanced
                 except Exception as cache_e:
-                    current_app.logger.debug(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
+                    debug_print(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
             
             # If no cached metrics and not forcing refresh, return with default/empty metrics
             # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
-            current_app.logger.debug(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
+            debug_print(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
             return enhanced
             
-        current_app.logger.debug(f"Force refresh requested - calculating fresh metrics for user {user.get('id')}")
+        debug_print(f"Force refresh requested - calculating fresh metrics for user {user.get('id')}")
         
         
         # Try to get comprehensive conversation metrics
@@ -215,10 +217,10 @@ def enhance_user_with_activity(user, force_refresh=False):
                         batch_size = size_result[0] if size_result else 0
                         total_message_size += batch_size or 0
                         
-                        current_app.logger.debug(f"Messages batch {i//batch_size + 1}: {batch_messages} messages, {batch_size or 0} bytes")
+                        debug_print(f"Messages batch {i//batch_size + 1}: {batch_messages} messages, {batch_size or 0} bytes")
                                 
                     except Exception as msg_e:
-                        current_app.logger.error(f"Could not query message sizes for batch {i//batch_size + 1}: {msg_e}")
+                        debug_print(f"Could not query message sizes for batch {i//batch_size + 1}: {msg_e}")
                         # Try individual conversation queries as fallback
                         for conv_id in batch_ids:
                             try:
@@ -251,15 +253,15 @@ def enhance_user_with_activity(user, force_refresh=False):
                                 total_message_size += size_result[0] if size_result and size_result[0] else 0
                                     
                             except Exception as individual_e:
-                                current_app.logger.debug(f"Could not query individual conversation {conv_id}: {individual_e}")
+                                debug_print(f"Could not query individual conversation {conv_id}: {individual_e}")
                                 continue
                 
                 enhanced['activity']['chat_metrics']['total_messages'] = total_messages
                 enhanced['activity']['chat_metrics']['total_message_size'] = total_message_size
-                current_app.logger.debug(f"Final chat metrics for user {user.get('id')}: {total_messages} messages, {total_message_size} bytes")
+                debug_print(f"Final chat metrics for user {user.get('id')}: {total_messages} messages, {total_message_size} bytes")
             
         except Exception as e:
-            current_app.logger.debug(f"Could not get chat metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get chat metrics for user {user.get('id')}: {e}")
         
         # Try to get comprehensive login metrics
         try:
@@ -292,7 +294,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                 enhanced['activity']['login_metrics']['last_login'] = login_record.get('timestamp') or login_record.get('created_at')
                 
         except Exception as e:
-            current_app.logger.debug(f"Could not get login metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get login metrics for user {user.get('id')}: {e}")
         
         # Try to get comprehensive document metrics
         try:
@@ -353,14 +355,14 @@ def enhance_user_with_activity(user, force_refresh=False):
                             total_storage_size += blob.size
                             blob_count += 1
                             debug_print(f"💾 [STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
-                            current_app.logger.debug(f"Storage blob {blob.name}: {blob.size} bytes")
+                            debug_print(f"Storage blob {blob.name}: {blob.size} bytes")
                         
                         debug_print(f"💾 [STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
-                        current_app.logger.debug(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
+                        debug_print(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
                     else:
                         debug_print(f"💾 [STORAGE DEBUG] Storage client NOT available for user {user.get('id')}")
-                        current_app.logger.debug(f"Storage client not available for user {user.get('id')}")
+                        debug_print(f"Storage client not available for user {user.get('id')}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
                             SELECT c.file_name, c.number_of_pages FROM c 
@@ -395,16 +397,16 @@ def enhance_user_with_activity(user, force_refresh=False):
                         
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         debug_print(f"💾 [STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
-                        current_app.logger.debug(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
+                        debug_print(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
                     
                 except Exception as storage_e:
                     debug_print(f"❌ [STORAGE DEBUG] Storage calculation failed for user {user.get('id')}: {storage_e}")
-                    current_app.logger.debug(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
+                    debug_print(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
                     # Set to 0 if we can't calculate
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                 
         except Exception as e:
-            current_app.logger.debug(f"Could not get document metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get document metrics for user {user.get('id')}: {e}")
         
         # Save calculated metrics to user settings for caching (only if we calculated fresh data)
         if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
@@ -429,17 +431,17 @@ def enhance_user_with_activity(user, force_refresh=False):
                 update_success = update_user_settings(user.get('id'), settings_update)
                 
                 if update_success:
-                    current_app.logger.debug(f"Successfully cached metrics for user {user.get('id')}")
+                    debug_print(f"Successfully cached metrics for user {user.get('id')}")
                 else:
-                    current_app.logger.debug(f"Failed to cache metrics for user {user.get('id')}")
+                    debug_print(f"Failed to cache metrics for user {user.get('id')}")
                     
             except Exception as cache_save_e:
-                current_app.logger.debug(f"Error saving metrics cache for user {user.get('id')}: {cache_save_e}")
+                debug_print(f"Error saving metrics cache for user {user.get('id')}: {cache_save_e}")
         
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing user data: {e}")
+        debug_print(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
 
 def enhance_public_workspace_with_activity(workspace, force_refresh=False):
@@ -703,7 +705,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing public workspace data: {e}")
+        debug_print(f"Error enhancing public workspace data: {e}")
         return workspace  # Return original workspace data if enhancement fails
 
 def enhance_group_with_activity(group, force_refresh=False):
@@ -967,15 +969,15 @@ def enhance_group_with_activity(group, force_refresh=False):
                             total_storage_size += blob.size
                             blob_count += 1
                             debug_print(f"💾 [GROUP STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
-                            current_app.logger.debug(f"Group storage blob {blob.name}: {blob.size} bytes")
+                            debug_print(f"Group storage blob {blob.name}: {blob.size} bytes")
                         
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         enhanced['storage_size'] = total_storage_size  # Update flat field
-                        current_app.logger.debug(f"Total storage size for group {group_id}: {total_storage_size} bytes")
+                        debug_print(f"Total storage size for group {group_id}: {total_storage_size} bytes")
                     else:
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client NOT available for group {group_id}")
-                        current_app.logger.debug(f"Storage client not available for group {group_id}")
+                        debug_print(f"Storage client not available for group {group_id}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
                             SELECT c.file_name, c.number_of_pages FROM c 
@@ -1011,11 +1013,11 @@ def enhance_group_with_activity(group, force_refresh=False):
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         enhanced['storage_size'] = total_storage_size  # Update flat field
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
-                        current_app.logger.debug(f"Estimated storage size for group {group_id}: {total_storage_size} bytes")
+                        debug_print(f"Estimated storage size for group {group_id}: {total_storage_size} bytes")
                     
                 except Exception as storage_e:
                     debug_print(f"❌ [GROUP STORAGE DEBUG] Storage calculation failed for group {group_id}: {storage_e}")
-                    current_app.logger.debug(f"Could not calculate storage size for group {group_id}: {storage_e}")
+                    debug_print(f"Could not calculate storage size for group {group_id}: {storage_e}")
                     # Set to 0 if we can't calculate
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
@@ -1039,7 +1041,7 @@ def enhance_group_with_activity(group, force_refresh=False):
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing group data: {e}")
+        debug_print(f"Error enhancing group data: {e}")
         return group  # Return original group data if enhancement fails
 
 def get_activity_trends_data(start_date, end_date):
@@ -1122,10 +1124,10 @@ def get_activity_trends_data(start_date, end_date):
                         if date_key in daily_data:
                             daily_data[date_key]['chats'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse conversation timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse conversation timestamp {timestamp}: {e}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query conversation activity logs: {e}")
+            debug_print(f"Could not query conversation activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
 
         # Query 2: Get document activity from activity_logs container (document_creation activity_type)
@@ -1175,12 +1177,12 @@ def get_activity_trends_data(start_date, end_date):
                             # Keep total for backward compatibility
                             daily_data[date_key]['documents'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse document timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse document timestamp {timestamp}: {e}")
             
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query document activity logs: {e}")
+            debug_print(f"Could not query document activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying documents: {e}")
 
         # Query 3: Get login activity from activity_logs container
@@ -1235,10 +1237,10 @@ def get_activity_trends_data(start_date, end_date):
                         if date_key in daily_data:
                             daily_data[date_key]['logins'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse login timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse login timestamp {timestamp}: {e}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query activity logs for login data: {e}")
+            debug_print(f"Could not query activity logs for login data: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying logins: {e}")
 
         # Query 4: Get token usage from activity_logs (token_usage activity_type)
@@ -1288,12 +1290,12 @@ def get_activity_trends_data(start_date, end_date):
                         if date_key in token_daily_data:
                             token_daily_data[date_key][token_type] += token_count
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse token timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse token timestamp {timestamp}: {e}")
             
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Token daily data: {token_daily_data}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query activity logs for token usage: {e}")
+            debug_print(f"Could not query activity logs for token usage: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying tokens: {e}")
             # Initialize empty token data on error
             token_daily_data = {}
@@ -1335,7 +1337,7 @@ def get_activity_trends_data(start_date, end_date):
         return result
 
     except Exception as e:
-        current_app.logger.error(f"Error getting activity trends data: {e}")
+        debug_print(f"Error getting activity trends data: {e}")
         print(f"❌ [ACTIVITY TRENDS DEBUG] Fatal error: {e}")
         return {
             'chats': {},
@@ -1936,7 +1938,7 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         return result
         
     except Exception as e:
-        current_app.logger.error(f"Error getting raw activity trends data: {e}")
+        debug_print(f"Error getting raw activity trends data: {e}")
         debug_print(f"❌ [RAW ACTIVITY DEBUG] Fatal error: {e}")
         return {}
 
@@ -2050,7 +2052,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting users: {e}")
+            debug_print(f"Error getting users: {e}")
             return jsonify({'error': 'Failed to retrieve users'}), 500
     
     @app.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
@@ -2107,7 +2109,7 @@ def register_route_backend_control_center(app):
                 return jsonify({'error': 'Failed to update user access'}), 500
             
         except Exception as e:
-            current_app.logger.error(f"Error updating user access: {e}")
+            debug_print(f"Error updating user access: {e}")
             return jsonify({'error': 'Failed to update user access'}), 500
     
     @app.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
@@ -2164,7 +2166,7 @@ def register_route_backend_control_center(app):
                 return jsonify({'error': 'Failed to update user file upload permissions'}), 500
             
         except Exception as e:
-            current_app.logger.error(f"Error updating user file uploads: {e}")
+            debug_print(f"Error updating user file uploads: {e}")
             return jsonify({'error': 'Failed to update user file upload permissions'}), 500
     
     @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
@@ -2235,7 +2237,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating user document deletion request: {e}")
+            debug_print(f"Error creating user document deletion request: {e}")
             log_event("[ControlCenter] Delete User Documents Request Failed", {
                 "error": str(e),
                 "user_id": user_id
@@ -2299,7 +2301,7 @@ def register_route_backend_control_center(app):
                     else:
                         failed_users.append(user_id)
                 except Exception as e:
-                    current_app.logger.error(f"Error updating user {user_id}: {e}")
+                    debug_print(f"Error updating user {user_id}: {e}")
                     failed_users.append(user_id)
             
             # Log admin action
@@ -2325,7 +2327,7 @@ def register_route_backend_control_center(app):
             return jsonify(result), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error performing bulk user action: {e}")
+            debug_print(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
     # Group Management APIs
@@ -2434,7 +2436,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting groups: {e}")
+            debug_print(f"Error getting groups: {e}")
             return jsonify({'error': 'Failed to retrieve groups'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
@@ -2534,7 +2536,7 @@ def register_route_backend_control_center(app):
                 }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error updating group status: {e}")
+            debug_print(f"Error updating group status: {e}")
             return jsonify({'error': 'Failed to update group status'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
@@ -2559,7 +2561,7 @@ def register_route_backend_control_center(app):
             return jsonify(enhanced_group), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting group details: {e}")
+            debug_print(f"Error getting group details: {e}")
             return jsonify({'error': 'Failed to retrieve group details'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
@@ -2625,7 +2627,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating group deletion request: {e}")
+            debug_print(f"Error creating group deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
@@ -2689,7 +2691,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating document deletion request: {e}")
+            debug_print(f"Error creating document deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
@@ -2724,7 +2726,7 @@ def register_route_backend_control_center(app):
             return jsonify({'members': members}), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting group members: {e}")
+            debug_print(f"Error getting group members: {e}")
             return jsonify({'error': 'Failed to retrieve group members'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
@@ -2793,7 +2795,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating take ownership request: {e}")
+            debug_print(f"Error creating take ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
@@ -2877,7 +2879,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating transfer ownership request: {e}")
+            debug_print(f"Error creating transfer ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
@@ -2985,7 +2987,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error adding group member: {e}")
+            debug_print(f"Error adding group member: {e}")
             return jsonify({'error': 'Failed to add member'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
@@ -3056,9 +3058,9 @@ def register_route_backend_control_center(app):
             """
             
             # Log the queries for debugging
-            current_app.logger.info(f"[Group Activity] Querying for group: {group_id}, days: {days}")
-            current_app.logger.debug(f"[Group Activity] Query 1: {query1}")
-            current_app.logger.debug(f"[Group Activity] Query 2: {query2}")
+            debug_print(f"[Group Activity] Querying for group: {group_id}, days: {days}")
+            debug_print(f"[Group Activity] Query 1: {query1}")
+            debug_print(f"[Group Activity] Query 2: {query2}")
             
             parameters = [
                 {"name": "@group_id", "value": group_id}
@@ -3067,7 +3069,7 @@ def register_route_backend_control_center(app):
             if cutoff_date:
                 parameters.append({"name": "@cutoff_date", "value": cutoff_date})
             
-            current_app.logger.debug(f"[Group Activity] Parameters: {parameters}")
+            debug_print(f"[Group Activity] Parameters: {parameters}")
             
             # Execute both queries
             activities = []
@@ -3079,10 +3081,10 @@ def register_route_backend_control_center(app):
                     parameters=parameters,
                     enable_cross_partition_query=True
                 ))
-                current_app.logger.debug(f"[Group Activity] Query 1 returned {len(activities1)} activities")
+                debug_print(f"[Group Activity] Query 1 returned {len(activities1)} activities")
                 activities.extend(activities1)
             except Exception as e:
-                current_app.logger.warning(f"[Group Activity] Query 1 failed: {e}")
+                debug_print(f"[Group Activity] Query 1 failed: {e}")
             
             try:
                 # Query 2: Document activities
@@ -3091,10 +3093,10 @@ def register_route_backend_control_center(app):
                     parameters=parameters,
                     enable_cross_partition_query=True
                 ))
-                current_app.logger.debug(f"[Group Activity] Query 2 returned {len(activities2)} activities")
+                debug_print(f"[Group Activity] Query 2 returned {len(activities2)} activities")
                 activities.extend(activities2)
             except Exception as e:
-                current_app.logger.warning(f"[Group Activity] Query 2 failed: {e}")
+                debug_print(f"[Group Activity] Query 2 failed: {e}")
             
             # Sort combined results by timestamp descending
             activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
@@ -3193,7 +3195,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching group activity: {e}")
+            debug_print(f"Error fetching group activity: {e}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
@@ -3267,7 +3269,7 @@ def register_route_backend_control_center(app):
                     enhanced_workspace = enhance_public_workspace_with_activity(workspace, force_refresh=force_refresh)
                     enhanced_workspaces.append(enhanced_workspace)
                 except Exception as enhance_e:
-                    current_app.logger.error(f"Error enhancing workspace {workspace.get('id', 'unknown')}: {enhance_e}")
+                    debug_print(f"Error enhancing workspace {workspace.get('id', 'unknown')}: {enhance_e}")
                     # Include the original workspace if enhancement fails
                     enhanced_workspaces.append(workspace)
             
@@ -3302,7 +3304,7 @@ def register_route_backend_control_center(app):
                 })
             
         except Exception as e:
-            current_app.logger.error(f"Error getting public workspaces for control center: {e}")
+            debug_print(f"Error getting public workspaces for control center: {e}")
             return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
 
     # Activity Trends API
@@ -3352,7 +3354,7 @@ def register_route_backend_control_center(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error getting activity trends: {e}")
+            debug_print(f"Error getting activity trends: {e}")
             print(f"❌ [Activity Trends API] Error: {e}")
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
@@ -3545,7 +3547,7 @@ def register_route_backend_control_center(app):
             return response
             
         except Exception as e:
-            current_app.logger.error(f"Error exporting activity trends: {e}")
+            debug_print(f"Error exporting activity trends: {e}")
             return jsonify({'error': 'Failed to export data'}), 500
 
     @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
@@ -3701,7 +3703,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating activity trends chat: {e}")
+            debug_print(f"Error creating activity trends chat: {e}")
             return jsonify({'error': 'Failed to create chat conversation'}), 500
     
     # Data Refresh API
@@ -3717,7 +3719,7 @@ def register_route_backend_control_center(app):
         """
         try:
             debug_print("🔄 [REFRESH DEBUG] Starting Control Center data refresh...")
-            current_app.logger.info("Starting Control Center data refresh...")
+            debug_print("Starting Control Center data refresh...")
             
             # Check if request has specific user_id
             from flask import request
@@ -3756,14 +3758,14 @@ def register_route_backend_control_center(app):
                     refreshed_count += 1
                     
                     debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed user {user_id}")
-                    current_app.logger.debug(f"Refreshed metrics for user {user_id}")
+                    debug_print(f"Refreshed metrics for user {user_id}")
                 except Exception as user_error:
                     failed_count += 1
                     debug_print(f"❌ [REFRESH DEBUG] Failed to refresh user {user.get('id')}: {user_error}")
                     debug_print(f"❌ [REFRESH DEBUG] User error traceback:")
                     import traceback
                     debug_print(traceback.format_exc())
-                    current_app.logger.error(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
+                    debug_print(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
             
             debug_print(f"🔄 [REFRESH DEBUG] User refresh loop completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
             
@@ -3791,18 +3793,18 @@ def register_route_backend_control_center(app):
                         groups_refreshed_count += 1
                         
                         debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed group {group_id}")
-                        current_app.logger.debug(f"Refreshed metrics for group {group_id}")
+                        debug_print(f"Refreshed metrics for group {group_id}")
                     except Exception as group_error:
                         groups_failed_count += 1
                         debug_print(f"❌ [REFRESH DEBUG] Failed to refresh group {group.get('id')}: {group_error}")
                         debug_print(f"❌ [REFRESH DEBUG] Group error traceback:")
                         import traceback
                         debug_print(traceback.format_exc())
-                        current_app.logger.error(f"Failed to refresh metrics for group {group.get('id')}: {group_error}")
+                        debug_print(f"Failed to refresh metrics for group {group.get('id')}: {group_error}")
                         
             except Exception as groups_error:
                 debug_print(f"❌ [REFRESH DEBUG] Error querying groups: {groups_error}")
-                current_app.logger.error(f"Error querying groups for refresh: {groups_error}")
+                debug_print(f"Error querying groups for refresh: {groups_error}")
             
             debug_print(f"🔄 [REFRESH DEBUG] Group refresh loop completed. Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
             
@@ -3818,19 +3820,19 @@ def register_route_backend_control_center(app):
                     
                     if not update_success:
                         debug_print("⚠️ [REFRESH DEBUG] Failed to update admin settings")
-                        current_app.logger.warning("Failed to update admin settings with refresh timestamp")
+                        debug_print("Failed to update admin settings with refresh timestamp")
                     else:
                         debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
-                        current_app.logger.info("Updated admin settings with refresh timestamp")
+                        debug_print("Updated admin settings with refresh timestamp")
                 else:
                     debug_print("⚠️ [REFRESH DEBUG] Could not get admin settings")
                     
             except Exception as admin_error:
                 debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
-                current_app.logger.error(f"Error updating admin settings: {admin_error}")
+                debug_print(f"Error updating admin settings: {admin_error}")
             
             debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Users - Refreshed: {refreshed_count}, Failed: {failed_count}. Groups - Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
-            current_app.logger.info(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
+            debug_print(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
             
             return jsonify({
                 'success': True,
@@ -3847,7 +3849,7 @@ def register_route_backend_control_center(app):
             debug_print("💥 [REFRESH DEBUG] Full traceback:")
             import traceback
             debug_print(traceback.format_exc())
-            current_app.logger.error(f"Error refreshing Control Center data: {e}")
+            debug_print(f"Error refreshing Control Center data: {e}")
             return jsonify({'error': 'Failed to refresh data'}), 500
     
     # Get refresh status API
@@ -3872,7 +3874,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting refresh status: {e}")
+            debug_print(f"Error getting refresh status: {e}")
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
     # Activity Log Migration APIs
@@ -3910,7 +3912,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['conversations_without_logs'] = conversations_result[0] if conversations_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking conversations migration status: {e}")
+                debug_print(f"Error checking conversations migration status: {e}")
             
             # Check personal documents without the flag
             try:
@@ -3925,7 +3927,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['personal_documents_without_logs'] = personal_docs_result[0] if personal_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking personal documents migration status: {e}")
+                debug_print(f"Error checking personal documents migration status: {e}")
             
             # Check group documents without the flag
             try:
@@ -3940,7 +3942,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['group_documents_without_logs'] = group_docs_result[0] if group_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking group documents migration status: {e}")
+                debug_print(f"Error checking group documents migration status: {e}")
             
             # Check public documents without the flag
             try:
@@ -3955,7 +3957,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['public_documents_without_logs'] = public_docs_result[0] if public_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking public documents migration status: {e}")
+                debug_print(f"Error checking public documents migration status: {e}")
             
             # Calculate totals
             migration_status['total_documents_without_logs'] = (
@@ -3974,7 +3976,7 @@ def register_route_backend_control_center(app):
             return jsonify(migration_status), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting migration status: {e}")
+            debug_print(f"Error getting migration status: {e}")
             return jsonify({'error': 'Failed to get migration status'}), 500
     
     @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
@@ -4008,7 +4010,7 @@ def register_route_backend_control_center(app):
             }
             
             # Migrate conversations
-            current_app.logger.info("Starting conversation migration...")
+            debug_print("Starting conversation migration...")
             try:
                 conversations_query = """
                     SELECT * 
@@ -4020,7 +4022,7 @@ def register_route_backend_control_center(app):
                     enable_cross_partition_query=True
                 ))
                 
-                current_app.logger.info(f"Found {len(conversations)} conversations to migrate")
+                debug_print(f"Found {len(conversations)} conversations to migrate")
                 
                 for conv in conversations:
                     try:
@@ -4053,16 +4055,16 @@ def register_route_backend_control_center(app):
                     except Exception as conv_error:
                         results['conversations_failed'] += 1
                         error_msg = f"Failed to migrate conversation {conv.get('id')}: {str(conv_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during conversation migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate personal documents
-            current_app.logger.info("Starting personal documents migration...")
+            debug_print("Starting personal documents migration...")
             try:
                 personal_docs_query = """
                     SELECT * 
@@ -4119,16 +4121,16 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['personal_documents_failed'] += 1
                         error_msg = f"Failed to migrate personal document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during personal documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate group documents
-            current_app.logger.info("Starting group documents migration...")
+            debug_print("Starting group documents migration...")
             try:
                 group_docs_query = """
                     SELECT * 
@@ -4187,16 +4189,16 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['group_documents_failed'] += 1
                         error_msg = f"Failed to migrate group document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during group documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate public documents
-            current_app.logger.info("Starting public documents migration...")
+            debug_print("Starting public documents migration...")
             try:
                 public_docs_query = """
                     SELECT * 
@@ -4255,12 +4257,12 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['public_documents_failed'] += 1
                         error_msg = f"Failed to migrate public document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during public documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Calculate totals
@@ -4278,12 +4280,12 @@ def register_route_backend_control_center(app):
                 results['public_documents_failed']
             )
             
-            current_app.logger.info(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
+            debug_print(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
             
             return jsonify(results), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error during migration: {e}")
+            debug_print(f"Error during migration: {e}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': f'Migration failed: {str(e)}'}), 500
@@ -4337,8 +4339,8 @@ def register_route_backend_control_center(app):
                 OFFSET {offset} LIMIT {per_page}
             """
             
-            current_app.logger.info(f"Activity logs query: {logs_query}")
-            current_app.logger.info(f"Query parameters: {parameters}")
+            debug_print(f"Activity logs query: {logs_query}")
+            debug_print(f"Query parameters: {parameters}")
             
             logs = list(cosmos_activity_logs_container.query_items(
                 query=logs_query,
@@ -4405,7 +4407,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting activity logs: {e}")
+            debug_print(f"Error getting activity logs: {e}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': 'Failed to fetch activity logs'}), 500
@@ -4479,9 +4481,9 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching approvals: {e}")
+            debug_print(f"Error fetching approvals: {e}")
             import traceback
-            current_app.logger.error(traceback.format_exc())
+            debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
     @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
@@ -4516,9 +4518,9 @@ def register_route_backend_control_center(app):
             return jsonify(approval), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching approval {approval_id}: {e}")
+            debug_print(f"Error fetching approval {approval_id}: {e}")
             import traceback
-            current_app.logger.error(traceback.format_exc())
+            debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
     @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
@@ -4568,7 +4570,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error approving request: {e}")
+            debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
@@ -4618,7 +4620,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error denying request: {e}")
+            debug_print(f"Error denying request: {e}")
             return jsonify({'error': str(e)}), 500
     
     # New standalone approvals API endpoints (accessible to all users with permissions)
@@ -4647,8 +4649,13 @@ def register_route_backend_control_center(app):
             action_type_filter = request.args.get('action_type', 'all')
             search_query = request.args.get('search', '')
             
+            debug_print(f"📋 [APPROVALS API] Fetching approvals - status_filter: {status_filter}, action_type: {action_type_filter}")
+            
             # Determine include_completed based on status filter
-            include_completed = (status_filter == 'all' or status_filter in ['approved', 'denied'])
+            # 'all' means show everything, specific statuses mean show only those
+            include_completed = (status_filter in ['all', 'approved', 'denied', 'executed'])
+            
+            debug_print(f"📋 [APPROVALS API] include_completed: {include_completed}")
             
             # Map action_type to request_type_filter
             request_type_filter = None if action_type_filter == 'all' else action_type_filter
@@ -4660,7 +4667,8 @@ def register_route_backend_control_center(app):
                 page=page,
                 per_page=page_size,
                 include_completed=include_completed,
-                request_type_filter=request_type_filter
+                request_type_filter=request_type_filter,
+                status_filter=status_filter
             )
             
             # Add can_approve field to each approval
@@ -4681,9 +4689,9 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching approvals: {e}")
+            debug_print(f"Error fetching approvals: {e}")
             import traceback
-            current_app.logger.error(traceback.format_exc())
+            debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
     @app.route('/api/approvals/<approval_id>', methods=['GET'])
@@ -4716,9 +4724,9 @@ def register_route_backend_control_center(app):
             return jsonify(approval), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error fetching approval {approval_id}: {e}")
+            debug_print(f"Error fetching approval {approval_id}: {e}")
             import traceback
-            current_app.logger.error(traceback.format_exc())
+            debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
     @app.route('/api/approvals/<approval_id>/approve', methods=['POST'])
@@ -4766,7 +4774,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error approving request: {e}")
+            debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/approvals/<approval_id>/deny', methods=['POST'])
@@ -4814,7 +4822,7 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error denying request: {e}")
+            debug_print(f"Error denying request: {e}")
             return jsonify({'error': str(e)}), 500
 
     def _execute_approved_action(approval, executor_id, executor_email, executor_name):
@@ -5050,40 +5058,82 @@ def register_route_backend_control_center(app):
         try:
             group_id = approval['group_id']
             
-            # Query all documents for this group
-            query = "SELECT * FROM c WHERE c.group_id = @group_id"
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Starting deletion for group_id: {group_id}")
+            
+            # Query all document metadata for this group
+            query = "SELECT * FROM c WHERE c.group_id = @group_id AND c.type = 'document_metadata'"
             parameters = [{"name": "@group_id", "value": group_id}]
             
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Query: {query}")
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Parameters: {parameters}")
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Using partition_key: {group_id}")
+            
+            # Query with partition key for better performance
             documents = list(cosmos_group_documents_container.query_items(
                 query=query,
                 parameters=parameters,
-                enable_cross_partition_query=True
+                partition_key=group_id
             ))
+            
+            debug_print(f"📊 [DELETE_GROUP_DOCS] Found {len(documents)} documents with partition key query")
+            
+            # If no documents found with partition key, try cross-partition query
+            if len(documents) == 0:
+                debug_print(f"⚠️ [DELETE_GROUP_DOCS] No documents found with partition key, trying cross-partition query")
+                documents = list(cosmos_group_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"📊 [DELETE_GROUP_DOCS] Cross-partition query found {len(documents)} documents")
+                
+                # Log sample document for debugging
+                if len(documents) > 0:
+                    sample_doc = documents[0]
+                    debug_print(f"📄 [DELETE_GROUP_DOCS] Sample document structure: id={sample_doc.get('id')}, type={sample_doc.get('type')}, group_id={sample_doc.get('group_id')}")
             
             deleted_count = 0
             
+            # Use proper deletion APIs for each document
             for doc in documents:
                 try:
-                    # Delete blob from Azure Storage
-                    blob_path = f"group-workspaces/{group_id}/{doc['id']}/{doc.get('file_name', '')}"
-                    blob_client = blob_service_client.get_blob_client(
-                        container=app.config.get('AZURE_STORAGE_CONTAINER_NAME', 'documents'),
-                        blob=blob_path
+                    doc_id = doc['id']
+                    debug_print(f"🗑️ [DELETE_GROUP_DOCS] Deleting document {doc_id}")
+                    
+                    # Use delete_document API which handles:
+                    # - Blob storage deletion
+                    # - AI Search index deletion
+                    # - Cosmos DB metadata deletion
+                    # Note: For group documents, we don't have a user_id, so we pass None
+                    delete_result = delete_document(
+                        user_id=None,
+                        document_id=doc_id,
+                        group_id=group_id
                     )
                     
-                    if blob_client.exists():
-                        blob_client.delete_blob()
-                    
-                    # Delete document from Cosmos
-                    cosmos_group_documents_container.delete_item(
-                        item=doc['id'],
-                        partition_key=group_id
-                    )
-                    
-                    deleted_count += 1
+                    # Check if delete_result is valid and successful
+                    if delete_result and delete_result.get('success'):
+                        # Delete document chunks using proper API
+                        delete_document_chunks(
+                            document_id=doc_id,
+                            group_id=group_id
+                        )
+                        
+                        deleted_count += 1
+                        debug_print(f"✅ [DELETE_GROUP_DOCS] Successfully deleted document {doc_id}")
+                    else:
+                        error_msg = delete_result.get('message') if delete_result else 'delete_document returned None'
+                        debug_print(f"❌ [DELETE_GROUP_DOCS] Failed to delete document {doc_id}: {error_msg}")
                     
                 except Exception as doc_error:
-                    current_app.logger.error(f"Error deleting document {doc['id']}: {doc_error}")
+                    debug_print(f"❌ [DELETE_GROUP_DOCS] Error deleting document {doc.get('id')}: {doc_error}")
+            
+            # Invalidate group search cache after deletion
+            try:
+                invalidate_group_search_cache(group_id)
+                debug_print(f"🔄 [DELETE_GROUP_DOCS] Invalidated search cache for group {group_id}")
+            except Exception as cache_error:
+                debug_print(f"⚠️ [DELETE_GROUP_DOCS] Could not invalidate search cache: {cache_error}")
             
             # Log to activity logs
             activity_record = {
@@ -5103,12 +5153,15 @@ def register_route_backend_control_center(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
+            debug_print(f"[ControlCenter] Group Documents Deleted (Approved) -- group_id: {group_id}, documents_deleted: {deleted_count}")
+            
             return {
                 'success': True,
                 'message': f'Deleted {deleted_count} documents'
             }
             
         except Exception as e:
+            debug_print(f"[DELETE_GROUP_DOCS] Fatal error: {e}")
             return {'success': False, 'message': f'Failed to delete documents: {str(e)}'}
 
     def _execute_delete_group(approval, executor_id, executor_email, executor_name):
@@ -5136,7 +5189,7 @@ def register_route_backend_control_center(app):
                         partition_key=group_id
                     )
             except Exception as conv_error:
-                current_app.logger.error(f"Error deleting conversations: {conv_error}")
+                debug_print(f"Error deleting conversations: {conv_error}")
             
             # Delete group messages (optional)
             try:
@@ -5152,13 +5205,12 @@ def register_route_backend_control_center(app):
                         partition_key=group_id
                     )
             except Exception as msg_error:
-                current_app.logger.error(f"Error deleting messages: {msg_error}")
+                debug_print(f"Error deleting messages: {msg_error}")
             
-            # Finally, delete the group itself
-            cosmos_groups_container.delete_item(
-                item=group_id,
-                partition_key=group_id
-            )
+            # Finally, delete the group itself using proper API
+            debug_print(f"🗑️ [DELETE GROUP] Deleting group document using delete_group() API")
+            delete_group(group_id)
+            debug_print(f"✅ [DELETE GROUP] Group {group_id} successfully deleted")
             
             # Log to activity logs
             activity_record = {
@@ -5188,6 +5240,9 @@ def register_route_backend_control_center(app):
     def _execute_delete_user_documents(approval, executor_id, executor_email, executor_name):
         """Execute delete all user documents action."""
         try:
+            from functions_documents import delete_document, delete_document_chunks
+            from utils_cache import invalidate_personal_search_cache
+            
             user_id = approval['metadata'].get('user_id')
             user_email = approval['metadata'].get('user_email', 'unknown')
             user_name = approval['metadata'].get('user_name', user_email)
@@ -5196,47 +5251,64 @@ def register_route_backend_control_center(app):
                 return {'success': False, 'message': 'User ID not found in approval metadata'}
             
             # Query all personal documents for this user
-            query = "SELECT * FROM c WHERE c.user_id = @user_id AND (NOT IS_DEFINED(c.group_id) OR c.group_id = null)"
+            # Personal documents are stored in cosmos_user_documents_container with user_id as partition key
+            query = "SELECT * FROM c WHERE c.user_id = @user_id"
             parameters = [{"name": "@user_id", "value": user_id}]
+            
+            debug_print(f"🔍 [DELETE_USER_DOCS] Querying for user_id: {user_id}")
+            debug_print(f"🔍 [DELETE_USER_DOCS] Query: {query}")
+            debug_print(f"🔍 [DELETE_USER_DOCS] Container: cosmos_user_documents_container")
             
             documents = list(cosmos_user_documents_container.query_items(
                 query=query,
                 parameters=parameters,
-                enable_cross_partition_query=True
+                partition_key=user_id  # Use partition key for efficient query
             ))
+            
+            debug_print(f"📊 [DELETE_USER_DOCS] Found {len(documents)} documents with partition key query")
+            if len(documents) > 0:
+                debug_print(f"📄 [DELETE_USER_DOCS] First document sample: id={documents[0].get('id', 'no-id')}, file_name={documents[0].get('file_name', 'no-filename')}, type={documents[0].get('type', 'no-type')}")
+            else:
+                # Try a cross-partition query to see if documents exist elsewhere
+                debug_print(f"⚠️ [DELETE_USER_DOCS] No documents found with partition key, trying cross-partition query...")
+                documents = list(cosmos_user_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"📊 [DELETE_USER_DOCS] Cross-partition query found {len(documents)} documents")
+                if len(documents) > 0:
+                    sample_doc = documents[0]
+                    debug_print(f"📄 [DELETE_USER_DOCS] Sample doc fields: {list(sample_doc.keys())}")
+                    debug_print(f"📄 [DELETE_USER_DOCS] Sample doc: id={sample_doc.get('id')}, type={sample_doc.get('type')}, user_id={sample_doc.get('user_id')}, file_name={sample_doc.get('file_name')}")
             
             deleted_count = 0
             
+            # Use the existing delete_document function for proper cleanup
             for doc in documents:
                 try:
-                    # Delete blob from Azure Storage
-                    blob_path = f"{user_id}/{doc['id']}/{doc.get('file_name', '')}"
-                    blob_client = blob_service_client.get_blob_client(
-                        container=app.config.get('AZURE_STORAGE_CONTAINER_NAME', 'documents'),
-                        blob=blob_path
-                    )
+                    document_id = doc['id']
+                    debug_print(f"🗑️ [DELETE_USER_DOCS] Deleting document {document_id}: {doc.get('file_name', 'unknown')}")
                     
-                    if blob_client.exists():
-                        blob_client.delete_blob()
-                    
-                    # Delete from AI Search index if enabled
-                    if app.config.get('AZURE_SEARCH_ENDPOINT'):
-                        try:
-                            from functions_documents import delete_document_chunks
-                            delete_document_chunks(doc['id'])
-                        except Exception as search_error:
-                            current_app.logger.error(f"Error deleting from AI Search: {search_error}")
-                    
-                    # Delete document from Cosmos
-                    cosmos_user_documents_container.delete_item(
-                        item=doc['id'],
-                        partition_key=user_id
-                    )
+                    # Use the proper delete_document function which handles:
+                    # - Blob storage deletion
+                    # - AI Search index deletion
+                    # - Cosmos DB document deletion
+                    delete_document(user_id, document_id)
+                    delete_document_chunks(document_id)
                     
                     deleted_count += 1
+                    debug_print(f"✅ [DELETE_USER_DOCS] Successfully deleted document {document_id}")
                     
                 except Exception as doc_error:
-                    current_app.logger.error(f"Error deleting user document {doc['id']}: {doc_error}")
+                    debug_print(f"❌ [DELETE_USER_DOCS] Error deleting document {doc.get('id')}: {doc_error}")
+            
+            # Invalidate search cache for this user
+            try:
+                invalidate_personal_search_cache(user_id)
+                debug_print(f"🔄 [DELETE_USER_DOCS] Invalidated search cache for user {user_id}")
+            except Exception as cache_error:
+                debug_print(f"⚠️ [DELETE_USER_DOCS] Failed to invalidate search cache: {cache_error}")
             
             # Log to activity logs
             activity_record = {
@@ -5272,7 +5344,7 @@ def register_route_backend_control_center(app):
             }
             
         except Exception as e:
-            current_app.logger.error(f"Error deleting user documents: {e}")
+            debug_print(f"Error deleting user documents: {e}")
             return {'success': False, 'message': f'Failed to delete user documents: {str(e)}'}
 
             return jsonify({'error': 'Failed to retrieve activity logs'}), 500

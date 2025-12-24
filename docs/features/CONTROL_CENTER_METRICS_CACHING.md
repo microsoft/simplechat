@@ -258,13 +258,13 @@ Performance Improvement: 300x faster!
 ### Logging Enhancements
 ```python
 # Cache hit logging
-current_app.logger.debug(f"Using cached metrics for user {user_id}")
+debug_print(f"Using cached metrics for user {user_id}")
 
 # Cache miss logging  
-current_app.logger.debug(f"Cache expired for user {user_id}, refreshing metrics")
+debug_print(f"Cache expired for user {user_id}, refreshing metrics")
 
 # Refresh operation logging
-current_app.logger.info(f"Control Center data refresh completed. Refreshed: {count}")
+debug_print(f"Control Center data refresh completed. Refreshed: {count}")
 ```
 
 ### Metrics to Monitor

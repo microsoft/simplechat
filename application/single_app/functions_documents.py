@@ -5261,12 +5261,16 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 print(f"📢 Created notification for public workspace {public_workspace_id}")
                 
             elif group_id:
-                # Notification for all group members
+                # Notification for all group members - get group name
+                from functions_group import find_group_by_id
+                group = find_group_by_id(group_id)
+                group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+                
                 create_group_notification(
                     group_id=group_id,
                     notification_type='document_processing_complete',
                     title=notification_title,
-                    message=notification_message,
+                    message=f"Document uploaded to {group_name} has been processed successfully with {total_chunks_saved} chunks.",
                     link_url='/group_workspaces',
                     link_context={
                         'workspace_type': 'group',
@@ -5276,10 +5280,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                     metadata={
                         'document_id': document_id,
                         'file_name': original_filename,
-                        'chunks': total_chunks_saved
+                        'chunks': total_chunks_saved,
+                        'group_name': group_name,
+                        'group_id': group_id
                     }
                 )
-                print(f"📢 Created notification for group {group_id}")
+                print(f"📢 Created notification for group {group_id} ({group_name})")
                 
             else:
                 # Personal notification for the uploader

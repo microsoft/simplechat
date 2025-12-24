@@ -15,7 +15,7 @@ from openapi_security import openapi_validator
 from openapi_auth_analyzer import analyze_openapi_authentication, get_authentication_help_text
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_security import is_valid_storage_name
-
+from functions_debug import debug_print
 
 def register_openapi_routes(app):
     """Register OpenAPI-related routes."""
@@ -130,7 +130,7 @@ def register_openapi_routes(app):
                     os.unlink(temp_path)
                     
         except Exception as e:
-            current_app.logger.error(f"Error uploading OpenAPI spec: {str(e)}")
+            debug_print(f"Error uploading OpenAPI spec: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during upload'
@@ -228,7 +228,7 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error validating OpenAPI URL: {str(e)}")
+            debug_print(f"Error validating OpenAPI URL: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during validation'
@@ -338,7 +338,7 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error downloading OpenAPI spec from URL: {str(e)}")
+            debug_print(f"Error downloading OpenAPI spec from URL: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during download'
@@ -386,7 +386,7 @@ def register_openapi_routes(app):
                                 'last_modified': os.path.getmtime(file_path)
                             })
                     except Exception as e:
-                        current_app.logger.warning(f"Could not read spec file {filename}: {str(e)}")
+                        debug_print(f"Could not read spec file {filename}: {str(e)}")
                         continue
             
             return jsonify({
@@ -395,7 +395,7 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error listing OpenAPI specs: {str(e)}")
+            debug_print(f"Error listing OpenAPI specs: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error while listing specifications'
@@ -443,7 +443,7 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error analyzing authentication: {str(e)}")
+            debug_print(f"Error analyzing authentication: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during authentication analysis'

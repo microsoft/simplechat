@@ -2086,8 +2086,19 @@ class ControlCenter {
         }
 
         tbody.innerHTML = logs.map(log => {
-            const user = userMap[log.user_id] || {};
-            const userName = user.display_name || user.email || log.user_id;
+            // Handle user identification - some activities may not have user_id (system activities)
+            let userName = 'System';
+            if (log.user_id) {
+                const user = userMap[log.user_id] || {};
+                userName = user.display_name || user.email || log.user_id || 'Unknown User';
+            } else if (log.admin_email) {
+                userName = log.admin_email;
+            } else if (log.requester_email) {
+                userName = log.requester_email;
+            } else if (log.added_by_email) {
+                userName = log.added_by_email;
+            }
+            
             const timestamp = new Date(log.timestamp).toLocaleString();
             const activityType = this.formatActivityType(log.activity_type);
             const details = this.formatActivityDetails(log);
@@ -2109,12 +2120,20 @@ class ControlCenter {
         const typeMap = {
             'user_login': 'User Login',
             'conversation_creation': 'Conversation Created',
-            'document_creation': 'Document Created',
-            'token_usage': 'Token Usage',
             'conversation_deletion': 'Conversation Deleted',
-            'conversation_archival': 'Conversation Archived'
+            'conversation_archival': 'Conversation Archived',
+            'document_creation': 'Document Created',
+            'document_deletion': 'Document Deleted',
+            'document_metadata_update': 'Document Metadata Updated',
+            'token_usage': 'Token Usage',
+            'group_status_change': 'Group Status Change',
+            'group_member_deleted': 'Group Member Deleted',
+            'add_member_directly': 'Add Member Directly',
+            'admin_take_ownership_approved': 'Admin Take Ownership (Approved)',
+            'delete_group_approved': 'Delete Group (Approved)',
+            'delete_all_documents_approved': 'Delete All Documents (Approved)'
         };
-        return typeMap[activityType] || activityType;
+        return typeMap[activityType] || activityType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     }
 
     formatActivityDetails(log) {
@@ -2129,17 +2148,6 @@ class ControlCenter {
                 const convId = log.conversation?.conversation_id || 'N/A';
                 return `Title: ${this.escapeHtml(convTitle)}<br><small class="text-muted">ID: ${convId}</small>`;
                 
-            case 'document_creation':
-                const fileName = log.document?.file_name || 'Unknown';
-                const fileType = log.document?.file_type || '';
-                return `File: ${this.escapeHtml(fileName)}<br><small class="text-muted">Type: ${fileType}</small>`;
-                
-            case 'token_usage':
-                const tokenType = log.token_type || 'unknown';
-                const totalTokens = log.usage?.total_tokens || 0;
-                const model = log.usage?.model || 'N/A';
-                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
-                
             case 'conversation_deletion':
                 const delTitle = log.conversation?.title || 'Untitled';
                 const delId = log.conversation?.conversation_id || 'N/A';
@@ -2149,6 +2157,64 @@ class ControlCenter {
                 const archTitle = log.conversation?.title || 'Untitled';
                 const archId = log.conversation?.conversation_id || 'N/A';
                 return `Archived: ${this.escapeHtml(archTitle)}<br><small class="text-muted">ID: ${archId}</small>`;
+                
+            case 'document_creation':
+                const fileName = log.document?.file_name || 'Unknown';
+                const fileType = log.document?.file_type || '';
+                return `File: ${this.escapeHtml(fileName)}<br><small class="text-muted">Type: ${fileType}</small>`;
+                
+            case 'document_deletion':
+                const delFileName = log.document?.file_name || 'Unknown';
+                const delFileType = log.document?.file_type || '';
+                return `Deleted: ${this.escapeHtml(delFileName)}<br><small class="text-muted">Type: ${delFileType}</small>`;
+                
+            case 'document_metadata_update':
+                const updatedFileName = log.document?.file_name || 'Unknown';
+                const updatedFields = Object.keys(log.updated_fields || {}).join(', ') || 'N/A';
+                return `File: ${this.escapeHtml(updatedFileName)}<br><small class="text-muted">Updated: ${updatedFields}</small>`;
+                
+            case 'token_usage':
+                const tokenType = log.token_type || 'unknown';
+                const totalTokens = log.usage?.total_tokens || 0;
+                const model = log.usage?.model || 'N/A';
+                return `Type: ${tokenType}<br>Tokens: ${totalTokens.toLocaleString()}<br><small class="text-muted">Model: ${model}</small>`;
+                
+            case 'group_status_change':
+                const groupName = log.group?.group_name || 'Unknown Group';
+                const oldStatus = log.status_change?.old_status || 'N/A';
+                const newStatus = log.status_change?.new_status || 'N/A';
+                return `Group: ${this.escapeHtml(groupName)}<br>Status: ${oldStatus} → ${newStatus}`;
+                
+            case 'group_member_deleted':
+                const memberName = log.removed_member?.name || log.removed_member?.email || 'Unknown';
+                const memberGroupName = log.group?.group_name || 'Unknown Group';
+                return `Removed: ${this.escapeHtml(memberName)}<br><small class="text-muted">From: ${this.escapeHtml(memberGroupName)}</small>`;
+                
+            case 'add_member_directly':
+                const addedMemberName = log.member_name || log.member_email || 'Unknown';
+                const addedToGroup = log.group_name || 'Unknown Group';
+                const memberRole = log.member_role || 'user';
+                return `Added: ${this.escapeHtml(addedMemberName)}<br><small class="text-muted">To: ${this.escapeHtml(addedToGroup)} (${memberRole})</small>`;
+                
+            case 'admin_take_ownership_approved':
+                const ownershipGroup = log.group_name || 'Unknown Group';
+                const oldOwner = log.old_owner_email || 'Unknown';
+                const newOwner = log.new_owner_email || 'Unknown';
+                const approver = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(ownershipGroup)}<br>Old Owner: ${this.escapeHtml(oldOwner)}<br>New Owner: ${this.escapeHtml(newOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(approver)}</small>`;
+                
+            case 'delete_group_approved':
+                const deletedGroup = log.group_name || 'Unknown Group';
+                const requester = log.requester_email || 'Unknown';
+                const delApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(deletedGroup)}<br>Requested by: ${this.escapeHtml(requester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(delApprover)}</small>`;
+                
+            case 'delete_all_documents_approved':
+                const docsGroup = log.group_name || 'Unknown Group';
+                const docsDeleted = log.documents_deleted !== undefined ? log.documents_deleted : 'N/A';
+                const docsRequester = log.requester_email || 'Unknown';
+                const docsApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(docsGroup)}<br>Documents Deleted: ${docsDeleted}<br>Requested by: ${this.escapeHtml(docsRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(docsApprover)}</small>`;
                 
             default:
                 return 'N/A';
@@ -2360,6 +2426,13 @@ class ControlCenter {
     }
 
     escapeHtml(text) {
+        // Handle undefined, null, or non-string values
+        if (text === undefined || text === null) {
+            return '';
+        }
+        // Convert to string if not already
+        text = String(text);
+        
         const map = {
             '&': '&amp;',
             '<': '&lt;',

@@ -388,10 +388,30 @@
     /**
      * Handle notification click
      */
-    function handleNotificationClick(notification) {
+    async function handleNotificationClick(notification) {
         // Mark as read
         if (!notification.is_read) {
             markNotificationRead(notification.id);
+        }
+        
+        // Check if this is a group notification - set active group before navigating
+        const groupId = notification.metadata?.group_id;
+        if (groupId && notification.link_url === '/group_workspaces') {
+            try {
+                const response = await fetch('/api/groups/setActive', {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ groupId: groupId })
+                });
+                
+                if (!response.ok) {
+                    console.error('Failed to set active group:', await response.text());
+                }
+            } catch (error) {
+                console.error('Error setting active group:', error);
+            }
         }
         
         // Navigate if link exists

@@ -17,6 +17,7 @@ from functions_group_agents import (
     delete_group_agent,
     validate_group_agent_payload,
 )
+from functions_debug import debug_print
 from functions_authentication import *
 from functions_appinsights import log_event
 from json_schema_validation import validate_agent
@@ -266,7 +267,7 @@ def create_group_agent_route():
     try:
         saved = save_group_agent(active_group, payload)
     except Exception as exc:
-        current_app.logger.error('Failed to save group agent: %s', exc)
+        debug_print('Failed to save group agent: %s', exc)
         return jsonify({'error': 'Unable to save agent'}), 500
 
     return jsonify(saved), 201
@@ -314,7 +315,7 @@ def update_group_agent_route(agent_id):
     try:
         saved = save_group_agent(active_group, merged)
     except Exception as exc:
-        current_app.logger.error('Failed to update group agent %s: %s', agent_id, exc)
+        debug_print('Failed to update group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to update agent'}), 500
 
     return jsonify(saved), 200
@@ -340,7 +341,7 @@ def delete_group_agent_route(agent_id):
     try:
         removed = delete_group_agent(active_group, agent_id)
     except Exception as exc:
-        current_app.logger.error('Failed to delete group agent %s: %s', agent_id, exc)
+        debug_print('Failed to delete group agent %s: %s', agent_id, exc)
         return jsonify({'error': 'Unable to delete agent'}), 500
 
     if not removed:

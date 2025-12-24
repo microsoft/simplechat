@@ -134,7 +134,7 @@ def register_route_frontend_authentication(app):
             if user_id:
                 log_user_login(user_id, 'azure_ad')
         except Exception as e:
-            current_app.logger.warning(f"Could not log login activity: {e}")
+            debug_print(f"Could not log login activity: {e}")
         
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
