@@ -13,6 +13,7 @@ def register_route_frontend_public_workspaces(app):
     @enabled_required("enable_public_workspaces")
     def my_public_workspaces():
         user = session.get('user', {})
+        user_id = get_current_user_id()
         settings = get_settings()
         require_member_of_create_public_workspace = settings.get("require_member_of_create_public_workspace", False)
         
@@ -21,12 +22,17 @@ def register_route_frontend_public_workspaces(app):
         if require_member_of_create_public_workspace:
             can_create_public_workspaces = 'roles' in user and 'CreatePublicWorkspaces' in user['roles']
         
+        # Get user settings to retrieve active public workspace ID
+        user_settings = get_user_settings(user_id)
+        active_public_workspace_id = user_settings.get("settings", {}).get("activePublicWorkspaceOid", "")
+        
         public_settings = sanitize_settings_for_user(settings)
         return render_template(
             "my_public_workspaces.html",
             settings=public_settings,
             app_settings=public_settings,
-            can_create_public_workspaces=can_create_public_workspaces
+            can_create_public_workspaces=can_create_public_workspaces,
+            active_public_workspace_id=active_public_workspace_id
         )
 
     @app.route("/public_workspaces/<workspace_id>", methods=["GET"])

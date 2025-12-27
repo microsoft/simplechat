@@ -2,7 +2,7 @@
 
 $(document).ready(function () {
   // Grab global active workspace ID (set via inline <script> in the template)
-  const activeWorkspaceId = window.activeWorkspaceId || null;
+  let activeWorkspaceId = window.activeWorkspaceId || null;
 
   // DOM references
   const tableBody            = $("#my-public-workspaces-table tbody");
@@ -198,7 +198,12 @@ $(document).ready(function () {
       method: "PATCH",
       contentType: "application/json",
       data: JSON.stringify({ workspaceId: id }),
-      success: fetchWorkspaces,
+      success: function() {
+        // Update the active workspace ID so the UI reflects the change
+        activeWorkspaceId = id;
+        // Refresh the table to show the new active state
+        fetchWorkspaces();
+      },
       error: function (jq) {
         const err = jq.responseJSON?.error || jq.statusText;
         alert("Failed to set active workspace: " + escapeHtml(err));
