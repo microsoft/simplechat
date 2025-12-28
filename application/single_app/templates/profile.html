@@ -7,106 +7,862 @@
 
 {% block head %}
 <style>
-    .profile-image {
-        width: 120px;
-        height: 120px;
+    .profile-hero {
+        background: linear-gradient(135deg, var(--bs-primary) 0%, var(--bs-info) 100%);
+        border-radius: 15px;
+        padding: 3rem 2rem;
+        margin-bottom: 2rem;
+        color: white;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    
+    [data-bs-theme="dark"] .profile-hero {
+        background: linear-gradient(135deg, #1a3c5a 0%, #2d5973 100%);
+    }
+    
+    .profile-hero-image {
+        width: 200px;
+        height: 200px;
         border-radius: 50%;
         object-fit: cover;
-        border: 3px solid #dee2e6;
+        border: 5px solid rgba(255,255,255,0.3);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     }
-    .profile-image-placeholder {
-        width: 120px;
-        height: 120px;
+    
+    .profile-hero-placeholder {
+        width: 200px;
+        height: 200px;
         border-radius: 50%;
-        background-color: #6c757d;
+        background: rgba(255,255,255,0.2);
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        font-size: 3rem;
+        font-size: 5rem;
         font-weight: bold;
-        border: 3px solid #dee2e6;
+        border: 5px solid rgba(255,255,255,0.3);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        backdrop-filter: blur(10px);
     }
-    .profile-header {
+    
+    .stat-card {
+        background: var(--bs-body-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border: 1px solid var(--bs-border-color);
+        transition: transform 0.2s, box-shadow 0.2s;
+        height: 100%;
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
         display: flex;
         align-items: center;
-        gap: 2rem;
+        justify-content: center;
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 0.5rem;
+    }
+    
+    .stat-label {
+        color: var(--bs-secondary-color);
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .stat-trend {
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+    
+    .chart-card {
+        background: var(--bs-body-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border: 1px solid var(--bs-border-color);
         margin-bottom: 2rem;
     }
-    .profile-info {
-        flex: 1;
+    
+    .chart-container {
+        position: relative;
+        height: 300px;
+    }
+    
+    .section-card {
+        background: var(--bs-body-bg);
+        border-radius: 12px;
+        padding: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border: 1px solid var(--bs-border-color);
+        margin-bottom: 2rem;
+    }
+    
+    .badge-large {
+        font-size: 0.875rem;
+        padding: 0.5rem 1rem;
+    }
+    
+    .timeline-item {
+        padding: 1rem;
+        border-left: 3px solid var(--bs-primary);
+        margin-bottom: 1rem;
+        background: var(--bs-light);
+        border-radius: 8px;
+    }
+    
+    [data-bs-theme="dark"] .timeline-item {
+        background: rgba(255,255,255,0.05);
+    }
+    
+    .spinning {
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-
-<h2>User Profile</h2>
-
-<div class="profile-header">
-    <div id="profile-image-container">
-        <!-- Profile image will be loaded here -->
+<div class="container-fluid px-4 py-3">
+    <!-- Hero Section -->
+    <div class="profile-hero">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <div id="profile-hero-image-container">
+                    <!-- Profile image will be loaded here -->
+                </div>
+            </div>
+            <div class="col">
+                <h2 class="mb-2">{{ user.get('name', 'N/A') }}</h2>
+                <p class="mb-3 opacity-90">
+                    <i class="bi bi-envelope me-2"></i>{{ user.get('preferred_username', 'N/A') }}
+                </p>
+                <div class="d-flex gap-2 flex-wrap">
+                    <button id="refresh-profile-image" class="btn btn-light btn-sm">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Profile Image
+                    </button>
+                    <button id="export-activity-btn" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#exportActivityModal">
+                        <i class="bi bi-download"></i> Export Activity
+                    </button>
+                    <span class="badge badge-large bg-light text-dark">
+                        <i class="bi bi-clock me-1"></i>Last Login: <span id="last-login">Loading...</span>
+                    </span>
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="profile-info">
-        <h4>{{ user.get('name', 'N/A') }}</h4>
-        <p class="text-muted">{{ user.get('preferred_username', 'N/A') }}</p>
-        <button id="refresh-profile-image" class="btn btn-outline-primary btn-sm">
-            <i class="bi bi-arrow-clockwise"></i> Get Profile Image from Entra
-        </button>
+
+    <!-- Cached Metrics Info -->
+    <div class="alert alert-info mb-3" role="alert">
+        <i class="bi bi-info-circle me-2"></i>
+        <strong>Note:</strong> Total statistics below are based on cached values calculated on <span id="metrics-cached-date">Loading...</span>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                    <i class="bi bi-chat-dots"></i>
+                </div>
+                <div class="stat-value" id="stat-conversations">-</div>
+                <div class="stat-label">Total Conversations</div>
+                <div class="stat-trend text-muted" id="stat-conversations-trend"></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-success bg-opacity-10 text-success">
+                    <i class="bi bi-chat-square-text"></i>
+                </div>
+                <div class="stat-value" id="stat-messages">-</div>
+                <div class="stat-label">Total Messages</div>
+                <div class="stat-trend text-muted" id="stat-messages-trend"></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-info bg-opacity-10 text-info">
+                    <i class="bi bi-file-earmark-text"></i>
+                </div>
+                <div class="stat-value" id="stat-documents">-</div>
+                <div class="stat-label">Total Documents</div>
+                <div class="stat-trend text-muted" id="stat-documents-trend"></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                </div>
+                <div class="stat-value" id="stat-logins">-</div>
+                <div class="stat-label">Total Logins</div>
+                <div class="stat-trend text-muted" id="stat-logins-trend"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity Charts -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="chart-card">
+                <h5 class="mb-3"><i class="bi bi-graph-up me-2"></i>Login Activity (Last 30 Days)</h5>
+                <div class="chart-container">
+                    <canvas id="loginChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="chart-card">
+                <h5 class="mb-3"><i class="bi bi-chat-left-dots me-2"></i>Conversation Activity (Last 30 Days)</h5>
+                <div class="chart-container">
+                    <canvas id="conversationChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+            <div class="chart-card">
+                <h5 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>Document Activity (Last 30 Days)</h5>
+                <div class="chart-container">
+                    <canvas id="documentChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="chart-card">
+                <h5 class="mb-3"><i class="bi bi-cpu me-2"></i>Token Usage (Last 30 Days)</h5>
+                <div class="chart-container">
+                    <canvas id="tokenChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Storage Usage -->
+    <div class="row g-3 mb-4">
+        <div class="col-lg-4">
+            <div class="chart-card">
+                <h5 class="mb-3"><i class="bi bi-hdd me-2"></i>Storage Usage</h5>
+                <div class="chart-container" style="height: 250px;">
+                    <canvas id="storageChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-8">
+            <div class="section-card">
+                <h5 class="mb-3"><i class="bi bi-person-badge me-2"></i>Account Information</h5>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small">Name</label>
+                        <div class="fw-semibold">{{ user.get('name', 'N/A') }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small">Email</label>
+                        <div class="fw-semibold">{{ user.get('preferred_username', 'N/A') }}</div>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label text-muted small">Object ID</label>
+                        <div class="font-monospace small">{{ user.get('oid', 'N/A') }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small">Streaming</label>
+                        <div><span id="streaming-badge" class="badge bg-secondary">-</span></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted small">Dark Mode</label>
+                        <div><span id="darkmode-badge" class="badge bg-secondary">-</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Retention Policy Settings -->
+    {% if app_settings.enable_retention_policy_personal %}
+    <div class="section-card">
+        <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
+        <p class="text-muted">Configure how long to keep your conversations and documents. Items older than the specified period will be automatically deleted.</p>
+        
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>
+            <strong>Default:</strong> Set to "No automatic deletion" means items are never automatically deleted. Choose a retention period to enable automatic cleanup.
+        </div>
+        
+        <form id="retention-settings-form">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="conversation_retention_days" class="form-label">Conversation Retention</label>
+                    <select class="form-select" id="conversation_retention_days" name="conversation_retention_days">
+                        <option value="none">No automatic deletion</option>
+                        <option value="1">1 day</option>
+                        <option value="5">5 days</option>
+                        <option value="10">10 days</option>
+                        <option value="21">21 days (3 weeks)</option>
+                        <option value="30">30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90">90 days (3 months)</option>
+                        <option value="180">180 days (6 months)</option>
+                        <option value="365">365 days (1 year)</option>
+                        <option value="730">730 days (2 years)</option>
+                    </select>
+                    <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
+                </div>
+                
+                <div class="col-md-6">
+                    <label for="document_retention_days" class="form-label">Document Retention</label>
+                    <select class="form-select" id="document_retention_days" name="document_retention_days">
+                        <option value="none">No automatic deletion</option>
+                        <option value="1">1 day</option>
+                        <option value="5">5 days</option>
+                        <option value="10">10 days</option>
+                        <option value="21">21 days (3 weeks)</option>
+                        <option value="30">30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90">90 days (3 months)</option>
+                        <option value="180">180 days (6 months)</option>
+                        <option value="365">365 days (1 year)</option>
+                        <option value="730">730 days (2 years)</option>
+                    </select>
+                    <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
+                </div>
+            </div>
+            
+            <div class="mt-3">
+                <button type="button" class="btn btn-primary" onclick="saveRetentionSettings()">
+                    <i class="bi bi-save me-1"></i>Save Retention Settings
+                </button>
+                <span id="retention-save-status" class="ms-3"></span>
+            </div>
+        </form>
+        
+        <div class="alert alert-warning mt-3 mb-0">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
+        </div>
+    </div>
+    {% endif %}
+
+    <p class="text-muted mt-4 text-center">Version: {{ config['VERSION'] }}</p>
+</div>
+
+<!-- Export Activity Modal -->
+<div class="modal fade" id="exportActivityModal" tabindex="-1" aria-labelledby="exportActivityModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exportActivityModalLabel">
+                    <i class="bi bi-download me-2"></i>Export Activity Data
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Select Data to Export</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="exportLogins" checked>
+                        <label class="form-check-label" for="exportLogins">
+                            Login Activity (Last 30 Days)
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="exportConversations" checked>
+                        <label class="form-check-label" for="exportConversations">
+                            Conversation Activity (Last 30 Days)
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="exportDocuments" checked>
+                        <label class="form-check-label" for="exportDocuments">
+                            Document Activity (Last 30 Days)
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="exportTokens" checked>
+                        <label class="form-check-label" for="exportTokens">
+                            Token Usage (Last 30 Days)
+                        </label>
+                    </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="exportMetrics" checked>
+                        <label class="form-check-label" for="exportMetrics">
+                            Summary Metrics (Totals)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="alert alert-info mb-0">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Data will be exported as a CSV file that you can open in Excel or other spreadsheet applications.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="exportActivityData()">
+                    <i class="bi bi-download me-1"></i>Export CSV
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 
-<table class="table">
-    <tr>
-        <th>Name:</th>
-        <td>{{ user.get('name', 'N/A') }}</td>
-    </tr>
-    <tr>
-        <th>Email:</th>
-        <td>{{ user.get('preferred_username', 'N/A') }}</td>
-    </tr>
-    <tr>
-        <th>Object ID:</th>
-        <td>{{ user.get('oid', 'N/A') }}</td>
-    </tr>
-</table>
-
-<p>Version: {{ config['VERSION'] }}</p>
-
+<script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
 <script>
+// Initialize charts
+let loginChart, conversationChart, documentChart, tokenChart, storageChart;
+
+console.log('Profile page script loaded - preparing to initialize');
+
+// Profile hero image function
+function updateProfileHeroImage() {
+    console.log('updateProfileHeroImage called');
+    const container = document.getElementById('profile-hero-image-container');
+    const userName = '{{ user.get("name", "User") }}';
+    
+    if (!container) {
+        console.error('ERROR: profile-hero-image-container not found in DOM!');
+        return;
+    }
+    
+    // Get profile image from sessionStorage (updated by profile-image.js)
+    const profileImageData = sessionStorage.getItem('userProfileImage');
+    console.log('Profile image from session:', profileImageData ? 'Found (' + profileImageData.length + ' chars)' : 'Not found');
+    
+    if (profileImageData && profileImageData.startsWith('data:image')) {
+        console.log('Rendering profile image in hero');
+        container.innerHTML = `<img src="${profileImageData}" alt="Profile Image" class="profile-hero-image">`;
+    } else {
+        console.log('Rendering placeholder in hero');
+        const initials = userName.split(' ').map(name => name.charAt(0)).join('').toUpperCase().substring(0, 2);
+        container.innerHTML = `<div class="profile-hero-placeholder">${initials}</div>`;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    loadUserProfileImage();
+    console.log('Profile DOMContentLoaded fired');
+    
+    // Use the global profile-image.js functions
+    console.log('Calling loadUserProfileImage from profile-image.js');
+    if (typeof loadUserProfileImage === 'function') {
+        loadUserProfileImage();
+        // Wait a bit for the image to load, then update hero
+        setTimeout(() => {
+            updateProfileHeroImage();
+        }, 500);
+    } else {
+        console.error('loadUserProfileImage not available!');
+    }
+    
+    loadRetentionSettings();
+    loadUserMetrics();
+    initializeCharts();
     
     document.getElementById('refresh-profile-image').addEventListener('click', function() {
-        refreshProfileImage();
+        if (typeof window.ProfileImage !== 'undefined' && window.ProfileImage.refresh) {
+            window.ProfileImage.refresh().then(() => {
+                updateProfileHeroImage();
+            });
+        } else {
+            loadUserProfileImage();
+            setTimeout(() => {
+                updateProfileHeroImage();
+            }, 500);
+        }
     });
 });
 
-function loadUserProfileImage() {
-    // Get user settings to check for profile image
+function loadUserMetrics() {
     fetch('/api/user/settings')
         .then(response => response.json())
         .then(data => {
-            const profileImage = data.settings?.profileImage;
-            displayProfileImage(profileImage);
+            const metrics = data.settings?.metrics || {};
+            
+            // Update stat cards
+            const loginMetrics = metrics.login_metrics || {};
+            const chatMetrics = metrics.chat_metrics || {};
+            const documentMetrics = metrics.document_metrics || {};
+            
+            document.getElementById('stat-conversations').textContent = formatNumber(chatMetrics.total_conversations || 0);
+            document.getElementById('stat-messages').textContent = formatNumber(chatMetrics.total_messages || 0);
+            document.getElementById('stat-documents').textContent = formatNumber(documentMetrics.total_documents || 0);
+            document.getElementById('stat-logins').textContent = formatNumber(loginMetrics.total_logins || 0);
+            
+            // Update last login
+            if (loginMetrics.last_login) {
+                document.getElementById('last-login').textContent = formatRelativeTime(loginMetrics.last_login);
+            }
+            
+            // Update cached metrics date
+            if (metrics.calculated_at) {
+                document.getElementById('metrics-cached-date').textContent = formatRelativeTime(metrics.calculated_at);
+            } else {
+                document.getElementById('metrics-cached-date').textContent = 'Unknown';
+            }
+            
+            // Update preferences badges
+            document.getElementById('streaming-badge').textContent = data.settings?.streamingEnabled ? 'Enabled' : 'Disabled';
+            document.getElementById('streaming-badge').className = `badge ${data.settings?.streamingEnabled ? 'bg-success' : 'bg-secondary'}`;
+            
+            document.getElementById('darkmode-badge').textContent = data.settings?.darkModeEnabled ? 'Enabled' : 'Disabled';
+            document.getElementById('darkmode-badge').className = `badge ${data.settings?.darkModeEnabled ? 'bg-dark' : 'bg-light text-dark'}`;
+            
+            // Load time-series data for charts
+            loadActivityChartData();
         })
         .catch(error => {
-            console.error('Error loading profile image:', error);
-            displayProfileImage(null);
+            console.error('Error loading user metrics:', error);
         });
 }
 
-function displayProfileImage(profileImageData) {
-    const container = document.getElementById('profile-image-container');
-    const userName = '{{ user.get("name", "User") }}';
+function loadActivityChartData() {
+    // Fetch activity trends data
+    fetch('/api/user/activity-trends?days=30')
+        .then(response => response.json())
+        .then(data => {
+            console.log('Activity trends data received:', data);
+            console.log('Logins:', data.logins);
+            console.log('Conversations:', data.conversations);
+            console.log('Documents:', data.documents);
+            console.log('Tokens:', data.tokens);
+            console.log('Storage:', data.storage);
+            
+            updateLoginChart(data.logins || []);
+            updateConversationChart(data.conversations || []);
+            updateDocumentChart(data.documents || []);
+            updateTokenChart(data.tokens || []);
+            updateStorageChart(data.storage || {});
+        })
+        .catch(error => {
+            console.error('Error loading activity trends:', error);
+            // Show sample data on error
+            updateLoginChart([]);
+            updateConversationChart([]);
+            updateDocumentChart([]);
+            updateTokenChart([]);
+            updateStorageChart({});
+        });
+}
+
+function initializeCharts() {
+    const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+    const textColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
     
-    if (profileImageData) {
-        container.innerHTML = `<img src="${profileImageData}" alt="Profile Image" class="profile-image">`;
-    } else {
-        // Show initials placeholder
-        const initials = window.ProfileImage ? window.ProfileImage.getInitials(userName) : userName.split(' ').map(name => name.charAt(0)).join('').toUpperCase().substring(0, 2);
-        container.innerHTML = `<div class="profile-image-placeholder">${initials}</div>`;
+    Chart.defaults.color = textColor;
+    Chart.defaults.borderColor = gridColor;
+    
+    // Initialize empty charts
+    const ctx1 = document.getElementById('loginChart').getContext('2d');
+    loginChart = new Chart(ctx1, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: getLineChartOptions('Logins')
+    });
+    
+    const ctx2 = document.getElementById('conversationChart').getContext('2d');
+    conversationChart = new Chart(ctx2, {
+        type: 'bar',
+        data: { labels: [], datasets: [] },
+        options: getBarChartOptions('Conversations')
+    });
+    
+    const ctx3 = document.getElementById('documentChart').getContext('2d');
+    documentChart = new Chart(ctx3, {
+        type: 'bar',
+        data: { labels: [], datasets: [] },
+        options: getBarChartOptions('Documents')
+    });
+    
+    const ctx4 = document.getElementById('tokenChart').getContext('2d');
+    tokenChart = new Chart(ctx4, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: getLineChartOptions('Tokens (Millions)')
+    });
+    
+    const ctx5 = document.getElementById('storageChart').getContext('2d');
+    storageChart = new Chart(ctx5, {
+        type: 'doughnut',
+        data: { labels: [], datasets: [] },
+        options: getDoughnutChartOptions()
+    });
+}
+
+function getLineChartOptions(label) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                mode: 'index',
+                intersect: false
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: { precision: 0 }
+            }
+        }
+    };
+}
+
+function getBarChartOptions(label) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                mode: 'index',
+                intersect: false
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: { precision: 0 }
+            }
+        }
+    };
+}
+
+function getDoughnutChartOptions() {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return context.label + ': ' + formatBytes(context.parsed);
+                    }
+                }
+            }
+        }
+    };
+}
+
+function updateLoginChart(data) {
+    const last30Days = getLast30Days();
+    const values = last30Days.map(date => {
+        const found = data.find(d => d.date === date);
+        return found ? found.count : 0;
+    });
+    
+    console.log('Login chart - last30Days:', last30Days);
+    console.log('Login chart - values:', values);
+    
+    loginChart.data.labels = last30Days.map(d => formatDate(d));
+    loginChart.data.datasets = [{
+        label: 'Logins',
+        data: values,
+        borderColor: '#ffc107',
+        backgroundColor: 'rgba(255, 193, 7, 0.1)',
+        tension: 0.4,
+        fill: true
+    }];
+    loginChart.update();
+}
+
+function updateConversationChart(data) {
+    const last30Days = getLast30Days();
+    const values = last30Days.map(date => {
+        const found = data.find(d => d.date === date);
+        return found ? found.count : 0;
+    });
+    
+    conversationChart.data.labels = last30Days.map(d => formatDate(d));
+    conversationChart.data.datasets = [{
+        label: 'Conversations',
+        data: values,
+        backgroundColor: '#0d6efd',
+        borderColor: '#0d6efd',
+        borderWidth: 1
+    }];
+    conversationChart.update();
+}
+
+function updateDocumentChart(data) {
+    const last30Days = getLast30Days();
+    const values = last30Days.map(date => {
+        const found = data.find(d => d.date === date);
+        return found ? found.count : 0;
+    });
+    
+    documentChart.data.labels = last30Days.map(d => formatDate(d));
+    documentChart.data.datasets = [{
+        label: 'Documents',
+        data: values,
+        backgroundColor: '#17a2b8',
+        borderColor: '#17a2b8',
+        borderWidth: 1
+    }];
+    documentChart.update();
+}
+
+function updateTokenChart(data) {
+    const last30Days = getLast30Days();
+    const values = last30Days.map(date => {
+        const found = data.find(d => d.date === date);
+        return found ? (found.tokens / 1000000) : 0; // Convert to millions
+    });
+    
+    tokenChart.data.labels = last30Days.map(d => formatDate(d));
+    tokenChart.data.datasets = [{
+        label: 'Tokens',
+        data: values,
+        borderColor: '#198754',
+        backgroundColor: 'rgba(25, 135, 84, 0.1)',
+        tension: 0.4,
+        fill: true
+    }];
+    tokenChart.update();
+}
+
+function updateStorageChart(data) {
+    const aiSearch = data.ai_search_size || 0;
+    const blobStorage = data.storage_account_size || 0;
+    
+    storageChart.data.labels = ['AI Search', 'Blob Storage'];
+    storageChart.data.datasets = [{
+        data: [aiSearch, blobStorage],
+        backgroundColor: ['#0d6efd', '#17a2b8'],
+        borderWidth: 2
+    }];
+    storageChart.update();
+}
+
+function getLast30Days() {
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        days.push(date.toISOString().split('T')[0]);
     }
+    return days;
+}
+
+function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    return (date.getMonth() + 1) + '/' + date.getDate();
+}
+
+function formatNumber(num) {
+    if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+    } else if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+function formatRelativeTime(dateStr) {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return diffMins + ' min ago';
+    if (diffHours < 24) return diffHours + ' hr ago';
+    if (diffDays < 7) return diffDays + ' day' + (diffDays > 1 ? 's' : '') + ' ago';
+    return date.toLocaleDateString();
+}
+
+function loadRetentionSettings() {
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            const retentionPolicy = data.settings?.retention_policy || {};
+            
+            const convRetention = retentionPolicy.conversation_retention_days || 'none';
+            const docRetention = retentionPolicy.document_retention_days || 'none';
+            
+            const convSelect = document.getElementById('conversation_retention_days');
+            const docSelect = document.getElementById('document_retention_days');
+            
+            if (convSelect) convSelect.value = convRetention;
+            if (docSelect) docSelect.value = docRetention;
+        })
+        .catch(error => {
+            console.error('Error loading retention settings:', error);
+        });
+}
+
+function saveRetentionSettings() {
+    const convRetention = document.getElementById('conversation_retention_days').value;
+    const docRetention = document.getElementById('document_retention_days').value;
+    
+    const statusElement = document.getElementById('retention-save-status');
+    statusElement.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+    statusElement.className = 'text-info';
+    
+    fetch('/api/retention-policy/user', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            conversation_retention_days: convRetention,
+            document_retention_days: docRetention
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusElement.innerHTML = '<i class="bi bi-check-circle"></i> Settings saved successfully!';
+            statusElement.className = 'text-success';
+            
+            setTimeout(() => {
+                statusElement.innerHTML = '';
+            }, 3000);
+        } else {
+            statusElement.innerHTML = '<i class="bi bi-exclamation-circle"></i> Error: ' + (data.error || 'Failed to save');
+            statusElement.className = 'text-danger';
+        }
+    })
+    .catch(error => {
+        statusElement.innerHTML = '<i class="bi bi-exclamation-circle"></i> Error: ' + error.message;
+        statusElement.className = 'text-danger';
+    });
 }
 
 function refreshProfileImage() {
@@ -184,6 +940,213 @@ function showSuccessToast(message) {
     // Remove toast after it's hidden
     toast.addEventListener('hidden.bs.toast', () => {
         toast.remove();
+    });
+}
+
+function loadRetentionSettings() {
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            const retentionPolicy = data.settings?.retention_policy || {};
+            
+            const convRetention = retentionPolicy.conversation_retention_days || 'none';
+            const docRetention = retentionPolicy.document_retention_days || 'none';
+            
+            const convSelect = document.getElementById('conversation_retention_days');
+            const docSelect = document.getElementById('document_retention_days');
+            
+            if (convSelect) convSelect.value = convRetention;
+            if (docSelect) docSelect.value = docRetention;
+        })
+        .catch(error => {
+            console.error('Error loading retention settings:', error);
+        });
+}
+
+function saveRetentionSettings() {
+    const convRetention = document.getElementById('conversation_retention_days').value;
+    const docRetention = document.getElementById('document_retention_days').value;
+    
+    const statusElement = document.getElementById('retention-save-status');
+    statusElement.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+    statusElement.className = 'text-info';
+    
+    fetch('/api/retention-policy/user', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            conversation_retention_days: convRetention,
+            document_retention_days: docRetention
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusElement.innerHTML = '<i class="bi bi-check-circle"></i> Settings saved successfully!';
+            statusElement.className = 'text-success';
+            
+            setTimeout(() => {
+                statusElement.innerHTML = '';
+            }, 3000);
+        } else {
+            statusElement.innerHTML = '<i class="bi bi-exclamation-circle"></i> Error: ' + (data.error || 'Failed to save');
+            statusElement.className = 'text-danger';
+        }
+    })
+    .catch(error => {
+        statusElement.innerHTML = '<i class="bi bi-exclamation-circle"></i> Error: ' + error.message;
+        statusElement.className = 'text-danger';
+    });
+}
+
+function showSuccessToast(message) {
+    // Show success message
+    const toast = document.createElement('div');
+    toast.className = 'toast align-items-center text-white bg-success border-0';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    document.body.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove toast after it's hidden
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+
+// Export activity data to CSV
+function exportActivityData() {
+    const includeLogins = document.getElementById('exportLogins').checked;
+    const includeConversations = document.getElementById('exportConversations').checked;
+    const includeDocuments = document.getElementById('exportDocuments').checked;
+    const includeTokens = document.getElementById('exportTokens').checked;
+    const includeMetrics = document.getElementById('exportMetrics').checked;
+    
+    if (!includeLogins && !includeConversations && !includeDocuments && !includeTokens && !includeMetrics) {
+        alert('Please select at least one data type to export.');
+        return;
+    }
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('exportActivityModal'));
+    modal.hide();
+    
+    // Fetch activity data
+    Promise.all([
+        fetch('/api/user/activity-trends?days=30').then(r => r.json()),
+        fetch('/api/user/settings').then(r => r.json())
+    ])
+    .then(([trendsData, settingsData]) => {
+        let csvContent = '';
+        const metrics = settingsData.settings?.metrics || {};
+        const userName = '{{ user.get("name", "User") }}';
+        const userEmail = '{{ user.get("preferred_username", "N/A") }}';
+        
+        // Add header with user info
+        csvContent += `User Activity Export\n`;
+        csvContent += `User: ${userName}\n`;
+        csvContent += `Email: ${userEmail}\n`;
+        csvContent += `Export Date: ${new Date().toLocaleString()}\n`;
+        csvContent += `Data Period: Last 30 Days\n\n`;
+        
+        // Add summary metrics if selected
+        if (includeMetrics && metrics) {
+            csvContent += `SUMMARY METRICS\n`;
+            csvContent += `Metric,Value\n`;
+            
+            if (metrics.login_metrics) {
+                csvContent += `Total Logins,${metrics.login_metrics.total_logins || 0}\n`;
+                csvContent += `Last Login,${metrics.login_metrics.last_login || 'Never'}\n`;
+            }
+            
+            if (metrics.chat_metrics) {
+                csvContent += `Total Conversations,${metrics.chat_metrics.total_conversations || 0}\n`;
+                csvContent += `Total Messages,${metrics.chat_metrics.total_messages || 0}\n`;
+                csvContent += `Total Message Size (bytes),${metrics.chat_metrics.total_message_size || 0}\n`;
+            }
+            
+            if (metrics.document_metrics) {
+                csvContent += `Total Documents,${metrics.document_metrics.total_documents || 0}\n`;
+                csvContent += `AI Search Size (bytes),${metrics.document_metrics.ai_search_size || 0}\n`;
+                csvContent += `Storage Size (bytes),${metrics.document_metrics.storage_account_size || 0}\n`;
+            }
+            
+            if (metrics.calculated_at) {
+                csvContent += `Metrics Calculated At,${metrics.calculated_at}\n`;
+            }
+            
+            csvContent += `\n`;
+        }
+        
+        // Add login activity
+        if (includeLogins && trendsData.logins) {
+            csvContent += `LOGIN ACTIVITY (Last 30 Days)\n`;
+            csvContent += `Date,Logins\n`;
+            trendsData.logins.forEach(item => {
+                csvContent += `${item.date},${item.count}\n`;
+            });
+            csvContent += `\n`;
+        }
+        
+        // Add conversation activity
+        if (includeConversations && trendsData.conversations) {
+            csvContent += `CONVERSATION ACTIVITY (Last 30 Days)\n`;
+            csvContent += `Date,Conversations Created\n`;
+            trendsData.conversations.forEach(item => {
+                csvContent += `${item.date},${item.count}\n`;
+            });
+            csvContent += `\n`;
+        }
+        
+        // Add document activity
+        if (includeDocuments && trendsData.documents) {
+            csvContent += `DOCUMENT ACTIVITY (Last 30 Days)\n`;
+            csvContent += `Date,Documents Uploaded\n`;
+            trendsData.documents.forEach(item => {
+                csvContent += `${item.date},${item.count}\n`;
+            });
+            csvContent += `\n`;
+        }
+        
+        // Add token usage
+        if (includeTokens && trendsData.tokens) {
+            csvContent += `TOKEN USAGE (Last 30 Days)\n`;
+            csvContent += `Date,Total Tokens\n`;
+            trendsData.tokens.forEach(item => {
+                csvContent += `${item.date},${item.tokens}\n`;
+            });
+            csvContent += `\n`;
+        }
+        
+        // Create and download file
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        const filename = `activity_export_${new Date().toISOString().split('T')[0]}.csv`;
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showSuccessToast('Activity data exported successfully!');
+    })
+    .catch(error => {
+        console.error('Error exporting activity data:', error);
+        alert('Error exporting activity data. Please try again.');
     });
 }
 </script>

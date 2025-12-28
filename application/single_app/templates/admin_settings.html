@@ -2053,7 +2053,101 @@
                     </div>
                 </div>
                 
-
+                <!-- Retention Policy Section -->
+                <div class="card p-3 mb-3" id="retention-policy-section">
+                    <h5>
+                        <i class="bi bi-hourglass-split me-2"></i>Retention Policy
+                    </h5>
+                    <p class="text-muted">Automatically delete aged conversations and documents based on configurable retention periods. Users, group owners, and public workspace admins can set their own retention policies.</p>
+                    
+                    <div class="alert alert-info mb-3" role="alert">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>How it works:</strong> Enable retention policy for workspace types below. Users/owners can then configure how many days to retain conversations and documents. Items older than the configured period are automatically deleted. Default is "none" (no deletion) until explicitly set by each user/owner.
+                    </div>
+                    
+                    <!-- Enable toggles for different workspace types -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_personal" name="enable_retention_policy_personal" {% if settings.enable_retention_policy_personal %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_personal">
+                                    Enable for Personal Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure retention policies for their personal conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_group" name="enable_retention_policy_group" {% if settings.enable_retention_policy_group %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_group">
+                                    Enable for Group Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group owners and admins to configure retention policies for group conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_public" name="enable_retention_policy_public" {% if settings.enable_retention_policy_public %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_public">
+                                    Enable for Public Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace owners and admins to configure retention policies for workspace conversations and documents."></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Scheduled execution time -->
+                    <div class="mb-3">
+                        <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
+                        <select class="form-select" id="retention_policy_execution_hour" name="retention_policy_execution_hour" style="max-width: 300px;">
+                            {% for hour in range(24) %}
+                            <option value="{{ hour }}" {% if settings.retention_policy_execution_hour == hour %}selected{% endif %}>
+                                {{ "%02d"|format(hour) }}:00 ({{ "Midnight" if hour == 0 else ("%d AM"|format(hour) if hour < 12 else ("Noon" if hour == 12 else "%d PM"|format(hour - 12))) }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Retention policy will run once daily at this hour (UTC timezone).</small>
+                    </div>
+                    
+                    <!-- Status information -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Last Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_last_run %}
+                                    <span class="text-success">{{ settings.retention_policy_last_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Never run</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Next Scheduled Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_next_run %}
+                                    <span class="text-info">{{ settings.retention_policy_next_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Not scheduled</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Manual execution button -->
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-warning" onclick="showManualExecutionModal()">
+                            <i class="bi bi-play-circle me-2"></i>Manual Execution
+                        </button>
+                        <small class="form-text text-muted d-block mt-2">
+                            Trigger retention policy execution immediately for selected workspace types, bypassing the scheduled time.
+                        </small>
+                    </div>
+                    
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
+                    </div>
+                </div>
             </div>
 
             
@@ -2981,6 +3075,68 @@
             </div>
         </div>
 
+        <!-- Manual Retention Policy Execution Modal -->
+        <div class="modal fade" id="manualExecutionModal" tabindex="-1" aria-labelledby="manualExecutionModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="manualExecutionModalLabel">
+                            <i class="bi bi-play-circle me-2"></i>Manual Retention Policy Execution
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which workspace types to process. The retention policy will execute immediately for the selected scopes, deleting conversations and documents that exceed their configured retention periods.</p>
+                        
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Warning:</strong> This action will permanently delete items (or archive them if archiving is enabled). This cannot be undone.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Workspace Scopes:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_personal" value="personal">
+                                <label class="form-check-label" for="manual_exec_personal">
+                                    Personal Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_group" value="group">
+                                <label class="form-check-label" for="manual_exec_group">
+                                    Group Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_public" value="public">
+                                <label class="form-check-label" for="manual_exec_public">
+                                    Public Workspaces
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-status" class="mt-3" style="display: none;">
+                            <div class="alert alert-info">
+                                <i class="bi bi-hourglass-split me-2"></i>
+                                <span id="execution-status-text">Processing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-results" class="mt-3" style="display: none;">
+                            <h6>Execution Results:</h6>
+                            <div id="results-content"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="modal-close-btn">Close</button>
+                        <button type="button" class="btn btn-danger" onclick="executeRetentionPolicy()" id="execute-btn">
+                            <i class="bi bi-play-circle me-1"></i>Execute Now
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
     </div>
@@ -3400,6 +3556,106 @@
         updateTimerLimits('debug');
         updateTimerLimits('file');
     });
+
+    // Retention Policy Functions
+    function showManualExecutionModal() {
+        const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));
+        
+        // Reset modal state
+        document.getElementById('execution-status').style.display = 'none';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('manual_exec_personal').checked = false;
+        document.getElementById('manual_exec_group').checked = false;
+        document.getElementById('manual_exec_public').checked = false;
+        document.getElementById('execute-btn').disabled = false;
+        
+        modal.show();
+    }
+
+    function executeRetentionPolicy() {
+        const personal = document.getElementById('manual_exec_personal').checked;
+        const group = document.getElementById('manual_exec_group').checked;
+        const publicWs = document.getElementById('manual_exec_public').checked;
+        
+        const scopes = [];
+        if (personal) scopes.push('personal');
+        if (group) scopes.push('group');
+        if (publicWs) scopes.push('public');
+        
+        if (scopes.length === 0) {
+            alert('Please select at least one workspace scope.');
+            return;
+        }
+        
+        // Confirm before executing
+        if (!confirm(`Are you sure you want to execute retention policy for ${scopes.join(', ')} workspaces? This will delete aged items according to configured retention periods.`)) {
+            return;
+        }
+        
+        // Show processing status
+        document.getElementById('execution-status').style.display = 'block';
+        document.getElementById('execution-status-text').textContent = 'Processing...';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('execute-btn').disabled = true;
+        
+        // Execute via API
+        fetch('/api/admin/retention-policy/execute', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ scopes: scopes })
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            
+            if (data.success) {
+                const results = data.results;
+                let html = '<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i><strong>Execution completed successfully!</strong></div>';
+                
+                html += '<div class="table-responsive"><table class="table table-sm">';
+                html += '<thead><tr><th>Workspace Type</th><th>Conversations Deleted</th><th>Documents Deleted</th><th>Workspaces/Users Affected</th></tr></thead>';
+                html += '<tbody>';
+                
+                if (scopes.includes('personal')) {
+                    html += `<tr><td>Personal</td><td>${results.personal.conversations}</td><td>${results.personal.documents}</td><td>${results.personal.users_affected} users</td></tr>`;
+                }
+                if (scopes.includes('group')) {
+                    html += `<tr><td>Group</td><td>${results.group.conversations}</td><td>${results.group.documents}</td><td>${results.group.workspaces_affected} groups</td></tr>`;
+                }
+                if (scopes.includes('public')) {
+                    html += `<tr><td>Public</td><td>${results.public.conversations}</td><td>${results.public.documents}</td><td>${results.public.workspaces_affected} workspaces</td></tr>`;
+                }
+                
+                html += '</tbody></table></div>';
+                html += '<p class="text-muted small mt-2">Affected users/owners will receive notifications with details of deleted items.</p>';
+                
+                document.getElementById('results-content').innerHTML = html;
+            } else {
+                document.getElementById('results-content').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Execution failed:</strong> ${data.error || 'Unknown error'}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('execute-btn').disabled = false;
+        })
+        .catch(error => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            document.getElementById('results-content').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Error:</strong> ${error.message}
+                </div>
+            `;
+            document.getElementById('execute-btn').disabled = false;
+        });
+    }
 
 </script>
 {% endblock %}

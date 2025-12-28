@@ -52,6 +52,7 @@ from route_backend_prompts import *
 from route_backend_group_prompts import *
 from route_backend_control_center import *
 from route_backend_notifications import *
+from route_backend_retention_policy import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
@@ -263,6 +264,66 @@ def before_first_request():
     approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
     approval_thread.start()
     print("Approval expiration background task started.")
+
+    # Background task to check retention policy execution time
+    def check_retention_policy():
+        """Background task that executes retention policy at scheduled time"""
+        while True:
+            try:
+                settings = get_settings()
+                
+                # Check if any retention policy is enabled
+                personal_enabled = settings.get('enable_retention_policy_personal', False)
+                group_enabled = settings.get('enable_retention_policy_group', False)
+                public_enabled = settings.get('enable_retention_policy_public', False)
+                
+                if personal_enabled or group_enabled or public_enabled:
+                    current_time = datetime.now(timezone.utc)
+                    execution_hour = settings.get('retention_policy_execution_hour', 2)
+                    
+                    # Check if we're in the execution hour
+                    if current_time.hour == execution_hour:
+                        # Check if we haven't run today yet
+                        last_run = settings.get('retention_policy_last_run')
+                        should_run = False
+                        
+                        if last_run:
+                            try:
+                                last_run_dt = datetime.fromisoformat(last_run)
+                                # Run if last run was more than 23 hours ago
+                                if (current_time - last_run_dt).total_seconds() > (23 * 3600):
+                                    should_run = True
+                            except:
+                                should_run = True
+                        else:
+                            should_run = True
+                        
+                        if should_run:
+                            print(f"Executing scheduled retention policy at {current_time.isoformat()}")
+                            from functions_retention_policy import execute_retention_policy
+                            results = execute_retention_policy(manual_execution=False)
+                            
+                            if results.get('success'):
+                                print(f"Retention policy execution completed: "
+                                     f"{results['personal']['conversations']} personal conversations, "
+                                     f"{results['personal']['documents']} personal documents, "
+                                     f"{results['group']['conversations']} group conversations, "
+                                     f"{results['group']['documents']} group documents, "
+                                     f"{results['public']['conversations']} public conversations, "
+                                     f"{results['public']['documents']} public documents deleted.")
+                            else:
+                                print(f"Retention policy execution failed: {results.get('errors')}")
+                
+            except Exception as e:
+                print(f"Error in retention policy check: {e}")
+            
+            # Check every hour
+            time.sleep(3600)
+
+    # Start the retention policy check thread
+    retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
+    retention_thread.start()
+    print("Retention policy background task started.")
 
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -485,6 +546,9 @@ register_route_backend_control_center(app)
 
 # ------------------- API Notifications Routes ----------
 register_route_backend_notifications(app)
+
+# ------------------- API Retention Policy Routes --------
+register_route_backend_retention_policy(app)
 
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)

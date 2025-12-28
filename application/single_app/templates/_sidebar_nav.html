@@ -274,16 +274,6 @@
                   <i class="bi bi-gear-fill me-2" style="font-size: 0.8em;"></i><span class="nav-text">System Settings</span>
                 </a>
               </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="control-center-admin-section">
-                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Control Center</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center" href="{{ url_for('approvals') }}">
-                  <i class="bi bi-check-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Approval Requests</span>
-                </a>
-              </li>
             </ul>
           </li>
           <li class="nav-item">
@@ -399,6 +389,11 @@
                   <i class="bi bi-tags me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Classification</span>
                 </a>
               </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="retention-policy-section">
+                  <i class="bi bi-hourglass-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Retention Policy</span>
+                </a>
+              </li>
             </ul>
           </li>
           <li class="nav-item">
@@ -441,30 +436,6 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="conversation-archiving-section">
                   <i class="bi bi-archive me-2" style="font-size: 0.8em;"></i><span class="nav-text">Conversation Archiving</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="pii">
-              <i class="bi bi-shield-check me-2"></i><span class="nav-text">PII Analysis</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="pii-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="pii" data-section="pii-analysis-section">
-                  <i class="bi bi-shield-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">PII Analysis</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="security">
-              <i class="bi bi-shield-lock me-2"></i><span class="nav-text">Security</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="security-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="security" data-section="keyvault-section">
-                  <i class="bi bi-safe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Key Vault</span>
                 </a>
               </li>
             </ul>
@@ -644,7 +615,14 @@
             </a>
           </li>
           <li>
-            <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
+            <a class="dropdown-item nav-layout-toggle" href="#">
+              <span id="sidebarSwitchToLeftNavText" class="">
+                <i class="bi bi-layout-sidebar me-2"></i>Left Nav
+              </span>
+              <span id="sidebarSwitchToTopNavText" class="d-none">
+                <i class="bi bi-window-dock me-2"></i>Top Nav
+              </span>
+            </a>
           </li>
           <li><hr class="dropdown-divider"></li>
           <!-- Notifications -->

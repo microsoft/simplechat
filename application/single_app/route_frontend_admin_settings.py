@@ -235,10 +235,16 @@ def register_route_frontend_admin_settings(app):
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
 
             return render_template(
                 'admin_settings.html',
+                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
                 settings=settings,
+                user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url
@@ -458,6 +464,29 @@ def register_route_frontend_admin_settings(app):
             else:
                 file_processing_logs_turnoff_time_str = None
 
+            # --- Retention Policy Settings ---
+            enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
+            enable_retention_policy_group = form_data.get('enable_retention_policy_group') == 'on'
+            enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
+            retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
+            
+            # Validate execution hour (0-23)
+            if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
+                retention_policy_execution_hour = 2  # Default to 2 AM
+            
+            # Calculate next scheduled execution time if any retention policy is enabled
+            retention_policy_next_run = None
+            if enable_retention_policy_personal or enable_retention_policy_group or enable_retention_policy_public:
+                now = datetime.now(timezone.utc)
+                # Create next run datetime with the specified hour
+                next_run = now.replace(hour=retention_policy_execution_hour, minute=0, second=0, microsecond=0)
+                
+                # If the scheduled time has already passed today, schedule for tomorrow
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                
+                retention_policy_next_run = next_run.isoformat()
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -570,6 +599,13 @@ def register_route_frontend_admin_settings(app):
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
+                
+                # Retention Policy
+                'enable_retention_policy_personal': enable_retention_policy_personal,
+                'enable_retention_policy_group': enable_retention_policy_group,
+                'enable_retention_policy_public': enable_retention_policy_public,
+                'retention_policy_execution_hour': retention_policy_execution_hour,
+                'retention_policy_next_run': retention_policy_next_run,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,

@@ -252,6 +252,18 @@ def get_settings(use_cosmos=False):
         'enable_key_vault_secret_storage': False,
         'key_vault_name': '',
         'key_vault_identity': '',
+        
+        # Retention Policy Settings
+        'enable_retention_policy_personal': False,
+        'enable_retention_policy_group': False,
+        'enable_retention_policy_public': False,
+        'retention_policy_execution_hour': 2,  # Run at 2 AM by default (0-23)
+        'retention_policy_last_run': None,  # ISO timestamp of last execution
+        'retention_policy_next_run': None,  # ISO timestamp of next scheduled execution
+        'retention_conversation_min_days': 1,
+        'retention_conversation_max_days': 3650,  # ~10 years
+        'retention_document_min_days': 1,
+        'retention_document_max_days': 3650,  # ~10 years
     }
 
     try:
