@@ -2579,16 +2579,20 @@ def register_route_backend_chats(app):
                     try:
                         user_settings_obj = get_user_settings(user_id)
                         debug_print(f"[DEBUG] user_settings_obj type: {type(user_settings_obj)}")
-                        debug_print(f"[DEBUG] user_settings_obj: {user_settings_obj}")
+                        # Sanitize user_settings_obj to remove sensitive data (keys, base64, images) from debug logs
+                        sanitized_settings = sanitize_settings_for_logging(user_settings_obj) if isinstance(user_settings_obj, dict) else user_settings_obj
+                        debug_print(f"[DEBUG] user_settings_obj (sanitized): {sanitized_settings}")
                         
                         # user_settings_obj might be nested with 'settings' key
                         if isinstance(user_settings_obj, dict):
                             if 'settings' in user_settings_obj:
                                 user_settings = user_settings_obj['settings']
-                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key: {user_settings}")
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key (sanitized): {sanitized_user_settings}")
                             else:
                                 user_settings = user_settings_obj
-                                debug_print(f"[DEBUG] Using user_settings_obj directly: {user_settings}")
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Using user_settings_obj directly (sanitized): {sanitized_user_settings}")
                         
                         user_enable_agents = user_settings.get('enable_agents', False)
                         debug_print(f"[DEBUG] user_enable_agents={user_enable_agents}")

@@ -2920,9 +2920,23 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow audio file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
                     </div>
+                    
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_speech_to_text_input"
+                            name="enable_speech_to_text_input"
+                            {% if settings.enable_speech_to_text_input %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_speech_to_text_input">
+                            Enable Speech-to-Text Chat Input
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to record voice messages up to 90 seconds in chat using Azure Speech Service for transcription."></i>
+                    </div>
 
                     <div id="audio_service_settings" class="card mb-3 p-3"
-                            {% if not settings.enable_audio_file_support %}style="display: none;"{% endif %}>
+                            {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input) %}style="display: none;"{% endif %}>
                         <h5>Speech Service Settings</h5>
                         <p class="text-muted">Configure Azure Speech Service for audio transcription & embedding.</p>
 
@@ -3314,14 +3328,30 @@
         
         // Handle audio support toggle in main form
         const audioSupportToggle = document.getElementById('enable_audio_file_support');
+        const speechInputToggle = document.getElementById('enable_speech_to_text_input');
+        
+        function updateAudioServiceSettings() {
+            const audioServiceSettings = document.getElementById('audio_service_settings');
+            const audioEnabled = audioSupportToggle?.checked || false;
+            const speechInputEnabled = speechInputToggle?.checked || false;
+            
+            if (audioServiceSettings) {
+                if (audioEnabled || speechInputEnabled) {
+                    audioServiceSettings.style.display = 'block';
+                } else {
+                    audioServiceSettings.style.display = 'none';
+                }
+            }
+            
+            updateWalkthroughRequirements();
+        }
+        
         if (audioSupportToggle) {
-            audioSupportToggle.addEventListener('change', function() {
-                updateWalkthroughRequirements();
-                
-                // Recalculate available steps and refresh navigation
-                const currentStep = getCurrentWalkthroughStep();
-                navigateToWalkthroughStep(currentStep);
-            });
+            audioSupportToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (speechInputToggle) {
+            speechInputToggle.addEventListener('change', updateAudioServiceSettings);
         }
         
         // Handle Front Door toggle in main form

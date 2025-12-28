@@ -7,6 +7,7 @@ from functions_search import *
 from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
+import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:

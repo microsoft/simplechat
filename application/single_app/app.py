@@ -58,6 +58,7 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_backend_speech import register_route_backend_speech
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -97,6 +98,9 @@ register_openapi_routes(app)
 
 # Register Enhanced Citations routes
 register_enhanced_citations_routes(app)
+
+# Register Speech routes
+register_route_backend_speech(app)
 
 # Register Swagger documentation routes
 from swagger_wrapper import register_swagger_routes

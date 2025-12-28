@@ -706,6 +706,9 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                
+                # Speech-to-text chat input
+                'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
 

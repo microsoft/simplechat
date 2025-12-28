@@ -247,6 +247,10 @@ def get_settings(use_cosmos=False):
         "speech_service_location": '',
         "speech_service_locale": "en-US",
         "speech_service_key": "",
+        "speech_service_authentication_type": "key",  # 'key' or 'managed_identity'
+        
+        # Speech-to-text chat input
+        "enable_speech_to_text_input": False,
         
         #key vault settings
         'enable_key_vault_secret_storage': False,
@@ -725,9 +729,36 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             if "key" not in k.lower() and "storage_account_url" not in k.lower()}
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:
-    # Exclude any key containing "key", "base64", "storage_account_url"
-    return {k: v for k, v in full_settings.items() 
-            if "key" not in k.lower() and "base64" not in k.lower() and "image" not in k.lower() and "storage_account_url" not in k.lower()}
+    """
+    Recursively sanitize settings to remove sensitive data from debug logs.
+    Filters out keys containing: key, base64, image, storage_account_url
+    Also filters out values containing base64 data
+    """
+    if not isinstance(full_settings, dict):
+        return full_settings
+    
+    sanitized = {}
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    
+    for k, v in full_settings.items():
+        # Skip keys with sensitive terms
+        if any(term in k.lower() for term in sensitive_key_terms):
+            sanitized[k] = "[REDACTED]"
+            continue
+        
+        # Check if value is a string containing base64 data
+        if isinstance(v, str) and ("base64," in v or len(v) > 500):
+            sanitized[k] = "[BASE64_DATA_REDACTED]"
+        # Recursively sanitize nested dicts
+        elif isinstance(v, dict):
+            sanitized[k] = sanitize_settings_for_logging(v)
+        # Recursively sanitize lists
+        elif isinstance(v, list):
+            sanitized[k] = [sanitize_settings_for_logging(item) if isinstance(item, dict) else item for item in v]
+        else:
+            sanitized[k] = v
+    
+    return sanitized
 
 # Search history management functions
 def get_user_search_history(user_id):

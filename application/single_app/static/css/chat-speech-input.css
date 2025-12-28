@@ -1,0 +1,130 @@
+/* chat-speech-input.css */
+/* Styles for speech-to-text chat input feature */
+
+/* Speech input button positioning */
+#speech-input-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 0.375rem;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+}
+
+#speech-input-btn:hover {
+    background-color: #e9ecef;
+    border-color: #adb5bd;
+}
+
+#speech-input-btn:active {
+    background-color: #dee2e6;
+}
+
+/* Recording UI Container */
+#recording-container {
+    min-height: 120px;
+}
+
+.recording-ui {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 0.375rem;
+    border: 1px solid #0d6efd;
+}
+
+/* Waveform Canvas */
+#waveform-canvas {
+    width: 100%;
+    height: 50px;
+    background-color: #f8f9fa;
+    border-radius: 0.25rem;
+    border: 1px solid #dee2e6;
+}
+
+/* Recording Controls */
+.recording-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* Recording Timer Bar */
+.recording-timer-bar {
+    width: 100%;
+    height: 6px;
+    background-color: #e9ecef;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+}
+
+.recording-timer-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: var(--recording-timer-width, 100%);
+    background-color: #198754;
+    transition: background-color 0.3s ease;
+}
+
+.recording-timer-bar.warning::after {
+    background-color: #ffc107;
+}
+
+.recording-timer-bar.danger::after {
+    background-color: #dc3545;
+}
+
+/* Recording Controls */
+.recording-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.recording-buttons .btn {
+    min-width: 36px;
+    width: 36px;
+    height: 31px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.recording-buttons .btn i {
+    font-size: 1rem;
+}
+
+/* Adjust textarea padding when speech button is visible */
+#user-input {
+    padding-left: 55px !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .recording-controls {
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .recording-buttons {
+        width: 100%;
+    }
+    
+    .recording-buttons .btn {
+        flex: 1;
+    }
+    
+    .countdown-timer {
+        font-size: 1.5rem;
+        width: 100%;
+    }
+}
