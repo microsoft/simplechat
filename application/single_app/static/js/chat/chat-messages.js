@@ -1607,16 +1607,31 @@ export function actuallySendMessage(finalMessageToSend) {
             });
 
           if (updated) {
-            selectConversation(currentConversationId); // Re-select to update header
+            // Update header without reloading messages (they're already streamed)
+            const headerTitleEl = document.getElementById("current-conversation-title");
+            if (headerTitleEl && data.conversation_title) {
+              headerTitleEl.textContent = data.conversation_title;
+            }
+            // Update badges without full reload
+            import('./chat-conversations.js').then(module => {
+              const chatType = convoItem.dataset.chatType;
+              const groupName = convoItem.dataset.groupName;
+              module.addChatTypeBadges(chatType, groupName);
+            });
           }
         } else {
           // New conversation case
+          console.log('[sendMessage] New conversation created, adding to list without reload');
           addConversationToList(
             currentConversationId,
             data.conversation_title,
             data.classification || []
           );
-          selectConversation(currentConversationId); // Select the newly added one
+          // Don't call selectConversation here - messages are already displayed
+          // Just update the current conversation ID and title
+          window.currentConversationId = currentConversationId;
+          document.getElementById("current-conversation-title").textContent = data.conversation_title || "New Conversation";
+          console.log('[sendMessage] New conversation setup complete, conversation ID:', currentConversationId);
         }
       }
     })

@@ -138,16 +138,19 @@ async function startRecording() {
         
         mediaRecorder.addEventListener('dataavailable', (event) => {
             if (event.data.size > 0) {
+                console.log('[Recording] Audio chunk received, size:', event.data.size);
                 audioChunks.push(event.data);
             }
         });
         
         mediaRecorder.addEventListener('stop', handleRecordingStop);
         
-        // Start recording
-        mediaRecorder.start();
+        // Start recording - request data every second for better chunk collection
+        mediaRecorder.start(1000); // Timeslice: 1000ms
         recordingStartTime = Date.now();
         remainingTime = MAX_RECORDING_DURATION;
+        
+        console.log('[Recording] Started with 1-second timeslice for better chunk collection');
         
         // Reset waveform data
         waveformData = [];
@@ -177,6 +180,10 @@ async function startRecording() {
  */
 function stopAndSendRecording() {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
+        const recordingDuration = (Date.now() - recordingStartTime) / 1000;
+        console.log('[Recording] Stopping recording after', recordingDuration.toFixed(2), 'seconds');
+        console.log('[Recording] Total chunks collected so far:', audioChunks.length);
+        
         mediaRecorder.stop();
         
         // Stop all tracks
@@ -351,7 +358,7 @@ async function handleRecordingStop() {
     
     if (sendBtn) {
         sendBtn.disabled = true;
-        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>';
+        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     }
     
     if (cancelBtn) {
@@ -362,16 +369,18 @@ async function handleRecordingStop() {
         // Convert to WAV format for Azure Speech SDK compatibility
         const wavBlob = await convertToWav(originalBlob);
         
-        // Update button text
+        console.log('[Recording] WAV conversion complete, sending to backend');
+        
+        // Update button text - keep same spinner
         if (sendBtn) {
-            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>';
+            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         }
         
         // Send to backend for transcription
         const formData = new FormData();
         formData.append('audio', wavBlob, 'recording.wav');
         
-        console.log('Sending WAV audio to backend');
+        console.log('[Recording] Sending WAV audio to backend, size:', wavBlob.size);
         
         const response = await fetch('/api/speech/transcribe-chat', {
             method: 'POST',
@@ -384,6 +393,8 @@ async function handleRecordingStop() {
             // Append transcribed text to existing input
             const userInput = document.getElementById('user-input');
             if (userInput) {
+                console.log('[Speech Input] Transcription successful:', result.text);
+                
                 // Check if there's existing text
                 const existingText = userInput.value.trim();
                 
@@ -394,6 +405,8 @@ async function handleRecordingStop() {
                     // No existing text, just set the transcription
                     userInput.value = result.text;
                 }
+                
+                console.log('[Speech Input] User input updated, value length:', userInput.value.length);
                 
                 // Adjust textarea height
                 userInput.style.height = '';
@@ -407,6 +420,7 @@ async function handleRecordingStop() {
             
             showToast('Voice message transcribed successfully', 'success');
             
+            console.log('[Speech Input] Starting auto-send countdown...');
             // Start auto-send countdown
             startAutoSendCountdown();
         } else {
@@ -506,6 +520,15 @@ function startWaveformVisualization(audioStream) {
         
         // Calculate progress (how much of the recording time has elapsed)
         const elapsed = Date.now() - recordingStartTime;
+        const elapsedSeconds = elapsed / 1000;
+        
+        // Check if we've hit the time limit FIRST (before clamping progress)
+        if (elapsedSeconds >= MAX_RECORDING_DURATION) {
+            console.log('[Recording] Time limit reached at', elapsedSeconds.toFixed(2), 'seconds, auto-stopping...');
+            stopAndSendRecording();
+            return; // Stop the animation loop
+        }
+        
         const progress = Math.min(elapsed / (MAX_RECORDING_DURATION * 1000), 1);
         const progressWidth = canvas.width * progress;
         
@@ -529,7 +552,7 @@ function startWaveformVisualization(audioStream) {
         // Draw recorded waveform (filled area) - vertical bars
         if (waveformData.length > 1) {
             const centerY = canvas.height / 2;
-            const maxBarHeight = canvas.height * 2; // Bars can extend 48% of canvas height in each direction (96% total)
+            const maxBarHeight = canvas.height * 1.95; // Bars can extend 48% of canvas height in each direction (96% total)
             const barSpacing = 3; // Pixels between bars
             const pointsToShow = Math.floor(progressWidth / barSpacing);
             const step = waveformData.length / pointsToShow;
@@ -646,16 +669,18 @@ function stopCountdown() {
  * Start auto-send countdown after transcription
  */
 function startAutoSendCountdown() {
-    console.log('Starting auto-send countdown...');
+    console.log('[Auto-Send] Starting countdown...');
     
-    const totalCountdown = 4; // seconds
+    const totalCountdown = 5; // seconds
     let countdown = totalCountdown;
     const sendBtn = document.getElementById('send-btn');
     
     if (!sendBtn) {
-        console.warn('Send button not found for auto-send countdown');
+        console.error('[Auto-Send] Send button not found!');
         return;
     }
+    
+    console.log('[Auto-Send] Send button found, current conversation ID:', window.currentConversationId || 'NEW');
     
     // Store original button state
     const originalHTML = sendBtn.innerHTML;
@@ -690,7 +715,7 @@ function startAutoSendCountdown() {
         event.stopPropagation();
         event.stopImmediatePropagation();
         
-        console.log('Auto-send cancelled by user');
+        console.log('[Auto-Send] Cancelled by user');
         clearAutoSend();
         
         // Remove progress background
@@ -726,9 +751,10 @@ function startAutoSendCountdown() {
             autoSendCountdown = requestAnimationFrame(updateProgress);
         } else {
             // Countdown complete - send immediately
-            sendBtn.removeEventListener('click', cancelAutoSend, true);
-            
-            console.log('Auto-sending message...');
+            console.log('[Auto-Send] ===== COUNTDOWN COMPLETE =====');
+            console.log('[Auto-Send] Current conversation ID:', window.currentConversationId || 'NEW');
+            console.log('[Auto-Send] User input value:', document.getElementById('user-input')?.value);
+            console.log('[Auto-Send] Chatbox children count:', document.getElementById('chatbox')?.children.length);
             
             // Remove progress background
             if (progressBg.parentNode) {
@@ -739,11 +765,24 @@ function startAutoSendCountdown() {
             sendBtn.innerHTML = originalHTML;
             sendBtn.disabled = originalDisabled;
             sendBtn.style.color = '';
-            sendBtn.classList.remove('btn-warning');
+            sendBtn.classList.remove('btn-warning', 'auto-sending');
             sendBtn.classList.add('btn-primary');
             
-            // Call the actual sendMessage function directly
-            sendMessage();
+            // Remove the cancel listener
+            sendBtn.removeEventListener('click', cancelAutoSend, true);
+            
+            // Clear the auto-send state
+            autoSendCountdown = null;
+            autoSendTimeout = null;
+            
+            console.log('[Auto-Send] About to trigger click...');
+            // Trigger the send by programmatically clicking the button
+            // This ensures all normal send handlers fire
+            requestAnimationFrame(() => {
+                console.log('[Auto-Send] Clicking send button NOW');
+                sendBtn.click();
+                console.log('[Auto-Send] Click triggered, conversation ID after:', window.currentConversationId || 'NEW');
+            });
         }
     };
     

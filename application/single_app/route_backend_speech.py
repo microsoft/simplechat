@@ -5,6 +5,7 @@ Backend routes for speech-to-text functionality.
 from config import *
 from functions_authentication import login_required, get_current_user_id
 from functions_settings import get_settings
+from functions_debug import debug_print
 import azure.cognitiveservices.speech as speechsdk
 import os
 import tempfile
@@ -94,35 +95,72 @@ def register_route_backend_speech(app):
                 audio_config=audio_config
             )
             
+            # Get audio file size for debugging
+            audio_file_size = os.path.getsize(temp_audio_path)
+            debug_print(f"[Speech] Audio file size: {audio_file_size} bytes")
+            
             try:
-                # Perform recognition
-                result = speech_recognizer.recognize_once()
+                debug_print("[Speech] Starting continuous recognition for longer audio...")
                 
-                # Check result
-                if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                # Use continuous recognition for longer audio files
+                all_results = []
+                done = False
+                
+                def handle_recognized(evt):
+                    """Handle recognized speech events"""
+                    if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                        debug_print(f"[Speech] Recognized: {evt.result.text}")
+                        all_results.append(evt.result.text)
+                
+                def handle_canceled(evt):
+                    """Handle cancellation events"""
+                    nonlocal done
+                    debug_print(f"[Speech] Canceled: {evt}")
+                    if evt.reason == speechsdk.CancellationReason.Error:
+                        debug_print(f"[Speech] Error details: {evt.error_details}")
+                    done = True
+                
+                def handle_session_stopped(evt):
+                    """Handle session stopped events"""
+                    nonlocal done
+                    debug_print("[Speech] Session stopped")
+                    done = True
+                
+                # Connect callbacks
+                speech_recognizer.recognized.connect(handle_recognized)
+                speech_recognizer.canceled.connect(handle_canceled)
+                speech_recognizer.session_stopped.connect(handle_session_stopped)
+                
+                # Start continuous recognition
+                speech_recognizer.start_continuous_recognition()
+                
+                # Wait for completion (timeout after 120 seconds)
+                import time
+                timeout = 120
+                elapsed = 0
+                while not done and elapsed < timeout:
+                    time.sleep(0.1)
+                    elapsed += 0.1
+                
+                # Stop recognition
+                speech_recognizer.stop_continuous_recognition()
+                
+                debug_print(f"[Speech] Recognition complete. Recognized {len(all_results)} segments")
+                
+                # Combine all recognized text
+                if all_results:
+                    combined_text = ' '.join(all_results)
+                    debug_print(f"[Speech] Combined text length: {len(combined_text)} characters")
                     return jsonify({
                         'success': True,
-                        'text': result.text
+                        'text': combined_text
                     })
-                elif result.reason == speechsdk.ResultReason.NoMatch:
+                else:
+                    debug_print("[Speech] No speech recognized")
                     return jsonify({
                         'success': False,
                         'error': 'No speech could be recognized'
                     })
-                elif result.reason == speechsdk.ResultReason.Canceled:
-                    cancellation = result.cancellation_details
-                    error_message = f"Speech recognition canceled: {cancellation.reason}"
-                    if cancellation.reason == speechsdk.CancellationReason.Error:
-                        error_message = f"Error: {cancellation.error_details}"
-                    return jsonify({
-                        'success': False,
-                        'error': error_message
-                    }), 500
-                else:
-                    return jsonify({
-                        'success': False,
-                        'error': 'Unknown recognition result'
-                    }), 500
             finally:
                 # Close the recognizer to release file handle
                 if speech_recognizer:
