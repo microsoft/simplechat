@@ -324,8 +324,6 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         // Update sidebar conversation title in real-time
         updateSidebarConversationTitle(finalData.conversation_id, finalData.conversation_title);
     }
-    
-    showToast('Response complete', 'success');
 }
 
 export function cancelStreaming() {

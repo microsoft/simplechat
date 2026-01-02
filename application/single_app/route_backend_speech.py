@@ -162,10 +162,22 @@ def register_route_backend_speech(app):
                         'error': 'No speech could be recognized'
                     })
             finally:
-                # Close the recognizer to release file handle
-                if speech_recognizer:
-                    speech_recognizer.__del__()
-                    print("[Debug] Speech recognizer closed")
+                # Properly close the recognizer to release file handles
+                try:
+                    if speech_recognizer:
+                        # Disconnect all callbacks
+                        speech_recognizer.recognized.disconnect_all()
+                        speech_recognizer.canceled.disconnect_all()
+                        speech_recognizer.session_stopped.disconnect_all()
+                        debug_print("[Speech] Disconnected recognizer callbacks")
+                        
+                        # Give the recognizer time to release resources
+                        import time
+                        time.sleep(0.2)
+                        
+                        debug_print("[Speech] Speech recognizer cleanup complete")
+                except Exception as recognizer_cleanup_error:
+                    print(f"[Debug] Error during recognizer cleanup: {recognizer_cleanup_error}")
                 
         except Exception as e:
             print(f"Error transcribing audio: {e}")
@@ -178,12 +190,15 @@ def register_route_backend_speech(app):
             
         finally:
             # Clean up temporary files
-            try:
-                if temp_audio_path and os.path.exists(temp_audio_path):
-                    # Small delay to ensure file handle is released
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                try:
+                    # Longer delay to ensure file handle is fully released on Windows
                     import time
-                    time.sleep(0.1)
+                    time.sleep(0.3)
                     os.remove(temp_audio_path)
                     print(f"[Debug] Cleaned up temp file: {temp_audio_path}")
-            except Exception as cleanup_error:
-                print(f"Error cleaning up temporary files: {cleanup_error}")
+                except PermissionError as perm_error:
+                    # If still locked, schedule for deletion on next boot or ignore
+                    print(f"[Debug] Temp file still locked, will be cleaned by OS: {temp_audio_path}")
+                except Exception as cleanup_error:
+                    print(f"[Debug] Error cleaning up temporary files: {cleanup_error}")

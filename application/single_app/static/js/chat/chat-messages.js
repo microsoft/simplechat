@@ -1607,17 +1607,7 @@ export function actuallySendMessage(finalMessageToSend) {
             });
 
           if (updated) {
-            // Update header without reloading messages (they're already streamed)
-            const headerTitleEl = document.getElementById("current-conversation-title");
-            if (headerTitleEl && data.conversation_title) {
-              headerTitleEl.textContent = data.conversation_title;
-            }
-            // Update badges without full reload
-            import('./chat-conversations.js').then(module => {
-              const chatType = convoItem.dataset.chatType;
-              const groupName = convoItem.dataset.groupName;
-              module.addChatTypeBadges(chatType, groupName);
-            });
+            selectConversation(currentConversationId); // Re-select to update header
           }
         } else {
           // New conversation case

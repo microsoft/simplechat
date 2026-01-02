@@ -1012,13 +1012,23 @@ export async function createNewConversation(callback) {
     currentConversationId = data.conversation_id;
     // Add to list (pass empty classifications for new convo)
     addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
-    // Select the new conversation to update header and chatbox
-    selectConversation(data.conversation_id);
+    
+    // Don't call selectConversation here if we're about to send a message
+    // because selectConversation clears the chatbox, which would remove
+    // the user message that's about to be appended by actuallySendMessage
+    // Instead, just update the UI elements directly
+    window.currentConversationId = data.conversation_id;
+    const titleEl = document.getElementById("current-conversation-title");
+    if (titleEl) {
+      titleEl.textContent = data.title || "New Conversation";
+    }
+    console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
 
     // Execute callback if provided (e.g., to send the first message)
     if (typeof callback === "function") {
       callback();
     }
+
 
   } catch (error) {
     console.error("Error creating conversation:", error);
