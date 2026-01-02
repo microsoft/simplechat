@@ -17,6 +17,8 @@ let audioContext = null;
 let analyser = null;
 let animationFrame = null;
 let stream = null;
+let waveformData = []; // Store waveform amplitudes over time
+let isCanceling = false; // Flag to track if recording is being canceled
 
 const MAX_RECORDING_DURATION = 90; // seconds
 let remainingTime = MAX_RECORDING_DURATION;
@@ -132,6 +134,7 @@ async function startRecording() {
         // Store the file extension for later use
         mediaRecorder.fileExtension = fileExtension;
         audioChunks = [];
+        isCanceling = false; // Reset cancel flag when starting new recording
         
         mediaRecorder.addEventListener('dataavailable', (event) => {
             if (event.data.size > 0) {
@@ -145,6 +148,9 @@ async function startRecording() {
         mediaRecorder.start();
         recordingStartTime = Date.now();
         remainingTime = MAX_RECORDING_DURATION;
+        
+        // Reset waveform data
+        waveformData = [];
         
         // Show recording UI
         showRecordingUI();
@@ -181,9 +187,13 @@ function stopAndSendRecording() {
 }
 
 /**
+/**
  * Cancel recording
  */
 function cancelRecording() {
+    // Set cancel flag BEFORE stopping the recorder
+    isCanceling = true;
+    
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
         
@@ -192,6 +202,9 @@ function cancelRecording() {
             stream.getTracks().forEach(track => track.stop());
         }
     }
+    
+    // Clear waveform data
+    waveformData = [];
     
     // Clear audio chunks
     audioChunks = [];
@@ -307,6 +320,14 @@ function createWavBlob(samples, sampleRate) {
  * Handle recording stop event
  */
 async function handleRecordingStop() {
+    if (isCanceling) {
+        console.log('Recording canceled by user');
+        hideRecordingUI();
+        isCanceling = false; // Reset flag
+        return;
+    }
+    
+    // Check if recording was canceled
     stopWaveformVisualization();
     stopCountdown();
     
@@ -330,7 +351,7 @@ async function handleRecordingStop() {
     
     if (sendBtn) {
         sendBtn.disabled = true;
-        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Converting...';
+        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>';
     }
     
     if (cancelBtn) {
@@ -343,7 +364,7 @@ async function handleRecordingStop() {
         
         // Update button text
         if (sendBtn) {
-            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Transcribing...';
+            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>';
         }
         
         // Send to backend for transcription
@@ -401,7 +422,7 @@ async function handleRecordingStop() {
         
         if (sendBtn) {
             sendBtn.disabled = false;
-            sendBtn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Send';
+            sendBtn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
         }
         
         if (cancelBtn) {
@@ -451,9 +472,9 @@ function startWaveformVisualization(audioStream) {
     
     const canvasCtx = canvas.getContext('2d');
     
-    // Set canvas size
+    // Set canvas size - height is now 36px to match buttons
     canvas.width = canvas.offsetWidth;
-    canvas.height = 100;
+    canvas.height = 36;
     
     // Create audio context and analyser
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -473,25 +494,70 @@ function startWaveformVisualization(audioStream) {
         
         analyser.getByteFrequencyData(dataArray);
         
-        canvasCtx.fillStyle = '#f8f9fa';
+        // Calculate average amplitude for this frame
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i];
+        }
+        const avgAmplitude = sum / bufferLength / 255; // Normalize to 0-1
+        
+        // Store amplitude for this frame (keep as 0-1, we'll handle centering in drawing)
+        waveformData.push(avgAmplitude);
+        
+        // Calculate progress (how much of the recording time has elapsed)
+        const elapsed = Date.now() - recordingStartTime;
+        const progress = Math.min(elapsed / (MAX_RECORDING_DURATION * 1000), 1);
+        const progressWidth = canvas.width * progress;
+        
+        // Check if dark mode is active
+        const isDarkMode = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        
+        // Clear canvas with appropriate background color
+        canvasCtx.fillStyle = isDarkMode ? '#343a40' : '#f8f9fa';
         canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
         
-        const barWidth = (canvas.width / bufferLength) * 2.5;
-        let barHeight;
-        let x = 0;
+        // Draw unfilled area (dashed line at center)
+        canvasCtx.setLineDash([5, 5]);
+        canvasCtx.strokeStyle = isDarkMode ? '#495057' : '#dee2e6';
+        canvasCtx.lineWidth = 1;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(progressWidth, canvas.height / 2);
+        canvasCtx.lineTo(canvas.width, canvas.height / 2);
+        canvasCtx.stroke();
+        canvasCtx.setLineDash([]);
         
-        for (let i = 0; i < bufferLength; i++) {
-            barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
+        // Draw recorded waveform (filled area) - vertical bars
+        if (waveformData.length > 1) {
+            const centerY = canvas.height / 2;
+            const maxBarHeight = canvas.height * 2; // Bars can extend 48% of canvas height in each direction (96% total)
+            const barSpacing = 3; // Pixels between bars
+            const pointsToShow = Math.floor(progressWidth / barSpacing);
+            const step = waveformData.length / pointsToShow;
             
-            // Gradient from primary to success color
-            const gradient = canvasCtx.createLinearGradient(0, canvas.height - barHeight, 0, canvas.height);
-            gradient.addColorStop(0, '#0d6efd');
-            gradient.addColorStop(1, '#198754');
+            // Determine waveform color based on progress
+            let waveformColor = '#0d6efd'; // Default blue
+            if (progress >= 0.95) {
+                waveformColor = '#dc3545'; // Red
+            } else if (progress >= 0.85) {
+                waveformColor = '#ffc107'; // Yellow
+            }
             
-            canvasCtx.fillStyle = gradient;
-            canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = waveformColor;
             
-            x += barWidth + 1;
+            for (let i = 0; i < pointsToShow && i < waveformData.length; i++) {
+                const dataIndex = Math.floor(i * step);
+                const amplitude = waveformData[dataIndex];
+                const x = i * barSpacing;
+                
+                // Draw vertical bar from center, extending both up and down
+                const barHeight = amplitude * maxBarHeight;
+                
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(x, centerY - barHeight);
+                canvasCtx.lineTo(x, centerY + barHeight);
+                canvasCtx.stroke();
+            }
         }
     }
     
@@ -582,7 +648,8 @@ function stopCountdown() {
 function startAutoSendCountdown() {
     console.log('Starting auto-send countdown...');
     
-    let countdown = 5;
+    const totalCountdown = 4; // seconds
+    let countdown = totalCountdown;
     const sendBtn = document.getElementById('send-btn');
     
     if (!sendBtn) {
@@ -594,14 +661,27 @@ function startAutoSendCountdown() {
     const originalHTML = sendBtn.innerHTML;
     const originalDisabled = sendBtn.disabled;
     
-    // Update button to show countdown number
-    const updateCountdownButton = () => {
-        sendBtn.innerHTML = `${countdown}`;
-        sendBtn.classList.add('btn-warning');
-        sendBtn.classList.remove('btn-primary');
-    };
+    // Add a progress background element
+    const progressBg = document.createElement('div');
+    progressBg.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #0d6efd, #0dcaf0);
+        border-radius: 0.375rem;
+        transition: width 0.1s linear;
+        z-index: -1;
+    `;
+    sendBtn.style.position = 'relative';
+    sendBtn.style.overflow = 'hidden';
+    sendBtn.appendChild(progressBg);
     
-    updateCountdownButton();
+    // Update button appearance for countdown mode
+    sendBtn.style.color = 'white';
+    sendBtn.classList.add('btn-primary');
+    sendBtn.classList.remove('btn-warning');
     
     // Click handler to cancel auto-send
     const cancelAutoSend = (event) => {
@@ -612,8 +692,15 @@ function startAutoSendCountdown() {
         
         console.log('Auto-send cancelled by user');
         clearAutoSend();
+        
+        // Remove progress background
+        if (progressBg.parentNode) {
+            progressBg.remove();
+        }
+        
         sendBtn.innerHTML = originalHTML;
         sendBtn.disabled = originalDisabled;
+        sendBtn.style.color = '';
         sendBtn.classList.remove('btn-warning');
         sendBtn.classList.add('btn-primary');
         sendBtn.removeEventListener('click', cancelAutoSend, true);
@@ -623,28 +710,45 @@ function startAutoSendCountdown() {
     // Add event listener with capture phase to intercept before other handlers
     sendBtn.addEventListener('click', cancelAutoSend, true);
     
-    // Countdown interval
-    autoSendCountdown = setInterval(() => {
-        countdown--;
+    // Animation frame for smooth progress
+    const startTime = Date.now();
+    const duration = totalCountdown * 1000; // milliseconds
+    
+    const updateProgress = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const percentage = progress * 100;
         
-        if (countdown > 0) {
-            updateCountdownButton();
+        // Update progress background width
+        progressBg.style.width = percentage + '%';
+        
+        if (progress < 1) {
+            autoSendCountdown = requestAnimationFrame(updateProgress);
         } else {
-            // Countdown reached 0, send message
-            clearAutoSend();
+            // Countdown complete - send immediately
             sendBtn.removeEventListener('click', cancelAutoSend, true);
+            
             console.log('Auto-sending message...');
+            
+            // Remove progress background
+            if (progressBg.parentNode) {
+                progressBg.remove();
+            }
             
             // Restore button to original state
             sendBtn.innerHTML = originalHTML;
             sendBtn.disabled = originalDisabled;
+            sendBtn.style.color = '';
             sendBtn.classList.remove('btn-warning');
             sendBtn.classList.add('btn-primary');
             
             // Call the actual sendMessage function directly
             sendMessage();
         }
-    }, 1000);
+    };
+    
+    // Start the animation
+    autoSendCountdown = requestAnimationFrame(updateProgress);
     
     // Also store timeout reference for cleanup
     autoSendTimeout = autoSendCountdown;
@@ -655,7 +759,7 @@ function startAutoSendCountdown() {
  */
 function clearAutoSend() {
     if (autoSendCountdown) {
-        clearInterval(autoSendCountdown);
+        cancelAnimationFrame(autoSendCountdown);
         autoSendCountdown = null;
     }
     

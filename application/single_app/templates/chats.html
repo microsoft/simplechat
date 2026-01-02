@@ -437,18 +437,15 @@
                     
                     <!-- Recording UI Container (hidden by default) -->
                     <div class="position-relative" id="recording-container" style="display: none;">
-                        <div class="recording-ui">
-                            <canvas id="waveform-canvas"></canvas>
-                            <div class="recording-timer-bar" id="recording-timer-bar"></div>
-                            <div class="recording-controls">
-                                <div class="recording-buttons">
-                                    <button class="btn btn-outline-danger btn-sm" id="cancel-recording-btn" title="Cancel Recording">
-                                        <i class="bi bi-x-octagon-fill"></i>
-                                    </button>
-                                    <button class="btn btn-outline-success btn-sm" id="send-recording-btn" title="Send Recording">
-                                        <i class="bi bi-send-check-fill"></i>
-                                    </button>
-                                </div>
+                        <div class="recording-ui d-flex align-items-center gap-2">
+                            <canvas id="waveform-canvas" style="flex: 1;"></canvas>
+                            <div class="recording-buttons d-flex gap-2">
+                                <button class="btn btn-danger" id="cancel-recording-btn" title="Cancel Recording">
+                                    <i class="bi bi-x-circle-fill"></i>
+                                </button>
+                                <button class="btn btn-success" id="send-recording-btn" title="Send Recording">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                </button>
                             </div>
                         </div>
                     </div>
