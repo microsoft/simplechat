@@ -479,6 +479,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             'owner_email': owner_info.get('email', ''),
             'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
             'document_count': 0,  # Will be updated from database
+            'member_count': len(workspace.get('admins', [])) + len(workspace.get('documentManagers', [])) + (1 if owner_info else 0),  # Total members including owner
             'storage_size': 0,  # Will be updated from storage account
             'last_activity': None,  # Will be updated from public_documents
             'recent_activity_count': 0,  # Will be calculated
