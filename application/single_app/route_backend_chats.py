@@ -3501,6 +3501,41 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
+                    # Log chat token usage to activity_logs for easy reporting
+                    if token_usage_data and token_usage_data.get('total_tokens'):
+                        try:
+                            from functions_activity_logging import log_token_usage
+                            
+                            # Determine workspace type based on active group/public workspace
+                            workspace_type = 'personal'
+                            if active_public_workspace_id:
+                                workspace_type = 'public'
+                            elif active_group_id:
+                                workspace_type = 'group'
+                            
+                            log_token_usage(
+                                user_id=user_id,
+                                token_type='chat',
+                                total_tokens=token_usage_data.get('total_tokens'),
+                                model=final_model_used if use_agent_streaming else gpt_model,
+                                workspace_type=workspace_type,
+                                prompt_tokens=token_usage_data.get('prompt_tokens'),
+                                completion_tokens=token_usage_data.get('completion_tokens'),
+                                conversation_id=conversation_id,
+                                message_id=assistant_message_id,
+                                group_id=active_group_id,
+                                public_workspace_id=active_public_workspace_id,
+                                additional_context={
+                                    'agent_name': agent_name_used if use_agent_streaming else None,
+                                    'augmented': bool(system_messages_for_augmentation),
+                                    'reasoning_effort': reasoning_effort
+                                }
+                            )
+                            debug_print(f"✅ Logged streaming chat token usage: {token_usage_data.get('total_tokens')} tokens")
+                        except Exception as log_error:
+                            debug_print(f"⚠️  Warning: Failed to log streaming chat token usage: {log_error}")
+                            # Don't fail the chat flow if logging fails
+                    
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     
