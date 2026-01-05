@@ -14,6 +14,7 @@ param containerImageName string
 param azurePlatform string
 param cosmosDbName string
 param searchServiceName string
+param openAiServiceName string
 param openAiResourceGroupName string
 param documentIntelligenceServiceName string
 param appInsightsName string
@@ -60,6 +61,9 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
 }
 
+resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+  name: openAiServiceName
+}
 resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: documentIntelligenceServiceName
 }

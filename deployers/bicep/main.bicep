@@ -351,12 +351,6 @@ module appServicePlan 'modules/appServicePlan.bicep' = {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-    customBlobStorageSuffix: customBlobStorageSuffix
-    customGraphUrl: customGraphUrl
-    customIdentityUrl: customIdentityUrl
-    customResourceManagerUrl: customResourceManagerUrl
-    customCognitiveServicesScope: customCognitiveServicesScope
-    customSearchResourceUrl: customSearchResourceUrl
   }
 }
 
@@ -378,7 +372,8 @@ module appService 'modules/appService.bicep' = {
     containerImageName: containerImageName
     azurePlatform: cloudEnvironment
     cosmosDbName: cosmosDB.outputs.cosmosDbName
-    searchServiceName: searchService.outputs.searchServiceName    
+    searchServiceName: searchService.outputs.searchServiceName
+    openAiServiceName: openAI.outputs.openAIName
     openAiResourceGroupName: openAI.outputs.openAIResourceGroup
     documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
     appInsightsName: applicationInsights.outputs.appInsightsName
@@ -486,7 +481,6 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
   name: 'setPermissions'
   scope: rg
   params: {
-
     webAppName: appService.outputs.name
     authenticationType: authenticationType
     enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
