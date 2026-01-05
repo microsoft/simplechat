@@ -54,7 +54,7 @@ resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023
   }
 }
 
-resource conversationsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = {
+resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = {
   parent: cosmosDatabase
   name: 'settings'
   properties: {
