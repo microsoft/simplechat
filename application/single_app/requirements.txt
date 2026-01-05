@@ -1,7 +1,6 @@
 # requirements.txt
 pandas==2.2.3
 azure-monitor-query==1.4.1
-opencensus-ext-azure==1.1.15
 Flask==2.2.5
 Flask-WTF==1.2.1
 gunicorn
