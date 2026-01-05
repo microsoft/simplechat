@@ -95,7 +95,7 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
-configure_azure_monitor()
+# configure_azure_monitor()  # Disabled for local development without Application Insights
 
 
 # =================== Helper Functions ===================

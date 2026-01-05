@@ -7,7 +7,7 @@ body {
 }
 
 header {
-    background-color: #0073e6;
+    background-color: #00675B;
     color: white;
     padding: 10px 20px;
 }
@@ -22,13 +22,104 @@ main {
 
 /* Dark mode styles */
 [data-bs-theme="dark"] {
-    --bs-body-bg: #212529;
-    --bs-body-color: #e9ecef;
+    --bs-body-bg: #0a1a17 !important;
+    --bs-body-color: #e9ecef !important;
+    --bs-primary: #00675B !important;
+}
+
+/* Dark mode primary color */
+[data-bs-theme="dark"] a {
+    color: #00D6BA !important;
+}
+
+[data-bs-theme="dark"] a:hover {
+    color: #FFAE00 !important;
+}
+
+[data-bs-theme="dark"] .btn-primary {
+    background-color: #0D9B8C !important;
+    border-color: #0D9B8C !important;
+}
+
+[data-bs-theme="dark"] .btn-primary:hover {
+    background-color: #00D6BA !important;
+    border-color: #00D6BA !important;
+    color: #000 !important;
+}
+
+/* Dark mode accents */
+[data-bs-theme="dark"] .btn-warning {
+    background-color: #FFAE00 !important;
+    border-color: #FFAE00 !important;
+    color: #000 !important;
+}
+
+[data-bs-theme="dark"] .btn-success {
+    background-color: #0D9B8C !important;
+    border-color: #0D9B8C !important;
+}
+
+[data-bs-theme="dark"] .form-control:focus {
+    border-color: #FF7F02 !important;
+    box-shadow: 0 0 0 0.25rem rgba(255, 127, 2, 0.25) !important;
+}
+
+[data-bs-theme="dark"] .form-select:focus {
+    border-color: #FF7F02 !important;
+    box-shadow: 0 0 0 0.25rem rgba(255, 127, 2, 0.25) !important;
 }
 
 /* Theme-based logo visibility */
 [data-bs-theme="light"] .d-dark-mode-only {
     display: none !important;
+}
+
+/* Light mode primary color */
+[data-bs-theme="light"] {
+    --bs-primary: #00D6BA !important;
+    --bs-primary-rgb: 0, 214, 186 !important;
+}
+
+[data-bs-theme="light"] a {
+    color: #0D9B8C !important;
+}
+
+[data-bs-theme="light"] a:hover {
+    color: #FF7F02 !important;
+}
+
+[data-bs-theme="light"] .btn-primary {
+    background-color: #00D6BA !important;
+    border-color: #00D6BA !important;
+    color: #000 !important;
+}
+
+[data-bs-theme="light"] .btn-primary:hover {
+    background-color: #0D9B8C !important;
+    border-color: #0D9B8C !important;
+    color: white !important;
+}
+
+/* Light mode accents */
+[data-bs-theme="light"] .btn-warning {
+    background-color: #FFAE00 !important;
+    border-color: #FFAE00 !important;
+    color: #000 !important;
+}
+
+[data-bs-theme="light"] .btn-success {
+    background-color: #00D6BA !important;
+    border-color: #00D6BA !important;
+}
+
+[data-bs-theme="light"] .form-control:focus {
+    border-color: #FF7F02 !important;
+    box-shadow: 0 0 0 0.25rem rgba(255, 127, 2, 0.25) !important;
+}
+
+[data-bs-theme="light"] .form-select:focus {
+    border-color: #FF7F02 !important;
+    box-shadow: 0 0 0 0.25rem rgba(255, 127, 2, 0.25) !important;
 }
 
 [data-bs-theme="dark"] .d-light-mode-only {
