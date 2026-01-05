@@ -999,3 +999,84 @@ def log_group_member_deleted(
         )
         debug_print(f"⚠️  Warning: Failed to log group member deletion: {str(e)}")
 
+
+def log_public_workspace_status_change(
+    workspace_id: str,
+    workspace_name: str,
+    old_status: str,
+    new_status: str,
+    changed_by_user_id: str,
+    changed_by_email: str,
+    reason: Optional[str] = None
+) -> None:
+    """
+    Log public workspace status change to activity_logs container for audit trail.
+    
+    Args:
+        workspace_id (str): The ID of the public workspace whose status is changing
+        workspace_name (str): The name of the public workspace
+        old_status (str): Previous status value
+        new_status (str): New status value
+        changed_by_user_id (str): User ID of admin who made the change
+        changed_by_email (str): Email of admin who made the change
+        reason (str, optional): Optional reason for the status change
+    """
+    
+    try:
+        import uuid
+        
+        # Create status change activity record
+        status_change_activity = {
+            'id': str(uuid.uuid4()),
+            'activity_type': 'public_workspace_status_change',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'public_workspace': {
+                'workspace_id': workspace_id,
+                'workspace_name': workspace_name
+            },
+            'status_change': {
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_at': datetime.utcnow().isoformat()
+            },
+            'changed_by': {
+                'user_id': changed_by_user_id,
+                'email': changed_by_email
+            },
+            'workspace_type': 'public_workspace',
+            'workspace_context': {
+                'public_workspace_id': workspace_id
+            }
+        }
+        
+        # Add reason if provided
+        if reason:
+            status_change_activity['status_change']['reason'] = reason
+        
+        # Save to activity_logs container for permanent audit trail
+        cosmos_activity_logs_container.create_item(body=status_change_activity)
+        
+        # Also log to Application Insights for monitoring
+        log_event(
+            message=f"Public workspace status changed: {workspace_name} ({workspace_id}) from '{old_status}' to '{new_status}' by {changed_by_email}",
+            extra=status_change_activity,
+            level=logging.INFO
+        )
+        
+        debug_print(f"✅ Logged public workspace status change: {workspace_name} ({workspace_id}) {old_status} -> {new_status}")
+        
+    except Exception as e:
+        # Log error but don't fail the operation
+        log_event(
+            message=f"Error logging public workspace status change: {str(e)}",
+            extra={
+                'workspace_id': workspace_id,
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_by_user_id': changed_by_user_id,
+                'error': str(e)
+            },
+            level=logging.ERROR
+        )
+        debug_print(f"⚠️  Warning: Failed to log public workspace status change: {str(e)}")

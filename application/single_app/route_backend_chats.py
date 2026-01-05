@@ -473,6 +473,17 @@ def register_route_backend_chats(app):
                         traceback.print_exc()
                 
                 if document_scope == 'public' and active_public_workspace_id:
+                    # Check if public workspace status allows chat operations
+                    try:
+                        from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                        workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                        if workspace_doc:
+                            allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                    except Exception as e:
+                        debug_print(f"Error checking public workspace status: {e}")
+                    
                     user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
                 else:
                     user_metadata['workspace_search'] = {
@@ -2812,6 +2823,18 @@ def register_route_backend_chats(app):
                             traceback.print_exc()
                     
                     if document_scope == 'public' and active_public_workspace_id:
+                        # Check if public workspace status allows chat operations
+                        try:
+                            from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                            workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                            if workspace_doc:
+                                allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                                if not allowed:
+                                    yield f"data: {json.dumps({'error': reason})}\n\n"
+                                    return
+                        except Exception as e:
+                            debug_print(f"Error checking public workspace status: {e}")
+                        
                         user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
                 else:
                     user_metadata['workspace_search'] = {

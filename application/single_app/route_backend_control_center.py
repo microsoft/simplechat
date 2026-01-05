@@ -328,7 +328,7 @@ def enhance_user_with_activity(user, force_refresh=False):
             
             enhanced['activity']['document_metrics']['total_documents'] = total_docs
             # AI search size = pages × 80KB
-            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 22 * 1024  # 22KB per page
             
             # Last day upload tracking removed - keeping only document count and sizes
             
@@ -482,7 +482,8 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             'storage_size': 0,  # Will be updated from storage account
             'last_activity': None,  # Will be updated from public_documents
             'recent_activity_count': 0,  # Will be calculated
-            'status': 'active',  # default - can be determined by business logic
+            'status': workspace.get('status', 'active'),  # Read from workspace document, default to 'active'
+            'statusHistory': workspace.get('statusHistory', []),  # Include status change history
             
             # Keep nested structure for backward compatibility
             'activity': {
@@ -516,7 +517,12 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                             # Update flat fields
                             enhanced['document_count'] = doc_metrics.get('total_documents', 0)
                             enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
-                            # Cached document metrics applied successfully
+                        
+                        # Apply cached activity metrics if available
+                        if 'last_activity' in cached_metrics:
+                            enhanced['last_activity'] = cached_metrics['last_activity']
+                        if 'recent_activity_count' in cached_metrics:
+                            enhanced['recent_activity_count'] = cached_metrics['recent_activity_count']
                         
                         debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Returning cached data for {workspace_id}: {enhanced['activity']['document_metrics']}")
                         return enhanced
@@ -589,7 +595,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             ))
             
             total_pages = pages_sum_result[0] if pages_sum_result and pages_sum_result[0] else 0
-            ai_search_size = total_pages * 80 * 1024  # 80KB per page
+            ai_search_size = total_pages * 22 * 1024  # 22KB per page
             enhanced['activity']['document_metrics']['ai_search_size'] = ai_search_size
             
             debug_print(f"📊 [PUBLIC WORKSPACE DOCUMENT DEBUG] Workspace {workspace_id}: {total_documents} documents, {total_pages} pages, {ai_search_size} AI search size")
@@ -691,6 +697,8 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             try:
                 metrics_cache = {
                     'document_metrics': enhanced['activity']['document_metrics'],
+                    'last_activity': enhanced.get('last_activity'),
+                    'recent_activity_count': enhanced.get('recent_activity_count', 0),
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
@@ -857,11 +865,11 @@ def enhance_group_with_activity(group, force_refresh=False):
             
             enhanced['activity']['document_metrics']['total_documents'] = total_docs
             enhanced['document_count'] = total_docs  # Update flat field
-            # AI search size = pages × 80KB
-            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            # AI search size = pages × 22KB
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 22 * 1024  # 22KB per page
             
             debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
-            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 80 * 1024} bytes")
+            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 22 * 1024} bytes")
             
             # Last day upload tracking removed - keeping only document count and sizes
             debug_print(f"� [GROUP DOCUMENT DEBUG] Document metrics calculation complete for group {group_id}")
@@ -3306,6 +3314,262 @@ def register_route_backend_control_center(app):
         except Exception as e:
             debug_print(f"Error getting public workspaces for control center: {e}")
             return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_update_public_workspace_status(workspace_id):
+        """
+        Update public workspace status (active, locked, upload_disabled, inactive)
+        Tracks who made the change and when, logs to activity_logs
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            new_status = data.get('status')
+            reason = data.get('reason')  # Optional reason for the status change
+            
+            if not new_status:
+                return jsonify({'error': 'Status is required'}), 400
+            
+            # Validate status values
+            valid_statuses = ['active', 'locked', 'upload_disabled', 'inactive']
+            if new_status not in valid_statuses:
+                return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+                
+            # Get the workspace
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Get admin user info
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
+            
+            # Get old status for logging
+            old_status = workspace.get('status', 'active')  # Default to 'active' if not set
+            
+            # Only update and log if status actually changed
+            if old_status != new_status:
+                # Update workspace status
+                workspace['status'] = new_status
+                workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                
+                # Add status change metadata
+                if 'statusHistory' not in workspace:
+                    workspace['statusHistory'] = []
+                
+                workspace['statusHistory'].append({
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'changed_by_user_id': admin_user_id,
+                    'changed_by_email': admin_email,
+                    'changed_at': datetime.utcnow().isoformat(),
+                    'reason': reason
+                })
+                
+                # Update in database
+                cosmos_public_workspaces_container.upsert_item(workspace)
+                
+                # Log to activity_logs container for audit trail
+                from functions_activity_logging import log_public_workspace_status_change
+                log_public_workspace_status_change(
+                    workspace_id=workspace_id,
+                    workspace_name=workspace.get('name', 'Unknown'),
+                    old_status=old_status,
+                    new_status=new_status,
+                    changed_by_user_id=admin_user_id,
+                    changed_by_email=admin_email,
+                    reason=reason
+                )
+                
+                # Log admin action (legacy logging)
+                log_event("[ControlCenter] Public Workspace Status Update", {
+                    "admin_user": admin_email,
+                    "admin_user_id": admin_user_id,
+                    "workspace_id": workspace_id,
+                    "workspace_name": workspace.get('name'),
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "reason": reason
+                })
+                
+                return jsonify({
+                    'message': 'Public workspace status updated successfully',
+                    'old_status': old_status,
+                    'new_status': new_status
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Status unchanged',
+                    'status': new_status
+                }), 200
+                
+        except Exception as e:
+            debug_print(f"Error updating public workspace status: {e}")
+            return jsonify({'error': 'Failed to update public workspace status'}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @control_center_admin_required
+    def api_bulk_public_workspace_action():
+        """
+        Perform bulk actions on multiple public workspaces.
+        Actions: lock, unlock, disable_uploads, enable_uploads, delete_documents
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            workspace_ids = data.get('workspace_ids', [])
+            action = data.get('action')
+            reason = data.get('reason')  # Optional reason
+            
+            if not workspace_ids or not isinstance(workspace_ids, list):
+                return jsonify({'error': 'workspace_ids must be a non-empty array'}), 400
+                
+            if not action:
+                return jsonify({'error': 'Action is required'}), 400
+            
+            # Validate action
+            valid_actions = ['lock', 'unlock', 'disable_uploads', 'enable_uploads', 'delete_documents']
+            if action not in valid_actions:
+                return jsonify({'error': f'Invalid action. Must be one of: {", ".join(valid_actions)}'}), 400
+            
+            # Get admin user info
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
+            
+            # Map actions to status values
+            action_to_status = {
+                'lock': 'locked',
+                'unlock': 'active',
+                'disable_uploads': 'upload_disabled',
+                'enable_uploads': 'active'
+            }
+            
+            successful = []
+            failed = []
+            
+            for workspace_id in workspace_ids:
+                try:
+                    # Get the workspace
+                    workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+                    
+                    if action == 'delete_documents':
+                        # Delete all documents for this workspace
+                        # Query all documents
+                        doc_query = "SELECT c.id FROM c WHERE c.public_workspace_id = @workspace_id"
+                        doc_params = [{"name": "@workspace_id", "value": workspace_id}]
+                        
+                        docs_to_delete = list(cosmos_public_documents_container.query_items(
+                            query=doc_query,
+                            parameters=doc_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        deleted_count = 0
+                        for doc in docs_to_delete:
+                            try:
+                                delete_document_chunks(doc['id'])
+                                delete_document(doc['id'])
+                                deleted_count += 1
+                            except Exception as del_e:
+                                debug_print(f"Error deleting document {doc['id']}: {del_e}")
+                        
+                        successful.append({
+                            'workspace_id': workspace_id,
+                            'workspace_name': workspace.get('name', 'Unknown'),
+                            'action': action,
+                            'documents_deleted': deleted_count
+                        })
+                        
+                        # Log the action
+                        log_event("[ControlCenter] Bulk Public Workspace Documents Deleted", {
+                            "admin_user": admin_email,
+                            "admin_user_id": admin_user_id,
+                            "workspace_id": workspace_id,
+                            "workspace_name": workspace.get('name'),
+                            "documents_deleted": deleted_count,
+                            "reason": reason
+                        })
+                        
+                    else:
+                        # Status change action
+                        new_status = action_to_status[action]
+                        old_status = workspace.get('status', 'active')
+                        
+                        if old_status != new_status:
+                            workspace['status'] = new_status
+                            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                            
+                            # Add status history
+                            if 'statusHistory' not in workspace:
+                                workspace['statusHistory'] = []
+                            
+                            workspace['statusHistory'].append({
+                                'old_status': old_status,
+                                'new_status': new_status,
+                                'changed_by_user_id': admin_user_id,
+                                'changed_by_email': admin_email,
+                                'changed_at': datetime.utcnow().isoformat(),
+                                'reason': reason,
+                                'bulk_action': True
+                            })
+                            
+                            cosmos_public_workspaces_container.upsert_item(workspace)
+                            
+                            # Log activity
+                            from functions_activity_logging import log_public_workspace_status_change
+                            log_public_workspace_status_change(
+                                workspace_id=workspace_id,
+                                workspace_name=workspace.get('name', 'Unknown'),
+                                old_status=old_status,
+                                new_status=new_status,
+                                changed_by_user_id=admin_user_id,
+                                changed_by_email=admin_email,
+                                reason=f"Bulk action: {reason}" if reason else "Bulk action"
+                            )
+                        
+                        successful.append({
+                            'workspace_id': workspace_id,
+                            'workspace_name': workspace.get('name', 'Unknown'),
+                            'action': action,
+                            'old_status': old_status,
+                            'new_status': new_status
+                        })
+                    
+                except Exception as e:
+                    failed.append({
+                        'workspace_id': workspace_id,
+                        'error': str(e)
+                    })
+                    debug_print(f"Error processing workspace {workspace_id}: {e}")
+            
+            return jsonify({
+                'message': 'Bulk action completed',
+                'successful': successful,
+                'failed': failed,
+                'summary': {
+                    'total': len(workspace_ids),
+                    'success': len(successful),
+                    'failed': len(failed)
+                }
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error performing bulk public workspace action: {e}")
+            return jsonify({'error': 'Failed to perform bulk action'}), 500
 
     # Activity Trends API
     @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
