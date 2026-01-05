@@ -54,15 +54,16 @@ resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023
   }
 }
 
-// Container definitions
 resource conversationsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = {
   parent: cosmosDatabase
-  name: 'conversations'
+  name: 'settings'
   properties: {
     resource: {
-      id: 'conversations'
+      id: 'settings'
       partitionKey: {
-        paths: ['/id']
+        paths: [
+          '/id'
+        ]
       }
     }
     options: {}
