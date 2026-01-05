@@ -6,6 +6,7 @@
 
 import { showToast } from './chat-toast.js';
 import { sendMessage } from './chat-messages.js';
+import { saveUserSetting } from './chat-layout.js';
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -19,6 +20,9 @@ let animationFrame = null;
 let stream = null;
 let waveformData = []; // Store waveform amplitudes over time
 let isCanceling = false; // Flag to track if recording is being canceled
+let microphonePermissionState = 'prompt'; // 'granted', 'denied', or 'prompt'
+let userMicrophonePreference = 'ask-every-session'; // User's permission preference
+let sessionPermissionRequested = false; // Track if permission was requested this session
 
 const MAX_RECORDING_DURATION = 90; // seconds
 let remainingTime = MAX_RECORDING_DURATION;
@@ -67,11 +71,14 @@ export function initializeSpeechInput() {
     
     console.log('Browser supports speech input');
     
-    // Attach event listener
-    speechBtn.addEventListener('click', () => {
-        console.log('Speech button clicked!');
-        startRecording();
+    // Load user microphone preferences
+    loadMicrophonePreference().then(() => {
+        // Check permission state and update icon
+        checkMicrophonePermissionState();
     });
+    
+    // Attach event listener
+    speechBtn.addEventListener('click', handleSpeechButtonClick);
     
     // Attach recording control listeners
     const cancelBtn = document.getElementById('cancel-recording-btn');
@@ -88,6 +95,150 @@ export function initializeSpeechInput() {
     }
     
     console.log('Speech input initialization complete');
+}
+
+/**
+ * Handle speech button click - check permission state first
+ */
+async function handleSpeechButtonClick() {
+    console.log('Speech button clicked!');
+    
+    // If permission is denied, navigate to profile settings
+    if (microphonePermissionState === 'denied') {
+        console.log('Microphone permission denied, redirecting to profile settings');
+        window.location.href = '/profile#speech-settings';
+        return;
+    }
+    
+    // Check if we should request permission based on user preference
+    if (shouldRequestPermission()) {
+        await checkMicrophonePermissionState();
+    }
+    
+    // Start recording
+    startRecording();
+}
+
+/**
+ * Check if we should request permission based on user preference
+ */
+function shouldRequestPermission() {
+    switch (userMicrophonePreference) {
+        case 'remember':
+            // Only request once ever
+            return microphonePermissionState === 'prompt';
+        case 'ask-every-session':
+            // Request once per browser session
+            return !sessionPermissionRequested;
+        case 'ask-every-page-load':
+            // Request on every page load
+            return true;
+        default:
+            return !sessionPermissionRequested;
+    }
+}
+
+/**
+ * Load user's microphone permission preference from settings
+ */
+async function loadMicrophonePreference() {
+    try {
+        const response = await fetch('/api/user/settings');
+        const data = await response.json();
+        const settings = data.settings || {};
+        
+        // Microphone permission preference removed - browser controls permission state
+        console.log('Loaded microphone preference:', userMicrophonePreference);
+        
+        return userMicrophonePreference;
+    } catch (error) {
+        console.error('Error loading microphone preference:', error);
+        userMicrophonePreference = 'ask-every-session';
+        return userMicrophonePreference;
+    }
+}
+
+/**
+ * Check microphone permission state and update UI
+ */
+async function checkMicrophonePermissionState() {
+    try {
+        // Try to get media to check permission state
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Permission granted
+        stream.getTracks().forEach(track => track.stop());
+        microphonePermissionState = 'granted';
+        sessionPermissionRequested = true;
+        updateMicrophoneIconState('granted');
+        
+        // Save state if preference is 'remember'
+        if (userMicrophonePreference === 'remember') {
+            await savePermissionState('granted');
+        }
+        
+    } catch (error) {
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            microphonePermissionState = 'denied';
+            sessionPermissionRequested = true;
+            updateMicrophoneIconState('denied');
+            
+            // Save state if preference is 'remember'
+            if (userMicrophonePreference === 'remember') {
+                await savePermissionState('denied');
+            }
+        } else {
+            console.error('Error checking microphone permission:', error);
+            microphonePermissionState = 'prompt';
+            updateMicrophoneIconState('prompt');
+        }
+    }
+}
+
+/**
+ * Update microphone icon state with color and tooltip
+ */
+function updateMicrophoneIconState(state) {
+    const speechBtn = document.getElementById('speech-input-btn');
+    if (!speechBtn) return;
+    
+    const icon = speechBtn.querySelector('i');
+    if (!icon) return;
+    
+    // Remove existing state classes
+    icon.classList.remove('text-success', 'text-danger', 'text-secondary');
+    
+    switch(state) {
+        case 'granted':
+            icon.classList.add('text-success');
+            speechBtn.title = 'Voice Input (Microphone access granted)';
+            break;
+        case 'denied':
+            icon.classList.add('text-danger');
+            speechBtn.title = 'Microphone access denied - Click to manage permissions';
+            break;
+        case 'prompt':
+        default:
+            icon.classList.add('text-secondary');
+            speechBtn.title = 'Voice Input (Click to enable microphone)';
+            break;
+    }
+    
+    console.log('Updated microphone icon state:', state);
+}
+
+/**
+ * Save permission state to user settings
+ */
+async function savePermissionState(state) {
+    try {
+        await saveUserSetting({
+            microphonePermissionState: state
+        });
+        console.log('Saved microphone permission state:', state);
+    } catch (error) {
+        console.error('Error saving microphone permission state:', error);
+    }
 }
 
 /**
@@ -164,11 +315,30 @@ async function startRecording() {
         // Start countdown timer
         startCountdown();
         
+        // Update permission state to granted
+        microphonePermissionState = 'granted';
+        sessionPermissionRequested = true;
+        updateMicrophoneIconState('granted');
+        
+        // Save state if preference is 'remember'
+        if (userMicrophonePreference === 'remember') {
+            await savePermissionState('granted');
+        }
+        
     } catch (error) {
         console.error('Error starting recording:', error);
         
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            showToast('Microphone permission denied. Please allow microphone access to use voice input.', 'warning');
+            microphonePermissionState = 'denied';
+            sessionPermissionRequested = true;
+            updateMicrophoneIconState('denied');
+            
+            // Save state if preference is 'remember'
+            if (userMicrophonePreference === 'remember') {
+                await savePermissionState('denied');
+            }
+            
+            showToast('Microphone permission denied. Click the microphone icon to manage permissions.', 'warning');
         } else {
             showToast('Error starting recording: ' + error.message, 'danger');
         }

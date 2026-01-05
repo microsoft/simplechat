@@ -365,7 +365,136 @@
     </div>
     {% endif %}
 
+    <!-- Speech & Microphone Settings -->
+    {% if app_settings.enable_speech_to_text_input %}
+    <div class="section-card" id="speech-settings">
+        <h5 class="mb-3"><i class="bi bi-mic-fill me-2"></i>Speech & Microphone Settings</h5>
+        <p class="text-muted">Manage how microphone permissions are handled for speech-to-text input.</p>
+        
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Current Permission Status</label>
+            <div class="d-flex align-items-center gap-2">
+                <span id="microphone-status-badge" class="badge bg-secondary">
+                    <i class="bi bi-question-circle me-1"></i>Unknown
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="microphone-permission-btn" onclick="toggleMicrophonePermission()">
+                    <i class="bi bi-mic-fill me-1"></i>Request Permission
+                </button>
+            </div>
+            <small class="text-muted">This shows your browser's current microphone permission status. Use the button to request or revoke permission.</small>
+        </div>
+        
+        <div class="alert alert-info mt-3 mb-0">
+            <i class="bi bi-info-circle me-2"></i>
+            <strong>Note:</strong> If the microphone icon appears red in chat, click it to return to this page and manage your permissions. 
+            You can also manage browser-level permissions through your browser settings.
+        </div>
+    </div>
+    {% endif %}
+
     <p class="text-muted mt-4 text-center">Version: {{ config['VERSION'] }}</p>
+</div>
+
+<!-- Microphone Permission Instructions Modal -->
+<div class="modal fade" id="microphonePermissionModal" tabindex="-1" aria-labelledby="microphonePermissionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="microphonePermissionModalLabel">
+                    <i class="bi bi-mic-mute-fill me-2"></i>Microphone Permission Blocked
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning" role="alert">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>This page is blocked from accessing your microphone.</strong>
+                </div>
+                
+                <h6 class="fw-bold mb-3">To enable microphone access:</h6>
+                
+                <ol class="mb-3">
+                    <li class="mb-3">
+                        <strong>Look for the microphone icon</strong> in the right side of your browser's address bar
+                        <div class="text-muted small mt-1">
+                            <i class="bi bi-mic-mute-fill"></i> It will have a line through it indicating it's blocked
+                        </div>
+                    </li>
+                    <li class="mb-3">
+                        Click <strong>the microphone icon</strong> (<i class="bi bi-mic-mute-fill"></i>) to open the permission menu
+                    </li>
+                    <li class="mb-3">
+                        Select <strong>"Always allow"</strong> to grant microphone access
+                    </li>
+                    <li class="mb-3">
+                        Click <strong>"Done"</strong> and refresh this page
+                    </li>
+                </ol>
+                
+                <div class="alert alert-info mb-0" role="alert">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Note:</strong> Once blocked, browsers won't ask for permission again until you manually change the setting.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="window.location.reload()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh Page
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Microphone Permission Revoke Modal -->
+<div class="modal fade" id="microphoneRevokeModal" tabindex="-1" aria-labelledby="microphoneRevokeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="microphoneRevokeModalLabel">
+                    <i class="bi bi-mic-mute-fill me-2"></i>Revoke Microphone Permission
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info" role="alert">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Microphone access is currently granted.</strong>
+                </div>
+                
+                <h6 class="fw-bold mb-3">To revoke/block microphone access:</h6>
+                
+                <ol class="mb-3">
+                    <li class="mb-3">
+                        <strong>Look for the microphone icon</strong> in the right side of your browser's address bar
+                        <div class="text-muted small mt-1">
+                            <i class="bi bi-mic-fill"></i> It will be shown without a line, indicating it's allowed
+                        </div>
+                    </li>
+                    <li class="mb-3">
+                        Click <strong>the microphone icon</strong> (<i class="bi bi-mic-fill"></i>) to open the permission menu
+                    </li>
+                    <li class="mb-3">
+                        <strong>Select "Continue blocking"</strong>, <strong>Select "Always block microphone access"</strong>, or <strong>Select "Block"</strong>
+                    </li>
+                    <li class="mb-3">
+                        Click <strong>"Done"</strong> and refresh this page
+                    </li>
+                </ol>
+                
+                <div class="alert alert-warning mb-0" role="alert">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Note:</strong> Revoking permission will prevent speech-to-text from working until you allow it again.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.location.reload()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh Page
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Export Activity Modal -->
@@ -477,6 +606,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     loadRetentionSettings();
+    loadMicrophoneSettings();
     loadUserMetrics();
     initializeCharts();
     
@@ -863,6 +993,181 @@ function saveRetentionSettings() {
         statusElement.innerHTML = '<i class="bi bi-exclamation-circle"></i> Error: ' + error.message;
         statusElement.className = 'text-danger';
     });
+}
+
+function loadMicrophoneSettings() {
+    // Check if microphone settings section exists (only if speech-to-text is enabled)
+    if (!document.getElementById('speech-settings')) {
+        return;
+    }
+    
+    // Check actual browser permission state
+    checkMicrophonePermissionStatus();
+}
+
+async function checkMicrophonePermissionStatus() {
+    // Try to access microphone to determine actual permission state
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        updateMicrophoneStatusBadge('prompt');
+        return;
+    }
+    
+    try {
+        // Request microphone access (will use cached permission, won't prompt again)
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Permission is granted - stop the stream immediately
+        stream.getTracks().forEach(track => track.stop());
+        updateMicrophoneStatusBadge('granted');
+        
+    } catch (error) {
+        // Check error type to determine state
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            // Permission was denied
+            updateMicrophoneStatusBadge('denied');
+        } else if (error.name === 'NotFoundError') {
+            // No microphone device found
+            updateMicrophoneStatusBadge('prompt');
+        } else {
+            // Other error - default to prompt
+            console.log('Microphone permission check error:', error.name, error.message);
+            updateMicrophoneStatusBadge('prompt');
+        }
+    }
+}
+
+function updateMicrophoneStatusBadge(status) {
+    const badge = document.getElementById('microphone-status-badge');
+    const button = document.getElementById('microphone-permission-btn');
+    if (!badge) return;
+    
+    switch(status) {
+        case 'granted':
+            badge.className = 'badge bg-success';
+            badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Granted';
+            if (button) {
+                button.className = 'btn btn-sm btn-outline-danger';
+                button.innerHTML = '<i class="bi bi-mic-mute-fill me-1"></i>Revoke Permission';
+            }
+            break;
+        case 'denied':
+            badge.className = 'badge bg-danger';
+            badge.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>Denied';
+            if (button) {
+                button.className = 'btn btn-sm btn-outline-primary';
+                button.innerHTML = '<i class="bi bi-mic-fill me-1"></i>Request Permission';
+            }
+            break;
+        case 'prompt':
+        default:
+            badge.className = 'badge bg-secondary';
+            badge.innerHTML = '<i class="bi bi-question-circle me-1"></i>Not Determined';
+            if (button) {
+                button.className = 'btn btn-sm btn-outline-primary';
+                button.innerHTML = '<i class="bi bi-mic-fill me-1"></i>Request Permission';
+            }
+            break;
+    }
+}
+
+async function requestMicrophonePermission() {
+    // Request microphone permission - this will trigger the browser's permission dialog if possible
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Your browser does not support microphone access.');
+        return;
+    }
+    
+    try {
+        // Always attempt to request microphone access
+        // If permission is 'prompt', this will show the browser's native permission dialog
+        // If permission is 'denied', this will immediately throw an error
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Permission granted - stop the stream and update UI
+        stream.getTracks().forEach(track => track.stop());
+        updateMicrophoneStatusBadge('granted');
+        showToastMessage('Microphone access granted!', 'success');
+        
+    } catch (error) {
+        // Check error type
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            // Permission was denied (either just now or already blocked)
+            updateMicrophoneStatusBadge('denied');
+            
+            // Show modal with helpful instructions
+            const modal = new bootstrap.Modal(document.getElementById('microphonePermissionModal'));
+            modal.show();
+        } else if (error.name === 'NotFoundError') {
+            // No microphone found
+            alert('No microphone device was found on your system. Please connect a microphone and try again.');
+        } else {
+            // Other error
+            console.error('Microphone permission error:', error);
+            alert('Error accessing microphone: ' + error.message);
+        }
+    }
+}
+
+async function toggleMicrophonePermission() {
+    const badge = document.getElementById('microphone-status-badge');
+    const currentStatus = badge?.textContent.includes('Granted') ? 'granted' : 'other';
+    
+    if (currentStatus === 'granted') {
+        // Show revoke modal
+        revokeMicrophonePermission();
+    } else {
+        // Request permission
+        requestMicrophonePermission();
+    }
+}
+
+async function revokeMicrophonePermission() {
+    // Activate microphone to show the browser's permission indicator in the address bar
+    let micStream = null;
+    
+    try {
+        // Request microphone access - this will make the browser show the mic icon
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Show modal with instructions
+        const modalElement = document.getElementById('microphoneRevokeModal');
+        const modal = new bootstrap.Modal(modalElement);
+        
+        // Clean up the stream when modal is closed
+        modalElement.addEventListener('hidden.bs.modal', () => {
+            if (micStream) {
+                micStream.getTracks().forEach(track => track.stop());
+                micStream = null;
+            }
+        }, { once: true });
+        
+        modal.show();
+        
+    } catch (error) {
+        console.error('Error accessing microphone for revoke:', error);
+        // Show modal anyway with instructions
+        const modal = new bootstrap.Modal(document.getElementById('microphoneRevokeModal'));
+        modal.show();
+    }
+}
+
+function showToastMessage(message, type) {
+    const bgClass = type === 'success' ? 'bg-success' : type === 'info' ? 'bg-info' : 'bg-primary';
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white ${bgClass} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                <i class="bi bi-${type === 'success' ? 'check-circle' : 'info-circle'} me-2"></i>${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    document.body.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    toast.addEventListener('hidden.bs.toast', () => toast.remove());
 }
 
 function refreshProfileImage() {
