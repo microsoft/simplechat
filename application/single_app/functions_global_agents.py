@@ -110,6 +110,9 @@ def get_global_agents():
             agent.setdefault('is_global', True)
             agent.setdefault('is_group', False)
             agent.setdefault('agent_type', 'local')
+            # Remove empty reasoning_effort to prevent validation errors
+            if agent.get('reasoning_effort') == '':
+                agent.pop('reasoning_effort', None)
         return agents
     except Exception as e:
         log_event(
@@ -143,6 +146,9 @@ def get_global_agent(agent_id):
         agent.setdefault('is_global', True)
         agent.setdefault('is_group', False)
         agent.setdefault('agent_type', 'local')
+        # Remove empty reasoning_effort to prevent validation errors
+        if agent.get('reasoning_effort') == '':
+            agent.pop('reasoning_effort', None)
         print(f"Found global agent: {agent_id}")
         return agent
     except Exception as e:
@@ -187,6 +193,10 @@ def save_global_agent(agent_data):
         agent_data = keyvault_agent_save_helper(agent_data, agent_data['id'], scope="global")
         if agent_data.get('max_completion_tokens') is None:
             agent_data['max_completion_tokens'] = -1  # Default value
+        
+        # Remove empty reasoning_effort to avoid schema validation errors
+        if agent_data.get('reasoning_effort') == '':
+            agent_data.pop('reasoning_effort', None)
 
         result = cosmos_global_agents_container.upsert_item(body=agent_data)
         log_event(

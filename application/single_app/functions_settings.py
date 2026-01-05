@@ -225,6 +225,12 @@ def get_settings(use_cosmos=False):
         'file_timer_unit': 'hours',
         'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
+        
+        # Streaming settings
+        'streamingEnabled': False,
+        
+        # Reasoning effort settings (per-model)
+        'reasoningEffortSettings': {},
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': video_indexer_endpoint,
@@ -547,7 +553,8 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
-    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
+    sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
 
 
     try:
@@ -701,8 +708,14 @@ def enabled_required(setting_key):
     return decorator
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing the substring "key" or specific sensitive URLs
-    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}
+    # Exclude any key containing "key", "base64", "storage_account_url"
+    return {k: v for k, v in full_settings.items() 
+            if "key" not in k.lower() and "storage_account_url" not in k.lower()}
+
+def sanitize_settings_for_logging(full_settings: dict) -> dict:
+    # Exclude any key containing "key", "base64", "storage_account_url"
+    return {k: v for k, v in full_settings.items() 
+            if "key" not in k.lower() and "base64" not in k.lower() and "image" not in k.lower() and "storage_account_url" not in k.lower()}
 
 # Search history management functions
 def get_user_search_history(user_id):

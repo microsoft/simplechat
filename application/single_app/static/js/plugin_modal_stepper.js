@@ -1513,6 +1513,7 @@ export class PluginModalStepper {
       }
       
       // Store the OpenAPI spec content directly in the plugin config
+      // IMPORTANT: Set these BEFORE collecting additional fields so they don't get overwritten
       additionalFields.openapi_spec_content = JSON.parse(specContent);
       additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
@@ -1686,9 +1687,12 @@ export class PluginModalStepper {
       }
     }
     
-    // Collect additional fields from the dynamic UI
+    // Collect additional fields from the dynamic UI and MERGE with existing additionalFields
+    // This preserves OpenAPI spec content and other auto-populated fields
     try {
-      additionalFields = this.collectAdditionalFields();
+      const dynamicFields = this.collectAdditionalFields();
+      // Merge dynamicFields into additionalFields (preserving existing values)
+      additionalFields = { ...additionalFields, ...dynamicFields };
     } catch (e) {
       throw new Error('Invalid additional fields input');
     }

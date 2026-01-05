@@ -5,8 +5,6 @@ param appName string
 param environment string
 param tags object
 
-param managedIdentityId string
-param managedIdentityClientId string
 param enableDiagLogging bool
 param logAnalyticsId string
 
@@ -16,21 +14,15 @@ param containerImageName string
 param azurePlatform string
 param cosmosDbName string
 param searchServiceName string
-param openAiServiceName string
-param openAiEndpoint string
 param openAiResourceGroupName string
 param documentIntelligenceServiceName string
 param appInsightsName string
-
-@description('Enterprise application client ID for Azure AD authentication')
 param enterpriseAppClientId string = ''
+param authenticationType string
 
-@description('Enterprise application client secret for Azure AD authentication')
 @secure()
 param enterpriseAppClientSecret string = ''
-
-@description('Key Vault URI for secret references')
-param keyVaultUri string = ''
+param keyVaultUri string
 
 // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
 @description('Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net')
@@ -60,7 +52,7 @@ resource acrService 'Microsoft.ContainerRegistry/registries@2025-04-01' existing
   name: acrName
 }
 
-resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = {   
+resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = {
   name: cosmosDbName
 }
 
@@ -69,7 +61,7 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
 }
 
 resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: documentIntelligenceServiceName 
+  name: documentIntelligenceServiceName
 }
 resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: appInsightsName
@@ -87,49 +79,85 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
     siteConfig: {
       linuxFxVersion: 'DOCKER|${containerImageName}'
       acrUseManagedIdentityCreds: true
-      acrUserManagedIdentityID: managedIdentityClientId
+      acrUserManagedIdentityID: '' // managedIdentityId
       alwaysOn: true
       ftpsState: 'Disabled'
       healthCheckPath: '/external/healthcheck'
-      appSettings: union([
-
+      appSettings: [
         {name: 'AZURE_ENVIRONMENT', value: azurePlatform }
         {name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false'}
         {name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.properties.documentEndpoint}
-        {name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: 'managed_identity'}
+        { name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: toLower(authenticationType) }
+        // Only add this setting if authenticationType is 'key'
+        ...(authenticationType == 'key'
+          ? [{ name: 'AZURE_COSMOS_KEY', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/cosmos-db-key)' }]
+          : [])
+        { name: 'TENANT_ID', value: tenant().tenantId }
+        { name: 'CLIENT_ID', value: enterpriseAppClientId }
+        {
+          name: 'SECRET_KEY'
+          value: !empty(enterpriseAppClientSecret)
+            ? enterpriseAppClientSecret
+            : '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'
+        }
+        {
+          name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
+          value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'
+        }
+        { name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrService.name}${acrDomain}' }
 
-        //{name: 'AZURE_COSMOS_AUTHENTICATION_TYPE', value: 'key'}
-        //{name: 'AZURE_COSMOS_KEY', value: cosmosDb.listKeys().primaryMasterKey}
+        // Only add this setting if authenticationType is 'key'
+        ...(authenticationType == 'key'
+          ? [{ name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: acrService.listCredentials().username }]
+          : [])
 
-        {name: 'TENANT_ID', value: tenant().tenantId }
-        {name: 'CLIENT_ID', value: enterpriseAppClientId }
-        {name: 'SECRET_KEY', value: !empty(enterpriseAppClientSecret) ? enterpriseAppClientSecret : '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)' }
-        {name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/enterprise-app-client-secret)'}
-        {name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrService.name}${acrDomain}' }
-        //{name: 'DOCKER_REGISTRY_SERVER_USERNAME', value: acrService.listCredentials().username }
-        //{name: 'DOCKER_REGISTRY_SERVER_PASSWORD', value: acrService.listCredentials().passwords[0].value }
-        {name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: tenant().tenantId }
-        {name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiServiceName}
-        {name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName}
-        {name: 'AZURE_OPENAI_URL', value: openAiEndpoint}
-        {name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name}
-        {name: 'AZURE_SEARCH_API_KEY', value: searchService.listAdminKeys().primaryKey}
-        {name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligence.properties.endpoint}
-        {name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', value: documentIntelligence.listKeys().key1}
-        {name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.properties.InstrumentationKey}
-        {name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString}
-        {name: 'APPINSIGHTS_PROFILERFEATURE_VERSION', value: '1.0.0'}
-        {name: 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', value: '1.0.0'}
-        {name: 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', value: ''}
-        {name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: '~3'}
-        {name: 'DiagnosticServices_EXTENSION_VERSION', value: '~3'}
-        {name: 'InstrumentationEngine_EXTENSION_VERSION', value: 'disabled'}
-        {name: 'SnapshotDebugger_EXTENSION_VERSION', value: 'disabled'}
-        {name: 'XDT_MicrosoftApplicationInsights_BaseExtensions', value: 'disabled'}
-        {name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended'}
-        {name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled'}
-      ],
-      azurePlatform == 'custom' ? [
+        // Only add this setting if authenticationType is 'key'
+        ...(authenticationType == 'key'
+          ? [
+              {
+                name: 'DOCKER_REGISTRY_SERVER_PASSWORD'
+                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/container-registry-key)'
+              }
+            ]
+          : [])
+
+        { name: 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', value: tenant().tenantId }
+        { name: 'AZURE_OPENAI_RESOURCE_NAME', value: openAiService.name }
+        { name: 'AZURE_OPENAI_RESOURCE_GROUP_NAME', value: openAiResourceGroupName }
+        { name: 'AZURE_OPENAI_URL', value: openAiService.properties.endpoint }
+        { name: 'AZURE_SEARCH_SERVICE_NAME', value: searchService.name }
+        // Only add this setting if authenticationType is 'key'
+        ...(authenticationType == 'key'
+          ? [
+              {
+                name: 'AZURE_SEARCH_API_KEY'
+                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/search-service-key)'
+              }
+            ]
+          : [])
+        { name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligence.properties.endpoint }
+        // Only add this setting if authenticationType is 'key'
+        ...(authenticationType == 'key'
+          ? [
+              {
+                name: 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY'
+                value: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/document-intelligence-key)'
+              }
+            ]
+          : [])
+        { name: 'APPINSIGHTS_INSTRUMENTATIONKEY', value: appInsights.properties.InstrumentationKey }
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+        { name: 'APPINSIGHTS_PROFILERFEATURE_VERSION', value: '1.0.0' }
+        { name: 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', value: '1.0.0' }
+        { name: 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', value: '' }
+        { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: '~3' }
+        { name: 'DiagnosticServices_EXTENSION_VERSION', value: '~3' }
+        { name: 'InstrumentationEngine_EXTENSION_VERSION', value: 'disabled' }
+        { name: 'SnapshotDebugger_EXTENSION_VERSION', value: 'disabled' }
+        { name: 'XDT_MicrosoftApplicationInsights_BaseExtensions', value: 'disabled' }
+        { name: 'XDT_MicrosoftApplicationInsights_Mode', value: 'recommended' }
+        { name: 'XDT_MicrosoftApplicationInsights_PreemptSdk', value: 'disabled' }
+        ...(azurePlatform == 'custom' ? [
         {name: 'CUSTOM_GRAPH_URL_VALUE', value: customGraphUrl}
         {name: 'CUSTOM_IDENTITY_URL_VALUE', value: customIdentityUrl}
         {name: 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', value: customResourceManagerUrl}
@@ -137,17 +165,15 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
         {name: 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', value: customCognitiveServicesScope}
         {name: 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', value: customSearchResourceUrl}
         {name: 'KEY_VAULT_DOMAIN', value: az.environment().suffixes.keyvaultDns}
-        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}
-      ] : [])      
+        {name: 'CUSTOM_OIDC_METADATA_URL_VALUE', value: openIdMetadataUrl}] 
+        : [])
+      ]
     }
     clientAffinityEnabled: false
     httpsOnly: true
   }
   identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentityId}': {}
-    }
+    type: 'SystemAssigned'
   }
   tags: union(tags, { 'azd-service-name': 'web' })
 }
@@ -167,8 +193,6 @@ resource webAppLogging 'Microsoft.Web/sites/config@2022-03-01' = {
   }
 }
 
-// prepare to add in app servce to have key vault secrets users rbac role.
-
 // configure diagnostic settings for web app
 resource webAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {
   name: toLower('${webApp.name}-diagnostics')
@@ -179,6 +203,68 @@ resource webAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
     logs: diagnosticConfigs.outputs.webAppLogCategories
     #disable-next-line BCP318 // expect one value to be null
     metrics: diagnosticConfigs.outputs.standardMetricsCategories
+  }
+}
+
+// Configure authentication settings for the web app
+resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
+  name: 'authsettingsV2'
+  parent: webApp
+  properties: {
+    globalValidation: {
+      requireAuthentication: true
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureActiveDirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          openIdIssuer: 'https://sts.windows.net/${tenant().tenantId}/'
+          clientId: enterpriseAppClientId
+          clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
+        }
+        validation: {
+          jwtClaimChecks: {}
+          allowedAudiences: [
+            'api://${enterpriseAppClientId}'
+            enterpriseAppClientId
+          ]
+        }
+        isAutoProvisioned: false
+      }
+    }
+    login: {
+      routes: {
+        logoutEndpoint: '/.auth/logout'
+      }
+      tokenStore: {
+        enabled: true
+        tokenRefreshExtensionHours: 72
+        fileSystem: {
+          directory: '/home/data/.auth'
+        }
+      }
+      preserveUrlFragmentsForLogins: false
+      allowedExternalRedirectUrls: []
+      cookieExpiration: {
+        convention: 'FixedTime'
+        timeToExpiration: '08:00:00'
+      }
+      nonce: {
+        validateNonce: true
+        nonceExpirationInterval: '00:05:00'
+      }
+    }
+    httpSettings: {
+      requireHttps: true
+      routes: {
+        apiPrefix: '/.auth'
+      }
+      forwardProxy: {
+        convention: 'NoProxy'
+      }
+    }
   }
 }
 

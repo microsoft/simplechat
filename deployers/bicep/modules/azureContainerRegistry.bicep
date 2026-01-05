@@ -4,10 +4,12 @@ param location string
 param acrName string
 param tags object
 
-param managedIdentityPrincipalId string
-param managedIdentityId string
 param enableDiagLogging bool
 param logAnalyticsId string
+
+param keyVault string
+param authenticationType string
+param configureApplicationPermissions bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -29,17 +31,15 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
   tags: tags
 }
 
-// grant the managed identity access to azure container registry as a pull contributor
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, managedIdentityId, 'acr-acrpull')
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    )
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
+//=========================================================
+// store container registry keys in key vault if using key authentication and configure app permissions = true
+//=========================================================
+module containerRegistrySecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
+  name: 'storeContainerRegistrySecret'
+  params: {
+    keyVaultName: keyVault
+    secretName: 'container-registry-key'
+    secretValue: acr.listCredentials().passwords[0].value
   }
 }
 

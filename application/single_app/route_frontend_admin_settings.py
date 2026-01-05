@@ -155,6 +155,8 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
@@ -377,6 +379,7 @@ def register_route_frontend_admin_settings(app):
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -668,6 +671,7 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
+                'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
@@ -680,6 +684,7 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+                'classification_banner_text_color': classification_banner_text_color,
 
                 'require_member_of_control_center_admin': require_member_of_control_center_admin
             }
