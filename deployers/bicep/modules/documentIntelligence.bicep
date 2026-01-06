@@ -12,9 +12,34 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param vNetId string = ''
+param privateEndpointSubnetId string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
+}
+
+// create private endpoint for azure document intelligence if private endpoint subnet id is provided
+module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
+  name: toLower('${appName}-${environment}-docintel-pe')
+  dependsOn:[
+    docIntel
+  ]
+  params: {
+    name: 'docintel'
+    location: location
+    appName: appName
+    environment: environment
+    privateDNSZoneName: 'privatelink.cognitiveservices.azure.com'
+    vNetId: vNetId
+    subnetId: privateEndpointSubnetId
+    serviceResourceID: docIntel.id
+    groupIDs: [
+      'account'
+    ]
+    tags: tags
+  }
 }
 
 // document intelligence resource
@@ -26,7 +51,7 @@ resource docIntel 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
     name: 'S0'
   }
   properties: {
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
     customSubDomainName: toLower('${appName}-${environment}-docintel')
   }
   tags: tags

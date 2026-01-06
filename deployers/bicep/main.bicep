@@ -160,18 +160,30 @@ module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworki
   params: {
     location: location
     vNetName: vNetName
-    addressSpaces: ['10.0.0.0/25']
+    addressSpaces: ['10.0.0.0/21']
     subnetConfigs: [
       {
-        name: 'privateEndpoints'
-        addressPrefix: '10.0.0.0/26'
+        name: 'AppServiceIntegration'
+        addressPrefix: '10.0.0.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+      {
+        name: 'PrivateEndpoints' // this subnet name must be present if private endpoints are to be used
+        addressPrefix: '10.0.2.0/24'
+        enablePrivateEndpointNetworkPolicies: true
+        enablePrivateLinkServiceNetworkPolicies: true
+      }
+      {
+        name: 'Management'
+        addressPrefix: '10.0.4.0/25'
         enablePrivateEndpointNetworkPolicies: true
         enablePrivateLinkServiceNetworkPolicies: true
       }
     ]
     tags: tags
   }
-} 
+}
 
 //=========================================================
 // Create log analytics workspace 
@@ -215,6 +227,10 @@ module keyVault 'modules/keyVault.bicep' = {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -248,6 +264,12 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    // todo: do not enable cosmosdb until validation has been completed.
+    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    // vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    // privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -267,6 +289,13 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    appName: appName
+    environment: environment
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -287,6 +316,11 @@ module searchService 'modules/search.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -307,6 +341,11 @@ module docIntel 'modules/documentIntelligence.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -327,6 +366,11 @@ module storageAccount 'modules/storageAccount.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -350,6 +394,11 @@ module openAI 'modules/openAI.bicep' = {
 
     gptModels: gptModels
     embeddingModels: embeddingModels
+
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -396,6 +445,13 @@ module appService 'modules/appService.bicep' = {
     enterpriseAppClientSecret: enterpriseAppClientSecret
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
+
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    appServiceSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.appServiceSubnetId : ''
   }
 }
 
@@ -548,3 +604,9 @@ output var_videoIndexerAccountId string = deployVideoIndexerService
   : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
+
+//--------------------------------------------
+#disable-next-line BCP318 // may not be configured if private networking is disabled
+output var_vNetId string = virtualNetwork.outputs.vNetId
+#disable-next-line BCP318 // may not be configured if private networking is disabled
+output var_privateNetworkSubnetId string = virtualNetwork.outputs.privateNetworkSubnetId

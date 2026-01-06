@@ -12,9 +12,34 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param vNetId string = ''
+param privateEndpointSubnetId string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
+}
+
+// create private endpoint for azure storage if private endpoint subnet id is provided
+module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
+  name: toLower('${appName}-${environment}-storage-pe')
+  dependsOn:[
+    storageAccount
+  ]
+  params: {
+    name: 'storage'
+    location: location
+    appName: appName
+    environment: environment
+    privateDNSZoneName: 'privatelink.blob.core.windows.net'
+    vNetId: vNetId
+    subnetId: privateEndpointSubnetId
+    serviceResourceID: storageAccount.id
+    groupIDs: [
+      'blob'
+    ]
+    tags: tags
+  }
 }
 
 // storage account resource
@@ -26,7 +51,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
     name: 'Standard_LRS'
   }
   kind: 'StorageV2'
+  
   properties: {
+    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
     accessTier: 'Hot'
     allowBlobPublicAccess: false
     allowSharedKeyAccess: true

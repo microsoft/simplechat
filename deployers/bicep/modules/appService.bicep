@@ -55,6 +55,31 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 
 var acrDomain = azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'
 
+param vNetId string = ''
+param privateEndpointSubnetId string = ''
+param appServiceSubnetId string = ''
+
+
+// create private endpoint for azure website if private endpoint subnet id is provided
+module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
+  name: toLower('${appName}-${environment}-app-pe')
+  
+  params: {
+    name: 'app'
+    location: location
+    appName: appName
+    environment: environment
+    privateDNSZoneName: 'privatelink.azurewebsites.net'
+    vNetId: vNetId
+    subnetId: privateEndpointSubnetId
+    serviceResourceID: webApp.id
+    groupIDs: [      
+      'sites'
+    ]
+    tags: tags
+  }
+}
+
 // add web app
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   name: toLower('${appName}-${environment}-app')
@@ -62,6 +87,12 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   kind: 'app,linux,container'
   properties: {
     serverFarmId: appServicePlanId
+
+    virtualNetworkSubnetId: appServiceSubnetId != '' ? appServiceSubnetId : null
+    publicNetworkAccess: appServiceSubnetId != '' ? 'Disabled' : 'Enabled'
+    vnetImagePullEnabled: appServiceSubnetId != '' ? true : false
+     
+    
     siteConfig: {
       linuxFxVersion: 'DOCKER|${containerImageName}'
       acrUseManagedIdentityCreds: true

@@ -12,9 +12,34 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param vNetId string = ''
+param privateEndpointSubnetId string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
+}
+
+//create private endpoint for cosmosdb if private endpoint subnet id is provided
+module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
+  name: toLower('${appName}-${environment}-cosmos-pe')
+  dependsOn: [
+    cosmosDb
+  ]
+  params: {
+    name: 'cosmos'
+    location: location
+    appName: appName
+    environment: environment
+    privateDNSZoneName: 'privatelink.documents.azure.com'
+    vNetId: vNetId
+    subnetId: privateEndpointSubnetId
+    serviceResourceID: cosmosDb.id
+    groupIDs: [
+      'sql'
+    ]
+    tags: tags
+  }
 }
 
 // cosmos db 
@@ -23,6 +48,7 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   location: location
   kind: 'GlobalDocumentDB'
   properties: {
+    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
     databaseAccountOfferType: 'Standard'
     capabilities: [
       {

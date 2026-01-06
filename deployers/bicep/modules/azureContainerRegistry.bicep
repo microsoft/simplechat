@@ -11,9 +11,36 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
+param appName string
+param environment string
+param vNetId string = ''
+param privateEndpointSubnetId string = ''
+
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
+}
+
+// create private endpoint for azure container registry if private endpoint subnet id is provided
+module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
+  name: toLower('${appName}-${environment}-acr-pe')
+  dependsOn:[
+    acr
+  ]
+  params: {
+    name: 'acr'
+    location: location
+    appName: appName
+    environment: environment
+    privateDNSZoneName: 'privatelink.azurecr.io'
+    vNetId: vNetId
+    subnetId: privateEndpointSubnetId
+    serviceResourceID: acr.id
+    groupIDs: [
+      'registry'
+    ]
+    tags: tags
+  }
 }
 
 // azure container registry
@@ -22,11 +49,11 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
   location: location
 
   sku: {
-    name: 'Standard'
+    name: privateEndpointSubnetId != '' ? 'Premium' : 'Standard'
   }
   properties: {
     adminUserEnabled: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
   }
   tags: tags
 }
