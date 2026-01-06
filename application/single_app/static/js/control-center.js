@@ -2071,6 +2071,9 @@ class ControlCenter {
     }
 
     renderActivityLogs(logs, userMap) {
+        // Store logs for modal access
+        this.currentActivityLogs = logs;
+        
         const tbody = document.getElementById('activityLogsTableBody');
         if (!tbody) return;
 
@@ -2104,8 +2107,9 @@ class ControlCenter {
             const details = this.formatActivityDetails(log);
             const workspaceType = log.workspace_type || 'N/A';
 
+            const logIndex = logs.indexOf(log);
             return `
-                <tr>
+                <tr style="cursor: pointer;" onclick="window.controlCenter.showRawLogModal(${logIndex})" title="Click to view raw log data">
                     <td>${timestamp}</td>
                     <td><span class="badge bg-primary">${activityType}</span></td>
                     <td>${this.escapeHtml(userName)}</td>
@@ -2215,6 +2219,52 @@ class ControlCenter {
                 const docsRequester = log.requester_email || 'Unknown';
                 const docsApprover = log.approver_email || 'N/A';
                 return `Group: ${this.escapeHtml(docsGroup)}<br>Documents Deleted: ${docsDeleted}<br>Requested by: ${this.escapeHtml(docsRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(docsApprover)}</small>`;
+                
+            case 'public_workspace_status_change':
+                const workspaceName = log.public_workspace?.workspace_name || log.workspace_context?.public_workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsOldStatus = log.status_change?.old_status || 'N/A';
+                const wsNewStatus = log.status_change?.new_status || 'N/A';
+                return `Workspace: ${this.escapeHtml(workspaceName)}<br>Status: ${wsOldStatus} → ${wsNewStatus}`;
+                
+            case 'admin_take_workspace_ownership_approved':
+                const wsOwnershipName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsOldOwner = log.old_owner_email || 'Unknown';
+                const wsNewOwner = log.new_owner_email || 'Unknown';
+                const wsApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsOwnershipName)}<br>Old Owner: ${this.escapeHtml(wsOldOwner)}<br>New Owner: ${this.escapeHtml(wsNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsApprover)}</small>`;
+                
+            case 'transfer_workspace_ownership_approved':
+                const wsTransferName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsTransferOldOwner = log.old_owner_email || 'Unknown';
+                const wsTransferNewOwner = log.new_owner_email || 'Unknown';
+                const wsTransferApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsTransferName)}<br>Old Owner: ${this.escapeHtml(wsTransferOldOwner)}<br>New Owner: ${this.escapeHtml(wsTransferNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsTransferApprover)}</small>`;
+                
+            case 'transfer_ownership_approved':
+                const transferGroup = log.group_name || 'Unknown Group';
+                const transferOldOwner = log.old_owner_email || 'Unknown';
+                const transferNewOwner = log.new_owner_email || 'Unknown';
+                const transferApprover = log.approver_email || 'N/A';
+                return `Group: ${this.escapeHtml(transferGroup)}<br>Old Owner: ${this.escapeHtml(transferOldOwner)}<br>New Owner: ${this.escapeHtml(transferNewOwner)}<br><small class="text-muted">Approved by: ${this.escapeHtml(transferApprover)}</small>`;
+                
+            case 'add_workspace_member_directly':
+                const wsAddedMemberName = log.member_name || log.member_email || 'Unknown';
+                const wsAddedTo = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsMemberRole = log.member_role || 'user';
+                return `Added: ${this.escapeHtml(wsAddedMemberName)}<br><small class="text-muted">To: ${this.escapeHtml(wsAddedTo)} (${wsMemberRole})</small>`;
+                
+            case 'delete_workspace_documents_approved':
+                const wsDocsName = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsDocsDeleted = log.documents_deleted !== undefined ? log.documents_deleted : 'N/A';
+                const wsDocsRequester = log.requester_email || 'Unknown';
+                const wsDocsApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(wsDocsName)}<br>Documents Deleted: ${wsDocsDeleted}<br>Requested by: ${this.escapeHtml(wsDocsRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsDocsApprover)}</small>`;
+                
+            case 'delete_workspace_approved':
+                const deletedWorkspace = log.workspace_name || log.public_workspace_name || 'Unknown Workspace';
+                const wsDelRequester = log.requester_email || 'Unknown';
+                const wsDelApprover = log.approver_email || 'N/A';
+                return `Workspace: ${this.escapeHtml(deletedWorkspace)}<br>Requested by: ${this.escapeHtml(wsDelRequester)}<br><small class="text-muted">Approved by: ${this.escapeHtml(wsDelApprover)}</small>`;
                 
             default:
                 return 'N/A';
@@ -2423,6 +2473,49 @@ class ControlCenter {
     capitalizeFirst(str) {
         if (!str) return '';
         return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
+    showRawLogModal(logIndex) {
+        if (!this.currentActivityLogs || !this.currentActivityLogs[logIndex]) {
+            alert('Log data not available');
+            return;
+        }
+
+        const log = this.currentActivityLogs[logIndex];
+        const modalBody = document.getElementById('rawLogModalBody');
+        const modalTitle = document.getElementById('rawLogModalTitle');
+        
+        if (!modalBody || !modalTitle) {
+            alert('Modal elements not found');
+            return;
+        }
+
+        // Set title
+        const activityType = this.formatActivityType(log.activity_type);
+        const timestamp = new Date(log.timestamp).toLocaleString();
+        modalTitle.textContent = `${activityType} - ${timestamp}`;
+
+        // Display JSON with pretty formatting
+        modalBody.innerHTML = `<pre class="mb-0" style="max-height: 500px; overflow-y: auto;">${this.escapeHtml(JSON.stringify(log, null, 2))}</pre>`;
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('rawLogModal'));
+        modal.show();
+    }
+
+    copyRawLogToClipboard() {
+        const rawLogText = document.getElementById('rawLogModalBody')?.textContent;
+        if (!rawLogText) {
+            alert('No log data to copy');
+            return;
+        }
+
+        navigator.clipboard.writeText(rawLogText).then(() => {
+            this.showToast('Log data copied to clipboard', 'success');
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Failed to copy to clipboard');
+        });
     }
 
     escapeHtml(text) {
@@ -2957,6 +3050,16 @@ class ControlCenter {
         const ownerName = workspace.owner?.displayName || workspace.owner?.display_name || workspace.owner_name || 'Unknown';
         const ownerEmail = workspace.owner?.email || workspace.owner_email || '';
         
+        // Get status and format badge
+        const status = workspace.status || 'active';
+        const statusConfig = {
+            'active': { class: 'bg-success', text: 'Active' },
+            'locked': { class: 'bg-warning text-dark', text: 'Locked' },
+            'upload_disabled': { class: 'bg-info text-dark', text: 'Upload Disabled' },
+            'inactive': { class: 'bg-secondary', text: 'Inactive' }
+        };
+        const statusInfo = statusConfig[status] || statusConfig['active'];
+        
         return `
             <tr>
                 <td>
@@ -2975,7 +3078,7 @@ class ControlCenter {
                     <div class="small"><strong>${memberCount}</strong> member${memberCount !== 1 ? 's' : ''}</div>
                 </td>
                 <td>
-                    <span class="badge bg-success">Active</span>
+                    <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
                 </td>
                 <td>
                     <div class="small">
@@ -2995,9 +3098,12 @@ class ControlCenter {
     }
     
     managePublicWorkspace(workspaceId) {
-        // Placeholder for public workspace management - can be implemented later
-        console.log('Managing public workspace:', workspaceId);
-        alert('Public workspace management functionality would open here');
+        console.log('Managing workspace:', workspaceId);
+        if (window.WorkspaceManager) {
+            WorkspaceManager.manageWorkspace(workspaceId);
+        } else {
+            alert('Workspace manager not loaded');
+        }
     }
 
     searchPublicWorkspaces(searchTerm) {

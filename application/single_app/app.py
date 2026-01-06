@@ -128,38 +128,54 @@ def configure_sessions(settings):
             redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
 
             if redis_url:
-                app.config['SESSION_TYPE'] = 'redis'
-                if redis_auth_type == 'managed_identity':
-                    print("Redis enabled using Managed Identity")
-                    from config import get_redis_cache_infrastructure_endpoint
-                    credential = DefaultAzureCredential()
-                    redis_hostname = redis_url.split('.')[0]
-                    cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-                    token = credential.get_token(cache_endpoint)
-                    app.config['SESSION_REDIS'] = Redis(
-                        host=redis_url,
-                        port=6380,
-                        db=0,
-                        password=token.token,
-                        ssl=True
-                    )
-                else:
-                    redis_key = settings.get('redis_key', '').strip()
-                    print("Redis enabled using Access Key")
-                    app.config['SESSION_REDIS'] = Redis(
-                        host=redis_url,
-                        port=6380,
-                        db=0,
-                        password=redis_key,
-                        ssl=True
-                    )
+                redis_client = None
+                try:
+                    if redis_auth_type == 'managed_identity':
+                        print("Redis enabled using Managed Identity")
+                        from config import get_redis_cache_infrastructure_endpoint
+                        credential = DefaultAzureCredential()
+                        redis_hostname = redis_url.split('.')[0]
+                        cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+                        token = credential.get_token(cache_endpoint)
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=token.token,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    else:
+                        redis_key = settings.get('redis_key', '').strip()
+                        print("Redis enabled using Access Key")
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_key,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    
+                    # Test the connection
+                    redis_client.ping()
+                    print("✅ Redis connection successful")
+                    app.config['SESSION_TYPE'] = 'redis'
+                    app.config['SESSION_REDIS'] = redis_client
+                    
+                except Exception as redis_error:
+                    print(f"⚠️  WARNING: Redis connection failed: {redis_error}")
+                    print("Falling back to filesystem sessions for reliability")
+                    app.config['SESSION_TYPE'] = 'filesystem'
             else:
                 print("Redis enabled but URL missing; falling back to filesystem.")
                 app.config['SESSION_TYPE'] = 'filesystem'
         else:
             app.config['SESSION_TYPE'] = 'filesystem'
     except Exception as e:
-        print(f"WARNING: Session configuration error; falling back to filesystem: {e}")
+        print(f"⚠️  WARNING: Session configuration error; falling back to filesystem: {e}")
         app.config['SESSION_TYPE'] = 'filesystem'
 
     # Initialize session interface

@@ -62,10 +62,38 @@ def create_approval_request(
     """
     try:
         # For user document deletion requests, use metadata for display info
+        # Initialize group variable for notifications (may be None for non-group operations)
+        group = None
+        
         if request_type == TYPE_DELETE_USER_DOCUMENTS:
             # For user document deletions, group_id is actually the user_id (partition key)
             group_name = metadata.get('user_name', 'Unknown User')
             group_owner = {}
+        elif metadata and metadata.get('entity_type') == 'workspace':
+            # For public workspace operations
+            from config import cosmos_public_workspaces_container
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=group_id, partition_key=group_id)
+                group_name = workspace.get('name', 'Unknown Workspace')
+                workspace_owner = workspace.get('owner', {})
+                if isinstance(workspace_owner, dict):
+                    group_owner = {
+                        'id': workspace_owner.get('userId'),
+                        'email': workspace_owner.get('email'),
+                        'displayName': workspace_owner.get('displayName')
+                    }
+                else:
+                    # Old format where owner is just a string ID
+                    group_owner = {'id': workspace_owner, 'email': 'unknown', 'displayName': 'unknown'}
+                
+                # Normalize workspace owner structure to match group owner structure for notifications
+                # Workspace uses 'userId' but notification function expects 'id'
+                workspace['owner'] = group_owner
+                
+                # Set group to workspace for notification purposes
+                group = workspace
+            except:
+                raise ValueError(f"Workspace {group_id} not found")
         else:
             # Get group details for group-based approvals
             group = find_group_by_id(group_id)

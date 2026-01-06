@@ -97,15 +97,18 @@ def get_control_center_statistics():
         except Exception as e:
             debug_print(f"Could not get user count: {e}")
         
-        # Get active users in last 30 days using lastUpdated
+        # Get active users in last 30 days using login activity logs
         try:
             thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
             active_users_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.lastUpdated >= @thirty_days_ago
+                SELECT VALUE COUNT(1) FROM (
+                    SELECT DISTINCT c.user_id FROM c 
+                    WHERE c.activity_type = 'user_login' 
+                    AND c.timestamp >= @thirty_days_ago
+                )
             """
             active_users_params = [{"name": "@thirty_days_ago", "value": thirty_days_ago}]
-            active_users_result = list(cosmos_user_settings_container.query_items(
+            active_users_result = list(cosmos_activity_logs_container.query_items(
                 query=active_users_query,
                 parameters=active_users_params,
                 enable_cross_partition_query=True
