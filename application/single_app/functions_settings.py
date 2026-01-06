@@ -221,7 +221,7 @@ def get_settings(use_cosmos=False):
         'default_system_prompt': '',
         # Access denied message shown on the home page when a signed-in user lacks required roles
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB)
-        'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease submit a ticket to request access.',
+        'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,
