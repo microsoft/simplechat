@@ -36,5 +36,5 @@ exceptions
 
 ## Flask Instrumentation Startup Error
 
-If startup logs show an error initializing Flask Instrumentation it can be disabled using environment variable DISABLE_FLASK_INSTRUMENTATION.  Set it to '1' or 'true' to disable flask instrumentation.
+If startup logs show an error initializing Flask Instrumentation it can be disabled using environment variable DISABLE_FLASK_INSTRUMENTATION.  Set it to '1' or 'true' to disable flask instrumentation. **REQUIRES APP RESTART**.
 
