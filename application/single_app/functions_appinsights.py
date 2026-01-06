@@ -115,6 +115,15 @@ def setup_appinsights_logging(settings):
     """
     Set up Azure Monitor Application Insights using the modern OpenTelemetry approach.
     This replaces the deprecated opencensus implementation.
+    
+    Configures OpenTelemetry settings based on admin settings:
+    - OTEL_SERVICE_NAME: Service name for telemetry
+    - OTEL_TRACES_SAMPLER: Sampling strategy for traces
+    - OTEL_TRACES_SAMPLER_ARG: Sampling ratio (0.0 to 1.0)
+    - OTEL_PYTHON_FLASK_EXCLUDED_URLS: URLs to exclude from instrumentation
+    - OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: Instrumentations to disable
+    - OTEL_LOGS_EXPORTER: Where to export logs
+    - OTEL_METRICS_EXPORTER: Where to export metrics
     """
     global _appinsights_logger, _azure_monitor_configured
     
@@ -130,11 +139,59 @@ def setup_appinsights_logging(settings):
         return
 
     try:
+        # Apply OpenTelemetry configuration from settings to environment variables
+        # These must be set before calling configure_azure_monitor()
+        
+        # Service Name - defaults to "simplechat"
+        otel_service_name = settings.get('otel_service_name', 'simplechat') if settings else 'simplechat'
+        if otel_service_name:
+            os.environ['OTEL_SERVICE_NAME'] = str(otel_service_name)
+            print(f"[Azure Monitor] OTEL_SERVICE_NAME set to: {otel_service_name}")
+        
+        # Traces Sampler - defaults to "parentbased_always_on"
+        otel_traces_sampler = settings.get('otel_traces_sampler', 'parentbased_always_on') if settings else 'parentbased_always_on'
+        if otel_traces_sampler:
+            os.environ['OTEL_TRACES_SAMPLER'] = str(otel_traces_sampler)
+            print(f"[Azure Monitor] OTEL_TRACES_SAMPLER set to: {otel_traces_sampler}")
+        
+        # Traces Sampler Argument - defaults to "1.0" (100%)
+        otel_traces_sampler_arg = settings.get('otel_traces_sampler_arg', '1.0') if settings else '1.0'
+        if otel_traces_sampler_arg:
+            os.environ['OTEL_TRACES_SAMPLER_ARG'] = str(otel_traces_sampler_arg)
+            print(f"[Azure Monitor] OTEL_TRACES_SAMPLER_ARG set to: {otel_traces_sampler_arg}")
+        
+        # Flask Excluded URLs - defaults to health check endpoints
+        otel_flask_excluded_urls = settings.get('otel_flask_excluded_urls', 'healthcheck,/health,/external/health') if settings else 'healthcheck,/health,/external/health'
+        if otel_flask_excluded_urls:
+            os.environ['OTEL_PYTHON_FLASK_EXCLUDED_URLS'] = str(otel_flask_excluded_urls)
+            print(f"[Azure Monitor] OTEL_PYTHON_FLASK_EXCLUDED_URLS set to: {otel_flask_excluded_urls}")
+        
+        # Disabled Instrumentations - defaults to empty (all enabled)
+        otel_disabled_instrumentations = settings.get('otel_disabled_instrumentations', '') if settings else ''
+        if otel_disabled_instrumentations:
+            os.environ['OTEL_PYTHON_DISABLED_INSTRUMENTATIONS'] = str(otel_disabled_instrumentations)
+            print(f"[Azure Monitor] OTEL_PYTHON_DISABLED_INSTRUMENTATIONS set to: {otel_disabled_instrumentations}")
+        
+        # Logs Exporter - defaults to "console,otlp"
+        otel_logs_exporter = settings.get('otel_logs_exporter', 'console,otlp') if settings else 'console,otlp'
+        if otel_logs_exporter:
+            os.environ['OTEL_LOGS_EXPORTER'] = str(otel_logs_exporter)
+            print(f"[Azure Monitor] OTEL_LOGS_EXPORTER set to: {otel_logs_exporter}")
+        
+        # Metrics Exporter - defaults to "otlp"
+        otel_metrics_exporter = settings.get('otel_metrics_exporter', 'otlp') if settings else 'otlp'
+        if otel_metrics_exporter:
+            os.environ['OTEL_METRICS_EXPORTER'] = str(otel_metrics_exporter)
+            print(f"[Azure Monitor] OTEL_METRICS_EXPORTER set to: {otel_metrics_exporter}")
+        
+        # Enable Live Metrics - defaults to True
+        enable_live_metrics = settings.get('otel_enable_live_metrics', True) if settings else True
+        
         # Configure Azure Monitor with OpenTelemetry
         # This automatically sets up logging, tracing, and metrics
         configure_azure_monitor(
             connection_string=connectionString,
-            enable_live_metrics=True,  # Enable live metrics for real-time monitoring
+            enable_live_metrics=bool(enable_live_metrics),
             disable_offline_storage=True,  # Disable offline storage to prevent issues
         )
         

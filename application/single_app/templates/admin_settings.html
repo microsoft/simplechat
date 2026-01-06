@@ -756,6 +756,92 @@
                     </div>
                 </div>
                 
+                <div class="card p-3 mb-3" id="opentelemetry-section">
+                    <h5>
+                        <i class="bi bi-sliders me-2"></i>OpenTelemetry Configuration
+                    </h5>
+                    <p class="text-muted">Fine-tune telemetry collection, sampling, and instrumentation for Azure Monitor Application Insights.</p>
+                    
+                    <!-- Service Name -->
+                    <div class="mb-3">
+                        <label for="otel_service_name" class="form-label fw-bold">Service Name</label>
+                        <input type="text" class="form-control" id="otel_service_name" name="otel_service_name" value="{{ settings.otel_service_name }}" placeholder="simplechat">
+                        <small class="form-text text-muted">Logical service name for telemetry data. Used to distinguish between multiple deployments (e.g., "simplechat-production").</small>
+                    </div>
+                    
+                    <!-- Traces Sampler -->
+                    <div class="mb-3">
+                        <label for="otel_traces_sampler" class="form-label fw-bold">Traces Sampler</label>
+                        <select class="form-select" id="otel_traces_sampler" name="otel_traces_sampler">
+                            <option value="always_on" {% if settings.otel_traces_sampler == 'always_on' %}selected{% endif %}>Always On (100% sampling)</option>
+                            <option value="always_off" {% if settings.otel_traces_sampler == 'always_off' %}selected{% endif %}>Always Off (0% sampling)</option>
+                            <option value="traceidratio" {% if settings.otel_traces_sampler == 'traceidratio' %}selected{% endif %}>Trace ID Ratio (percentage-based)</option>
+                            <option value="parentbased_always_on" {% if settings.otel_traces_sampler == 'parentbased_always_on' %}selected{% endif %}>Parent-based Always On (default)</option>
+                            <option value="parentbased_always_off" {% if settings.otel_traces_sampler == 'parentbased_always_off' %}selected{% endif %}>Parent-based Always Off</option>
+                            <option value="parentbased_traceidratio" {% if settings.otel_traces_sampler == 'parentbased_traceidratio' %}selected{% endif %}>Parent-based Trace ID Ratio</option>
+                        </select>
+                        <small class="form-text text-muted">Controls what percentage of traces are collected. Use ratio-based samplers to reduce costs in high-traffic environments.</small>
+                    </div>
+                    
+                    <!-- Traces Sampler Argument -->
+                    <div class="mb-3">
+                        <label for="otel_traces_sampler_arg" class="form-label fw-bold">Traces Sampler Argument (Ratio)</label>
+                        <input type="text" class="form-control" id="otel_traces_sampler_arg" name="otel_traces_sampler_arg" value="{{ settings.otel_traces_sampler_arg }}" placeholder="1.0">
+                        <small class="form-text text-muted">Sampling ratio (0.0 to 1.0). For example, 0.1 = 10% sampling, 1.0 = 100% sampling. Used with ratio-based samplers.</small>
+                    </div>
+                    
+                    <!-- Flask Excluded URLs -->
+                    <div class="mb-3">
+                        <label for="otel_flask_excluded_urls" class="form-label fw-bold">Flask Excluded URLs</label>
+                        <input type="text" class="form-control" id="otel_flask_excluded_urls" name="otel_flask_excluded_urls" value="{{ settings.otel_flask_excluded_urls }}" placeholder="healthcheck,/health,/external/health">
+                        <small class="form-text text-muted">Comma-separated regex patterns for URLs to exclude from instrumentation. Reduces noise and costs by excluding health checks and internal endpoints.</small>
+                    </div>
+                    
+                    <!-- Disabled Instrumentations -->
+                    <div class="mb-3">
+                        <label for="otel_disabled_instrumentations" class="form-label fw-bold">Disabled Instrumentations</label>
+                        <input type="text" class="form-control" id="otel_disabled_instrumentations" name="otel_disabled_instrumentations" value="{{ settings.otel_disabled_instrumentations }}" placeholder="Leave empty to enable all">
+                        <small class="form-text text-muted">Comma-separated list of instrumentations to disable (e.g., "flask,requests"). Leave empty to enable all instrumentations.</small>
+                    </div>
+                    
+                    <!-- Logs Exporter -->
+                    <div class="mb-3">
+                        <label for="otel_logs_exporter" class="form-label fw-bold">Logs Exporter</label>
+                        <select class="form-select" id="otel_logs_exporter" name="otel_logs_exporter">
+                            <option value="console" {% if settings.otel_logs_exporter == 'console' %}selected{% endif %}>Console</option>
+                            <option value="otlp" {% if settings.otel_logs_exporter == 'otlp' %}selected{% endif %}>OTLP (Azure Monitor)</option>
+                            <option value="console,otlp" {% if settings.otel_logs_exporter == 'console,otlp' %}selected{% endif %}>Console and OTLP (default)</option>
+                            <option value="none" {% if settings.otel_logs_exporter == 'none' %}selected{% endif %}>None</option>
+                        </select>
+                        <small class="form-text text-muted">Where to export OpenTelemetry logs. Choose "OTLP" for production or "Console" for development.</small>
+                    </div>
+                    
+                    <!-- Metrics Exporter -->
+                    <div class="mb-3">
+                        <label for="otel_metrics_exporter" class="form-label fw-bold">Metrics Exporter</label>
+                        <select class="form-select" id="otel_metrics_exporter" name="otel_metrics_exporter">
+                            <option value="console" {% if settings.otel_metrics_exporter == 'console' %}selected{% endif %}>Console</option>
+                            <option value="otlp" {% if settings.otel_metrics_exporter == 'otlp' %}selected{% endif %}>OTLP (Azure Monitor, default)</option>
+                            <option value="console,otlp" {% if settings.otel_metrics_exporter == 'console,otlp' %}selected{% endif %}>Console and OTLP</option>
+                            <option value="none" {% if settings.otel_metrics_exporter == 'none' %}selected{% endif %}>None</option>
+                        </select>
+                        <small class="form-text text-muted">Where to export OpenTelemetry metrics. Choose "None" if using external metrics platforms like Prometheus.</small>
+                    </div>
+                    
+                    <!-- Enable Live Metrics -->
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="otel_enable_live_metrics" name="otel_enable_live_metrics" {% if settings.otel_enable_live_metrics %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="otel_enable_live_metrics">
+                            Enable Live Metrics
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables Azure Monitor Live Metrics stream for real-time monitoring. Maintains a persistent connection."></i>
+                    </div>
+                    
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <strong>Note:</strong> Changing OpenTelemetry settings requires an application restart to take effect. See <a href="https://github.com/microsoft/simplechat/blob/main/docs/features/OPENTELEMETRY_CONFIGURATION.md" target="_blank">documentation</a> for detailed use cases and recommendations.
+                    </div>
+                </div>
+                
                 <div class="card p-3 mb-3" id="debug-logging-section">
                     <h5>
                         <i class="bi bi-bug me-2"></i>Debug Logging
