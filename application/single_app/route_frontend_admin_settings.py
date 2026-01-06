@@ -70,6 +70,24 @@ def register_route_frontend_admin_settings(app):
         if 'enable_debug_logging' not in settings:
             settings['enable_debug_logging'] = False
 
+        # --- Add defaults for OpenTelemetry configuration ---
+        if 'otel_service_name' not in settings:
+            settings['otel_service_name'] = 'simplechat'
+        if 'otel_traces_sampler' not in settings:
+            settings['otel_traces_sampler'] = 'parentbased_always_on'
+        if 'otel_traces_sampler_arg' not in settings:
+            settings['otel_traces_sampler_arg'] = '1.0'
+        if 'otel_flask_excluded_urls' not in settings:
+            settings['otel_flask_excluded_urls'] = 'healthcheck,/health,/external/health'
+        if 'otel_disabled_instrumentations' not in settings:
+            settings['otel_disabled_instrumentations'] = ''
+        if 'otel_logs_exporter' not in settings:
+            settings['otel_logs_exporter'] = 'console,otlp'
+        if 'otel_metrics_exporter' not in settings:
+            settings['otel_metrics_exporter'] = 'otlp'
+        if 'otel_enable_live_metrics' not in settings:
+            settings['otel_enable_live_metrics'] = True
+
         # --- Add default for semantic_kernel ---
         if 'per_user_semantic_kernel' not in settings:
             settings['per_user_semantic_kernel'] = False
@@ -458,6 +476,26 @@ def register_route_frontend_admin_settings(app):
                 flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
                 front_door_url = ''
 
+            # --- OpenTelemetry Configuration ---
+            otel_service_name = form_data.get('otel_service_name', 'simplechat').strip()
+            otel_traces_sampler = form_data.get('otel_traces_sampler', 'parentbased_always_on')
+            otel_traces_sampler_arg = form_data.get('otel_traces_sampler_arg', '1.0').strip()
+            otel_flask_excluded_urls = form_data.get('otel_flask_excluded_urls', 'healthcheck,/health,/external/health').strip()
+            otel_disabled_instrumentations = form_data.get('otel_disabled_instrumentations', '').strip()
+            otel_logs_exporter = form_data.get('otel_logs_exporter', 'console,otlp')
+            otel_metrics_exporter = form_data.get('otel_metrics_exporter', 'otlp')
+            otel_enable_live_metrics = form_data.get('otel_enable_live_metrics') == 'on'
+            
+            # Validate OTEL_TRACES_SAMPLER_ARG is a valid float between 0.0 and 1.0
+            try:
+                sampler_arg_float = float(otel_traces_sampler_arg)
+                if sampler_arg_float < 0.0 or sampler_arg_float > 1.0:
+                    flash('OTEL Traces Sampler Argument must be between 0.0 and 1.0. Reset to 1.0.', 'warning')
+                    otel_traces_sampler_arg = '1.0'
+            except ValueError:
+                flash('Invalid OTEL Traces Sampler Argument. Must be a number between 0.0 and 1.0. Reset to 1.0.', 'warning')
+                otel_traces_sampler_arg = '1.0'
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -467,6 +505,15 @@ def register_route_frontend_admin_settings(app):
                 'debug_timer_value': debug_timer_value,
                 'debug_timer_unit': debug_timer_unit,
                 'debug_logging_turnoff_time': debug_logging_turnoff_time_str,
+                # OpenTelemetry Configuration
+                'otel_service_name': otel_service_name,
+                'otel_traces_sampler': otel_traces_sampler,
+                'otel_traces_sampler_arg': otel_traces_sampler_arg,
+                'otel_flask_excluded_urls': otel_flask_excluded_urls,
+                'otel_disabled_instrumentations': otel_disabled_instrumentations,
+                'otel_logs_exporter': otel_logs_exporter,
+                'otel_metrics_exporter': otel_metrics_exporter,
+                'otel_enable_live_metrics': otel_enable_live_metrics,
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',
