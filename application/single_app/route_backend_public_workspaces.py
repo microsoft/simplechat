@@ -175,6 +175,7 @@ def register_route_backend_public_workspaces(app):
                 "name": ws.get("name", ""),
                 "description": ws.get("description", ""),
                 "userRole": role,
+                "status": ws.get("status", "active"),
                 "isActive": (ws["id"] == active_id)
             })
 

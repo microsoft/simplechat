@@ -36,7 +36,7 @@ $(document).ready(function () {
     // Show loading placeholder
     tableBody.html(`
       <tr class="table-loading-row">
-        <td colspan="4" class="text-center p-4 text-muted">
+        <td colspan="5" class="text-center p-4 text-muted">
           <div class="spinner-border spinner-border-sm me-2" role="status"></div>
           Loading…
         </td>
@@ -62,13 +62,13 @@ $(document).ready(function () {
           workspaces.forEach(renderWorkspaceRow);
         } else if (currentSearchQuery) {
           tableBody.html(`
-            <tr><td colspan="4" class="text-center p-4 text-muted">
+            <tr><td colspan="5" class="text-center p-4 text-muted">
               No workspaces found matching "${escapeHtml(currentSearchQuery)}".
             </td></tr>
           `);
         } else {
           tableBody.html(`
-            <tr><td colspan="4" class="text-center p-4 text-muted">
+            <tr><td colspan="5" class="text-center p-4 text-muted">
               You don't have any public workspaces yet.<br>
               Use "Create New Public Workspace" or "Find Public Workspace" above.
             </td></tr>
@@ -79,7 +79,7 @@ $(document).ready(function () {
       .fail(function (jqXHR) {
         const err = jqXHR.responseJSON?.error || jqXHR.statusText;
         tableBody.html(`
-          <tr><td colspan="4" class="text-center text-danger p-4">
+          <tr><td colspan="5" class="text-center text-danger p-4">
             Error loading workspaces: ${escapeHtml(err)}
           </td></tr>
         `);
@@ -102,6 +102,30 @@ $(document).ready(function () {
     row.append(
       $("<td></td>").text(ws.userRole || "Document Manager")
     );
+
+    // Status Badge
+    const statusCell = $("<td class='text-center'></td>");
+    const status = ws.status || 'active';
+    let badgeClass = 'bg-success';
+    let badgeText = 'Active';
+    let badgeIcon = 'bi-check-circle-fill';
+    
+    if (status === 'locked') {
+      badgeClass = 'bg-warning text-dark';
+      badgeText = 'Locked';
+      badgeIcon = 'bi-lock-fill';
+    } else if (status === 'upload_disabled') {
+      badgeClass = 'bg-info text-dark';
+      badgeText = 'Upload Disabled';
+      badgeIcon = 'bi-cloud-slash-fill';
+    } else if (status === 'inactive') {
+      badgeClass = 'bg-danger';
+      badgeText = 'Inactive';
+      badgeIcon = 'bi-exclamation-triangle-fill';
+    }
+    
+    statusCell.append(`<span class="badge ${badgeClass}"><i class="bi ${badgeIcon} me-1"></i>${badgeText}</span>`);
+    row.append(statusCell);
 
     // Active badge or Set Active button
     const activeCell = $("<td class='text-center'></td>");

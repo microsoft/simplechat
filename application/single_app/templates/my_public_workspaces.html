@@ -11,15 +11,17 @@
     /* Column Widths */
     #my-public-workspaces-table th:nth-child(1), /* Name */
     #my-public-workspaces-table td:nth-child(1) {
-        width: 35%;
+        width: 30%;
         overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     }
     #my-public-workspaces-table th:nth-child(2), /* Role */
-    #my-public-workspaces-table td:nth-child(2) { width: 20%; }
-    #my-public-workspaces-table th:nth-child(3), /* Active */
-    #my-public-workspaces-table td:nth-child(3) { width: 20%; text-align: center; }
-    #my-public-workspaces-table th:nth-child(4), /* Actions */
-    #my-public-workspaces-table td:nth-child(4) { width: 25%; text-align: center; }
+    #my-public-workspaces-table td:nth-child(2) { width: 15%; }
+    #my-public-workspaces-table th:nth-child(3), /* Status */
+    #my-public-workspaces-table td:nth-child(3) { width: 15%; text-align: center; }
+    #my-public-workspaces-table th:nth-child(4), /* Active */
+    #my-public-workspaces-table td:nth-child(4) { width: 18%; text-align: center; }
+    #my-public-workspaces-table th:nth-child(5), /* Actions */
+    #my-public-workspaces-table td:nth-child(5) { width: 22%; text-align: center; }
 
     #my-public-workspaces-table td {
         vertical-align: middle;
@@ -73,13 +75,14 @@
         <tr>
           <th>Name</th>
           <th>Your Role</th>
+          <th>Status</th>
           <th>Active</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         <tr class="table-loading-row">
-          <td colspan="4" class="text-center p-4 text-muted">
+          <td colspan="5" class="text-center p-4 text-muted">
             <div class="spinner-border spinner-border-sm me-2" role="status"></div>
             Loading…
           </td>

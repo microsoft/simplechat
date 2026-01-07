@@ -100,6 +100,12 @@ $(document).ready(function () {
     resetCsvModal();
   });
 
+  // Activity timeline pagination
+  $('input[name="activityLimit"]').on('change', function() {
+    const limit = parseInt($(this).val());
+    loadActivityTimeline(limit);
+  });
+
   // Bulk Actions Events
   $("#selectAllMembers").on("change", function () {
     const isChecked = $(this).prop("checked");
@@ -248,14 +254,13 @@ function loadGroupInfo(doneCallback) {
     const ownerName = group.owner?.displayName || "N/A";
     const ownerEmail = group.owner?.email || "N/A";
 
-    $("#groupInfoContainer").html(`
-      <h4>${group.name}</h4>
-      <p>${group.description || ""}</p>
-      <p>
-        <strong>Owner Name:</strong> ${ownerName}<br/>
-        <strong>Owner Email:</strong> ${ownerEmail}
-      </p>
-    `);
+    // Update hero section
+    const initial = group.name ? group.name.charAt(0).toUpperCase() : 'G';
+    $('#groupInitial').text(initial);
+    $('#groupHeroName').text(group.name);
+    $('#groupOwnerName').text(ownerName);
+    $('#groupOwnerEmail').text(ownerEmail);
+    $('#groupHeroDescription').text(group.description || 'No description provided');
 
     // Update group status alert if not active
     updateGroupStatusAlert(group.status || 'active');
@@ -307,8 +312,12 @@ function loadGroupInfo(doneCallback) {
       }
       
       $("#pendingRequestsSection").show();
+      $("#activityTimelineSection").show();
+      $("#stats-tab-item").show();
 
       loadPendingRequests();
+      loadGroupStats();
+      loadActivityTimeline(50);
     }
 
     if (typeof doneCallback === "function") {
@@ -643,44 +652,76 @@ function updateGroupStatusAlert(status) {
   const contentDiv = $("#group-status-content");
   
   if (!status || status === 'active') {
-    alertBox.hide();
+    alertBox.addClass('d-none');
+    alertBox.removeClass('alert-warning alert-info alert-danger');
     return;
   }
   
-  const statusInfo = {
+  const statusMessages = {
     'locked': {
-      icon: '🔒',
-      title: 'Locked (Read-only)',
-      description: 'Group is in read-only mode.',
-      blocks: 'New document uploads and deletions, creating/editing/deleting prompts, agents, and actions',
-      allows: 'Viewing existing documents, chat and search, using existing prompts/agents/actions'
+      type: 'warning',
+      icon: 'bi-lock-fill',
+      title: '🔒 Locked (Read-Only)',
+      message: 'Group is in read-only mode',
+      details: [
+        '❌ New document uploads',
+        '❌ Document deletions',
+        '❌ Creating, editing, or deleting prompts',
+        '❌ Creating, editing, or deleting agents',
+        '❌ Creating, editing, or deleting actions',
+        '✅ Viewing existing documents',
+        '✅ Chat and search with existing documents',
+        '✅ Using existing prompts, agents, and actions'
+      ]
     },
     'upload_disabled': {
-      icon: '📁',
-      title: 'Upload Disabled',
-      description: 'Restrict new content but allow other operations.',
-      blocks: 'New document uploads',
-      allows: 'Document deletions (cleanup), full chat and search functionality, creating/editing/deleting prompts, agents, and actions'
+      type: 'info',
+      icon: 'bi-cloud-slash-fill',
+      title: '📁 Upload Disabled',
+      message: 'Restrict new content but allow other operations',
+      details: [
+        '❌ New document uploads',
+        '✅ Document deletions (cleanup)',
+        '✅ Full chat and search functionality',
+        '✅ Creating, editing, and deleting prompts',
+        '✅ Creating, editing, and deleting agents',
+        '✅ Creating, editing, and deleting actions'
+      ]
     },
     'inactive': {
-      icon: '⭕',
-      title: 'Inactive',
-      description: 'Group is completely disabled.',
-      blocks: 'ALL operations (uploads, deletions, chat, document access, creating/editing/deleting prompts, agents, and actions)',
-      allows: 'Only admin viewing of group information'
+      type: 'danger',
+      icon: 'bi-exclamation-triangle-fill',
+      title: '⭕ Inactive',
+      message: 'Group is disabled',
+      details: [
+        '❌ ALL operations (uploads, chat, document access)',
+        '❌ Creating, editing, or deleting prompts, agents, and actions',
+        '✅ Only admin viewing of group information',
+        'Use case: Decommissioned projects, suspended groups, compliance holds'
+      ]
     }
   };
   
-  const info = statusInfo[status];
-  if (info) {
+  const config = statusMessages[status];
+  if (config) {
+    alertBox.removeClass('d-none alert-warning alert-info alert-danger');
+    alertBox.addClass(`alert-${config.type}`);
+    
+    const detailsList = config.details.map(d => `<li class="mb-1">${d}</li>`).join('');
+    
     contentDiv.html(`
-      <strong>${info.icon} ${info.title}:</strong> ${info.description}<br>
-      <strong>• Blocks:</strong> ${info.blocks}<br>
-      <strong>• Allows:</strong> ${info.allows}
+      <div class="d-flex align-items-start">
+        <i class="bi ${config.icon} me-2 flex-shrink-0" style="font-size: 1.2rem;"></i>
+        <div>
+          <strong>${config.title}</strong> - ${config.message}
+          <ul class="mb-0 mt-2 small">
+            ${detailsList}
+          </ul>
+        </div>
+      </div>
     `);
-    alertBox.show();
   } else {
-    alertBox.hide();
+    alertBox.addClass('d-none');
   }
 }
 
@@ -821,6 +862,304 @@ function handleCsvFileSelect(event) {
   };
 
   reader.readAsText(file);
+}
+
+// Stats and Charts Functions
+let documentChart, storageChart, tokenChart;
+
+function loadGroupStats() {
+  $.get(`/api/groups/${groupId}/stats`)
+    .done(function(data) {
+      // Update stat cards
+      $('#stat-documents').text(data.totalDocuments || 0);
+      
+      // Format storage
+      const storageMB = Math.round(data.storageUsed / (1024 * 1024));
+      $('#stat-storage').text(storageMB + ' MB');
+      
+      // Format tokens
+      const tokensK = Math.round(data.totalTokens / 1000);
+      $('#stat-tokens').text(tokensK + 'K');
+      
+      $('#stat-members').text(data.totalMembers || 0);
+
+      // Create charts
+      createDocumentChart(data.documentActivity);
+      createStorageChart(data.storage);
+      createTokenChart(data.tokenUsage);
+    })
+    .fail(function(xhr) {
+      console.error('Failed to load group stats:', xhr);
+      $('#stat-documents').text('Error');
+      $('#stat-storage').text('Error');
+      $('#stat-tokens').text('Error');
+      $('#stat-members').text('Error');
+    });
+}
+
+function createDocumentChart(activityData) {
+  const ctx = document.getElementById('documentChart');
+  if (!ctx) return;
+
+  if (documentChart) {
+    documentChart.destroy();
+  }
+
+  documentChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: activityData.labels,
+      datasets: [
+        {
+          label: 'Uploads',
+          data: activityData.uploads,
+          backgroundColor: 'rgba(13, 202, 240, 0.8)',
+          borderColor: 'rgba(13, 202, 240, 1)',
+          borderWidth: 1
+        },
+        {
+          label: 'Deletes',
+          data: activityData.deletes,
+          backgroundColor: 'rgba(220, 53, 69, 0.8)',
+          borderColor: 'rgba(220, 53, 69, 1)',
+          borderWidth: 1
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1
+          }
+        }
+      }
+    }
+  });
+}
+
+function createStorageChart(storageData) {
+  const ctx = document.getElementById('storageChart');
+  if (!ctx) return;
+
+  if (storageChart) {
+    storageChart.destroy();
+  }
+
+  const aiSearchMB = Math.round(storageData.ai_search_size / (1024 * 1024));
+  const blobStorageMB = Math.round(storageData.storage_account_size / (1024 * 1024));
+
+  storageChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['AI Search', 'Blob Storage'],
+      datasets: [{
+        data: [aiSearchMB, blobStorageMB],
+        backgroundColor: [
+          'rgba(13, 110, 253, 0.8)',
+          'rgba(13, 202, 240, 0.8)'
+        ],
+        borderColor: [
+          'rgba(13, 110, 253, 1)',
+          'rgba(13, 202, 240, 1)'
+        ],
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.label + ': ' + context.parsed + ' MB';
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function createTokenChart(tokenData) {
+  const ctx = document.getElementById('tokenChart');
+  if (!ctx) return;
+
+  if (tokenChart) {
+    tokenChart.destroy();
+  }
+
+  tokenChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: tokenData.labels,
+      datasets: [{
+        label: 'Tokens',
+        data: tokenData.data,
+        backgroundColor: 'rgba(255, 193, 7, 0.8)',
+        borderColor: 'rgba(255, 193, 7, 1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
+// Activity Timeline Functions
+function loadActivityTimeline(limit = 50) {
+  $.get(`/api/groups/${groupId}/activity?limit=${limit}`)
+    .done(function(activities) {
+      if (!activities || activities.length === 0) {
+        $('#activityTimeline').html('<p class="text-muted">No recent activity</p>');
+        return;
+      }
+      
+      const html = activities.map(activity => renderActivityItem(activity)).join('');
+      $('#activityTimeline').html(html);
+    })
+    .fail(function(xhr) {
+      if (xhr.status === 403) {
+        $('#activityTimeline').html('<p class="text-danger">Access denied - Only group owners and admins can view activity timeline</p>');
+      } else {
+        $('#activityTimeline').html('<p class="text-danger">Failed to load activity</p>');
+      }
+    });
+}
+
+function renderActivityItem(activity) {
+  const icons = {
+    'document_creation': 'file-earmark-arrow-up',
+    'document_deletion': 'file-earmark-x',
+    'token_usage': 'cpu',
+    'user_login': 'box-arrow-in-right',
+    'conversation_creation': 'chat-dots',
+    'conversation_deletion': 'chat-dots-fill'
+  };
+  
+  const colors = {
+    'document_creation': 'success',
+    'document_deletion': 'danger',
+    'token_usage': 'primary',
+    'user_login': 'info',
+    'conversation_creation': 'primary',
+    'conversation_deletion': 'danger'
+  };
+  
+  const activityType = activity.activity_type || 'unknown';
+  const icon = icons[activityType] || 'circle';
+  const color = colors[activityType] || 'secondary';
+  const time = formatRelativeTime(activity.timestamp || activity.created_at);
+  
+  // Generate description based on activity type
+  let description = '';
+  let title = activityType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  
+  if (activityType === 'document_creation' && activity.document) {
+    description = `File: ${activity.document.file_name || 'Unknown'}`;
+  } else if (activityType === 'document_deletion' && activity.document_metadata) {
+    description = `File: ${activity.document_metadata.file_name || 'Unknown'}`;
+  } else if (activityType === 'token_usage' && activity.usage) {
+    description = `Tokens: ${formatNumber(activity.usage.total_tokens || 0)}`;
+  } else if (activityType === 'user_login') {
+    description = 'User logged in';
+  } else if (activityType === 'conversation_creation') {
+    description = 'New conversation started';
+  } else if (activityType === 'conversation_deletion') {
+    description = 'Conversation deleted';
+  }
+  
+  const activityJson = JSON.stringify(activity);
+  
+  return `
+    <div class="activity-item" data-activity='${activityJson.replace(/'/g, "&apos;")}' onclick="showRawActivity(this)">
+      <div class="d-flex align-items-start gap-3">
+        <div class="activity-icon">
+          <i class="bi bi-${icon} text-${color}" style="font-size: 1.5rem;"></i>
+        </div>
+        <div class="flex-grow-1">
+          <div class="d-flex justify-content-between align-items-start mb-1">
+            <h6 class="mb-0">${title}</h6>
+            <small class="text-muted">${time}</small>
+          </div>
+          <p class="mb-0 text-muted small">${description}</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function formatRelativeTime(timestamp) {
+  if (!timestamp) return 'Unknown';
+  
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+  return `${Math.floor(diffDays / 365)}y ago`;
+}
+
+function formatNumber(num) {
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function showRawActivity(element) {
+  try {
+    const activityJson = element.getAttribute('data-activity');
+    const activity = JSON.parse(activityJson);
+    const modalBody = document.getElementById('rawActivityModalBody');
+    modalBody.innerHTML = `<pre><code>${JSON.stringify(activity, null, 2)}</code></pre>`;
+    $('#rawActivityModal').modal('show');
+  } catch (error) {
+    console.error('Error showing raw activity:', error);
+  }
+}
+
+function copyRawActivityToClipboard() {
+  const modalBody = document.getElementById('rawActivityModalBody');
+  const text = modalBody.textContent;
+  
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('Activity data copied to clipboard', 'success');
+  }).catch(err => {
+    console.error('Failed to copy:', err);
+    showToast('Failed to copy to clipboard', 'danger');
+  });
 }
 
 function showCsvError(message) {
@@ -1022,7 +1361,7 @@ async function bulkAssignRole() {
 
       const data = await response.json();
       
-      if (response.ok && data.success) {
+      if (response.ok) {
         successCount++;
       } else {
         failedCount++;

@@ -454,6 +454,31 @@ def register_route_backend_groups(app):
         except Exception as log_error:
             debug_print(f"Failed to log member addition activity: {log_error}")
         
+        # Create notification for the new member
+        try:
+            from functions_notifications import create_notification
+            role_display = {
+                'admin': 'Admin',
+                'document_manager': 'Document Manager',
+                'user': 'Member'
+            }.get(member_role, 'Member')
+            
+            create_notification(
+                user_id=new_user_id,
+                notification_type='system_announcement',
+                title='Added to Group',
+                message=f"You have been added to the group '{group_doc.get('name', 'Unknown')}' as {role_display} by {user_email}.",
+                link_url=f"/manage_group/{group_id}",
+                metadata={
+                    'group_id': group_id,
+                    'group_name': group_doc.get('name', 'Unknown'),
+                    'added_by': user_email,
+                    'role': member_role
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create member addition notification: {notif_error}")
+        
         return jsonify({"message": "Member added", "success": True}), 200
 
     @app.route("/api/groups/<group_id>/members/<member_id>", methods=["DELETE"])
@@ -658,6 +683,26 @@ def register_route_backend_groups(app):
             cosmos_activity_logs_container.create_item(body=activity_record)
         except Exception as log_error:
             debug_print(f"Failed to log role change activity: {log_error}")
+        
+        # Create notification for the member whose role was changed
+        try:
+            from functions_notifications import create_notification
+            create_notification(
+                user_id=member_id,
+                notification_type='system_announcement',
+                title='Role Changed',
+                message=f"Your role in group '{group_doc.get('name', 'Unknown')}' has been changed from {target_role} to {new_role} by {user_email}.",
+                link_url=f"/manage_group/{group_id}",
+                metadata={
+                    'group_id': group_id,
+                    'group_name': group_doc.get('name', 'Unknown'),
+                    'changed_by': user_email,
+                    'old_role': target_role,
+                    'new_role': new_role
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create role change notification: {notif_error}")
 
         return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
 
@@ -825,3 +870,260 @@ def register_route_backend_groups(app):
             file_count = item
 
         return jsonify({ "fileCount": file_count }), 200
+
+    @app.route("/api/groups/<group_id>/activity", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_group_activity(group_id):
+        """
+        GET /api/groups/<group_id>/activity
+        Returns recent activity timeline for the group.
+        Only accessible by owner and admins.
+        """
+        from functions_debug import debug_print
+        
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        group = find_group_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user is owner or admin (NOT document managers or regular members)
+        is_owner = group["owner"]["id"] == user_id
+        is_admin = user_id in (group.get("admins", []))
+        
+        if not (is_owner or is_admin):
+            return jsonify({"error": "Forbidden - Only group owners and admins can view activity timeline"}), 403
+
+        # Get pagination parameters
+        limit = request.args.get('limit', 50, type=int)
+        if limit not in [10, 20, 50]:
+            limit = 50
+
+        # Get recent activity
+        query = f"""
+            SELECT TOP {limit} *
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            ORDER BY a.timestamp DESC
+        """
+        params = [{"name": "@groupId", "value": group_id}]
+        
+        debug_print(f"[GROUP_ACTIVITY] Group ID: {group_id}")
+        debug_print(f"[GROUP_ACTIVITY] Query: {query}")
+        debug_print(f"[GROUP_ACTIVITY] Params: {params}")
+        
+        activities = []
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            )
+            activities = list(activity_iter)
+            debug_print(f"[GROUP_ACTIVITY] Found {len(activities)} activity records")
+        except Exception as e:
+            debug_print(f"[GROUP_ACTIVITY] Error querying activity: {e}")
+            return jsonify({"error": "Failed to retrieve activity"}), 500
+        
+        return jsonify(activities), 200
+
+    @app.route("/api/groups/<group_id>/stats", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_group_stats(group_id):
+        """
+        GET /api/groups/<group_id>/stats
+        Returns statistics for the group including documents, storage, tokens, and members.
+        Only accessible by owner and admins.
+        """
+        from functions_debug import debug_print
+        from datetime import datetime, timedelta
+        
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        group = find_group_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user is owner or admin
+        is_owner = group["owner"]["id"] == user_id
+        is_admin = user_id in (group.get("admins", []))
+        
+        if not (is_owner or is_admin):
+            return jsonify({"error": "Forbidden"}), 403
+
+        # Get metrics from group record
+        metrics = group.get("metrics", {})
+        document_metrics = metrics.get("document_metrics", {})
+        
+        total_documents = document_metrics.get("total_documents", 0)
+        storage_used = document_metrics.get("storage_account_size", 0)
+        ai_search_size = document_metrics.get("ai_search_size", 0)
+        storage_account_size = document_metrics.get("storage_account_size", 0)
+
+        # Get member count
+        total_members = len(group.get("users", []))
+
+        # Get token usage from activity logs (last 30 days)
+        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        
+        debug_print(f"[GROUP_STATS] Group ID: {group_id}")
+        debug_print(f"[GROUP_STATS] Start date: {thirty_days_ago}")
+        
+        token_query = """
+            SELECT a.usage
+            FROM a 
+            WHERE a.workspace_context.group_id = @groupId 
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        token_params = [
+            {"name": "@groupId", "value": group_id},
+            {"name": "@startDate", "value": thirty_days_ago}
+        ]
+        
+        total_tokens = 0
+        try:
+            token_iter = cosmos_activity_logs_container.query_items(
+                query=token_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in token_iter:
+                usage = item.get("usage", {})
+                total_tokens += usage.get("total_tokens", 0)
+            debug_print(f"[GROUP_STATS] Total tokens accumulated: {total_tokens}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying total tokens: {e}")
+
+        # Get activity data for charts (last 30 days)
+        doc_activity_labels = []
+        doc_upload_data = []
+        doc_delete_data = []
+        token_usage_labels = []
+        token_usage_data = []
+        
+        # Generate labels for last 30 days
+        for i in range(29, -1, -1):
+            date = datetime.utcnow() - timedelta(days=i)
+            doc_activity_labels.append(date.strftime("%m/%d"))
+            token_usage_labels.append(date.strftime("%m/%d"))
+            doc_upload_data.append(0)
+            doc_delete_data.append(0)
+            token_usage_data.append(0)
+
+        # Get document upload activity by day
+        doc_upload_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_creation'
+        """
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=doc_upload_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in activity_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_upload_data[idx] += 1
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying document uploads: {e}")
+
+        # Get document delete activity by day
+        doc_delete_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_deletion'
+        """
+        try:
+            delete_iter = cosmos_activity_logs_container.query_items(
+                query=doc_delete_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in delete_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_delete_data[idx] += 1
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying document deletes: {e}")
+
+        # Get token usage by day
+        token_activity_query = """
+            SELECT a.timestamp, a.created_at, a.usage
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        try:
+            token_activity_iter = cosmos_activity_logs_container.query_items(
+                query=token_activity_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in token_activity_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in token_usage_labels:
+                            idx = token_usage_labels.index(day_date)
+                            usage = item.get("usage", {})
+                            tokens = usage.get("total_tokens", 0)
+                            token_usage_data[idx] += tokens
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying token usage: {e}")
+
+        stats = {
+            "totalDocuments": total_documents,
+            "storageUsed": storage_used,
+            "storageLimit": 10737418240,  # 10GB default
+            "totalTokens": total_tokens,
+            "totalMembers": total_members,
+            "storage": {
+                "ai_search_size": ai_search_size,
+                "storage_account_size": storage_account_size
+            },
+            "documentActivity": {
+                "labels": doc_activity_labels,
+                "uploads": doc_upload_data,
+                "deletes": doc_delete_data
+            },
+            "tokenUsage": {
+                "labels": token_usage_labels,
+                "data": token_usage_data
+            }
+        }
+
+        return jsonify(stats), 200
