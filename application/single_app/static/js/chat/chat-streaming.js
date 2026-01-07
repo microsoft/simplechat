@@ -61,13 +61,28 @@ function updateStreamingButtonState() {
     const streamingToggleBtn = document.getElementById('streaming-toggle-btn');
     if (!streamingToggleBtn) return;
     
-    if (streamingEnabled) {
-        streamingToggleBtn.classList.remove('btn-outline-secondary');
+    // Check if TTS autoplay is enabled
+    let ttsAutoplayEnabled = false;
+    if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
+        const cachedSettings = JSON.parse(localStorage.getItem('userSettings') || '{}');
+        ttsAutoplayEnabled = cachedSettings.settings?.ttsAutoplay === true;
+    }
+    
+    if (ttsAutoplayEnabled) {
+        // Disable streaming button when TTS autoplay is on
+        streamingToggleBtn.classList.remove('btn-primary');
+        streamingToggleBtn.classList.add('btn-outline-secondary', 'disabled');
+        streamingToggleBtn.disabled = true;
+        streamingToggleBtn.title = 'Streaming disabled - TTS autoplay is enabled. Disable TTS autoplay in your profile to enable streaming.';
+    } else if (streamingEnabled) {
+        streamingToggleBtn.classList.remove('btn-outline-secondary', 'disabled');
         streamingToggleBtn.classList.add('btn-primary');
+        streamingToggleBtn.disabled = false;
         streamingToggleBtn.title = 'Streaming enabled - click to disable';
     } else {
-        streamingToggleBtn.classList.remove('btn-primary');
+        streamingToggleBtn.classList.remove('btn-primary', 'disabled');
         streamingToggleBtn.classList.add('btn-outline-secondary');
+        streamingToggleBtn.disabled = false;
         streamingToggleBtn.title = 'Streaming disabled - click to enable';
     }
 }
@@ -86,6 +101,24 @@ function updateStreamingButtonVisibility() {
 }
 
 export function isStreamingEnabled() {
+    // Check if TTS autoplay is enabled - streaming is incompatible with TTS autoplay
+    if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
+        // Dynamically check TTS settings
+        loadUserSettings().then(settings => {
+            if (settings.ttsAutoplay === true) {
+                console.log('TTS autoplay enabled - streaming disabled');
+            }
+        }).catch(error => {
+            console.error('Error checking TTS settings:', error);
+        });
+        
+        // Synchronous check using cached value if available
+        const cachedSettings = JSON.parse(localStorage.getItem('userSettings') || '{}');
+        if (cachedSettings.settings?.ttsAutoplay === true) {
+            return false; // Disable streaming when TTS autoplay is active
+        }
+    }
+    
     // Check if image generation is active - streaming is incompatible with image gen
     const imageGenBtn = document.getElementById('image-generate-btn');
     if (imageGenBtn && imageGenBtn.classList.contains('active')) {
@@ -307,7 +340,8 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData) {
         finalData.agent_citations || [],
         finalData.agent_display_name || null,
         finalData.agent_name || null,
-        null
+        null,
+        true // isNewMessage - trigger autoplay for new streaming responses
     );
     
     // Update conversation if needed

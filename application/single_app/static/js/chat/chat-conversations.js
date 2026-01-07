@@ -992,6 +992,14 @@ export function deleteConversation(conversationId) {
 export async function createNewConversation(callback) {
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;
+    
+    // Clear the chatbox immediately when creating new conversation
+    const chatbox = document.getElementById("chatbox");
+    if (chatbox && !callback) {
+        // Only clear if there's no callback (i.e., not sending a message immediately)
+        chatbox.innerHTML = "";
+    }
+    
   try {
     const response = await fetch("/api/create_conversation", {
       method: "POST",

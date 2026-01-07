@@ -252,6 +252,9 @@ def get_settings(use_cosmos=False):
         # Speech-to-text chat input
         "enable_speech_to_text_input": False,
         
+        # Text-to-speech chat output
+        "enable_text_to_speech": False,
+        
         #key vault settings
         'enable_key_vault_secret_storage': False,
         'key_vault_name': '',

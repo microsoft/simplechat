@@ -288,6 +288,20 @@
                     <!-- Right side selectors -->
                     <div class="d-flex align-items-center gap-2">
 
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="TTS Autoplay Off"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
+
                         <!-- Streaming toggle button -->
                         <button 
                             id="streaming-toggle-btn" 
@@ -867,6 +881,12 @@
         display_name: "{{ user_display_name }}"
     };
 
+    // App settings for feature detection
+    window.appSettings = {
+        enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
+        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }}
+    };
+
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;
     let currentLayout = 'split'; // Default layout
@@ -879,6 +899,9 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-utils.js') }}"></script>
 {% if app_settings.enable_speech_to_text_input %}
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-speech-input.js') }}"></script>
+{% endif %}
+{% if app_settings.enable_text_to_speech %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-tts.js') }}"></script>
 {% endif %}
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-messages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversations.js') }}"></script>

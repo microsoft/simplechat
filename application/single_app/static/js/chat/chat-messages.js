@@ -15,10 +15,23 @@ import {
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
+
+// Conditionally import TTS if enabled
+let ttsModule = null;
+if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
+    import('./chat-tts.js').then(module => {
+        ttsModule = module;
+        console.log('TTS module loaded');
+        module.initializeTTS();
+    }).catch(error => {
+        console.error('Failed to load TTS module:', error);
+    });
+}
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -545,7 +558,8 @@ export function appendMessage(
   agentCitations = [],
   agentDisplayName = null,
   agentName = null,
-  fullMessageObject = null
+  fullMessageObject = null,
+  isNewMessage = false
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -616,6 +630,16 @@ export function appendMessage(
     const maskIcon = isMasked ? 'bi-front' : 'bi-back';
     const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
     
+    // TTS button (only for AI messages)
+    const ttsButtonHtml = (sender === 'AI' && typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) ? `
+            <button class="btn btn-sm btn-link text-muted tts-play-btn" 
+                    title="Listen"
+                    data-message-id="${messageId}"
+                    onclick="if(window.chatTTS) window.chatTTS.handleButtonClick('${messageId}')">
+                <i class="bi bi-volume-up"></i>
+            </button>
+        ` : '';
+    
     const copyButtonHtml = `
             <button class="copy-btn btn btn-sm btn-link text-muted" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
                 <i class="bi bi-copy"></i>
@@ -650,7 +674,7 @@ export function appendMessage(
                 <i class="bi bi-box-arrow-in-right"></i>
             </button>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${copyButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${ttsButtonHtml}${copyButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -743,6 +767,11 @@ export function appendMessage(
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
+    
+    // Auto-play TTS if enabled (only for new messages, not when loading history)
+    if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
+        autoplayTTSIfEnabled(messageId, messageContent);
+    }
     
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
@@ -1533,7 +1562,9 @@ export function actuallySendMessage(finalMessageToSend) {
           data.web_search_citations, // Pass web citations
           data.agent_citations, // Pass agent citations
           data.agent_display_name, // Pass agent display name
-          data.agent_name // Pass agent name
+          data.agent_name, // Pass agent name
+          null, // fullMessageObject
+          true // isNewMessage - trigger autoplay for new responses
         );
       }
       // Show kernel fallback notice if present

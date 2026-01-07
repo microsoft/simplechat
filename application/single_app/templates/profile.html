@@ -392,6 +392,65 @@
     </div>
     {% endif %}
 
+    <!-- Text-to-Speech Settings -->
+    {% if app_settings.enable_text_to_speech %}
+    <div class="section-card" id="tts-settings">
+        <h5 class="mb-3"><i class="bi bi-volume-up-fill me-2"></i>Text-to-Speech Settings</h5>
+        <p class="text-muted">Configure AI voice responses for assistant messages.</p>
+        
+        <div class="mb-3">
+            <label for="tts-voice-select" class="form-label fw-semibold">Voice Selection</label>
+            <select class="form-select" id="tts-voice-select" onchange="updateVoicePreview()">
+                <option value="">Select a voice...</option>
+                <!-- Voice options will be populated by JavaScript -->
+            </select>
+            <small class="text-muted">Choose the voice that will read AI assistant messages aloud.</small>
+        </div>
+        
+        <div class="mb-3">
+            <label for="tts-speed-slider" class="form-label fw-semibold">Speech Speed: <span id="tts-speed-value">1.0x</span></label>
+            <input type="range" class="form-range" id="tts-speed-slider" 
+                   min="0.5" max="2.0" step="0.1" value="1.0" 
+                   oninput="updateSpeedValue(this.value)">
+            <div class="d-flex justify-content-between">
+                <small class="text-muted">0.5x (Slower)</small>
+                <small class="text-muted">2.0x (Faster)</small>
+            </div>
+        </div>
+        
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Voice Preview</label>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="tts-preview-btn" onclick="playVoicePreview()">
+                    <i class="bi bi-play-circle me-1"></i>Play Sample
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="tts-stop-btn" onclick="stopVoicePreview()" style="display: none;">
+                    <i class="bi bi-stop-circle me-1"></i>Stop
+                </button>
+                <span id="tts-preview-status" class="text-muted small"></span>
+            </div>
+            <small class="text-muted">Test the selected voice with a sample phrase.</small>
+        </div>
+        
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="tts-autoplay-toggle">
+            <label class="form-check-label" for="tts-autoplay-toggle">
+                Enable Auto-play for AI Responses
+            </label>
+            <small class="d-block text-muted">When enabled, AI responses will automatically be read aloud. Streaming will be disabled when auto-play is on.</small>
+        </div>
+        
+        <button type="button" class="btn btn-primary" onclick="saveTTSSettings()">
+            <i class="bi bi-save me-1"></i>Save Voice Settings
+        </button>
+        
+        <div class="alert alert-info mt-3 mb-0">
+            <i class="bi bi-info-circle me-2"></i>
+            <strong>Tip:</strong> You can also enable voice playback for individual messages using the "Listen" button in the chat interface.
+        </div>
+    </div>
+    {% endif %}
+
     <p class="text-muted mt-4 text-center">Version: {{ config['VERSION'] }}</p>
 </div>
 
@@ -609,6 +668,11 @@ document.addEventListener('DOMContentLoaded', function() {
     loadMicrophoneSettings();
     loadUserMetrics();
     initializeCharts();
+    
+    // Initialize TTS settings if enabled
+    {% if app_settings.enable_text_to_speech %}
+    loadTTSSettings();
+    {% endif %}
     
     document.getElementById('refresh-profile-image').addEventListener('click', function() {
         if (typeof window.ProfileImage !== 'undefined' && window.ProfileImage.refresh) {
@@ -1508,6 +1572,218 @@ function exportActivityData() {
         alert('Error exporting activity data. Please try again.');
     });
 }
+
+// Text-to-Speech Settings Functions
+{% if app_settings.enable_text_to_speech %}
+let ttsVoices = [];
+let currentAudio = null;
+
+async function loadTTSSettings() {
+    try {
+        // Load available voices
+        const voicesResponse = await fetch('/api/chat/tts/voices');
+        const voicesData = await voicesResponse.json();
+        ttsVoices = voicesData.voices || [];
+        
+        // Populate voice dropdown
+        const voiceSelect = document.getElementById('tts-voice-select');
+        voiceSelect.innerHTML = '<option value="">Select a voice...</option>';
+        
+        // Group voices by language
+        const languageGroups = {};
+        ttsVoices.forEach(voice => {
+            const lang = voice.language || 'Other';
+            if (!languageGroups[lang]) {
+                languageGroups[lang] = [];
+            }
+            languageGroups[lang].push(voice);
+        });
+        
+        // Add grouped options
+        Object.keys(languageGroups).sort().forEach(lang => {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = lang;
+            languageGroups[lang].forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.name;
+                const displayName = voice.name.split(':')[0].split('-').pop(); // Extract just the name
+                const genderBadge = voice.gender === 'Male' ? '♂' : voice.gender === 'Female' ? '♀' : '◉';
+                const statusBadge = voice.status === 'Preview' ? ' [Preview]' : '';
+                option.textContent = `${displayName} ${genderBadge}${statusBadge}`;
+                if (voice.note) {
+                    option.textContent += ` - ${voice.note}`;
+                }
+                optgroup.appendChild(option);
+            });
+            voiceSelect.appendChild(optgroup);
+        });
+        
+        // Load user's saved settings
+        const response = await fetch('/api/user/settings');
+        const data = await response.json();
+        const settings = data.settings || {};
+        
+        // Apply saved settings
+        if (settings.ttsVoice) {
+            voiceSelect.value = settings.ttsVoice;
+        } else {
+            // Default to Andrew
+            voiceSelect.value = 'en-US-Andrew:DragonHDLatestNeural';
+        }
+        
+        if (settings.ttsSpeed) {
+            document.getElementById('tts-speed-slider').value = settings.ttsSpeed;
+            document.getElementById('tts-speed-value').textContent = `${settings.ttsSpeed}x`;
+        }
+        
+        if (settings.ttsAutoplay !== undefined) {
+            document.getElementById('tts-autoplay-toggle').checked = settings.ttsAutoplay;
+        }
+        
+    } catch (error) {
+        console.error('Error loading TTS settings:', error);
+        showToastMessage('Failed to load TTS settings', 'danger');
+    }
+}
+
+function updateSpeedValue(value) {
+    document.getElementById('tts-speed-value').textContent = `${value}x`;
+}
+
+function updateVoicePreview() {
+    // Stop any currently playing audio
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+        document.getElementById('tts-preview-btn').style.display = 'inline-block';
+        document.getElementById('tts-stop-btn').style.display = 'none';
+    }
+}
+
+async function playVoicePreview() {
+    const voiceSelect = document.getElementById('tts-voice-select');
+    const selectedVoice = voiceSelect.value;
+    
+    if (!selectedVoice) {
+        showToastMessage('Please select a voice first', 'warning');
+        return;
+    }
+    
+    const speed = parseFloat(document.getElementById('tts-speed-slider').value);
+    const previewBtn = document.getElementById('tts-preview-btn');
+    const stopBtn = document.getElementById('tts-stop-btn');
+    const statusSpan = document.getElementById('tts-preview-status');
+    
+    try {
+        previewBtn.disabled = true;
+        statusSpan.textContent = 'Generating audio...';
+        
+        // Get voice name for display
+        const voice = ttsVoices.find(v => v.name === selectedVoice);
+        const displayName = voice ? voice.name.split(':')[0].split('-').pop() : 'voice';
+        
+        const sampleText = `Hi, I'm ${displayName}. This is how I sound when reading AI assistant messages.`;
+        
+        const response = await fetch('/api/chat/tts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                text: sampleText,
+                voice: selectedVoice,
+                speed: speed
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to generate audio');
+        }
+        
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        currentAudio = new Audio(audioUrl);
+        currentAudio.onplay = () => {
+            previewBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-block';
+            statusSpan.textContent = 'Playing...';
+        };
+        currentAudio.onended = () => {
+            previewBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            previewBtn.disabled = false;
+            statusSpan.textContent = '';
+            URL.revokeObjectURL(audioUrl);
+        };
+        currentAudio.onerror = () => {
+            previewBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            previewBtn.disabled = false;
+            statusSpan.textContent = '';
+            showToastMessage('Error playing audio', 'danger');
+        };
+        
+        currentAudio.play();
+        
+    } catch (error) {
+        console.error('Error playing voice preview:', error);
+        showToastMessage('Failed to play voice preview', 'danger');
+        previewBtn.disabled = false;
+        statusSpan.textContent = '';
+    }
+}
+
+function stopVoicePreview() {
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+        document.getElementById('tts-preview-btn').style.display = 'inline-block';
+        document.getElementById('tts-stop-btn').style.display = 'none';
+        document.getElementById('tts-preview-status').textContent = '';
+    }
+}
+
+async function saveTTSSettings() {
+    const voiceSelect = document.getElementById('tts-voice-select');
+    const selectedVoice = voiceSelect.value;
+    
+    if (!selectedVoice) {
+        showToastMessage('Please select a voice', 'warning');
+        return;
+    }
+    
+    const speed = parseFloat(document.getElementById('tts-speed-slider').value);
+    const autoplay = document.getElementById('tts-autoplay-toggle').checked;
+    
+    try {
+        const response = await fetch('/api/user/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                settings: {
+                    ttsVoice: selectedVoice,
+                    ttsSpeed: speed,
+                    ttsAutoplay: autoplay,
+                    ttsEnabled: true
+                }
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to save settings');
+        }
+        
+        showToastMessage('Text-to-speech settings saved successfully', 'success');
+        
+    } catch (error) {
+        console.error('Error saving TTS settings:', error);
+        showToastMessage('Failed to save TTS settings', 'danger');
+    }
+}
+{% endif %}
 </script>
 
 <style>

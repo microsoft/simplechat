@@ -1614,3 +1614,36 @@ mark.search-highlight {
     font-weight: 600;
     font-size: 0.9rem;
 }
+
+/* Text-to-Speech Styles */
+.tts-play-btn {
+    padding: 0.25rem 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.tts-play-btn:hover {
+    color: var(--bs-primary) !important;
+    transform: scale(1.1);
+}
+
+.tts-play-btn.btn-success {
+    color: var(--bs-success) !important;
+}
+
+.tts-play-btn.btn-warning {
+    color: var(--bs-warning) !important;
+}
+
+.message.tts-playing {
+    animation: tts-pulse 2s ease-in-out infinite;
+    box-shadow: 0 0 10px rgba(var(--bs-primary-rgb), 0.3);
+}
+
+@keyframes tts-pulse {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(var(--bs-primary-rgb), 0.3);
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(var(--bs-primary-rgb), 0.5);
+    }
+}

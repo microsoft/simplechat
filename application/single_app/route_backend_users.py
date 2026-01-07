@@ -157,6 +157,8 @@ def register_route_backend_users(app):
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     # Microphone permission settings
                     'microphonePermissionState',
+                    # Text-to-speech settings
+                    'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
                     # Metrics and other settings
                     'metrics', 'lastUpdated'
                 } # Add others as needed

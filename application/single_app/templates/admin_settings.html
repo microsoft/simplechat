@@ -2935,8 +2935,22 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to record voice messages up to 90 seconds in chat using Azure Speech Service for transcription."></i>
                     </div>
 
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_text_to_speech"
+                            name="enable_text_to_speech"
+                            {% if settings.enable_text_to_speech %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_text_to_speech">
+                            Enable Text-to-Speech AI Responses
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow AI assistant messages to be read aloud using Azure Speech Service with DragonHD voices."></i>
+                    </div>
+
                     <div id="audio_service_settings" class="card mb-3 p-3"
-                            {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input) %}style="display: none;"{% endif %}>
+                            {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
                         <h5>Speech Service Settings</h5>
                         <p class="text-muted">Configure Azure Speech Service for audio transcription & embedding.</p>
 
@@ -3329,14 +3343,16 @@
         // Handle audio support toggle in main form
         const audioSupportToggle = document.getElementById('enable_audio_file_support');
         const speechInputToggle = document.getElementById('enable_speech_to_text_input');
+        const ttsToggle = document.getElementById('enable_text_to_speech');
         
         function updateAudioServiceSettings() {
             const audioServiceSettings = document.getElementById('audio_service_settings');
             const audioEnabled = audioSupportToggle?.checked || false;
             const speechInputEnabled = speechInputToggle?.checked || false;
+            const ttsEnabled = ttsToggle?.checked || false;
             
             if (audioServiceSettings) {
-                if (audioEnabled || speechInputEnabled) {
+                if (audioEnabled || speechInputEnabled || ttsEnabled) {
                     audioServiceSettings.style.display = 'block';
                 } else {
                     audioServiceSettings.style.display = 'none';
@@ -3352,6 +3368,10 @@
         
         if (speechInputToggle) {
             speechInputToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (ttsToggle) {
+            ttsToggle.addEventListener('change', updateAudioServiceSettings);
         }
         
         // Handle Front Door toggle in main form
