@@ -2906,53 +2906,114 @@
                         </div>
                     </div>
 
-                    <!-- Audio File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_audio_file_support"
-                            name="enable_audio_file_support"
-                            {% if settings.enable_audio_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_audio_file_support">
-                            Enable Audio File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow audio file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
-                    </div>
-                    
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_speech_to_text_input"
-                            name="enable_speech_to_text_input"
-                            {% if settings.enable_speech_to_text_input %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_speech_to_text_input">
-                            Enable Speech-to-Text Chat Input
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to record voice messages up to 90 seconds in chat using Azure Speech Service for transcription."></i>
-                    </div>
+                    <!-- AI Voice Chat Card -->
+                    <div class="card p-4 mb-4 border-primary shadow-sm" id="ai-voice-chat-section">
+                        <div class="d-flex align-items-center mb-3">
+                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-mic-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
+                                </h4>
+                                <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
+                            </div>
+                        </div>
 
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_text_to_speech"
-                            name="enable_text_to_speech"
-                            {% if settings.enable_text_to_speech %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_text_to_speech">
-                            Enable Text-to-Speech AI Responses
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow AI assistant messages to be read aloud using Azure Speech Service with DragonHD voices."></i>
-                    </div>
+                        <div class="alert alert-info mb-4">
+                            <i class="bi bi-lightbulb-fill me-2"></i>
+                            <strong>Create a Complete Voice Experience:</strong> Enable both features together for seamless two-way voice conversations—speak your questions and hear AI responses aloud. Perfect for hands-free workflows, accessibility, and natural interactions.
+                        </div>
 
-                    <div id="audio_service_settings" class="card mb-3 p-3"
-                            {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
-                        <h5>Speech Service Settings</h5>
-                        <p class="text-muted">Configure Azure Speech Service for audio transcription & embedding.</p>
+                        <!-- Audio File Support -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_audio_file_support"
+                                    name="enable_audio_file_support"
+                                    {% if settings.enable_audio_file_support %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_audio_file_support">
+                                    <i class="bi bi-file-earmark-music me-1"></i> Enable Audio File Upload & Processing
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-0">
+                                Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed. 
+                                The AI can then search, analyze, and answer questions about audio content—perfect for meetings, interviews, lectures, and podcasts.
+                            </p>
+                        </div>
+
+                        <!-- Speech-to-Text -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_speech_to_text_input"
+                                    name="enable_speech_to_text_input"
+                                    {% if settings.enable_speech_to_text_input %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_speech_to_text_input">
+                                    <i class="bi bi-mic me-1"></i> Enable Voice Input (Speech-to-Text)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Talk to your AI instead of typing. Record voice messages up to 90 seconds directly in the chat interface. 
+                                Azure Speech Service instantly transcribes your speech with high accuracy, supporting multiple languages and accents.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-hand-thumbs-up-fill me-1"></i> Hands-Free
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-universal-access me-1"></i> Accessible
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis">
+                                    <i class="bi bi-lightning-fill me-1"></i> Fast Input
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Text-to-Speech -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_text_to_speech"
+                                    name="enable_text_to_speech"
+                                    {% if settings.enable_text_to_speech %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_text_to_speech">
+                                    <i class="bi bi-volume-up me-1"></i> Enable Voice Responses (Text-to-Speech)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Hear AI responses read aloud in natural, human-like voices powered by Azure's advanced neural Text-to-Speech. 
+                                Each message includes a speaker button—click to listen while multitasking, commuting, or whenever reading isn't convenient.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-ear-fill me-1"></i> Natural Voices
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-arrows-fullscreen me-1"></i> Multitask-Friendly
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis">
+                                    <i class="bi bi-globe me-1"></i> Multi-Language
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Speech Service Configuration (collapsible) -->
+                        <div id="audio_service_settings" class="border-top pt-3"
+                                {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
+                            <h5 class="mb-3">
+                                <i class="bi bi-gear-fill me-2"></i>Azure Speech Service Configuration
+                            </h5>
+                            <p class="text-muted small mb-3">Connect to your Azure Speech Service for audio transcription, voice input, and text-to-speech capabilities.</p>
 
                         <div class="mb-3">
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
