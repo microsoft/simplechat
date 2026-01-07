@@ -7,6 +7,8 @@ from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 import azure.cognitiveservices.speech as speechsdk
 import io
+import time
+import random
 
 def register_route_backend_tts(app):
     """
@@ -86,27 +88,78 @@ def register_route_backend_tts(app):
                 audio_config=None
             )
             
-            # Build SSML if speed adjustment needed
-            if speed != 1.0:
-                debug_print(f"[TTS] Using SSML with speed adjustment: {speed}x")
-                speed_percent = int(speed * 100)
-                ssml = f"""
-                <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-                    <voice name="{voice}">
-                        <prosody rate="{speed_percent}%">
-                            {text}
-                        </prosody>
-                    </voice>
-                </speak>
-                """
-                result = speech_synthesizer.speak_ssml_async(ssml).get()
-            else:
-                debug_print("[TTS] Using plain text synthesis")
-                result = speech_synthesizer.speak_text_async(text).get()
+            # Perform synthesis with retry logic for rate limiting (429 errors)
+            max_retries = 3
+            retry_count = 0
+            last_error = None
             
-            # Check result
+            while retry_count <= max_retries:
+                try:
+                    # Build SSML if speed adjustment needed
+                    if speed != 1.0:
+                        debug_print(f"[TTS] Using SSML with speed adjustment: {speed}x (attempt {retry_count + 1}/{max_retries + 1})")
+                        speed_percent = int(speed * 100)
+                        ssml = f"""
+                        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+                            <voice name="{voice}">
+                                <prosody rate="{speed_percent}%">
+                                    {text}
+                                </prosody>
+                            </voice>
+                        </speak>
+                        """
+                        result = speech_synthesizer.speak_ssml_async(ssml).get()
+                    else:
+                        debug_print(f"[TTS] Using plain text synthesis (attempt {retry_count + 1}/{max_retries + 1})")
+                        result = speech_synthesizer.speak_text_async(text).get()
+                    
+                    # Check for rate limiting or capacity issues
+                    if result.reason == speechsdk.ResultReason.Canceled:
+                        cancellation_details = result.cancellation_details
+                        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                            error_details = cancellation_details.error_details
+                            
+                            # Check if it's a rate limit error (429 or similar)
+                            if "429" in error_details or "rate" in error_details.lower() or "quota" in error_details.lower() or "throttl" in error_details.lower():
+                                if retry_count < max_retries:
+                                    # Randomized delay between 50-800ms with exponential backoff
+                                    base_delay = 0.05 + (retry_count * 0.1)  # 50ms, 150ms, 250ms base
+                                    jitter = random.uniform(0, 0.75)  # Up to 750ms jitter
+                                    delay = base_delay + jitter
+                                    debug_print(f"[TTS] Rate limit detected (429), retrying in {delay*1000:.0f}ms (attempt {retry_count + 1}/{max_retries})")
+                                    time.sleep(delay)
+                                    retry_count += 1
+                                    last_error = error_details
+                                    continue  # Retry
+                                else:
+                                    debug_print(f"[TTS] ERROR - Rate limit exceeded after {max_retries} retries")
+                                    return jsonify({"error": "Service temporarily unavailable due to high load. Please try again."}), 429
+                            else:
+                                # Other error, don't retry
+                                error_msg = f"Speech synthesis canceled: {cancellation_details.reason} - {error_details}"
+                                debug_print(f"[TTS] ERROR - Synthesis failed: {error_msg}")
+                                return jsonify({"error": error_msg}), 500
+                    
+                    # Success - break out of retry loop
+                    break
+                    
+                except Exception as e:
+                    # Network or other transient errors
+                    if retry_count < max_retries and ("timeout" in str(e).lower() or "connection" in str(e).lower()):
+                        delay = 0.05 + (retry_count * 0.1) + random.uniform(0, 0.75)
+                        debug_print(f"[TTS] Transient error, retrying in {delay*1000:.0f}ms: {str(e)}")
+                        time.sleep(delay)
+                        retry_count += 1
+                        last_error = str(e)
+                        continue
+                    else:
+                        raise  # Re-raise if not retryable or out of retries
+            
+            # Check result after retries
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
                 debug_print(f"[TTS] Synthesis completed successfully - audio_size: {len(result.audio_data)} bytes")
+                if retry_count > 0:
+                    debug_print(f"[TTS] Success after {retry_count} retries")
                 # Get audio data
                 audio_data = result.audio_data
                 
