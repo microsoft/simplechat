@@ -4,6 +4,7 @@ from config import *
 from functions_authentication import *
 from functions_group import *
 from functions_debug import debug_print
+from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):

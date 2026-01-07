@@ -1076,10 +1076,18 @@ def get_activity_trends_data(start_date, end_date):
             date_key = current_date.strftime('%Y-%m-%d')
             daily_data[date_key] = {
                 'date': date_key,
-                'chats': 0,
-                'personal_documents': 0,  # Track personal documents separately
-                'group_documents': 0,     # Track group documents separately
-                'public_documents': 0,    # Track public documents separately
+                'chats_created': 0,
+                'chats_deleted': 0,
+                'chats': 0,  # Keep for backward compatibility
+                'personal_documents_created': 0,
+                'personal_documents_deleted': 0,
+                'group_documents_created': 0,
+                'group_documents_deleted': 0,
+                'public_documents_created': 0,
+                'public_documents_deleted': 0,
+                'personal_documents': 0,  # Keep for backward compatibility
+                'group_documents': 0,     # Keep for backward compatibility
+                'public_documents': 0,    # Keep for backward compatibility
                 'documents': 0,           # Keep for backward compatibility
                 'logins': 0,
                 'total': 0
@@ -1096,12 +1104,11 @@ def get_activity_trends_data(start_date, end_date):
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Query parameters: {parameters}")
         
-        # Query 1: Get chat activity from conversations and messages containers
+        # Query 1: Get chat activity from activity logs (both creation and deletion)
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying conversations...")
             
-            # Count conversations using activity_logs container (conversation_creation activity_type)
-            # This uses permanent activity log records instead of querying the conversations container
+            # Count conversation creations
             conversations_query = """
                 SELECT c.timestamp, c.created_at
                 FROM c 
@@ -1110,7 +1117,6 @@ def get_activity_trends_data(start_date, end_date):
                    OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Process conversations from activity logs
             conversations = list(cosmos_activity_logs_container.query_items(
                 query=conversations_query,
                 parameters=parameters,
@@ -1120,7 +1126,6 @@ def get_activity_trends_data(start_date, end_date):
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversation creation logs")
             
             for conv in conversations:
-                # Use timestamp or created_at from activity log
                 timestamp = conv.get('timestamp') or conv.get('created_at')
                 if timestamp:
                     try:
@@ -1131,19 +1136,52 @@ def get_activity_trends_data(start_date, end_date):
                         
                         date_key = conv_date.strftime('%Y-%m-%d')
                         if date_key in daily_data:
-                            daily_data[date_key]['chats'] += 1
+                            daily_data[date_key]['chats_created'] += 1
+                            daily_data[date_key]['chats'] += 1  # Keep total for backward compatibility
                     except Exception as e:
                         debug_print(f"Could not parse conversation timestamp {timestamp}: {e}")
+            
+            # Count conversation deletions
+            deletions_query = """
+                SELECT c.timestamp, c.created_at
+                FROM c 
+                WHERE c.activity_type = 'conversation_deletion'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            deletions = list(cosmos_activity_logs_container.query_items(
+                query=deletions_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(deletions)} conversation deletion logs")
+            
+            for deletion in deletions:
+                timestamp = deletion.get('timestamp') or deletion.get('created_at')
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            del_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            del_date = timestamp
+                        
+                        date_key = del_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['chats_deleted'] += 1
+                    except Exception as e:
+                        debug_print(f"Could not parse deletion timestamp {timestamp}: {e}")
                         
         except Exception as e:
             debug_print(f"Could not query conversation activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
 
-        # Query 2: Get document activity from activity_logs container (document_creation activity_type)
-        # This uses permanent activity log records and unified workspace tracking
+        # Query 2: Get document activity from activity_logs (both creation and deletion)
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents from activity logs...")
             
+            # Document creations
             documents_query = """
                 SELECT c.timestamp, c.created_at, c.workspace_type
                 FROM c 
@@ -1152,7 +1190,6 @@ def get_activity_trends_data(start_date, end_date):
                    OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Query activity logs for all document types
             docs = list(cosmos_activity_logs_container.query_items(
                 query=documents_query,
                 parameters=parameters,
@@ -1162,7 +1199,6 @@ def get_activity_trends_data(start_date, end_date):
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} document creation logs")
             
             for doc in docs:
-                # Use timestamp or created_at from activity log
                 timestamp = doc.get('timestamp') or doc.get('created_at')
                 workspace_type = doc.get('workspace_type', 'personal')
                 
@@ -1175,20 +1211,60 @@ def get_activity_trends_data(start_date, end_date):
                         
                         date_key = doc_date.strftime('%Y-%m-%d')
                         if date_key in daily_data:
-                            # Increment workspace-specific counter
                             if workspace_type == 'group':
+                                daily_data[date_key]['group_documents_created'] += 1
                                 daily_data[date_key]['group_documents'] += 1
                             elif workspace_type == 'public':
+                                daily_data[date_key]['public_documents_created'] += 1
                                 daily_data[date_key]['public_documents'] += 1
                             else:
+                                daily_data[date_key]['personal_documents_created'] += 1
                                 daily_data[date_key]['personal_documents'] += 1
                             
-                            # Keep total for backward compatibility
                             daily_data[date_key]['documents'] += 1
                     except Exception as e:
                         debug_print(f"Could not parse document timestamp {timestamp}: {e}")
             
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)}")
+            # Document deletions
+            deletions_query = """
+                SELECT c.timestamp, c.created_at, c.workspace_type
+                FROM c 
+                WHERE c.activity_type = 'document_deletion'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            doc_deletions = list(cosmos_activity_logs_container.query_items(
+                query=deletions_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(doc_deletions)} document deletion logs")
+            
+            for doc in doc_deletions:
+                timestamp = doc.get('timestamp') or doc.get('created_at')
+                workspace_type = doc.get('workspace_type', 'personal')
+                
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            doc_date = timestamp
+                        
+                        date_key = doc_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            if workspace_type == 'group':
+                                daily_data[date_key]['group_documents_deleted'] += 1
+                            elif workspace_type == 'public':
+                                daily_data[date_key]['public_documents_deleted'] += 1
+                            else:
+                                daily_data[date_key]['personal_documents_deleted'] += 1
+                    except Exception as e:
+                        debug_print(f"Could not parse document deletion timestamp {timestamp}: {e}")
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)} created, {len(doc_deletions)} deleted")
                         
         except Exception as e:
             debug_print(f"Could not query document activity logs: {e}")
@@ -1325,20 +1401,36 @@ def get_activity_trends_data(start_date, end_date):
         # Group by activity type for chart display  
         result = {
             'chats': {},
+            'chats_created': {},
+            'chats_deleted': {},
             'documents': {},           # Keep for backward compatibility
-            'personal_documents': {},  # New: personal documents only
-            'group_documents': {},     # New: group documents only
-            'public_documents': {},    # New: public documents only
+            'personal_documents': {},  # Keep for backward compatibility
+            'group_documents': {},     # Keep for backward compatibility
+            'public_documents': {},    # Keep for backward compatibility
+            'personal_documents_created': {},
+            'personal_documents_deleted': {},
+            'group_documents_created': {},
+            'group_documents_deleted': {},
+            'public_documents_created': {},
+            'public_documents_deleted': {},
             'logins': {},
             'tokens': token_daily_data  # Token usage by type (embedding, chat)
         }
         
         for date_key, data in daily_data.items():
             result['chats'][date_key] = data['chats']
-            result['documents'][date_key] = data['documents']  # Total for backward compatibility
+            result['chats_created'][date_key] = data['chats_created']
+            result['chats_deleted'][date_key] = data['chats_deleted']
+            result['documents'][date_key] = data['documents']
             result['personal_documents'][date_key] = data['personal_documents']
             result['group_documents'][date_key] = data['group_documents']
             result['public_documents'][date_key] = data['public_documents']
+            result['personal_documents_created'][date_key] = data['personal_documents_created']
+            result['personal_documents_deleted'][date_key] = data['personal_documents_deleted']
+            result['group_documents_created'][date_key] = data['group_documents_created']
+            result['group_documents_deleted'][date_key] = data['group_documents_deleted']
+            result['public_documents_created'][date_key] = data['public_documents_created']
+            result['public_documents_deleted'][date_key] = data['public_documents_deleted']
             result['logins'][date_key] = data['logins']
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")

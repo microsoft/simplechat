@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.234.150"
+VERSION = "0.234.175"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -101,10 +101,13 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "img-src 'self' data: https: blob:; "
-        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "font-src 'self'; "
+        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "

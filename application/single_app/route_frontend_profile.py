@@ -83,7 +83,9 @@ def register_route_frontend_profile(app):
             # Initialize data structures for daily aggregation
             logins_by_date = defaultdict(int)
             conversations_by_date = defaultdict(int)
-            documents_by_date = defaultdict(int)
+            conversations_delete_by_date = defaultdict(int)
+            documents_upload_by_date = defaultdict(int)
+            documents_delete_by_date = defaultdict(int)
             tokens_by_date = defaultdict(int)
             
             # Query 1: Get login activity from activity_logs
@@ -146,9 +148,35 @@ def register_route_frontend_profile(app):
             except Exception as e:
                 print(f"Error fetching conversation trends: {e}")
             
-            # Query 3: Get document creation activity from activity_logs
+            # Query 2b: Get conversation deletion activity from activity_logs
             try:
-                doc_query = """
+                conv_delete_query = """
+                    SELECT c.timestamp, c.created_at FROM c 
+                    WHERE c.user_id = @user_id 
+                    AND c.activity_type = 'conversation_deletion'
+                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                """
+                conv_delete_records = list(cosmos_activity_logs_container.query_items(
+                    query=conv_delete_query,
+                    parameters=conv_params,
+                    enable_cross_partition_query=True
+                ))
+                
+                for record in conv_delete_records:
+                    timestamp = record.get('timestamp') or record.get('created_at')
+                    if timestamp:
+                        try:
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            date_key = dt.strftime('%Y-%m-%d')
+                            conversations_delete_by_date[date_key] += 1
+                        except:
+                            pass
+            except Exception as e:
+                print(f"Error fetching conversation deletion trends: {e}")
+            
+            # Query 3: Get document upload activity from activity_logs
+            try:
+                doc_upload_query = """
                     SELECT c.timestamp, c.created_at FROM c 
                     WHERE c.user_id = @user_id 
                     AND c.activity_type = 'document_creation'
@@ -159,7 +187,7 @@ def register_route_frontend_profile(app):
                     {"name": "@start_date", "value": start_date.isoformat()}
                 ]
                 doc_records = list(cosmos_activity_logs_container.query_items(
-                    query=doc_query,
+                    query=doc_upload_query,
                     parameters=doc_params,
                     enable_cross_partition_query=True
                 ))
@@ -170,11 +198,37 @@ def register_route_frontend_profile(app):
                         try:
                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                             date_key = dt.strftime('%Y-%m-%d')
-                            documents_by_date[date_key] += 1
+                            documents_upload_by_date[date_key] += 1
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching document trends: {e}")
+                print(f"Error fetching document upload trends: {e}")
+            
+            # Query 3b: Get document delete activity from activity_logs
+            try:
+                doc_delete_query = """
+                    SELECT c.timestamp, c.created_at FROM c 
+                    WHERE c.user_id = @user_id 
+                    AND c.activity_type = 'document_deletion'
+                    AND (c.timestamp >= @start_date OR c.created_at >= @start_date)
+                """
+                doc_delete_records = list(cosmos_activity_logs_container.query_items(
+                    query=doc_delete_query,
+                    parameters=doc_params,
+                    enable_cross_partition_query=True
+                ))
+                
+                for record in doc_delete_records:
+                    timestamp = record.get('timestamp') or record.get('created_at')
+                    if timestamp:
+                        try:
+                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                            date_key = dt.strftime('%Y-%m-%d')
+                            documents_delete_by_date[date_key] += 1
+                        except:
+                            pass
+            except Exception as e:
+                print(f"Error fetching document delete trends: {e}")
             
             # Query 4: Get token usage from activity_logs
             try:
@@ -217,8 +271,14 @@ def register_route_frontend_profile(app):
             
             # Format data for Chart.js
             logins_data = [{"date": date, "count": logins_by_date.get(date, 0)} for date in date_range]
-            conversations_data = [{"date": date, "count": conversations_by_date.get(date, 0)} for date in date_range]
-            documents_data = [{"date": date, "count": documents_by_date.get(date, 0)} for date in date_range]
+            conversations_data = {
+                "creates": [{"date": date, "count": conversations_by_date.get(date, 0)} for date in date_range],
+                "deletes": [{"date": date, "count": conversations_delete_by_date.get(date, 0)} for date in date_range]
+            }
+            documents_data = {
+                "uploads": [{"date": date, "count": documents_upload_by_date.get(date, 0)} for date in date_range],
+                "deletes": [{"date": date, "count": documents_delete_by_date.get(date, 0)} for date in date_range]
+            }
             tokens_data = [{"date": date, "tokens": tokens_by_date.get(date, 0)} for date in date_range]
             
             # Get storage metrics from user settings

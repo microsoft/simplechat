@@ -1365,25 +1365,121 @@ class ControlCenter {
     }
     
     renderChatsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData.chats);
-        this.renderSingleChart('chatsChart', 'chats', activityData.chats, {
-            label: 'Chats',
-            backgroundColor: 'rgba(13, 110, 253, 0.2)',
-            borderColor: '#0d6efd'
+        console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData);
+        
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error(`❌ [Frontend Debug] Chart.js is not loaded. Cannot render chats chart.`);
+            this.showChartError('chatsChart', 'chats');
+            return;
+        }
+        
+        const canvas = document.getElementById('chatsChart');
+        if (!canvas) {
+            console.error(`❌ [Frontend Debug] Chart canvas element chatsChart not found`);
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error(`❌ [Frontend Debug] Could not get 2D context from chatsChart canvas`);
+            return;
+        }
+        
+        // Show canvas
+        canvas.style.display = 'block';
+        
+        // Destroy existing chart if it exists
+        if (this.chatsChart) {
+            this.chatsChart.destroy();
+        }
+        
+        // Get data for created and deleted chats
+        const createdData = activityData.chats_created || {};
+        const deletedData = activityData.chats_deleted || {};
+        const allDates = [...new Set([...Object.keys(createdData), ...Object.keys(deletedData)])].sort();
+        
+        const labels = allDates.map(date => {
+            const dateObj = new Date(date);
+            return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        
+        const createdValues = allDates.map(date => createdData[date] || 0);
+        const deletedValues = allDates.map(date => deletedData[date] || 0);
+        
+        const datasets = [
+            {
+                label: 'New Chats',
+                data: createdValues,
+                borderColor: '#0d6efd',
+                backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                type: 'line'
+            },
+            {
+                label: 'Deleted Chats',
+                data: deletedValues,
+                backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                borderColor: '#dc3545',
+                borderWidth: 1,
+                type: 'bar'
+            }
+        ];
+        
+        this.chatsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: { display: false }
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0, 0, 0, 0.1)' },
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
         });
     }
     
     renderDocumentsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering documents chart with personal, group, and public data');
-        console.log('🔍 [Frontend Debug] Personal documents:', activityData.personal_documents);
-        console.log('🔍 [Frontend Debug] Group documents:', activityData.group_documents);
-        console.log('🔍 [Frontend Debug] Public documents:', activityData.public_documents);
+        console.log('🔍 [Frontend Debug] Rendering documents chart with creation/deletion data');
+        console.log('🔍 [Frontend Debug] Personal created:', activityData.personal_documents_created);
+        console.log('🔍 [Frontend Debug] Personal deleted:', activityData.personal_documents_deleted);
+        console.log('🔍 [Frontend Debug] Group created:', activityData.group_documents_created);
+        console.log('🔍 [Frontend Debug] Group deleted:', activityData.group_documents_deleted);
+        console.log('🔍 [Frontend Debug] Public created:', activityData.public_documents_created);
+        console.log('🔍 [Frontend Debug] Public deleted:', activityData.public_documents_deleted);
         
-        // Render combined chart with personal, group, and public documents
+        // Render combined chart with creations (lines) and deletions (bars)
         this.renderCombinedDocumentsChart('documentsChart', {
-            personal: activityData.personal_documents || {},
-            group: activityData.group_documents || {},
-            public: activityData.public_documents || {}
+            personal_created: activityData.personal_documents_created || {},
+            personal_deleted: activityData.personal_documents_deleted || {},
+            group_created: activityData.group_documents_created || {},
+            group_deleted: activityData.group_documents_deleted || {},
+            public_created: activityData.public_documents_created || {},
+            public_deleted: activityData.public_documents_deleted || {}
         });
     }
     
@@ -1420,10 +1516,14 @@ class ControlCenter {
         }
         
         // Prepare data for Chart.js - get all unique dates and sort them
-        const personalDates = Object.keys(documentsData.personal || {});
-        const groupDates = Object.keys(documentsData.group || {});
-        const publicDates = Object.keys(documentsData.public || {});
-        const allDates = [...new Set([...personalDates, ...groupDates, ...publicDates])].sort();
+        const allDates = [...new Set([
+            ...Object.keys(documentsData.personal_created || {}),
+            ...Object.keys(documentsData.personal_deleted || {}),
+            ...Object.keys(documentsData.group_created || {}),
+            ...Object.keys(documentsData.group_deleted || {}),
+            ...Object.keys(documentsData.public_created || {}),
+            ...Object.keys(documentsData.public_deleted || {})
+        ])].sort();
         
         console.log(`🔍 [Frontend Debug] Documents date range:`, allDates);
         
@@ -1432,42 +1532,77 @@ class ControlCenter {
             return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         });
         
-        // Prepare datasets for personal, group, and public documents
-        const personalData = allDates.map(date => (documentsData.personal || {})[date] || 0);
-        const groupData = allDates.map(date => (documentsData.group || {})[date] || 0);
-        const publicData = allDates.map(date => (documentsData.public || {})[date] || 0);
+        // Prepare datasets - lines for creations, bars for deletions
+        const personalCreated = allDates.map(date => (documentsData.personal_created || {})[date] || 0);
+        const personalDeleted = allDates.map(date => (documentsData.personal_deleted || {})[date] || 0);
+        const groupCreated = allDates.map(date => (documentsData.group_created || {})[date] || 0);
+        const groupDeleted = allDates.map(date => (documentsData.group_deleted || {})[date] || 0);
+        const publicCreated = allDates.map(date => (documentsData.public_created || {})[date] || 0);
+        const publicDeleted = allDates.map(date => (documentsData.public_deleted || {})[date] || 0);
         
-        console.log(`🔍 [Frontend Debug] Personal documents data:`, personalData);
-        console.log(`🔍 [Frontend Debug] Group documents data:`, groupData);
-        console.log(`🔍 [Frontend Debug] Public documents data:`, publicData);
+        console.log(`🔍 [Frontend Debug] Personal created:`, personalCreated);
+        console.log(`🔍 [Frontend Debug] Personal deleted:`, personalDeleted);
+        console.log(`🔍 [Frontend Debug] Group created:`, groupCreated);
+        console.log(`🔍 [Frontend Debug] Group deleted:`, groupDeleted);
+        console.log(`🔍 [Frontend Debug] Public created:`, publicCreated);
+        console.log(`🔍 [Frontend Debug] Public deleted:`, publicDeleted);
         
         const datasets = [
+            // Lines for new documents
             {
-                label: 'Personal',
-                data: personalData,
-                backgroundColor: 'rgba(144, 238, 144, 0.4)',  // Light green
-                borderColor: '#90EE90',                        // Light green
+                label: 'Personal (New)',
+                data: personalCreated,
+                borderColor: '#90EE90',
+                backgroundColor: 'rgba(144, 238, 144, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
             },
             {
-                label: 'Group',
-                data: groupData,
-                backgroundColor: 'rgba(34, 139, 34, 0.4)',    // Medium green (forest green)
-                borderColor: '#228B22',                        // Medium green (forest green)
+                label: 'Group (New)',
+                data: groupCreated,
+                borderColor: '#228B22',
+                backgroundColor: 'rgba(34, 139, 34, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
             },
             {
-                label: 'Public',
-                data: publicData,
-                backgroundColor: 'rgba(0, 100, 0, 0.4)',      // Dark green
-                borderColor: '#006400',                        // Dark green
+                label: 'Public (New)',
+                data: publicCreated,
+                borderColor: '#006400',
+                backgroundColor: 'rgba(0, 100, 0, 0.1)',
                 borderWidth: 2,
-                fill: false,
-                tension: 0.1
+                fill: true,
+                tension: 0.4,
+                type: 'line'
+            },
+            // Bars for deleted documents
+            {
+                label: 'Personal (Deleted)',
+                data: personalDeleted,
+                backgroundColor: 'rgba(255, 182, 193, 0.7)',
+                borderColor: '#FFB6C1',
+                borderWidth: 1,
+                type: 'bar'
+            },
+            {
+                label: 'Group (Deleted)',
+                data: groupDeleted,
+                backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                borderColor: '#dc3545',
+                borderWidth: 1,
+                type: 'bar'
+            },
+            {
+                label: 'Public (Deleted)',
+                data: publicDeleted,
+                backgroundColor: 'rgba(139, 0, 0, 0.7)',
+                borderColor: '#8B0000',
+                borderWidth: 1,
+                type: 'bar'
             }
         ];
         
@@ -1476,7 +1611,7 @@ class ControlCenter {
         // Create new chart
         try {
             this.documentsChart = new Chart(ctx, {
-                type: 'line',
+                type: 'bar',
                 data: {
                     labels: labels,
                     datasets: datasets
@@ -1486,11 +1621,12 @@ class ControlCenter {
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {
-                            display: true,  // Show legend for multiple datasets
+                            display: true,
                             position: 'top',
                             labels: {
                                 usePointStyle: true,
-                                padding: 15
+                                padding: 10,
+                                font: { size: 10 }
                             }
                         },
                         tooltip: {
