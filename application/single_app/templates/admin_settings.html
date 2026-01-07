@@ -2796,37 +2796,71 @@
                     </div>
                 </div>
 
-                <!-- Multimedia Support Section -->
-                <div class="card p-3 mb-3" id="multimedia-support-section">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="mb-0"><i class="bi bi-play-circle me-2"></i>Multimedia Support</h5>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
-                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                <!-- AI Video Intelligence Card -->
+                <div class="card p-4 mb-4 border-info shadow-sm" id="video-intelligence-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-info text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-camera-video-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-play-circle me-2"></i>AI Video Intelligence
+                                </h4>
+                                <p class="text-muted mb-0 small">Extract insights and make video content searchable and interactive</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Setup Guide
                         </button>
                     </div>
-                    <p class="text-muted mb-3">
-                        Support video and audio file upload for transcription, indexing, and embedding.
-                    </p>
 
-                    <!-- Video File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_video_file_support"
-                            name="enable_video_file_support"
-                            {% if settings.enable_video_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_video_file_support">
-                            Enable Video File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow video file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-lightbulb-fill me-2"></i>
+                        <strong>Make Video Content Fully Searchable:</strong> Upload videos to your workspace and automatically extract transcripts, identify speakers, detect topics, and generate searchable timestamps. Your AI can then answer questions about video content, cite specific moments, and provide deep insights.
                     </div>
 
-                    <div id="video_indexer_settings" class="card mb-3 p-3"
+                    <!-- Video File Support Toggle -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_video_file_support"
+                                name="enable_video_file_support"
+                                {% if settings.enable_video_file_support %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="enable_video_file_support">
+                                <i class="bi bi-camera-video me-1"></i> Enable Video File Upload & Processing
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            Upload video files (MP4, AVI, MOV, etc.) to workspaces where Azure Video Indexer automatically processes them. 
+                            Extract spoken content, identify speakers, detect faces, recognize brands, and generate searchable metadata—perfect for meetings, presentations, training videos, and recorded content.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-search me-1"></i> Full-Text Search
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-person-badge me-1"></i> Speaker ID
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-clock-history me-1"></i> Timestamped Citations
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis">
+                                <i class="bi bi-translate me-1"></i> Multi-Language
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Video Indexer Configuration (collapsible) -->
+                    <div id="video_indexer_settings" class="border-top pt-3"
                             {% if not settings.enable_video_file_support %}style="display: none;"{% endif %}>
-                        <h5>Azure Video Indexer Settings</h5>
-                        <p class="text-muted">Configure Azure Video Indexer for transcription & indexing using Managed Identity authentication.</p>
+                        <h5 class="mb-3">
+                            <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
+                        </h5>
+                        <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
                         
                         <div class="alert alert-info">
                             <strong><i class="bi bi-info-circle"></i> Prerequisites:</strong>
