@@ -4558,7 +4558,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
-    @control_center_admin_required
+    @control_center_dashboard_reader_required
     def api_get_activity_trends():
         """
         Get activity trends data for the control center dashboard.
@@ -4610,7 +4610,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
-    @control_center_admin_required
+    @control_center_dashboard_reader_required
     def api_export_activity_trends():
         """
         Export activity trends raw data as CSV file based on selected charts and date range.
@@ -4800,7 +4800,7 @@ def register_route_backend_control_center(app):
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
-    @control_center_admin_required
+    @control_center_dashboard_reader_required
     def api_chat_activity_trends():
         """
         Create a new chat conversation with activity trends data as CSV message.

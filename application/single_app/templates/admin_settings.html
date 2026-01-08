@@ -520,6 +520,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="control-center-config-tab" data-bs-toggle="tab" data-bs-target="#control-center-config"
+                    type="button" role="tab" aria-controls="control-center-config" aria-selected="false">
+                    Control Center
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
@@ -1648,6 +1654,114 @@
                     Test Image Connection
                 </button>
                 <div id="test_image_result" class="mt-2"></div>
+                </div>
+            </div>
+
+            <!-- Control Center Configuration Tab -->
+            <div class="tab-pane fade" id="control-center-config" role="tabpanel" aria-labelledby="control-center-config-tab">
+                <p class="text-muted">
+                    Configure Control Center access and permissions for administrators.
+                </p>
+
+                <!-- Control Center Overview Card -->
+                <div class="card p-4 mb-4 border-success shadow-sm" id="control-center-overview-section">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                            <i class="bi bi-speedometer2 fs-4"></i>
+                        </div>
+                        <div>
+                            <h4 class="mb-1">
+                                <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
+                            </h4>
+                            <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        <strong>About Control Center:</strong> The Control Center is a powerful administrative dashboard that provides user management, group oversight, public workspace control, and detailed activity monitoring. Use role-based access controls below to delegate administrative responsibilities.
+                    </div>
+
+                    <!-- ControlCenterAdmin Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_admin"
+                                name="require_member_of_control_center_admin"
+                                {% if settings.require_member_of_control_center_admin %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_admin">
+                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin Role for Full Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, <strong>only users with the ControlCenterAdmin role</strong> can access the Control Center and all its features (User Management, Group Management, Public Workspaces, Activity Logs). Regular Admins will lose access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-people-fill me-1"></i> User Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-collection me-1"></i> Group Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-folder2-open me-1"></i> Public Workspaces
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis">
+                                <i class="bi bi-clock-history me-1"></i> Activity Logs
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- ControlCenterDashboardReader Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_dashboard_reader"
+                                name="require_member_of_control_center_dashboard_reader"
+                                {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
+                                <i class="bi bi-eye me-1"></i> Require ControlCenterDashboardReader Role for Dashboard Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, <strong>only users with the ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics). This provides a view-only access level for monitoring without administrative capabilities. Regular Admins will lose dashboard access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-speedometer2 me-1"></i> Dashboard Statistics
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-graph-up me-1"></i> Activity Trends
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis">
+                                <i class="bi bi-bar-chart-line me-1"></i> Usage Metrics
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning-subtle border-warning mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <strong>Important:</strong> Configure these roles in your identity provider (Entra ID). When role requirements are enabled, standard Admins without the specific roles will be denied access to Control Center features.
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="border-top pt-3">
+                        <h5 class="mb-3">
+                            <i class="bi bi-lightbulb-fill me-2"></i>Best Practices
+                        </h5>
+                        <ul class="text-muted small">
+                            <li><strong>ControlCenterAdmin:</strong> Grant to IT administrators who need full control over users, groups, and workspaces</li>
+                            <li><strong>ControlCenterDashboardReader:</strong> Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
+                            <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
+                            <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
 
