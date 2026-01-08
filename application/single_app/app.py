@@ -67,7 +67,13 @@ from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_debug import debug_print
 
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+
 app = Flask(__name__, static_url_path='/static', static_folder='static')
+
+disable_flask_instrumentation = os.environ.get("DISABLE_FLASK_INSTRUMENTATION", "0")
+if not (disable_flask_instrumentation == "1" or disable_flask_instrumentation.lower() == "true"):
+    FlaskInstrumentor().instrument_app(app)
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
