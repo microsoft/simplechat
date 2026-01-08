@@ -190,25 +190,28 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
             </li>
-            {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin %}
+            {% endif %}
+            {# Control Center - accessible to admins OR users with ControlCenter roles #}
+            {% if (session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
             </li>
             {% endif %}
+            {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
             {% if app_settings.enable_content_safety %}
-              {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+              {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
               <li>
                 <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
               </li>
               {% endif %}
             {% endif %}
+            {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
             {% if app_settings.enable_user_feedback %}
-              {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+              {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
               <li>
                 <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
               </li>
               {% endif %}
-            {% endif %}
             {% endif %}
             <li><hr class="dropdown-divider"></li>
             <li>

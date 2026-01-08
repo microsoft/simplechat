@@ -119,7 +119,7 @@
 
 <div class="container">
     <h2>Admin Settings</h2>
-    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;">
+    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate>
         <p class="text-muted">Use this form to configure the administrative settings for your application.</p>
         <p class="text-muted">
             Version: {{ config['VERSION'] }}
@@ -1665,16 +1665,21 @@
 
                 <!-- Control Center Overview Card -->
                 <div class="card p-4 mb-4 border-success shadow-sm" id="control-center-overview-section">
-                    <div class="d-flex align-items-center mb-3">
-                        <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-                            <i class="bi bi-speedometer2 fs-4"></i>
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-speedometer2 fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
+                                </h4>
+                                <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
+                            </div>
                         </div>
-                        <div>
-                            <h4 class="mb-1">
-                                <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
-                            </h4>
-                            <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
-                        </div>
+                        <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#controlCenterRolesInfoModal">
+                            <i class="bi bi-question-circle me-1"></i>Role Setup Guide
+                        </button>
                     </div>
 
                     <div class="alert alert-info mb-4">
@@ -1726,11 +1731,11 @@
                                 {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
                             >
                             <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
-                                <i class="bi bi-eye me-1"></i> Require ControlCenterDashboardReader Role for Dashboard Access
+                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader Role for Dashboard-Only Access
                             </label>
                         </div>
                         <p class="text-muted small ms-4 ps-3 mb-2">
-                            When enabled, <strong>only users with the ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics). This provides a view-only access level for monitoring without administrative capabilities. Regular Admins will lose dashboard access when this is enabled.
+                            When enabled, users with <strong>ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics only). Users with <strong>ControlCenterAdmin role</strong> can also access the dashboard in addition to all management features. Regular Admins will lose dashboard access when this is enabled.
                         </p>
                         <div class="ms-4 ps-3">
                             <span class="badge bg-info-subtle text-info-emphasis me-2">
@@ -3252,6 +3257,9 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Control Center Roles Info Modal -->
+        {% include '_control_center_roles_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">

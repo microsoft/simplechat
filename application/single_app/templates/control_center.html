@@ -2694,6 +2694,10 @@
 
 <!-- Control Center Scripts -->
 <script src="{{ url_for('static', filename='js/chart.min.js') }}"></script>
+<script>
+// Pass user role information to JavaScript
+window.hasControlCenterAdmin = {{ 'true' if has_control_center_admin else 'false' }};
+</script>
 <script src="{{ url_for('static', filename='js/control-center.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
 <script src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>

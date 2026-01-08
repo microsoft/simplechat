@@ -2050,8 +2050,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_all_users():
         """
         Get all users with their settings, activity data, and access status.
@@ -2159,8 +2158,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_user_access(user_id):
         """
         Update user access permissions (allow/deny with optional time-based restriction).
@@ -2216,8 +2214,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_user_file_uploads(user_id):
         """
         Update user file upload permissions (allow/deny with optional time-based restriction).
@@ -2273,8 +2270,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_user_documents_admin(user_id):
         """
         Create an approval request to delete all documents for a user.
@@ -2348,8 +2344,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_bulk_user_action():
         """
         Perform bulk actions on multiple users (access control, file upload control).
@@ -2435,8 +2430,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_all_groups():
         """
         Get all groups with their activity data and metrics.
@@ -2543,8 +2537,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_group_status(group_id):
         """
         Update group status (active, locked, upload_disabled, inactive)
@@ -2643,8 +2636,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_group_details_admin(group_id):
         """
         Get detailed information about a specific group
@@ -2668,8 +2660,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_group_admin(group_id):
         """
         Create an approval request to delete a group and all its documents.
@@ -2734,8 +2725,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_group_documents_admin(group_id):
         """
         Create an approval request to delete all documents in a group.
@@ -2798,8 +2788,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_group_members_admin(group_id):
         """
         Get list of group members for ownership transfer selection
@@ -2833,8 +2822,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_take_group_ownership(group_id):
         """
         Create an approval request for admin to take ownership of a group.
@@ -2902,8 +2890,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_transfer_group_ownership(group_id):
         """
         Create an approval request to transfer group ownership to another member.
@@ -2986,8 +2973,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_add_group_member(group_id):
         """
         Admin adds a member to a group (used by both single add and CSV bulk upload)
@@ -3094,8 +3080,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_get_group_activity(group_id):
         """
         Get activity timeline for a specific group from activity logs
@@ -3320,8 +3305,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_control_center_public_workspaces():
         """
         Get paginated list of public workspaces with activity data for control center management.
@@ -3426,8 +3410,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_public_workspace_status(workspace_id):
         """
         Update public workspace status (active, locked, upload_disabled, inactive)
@@ -3526,8 +3509,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_bulk_public_workspace_action():
         """
         Perform bulk actions on multiple public workspaces.
@@ -3682,8 +3664,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_public_workspace_details(workspace_id):
         """
         Get detailed information about a specific public workspace.
@@ -3708,8 +3689,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_public_workspace_members(workspace_id):
         """
         Get all members of a specific public workspace with their roles.
@@ -3803,8 +3783,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_add_workspace_member(workspace_id):
         """
         Admin adds a member to a public workspace (used by both single add and CSV bulk upload)
@@ -3917,8 +3896,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_add_workspace_member_single(workspace_id):
         """
         Admin adds a single member to a public workspace via the Add Member modal
@@ -4023,8 +4001,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_public_workspace_activity(workspace_id):
         """
         Get activity timeline for a specific public workspace from activity logs
@@ -4215,8 +4192,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_take_workspace_ownership(workspace_id):
         """
         Create an approval request for admin to take ownership of a public workspace.
@@ -4297,8 +4273,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_public_workspace_ownership(workspace_id):
         """
         Create an approval request to transfer public workspace ownership to another member.
@@ -4422,8 +4397,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_public_workspace_documents_admin(workspace_id):
         """
         Create an approval request to delete all documents in a public workspace.
@@ -4488,8 +4462,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_public_workspace_admin(workspace_id):
         """
         Create an approval request to delete an entire public workspace.
@@ -4557,8 +4530,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_dashboard_reader_required
+    @control_center_required('dashboard')
     def api_get_activity_trends():
         """
         Get activity trends data for the control center dashboard.
@@ -4609,8 +4581,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_dashboard_reader_required
+    @control_center_required('dashboard')
     def api_export_activity_trends():
         """
         Export activity trends raw data as CSV file based on selected charts and date range.
@@ -4799,8 +4770,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_dashboard_reader_required
+    @control_center_required('dashboard')
     def api_chat_activity_trends():
         """
         Create a new chat conversation with activity trends data as CSV message.
@@ -4956,8 +4926,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_refresh_control_center_data():
         """
         Refresh all Control Center metrics data and update admin timestamp.
@@ -5102,8 +5071,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required  
+    @control_center_required('admin')  
     def api_get_refresh_status():
         """
         Get the last refresh timestamp for Control Center data.
@@ -5127,8 +5095,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/migrate/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_migration_status():
         """
         Check if there are conversations and documents that need to be migrated to activity logs.
@@ -5228,8 +5195,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_migrate_to_activity_logs():
         """
         Migrate all conversations and documents without activity logs.
@@ -5539,8 +5505,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_activity_logs():
         """
         Get paginated and filtered activity logs from cosmos_activity_logs_container.
@@ -5665,8 +5630,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_get_approvals():
         """
         Get approval requests visible to the current user.
@@ -5735,8 +5699,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_get_approval_by_id(approval_id):
         """
         Get a single approval request by ID.
@@ -5772,8 +5735,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_approve_request(approval_id):
         """
         Approve an approval request and execute the action.
@@ -5822,8 +5784,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_admin_deny_request(approval_id):
         """
         Deny an approval request.

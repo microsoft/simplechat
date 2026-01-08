@@ -162,15 +162,24 @@ class ControlCenter {
     
     init() {
         this.bindEvents();
-        this.loadUsers();
-        this.loadActivityTrends();
         
-        // Also load groups and public workspaces on initial page load
-        // This ensures they get their cached metrics on first load
-        setTimeout(() => {
-            this.loadGroups();
-            this.loadPublicWorkspaces();
-        }, 500); // Small delay to ensure DOM is ready
+        // Check if user has admin role (passed from backend)
+        const hasAdminRole = window.hasControlCenterAdmin === true;
+        
+        // Only load admin features if user has ControlCenterAdmin role
+        if (hasAdminRole) {
+            this.loadUsers();
+            
+            // Also load groups and public workspaces on initial page load
+            // This ensures they get their cached metrics on first load
+            setTimeout(() => {
+                this.loadGroups();
+                this.loadPublicWorkspaces();
+            }, 500); // Small delay to ensure DOM is ready
+        }
+        
+        // Always load activity trends (available to all Control Center users)
+        this.loadActivityTrends();
     }
     
     bindEvents() {
@@ -3516,6 +3525,11 @@ async function refreshControlCenterData() {
 }
 
 async function loadRefreshStatus() {
+    // Only admins can see refresh status
+    if (window.hasControlCenterAdmin !== true) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/admin/control-center/refresh-status');
         if (response.ok) {
@@ -3671,6 +3685,11 @@ function showAlert(message, type = 'info') {
 
 // Activity Log Migration Functions
 async function checkMigrationStatus() {
+    // Only admins can see migration status
+    if (window.hasControlCenterAdmin !== true) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/admin/control-center/migrate/status');
         if (!response.ok) {
@@ -3850,11 +3869,16 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Control Center Elements Check on DOM Ready:');
     window.debugControlCenterElements();
     
-    // Load initial refresh status with a slight delay to ensure elements are rendered
-    setTimeout(() => {
-        loadRefreshStatus();
-        
-        // Check migration status
-        checkMigrationStatus();
-    }, 100);
+    // Only load admin features if user has ControlCenterAdmin role
+    const hasAdminRole = window.hasControlCenterAdmin === true;
+    
+    if (hasAdminRole) {
+        // Load initial refresh status with a slight delay to ensure elements are rendered
+        setTimeout(() => {
+            loadRefreshStatus();
+            
+            // Check migration status
+            checkMigrationStatus();
+        }, 100);
+    }
 });

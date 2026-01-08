@@ -358,19 +358,6 @@
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="control-center-config">
               <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Control Center</span>
             </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="control-center-config-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="control-center-config" data-section="control-center-overview-section">
-                  <i class="bi bi-gear-wide-connected me-2" style="font-size: 0.8em;"></i><span class="nav-text">Access Control</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="front-door-section">
-                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Front Door</span>
-                </a>
-              </li>
-            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
@@ -485,8 +472,8 @@
     </div>
     {% endif %}
 
-    <!-- Control Center Section - Only show when on control center page and user is admin with proper role -->
-    {% if request.endpoint == 'control_center' and 'Admin' in session['user']['roles'] and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin) %}
+    <!-- Control Center Section - Show when on control center page for admins OR users with ControlCenter roles -->
+    {% if request.endpoint == 'control_center' and ((session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader)) %}
     <div class="overflow-auto">
       <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
         <div class="d-flex align-items-center">
@@ -514,6 +501,8 @@
               <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Dashboard</span>
             </a>
           </li>
+          {# Only show admin tabs if user has ControlCenterAdmin role #}
+          {% if session.get('user') and 'ControlCenterAdmin' in session['user']['roles'] %}
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="users">
               <i class="bi bi-people me-2"></i><span class="nav-text">User Management</span>
@@ -534,6 +523,7 @@
               <i class="bi bi-clock-history me-2"></i><span class="nav-text">Activity Logs</span>
             </a>
           </li>
+          {% endif %}
         </ul>
       </div>
     </div>
@@ -684,25 +674,28 @@
           <li>
             <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
           </li>
-          {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or not app_settings.require_member_of_control_center_admin %}
+          {% endif %}
+          {# Control Center - accessible to admins OR users with ControlCenter roles #}
+          {% if (session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader) %}
           <li>
             <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
           </li>
           {% endif %}
+          {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_content_safety %}
-            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
             </li>
             {% endif %}
           {% endif %}
+          {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_user_feedback %}
-            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
             </li>
             {% endif %}
-          {% endif %}
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li>

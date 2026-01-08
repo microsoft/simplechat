@@ -13,8 +13,7 @@ def register_route_frontend_control_center(app):
     @app.route('/admin/control-center', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('dashboard')
     def control_center():
         """
         Control Center main page for administrators.
@@ -28,10 +27,15 @@ def register_route_frontend_control_center(app):
             # Get basic statistics for dashboard
             stats = get_control_center_statistics()
             
+            # Check user's role for frontend conditional rendering
+            user = session.get('user', {})
+            has_admin_role = 'ControlCenterAdmin' in user.get('roles', [])
+            
             return render_template('control_center.html', 
                                  app_settings=public_settings, 
                                  settings=public_settings,
-                                 statistics=stats)
+                                 statistics=stats,
+                                 has_control_center_admin=has_admin_role)
         except Exception as e:
             debug_print(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")
