@@ -619,12 +619,12 @@ export function updateAutoplayButton() {
     const icon = button.querySelector('i');
     if (ttsAutoplay) {
         icon.className = 'bi bi-volume-up-fill';
-        button.title = 'Auto Voice Response On - click to disable';
+        button.title = 'Auto voice response enabled - click to disable';
         button.classList.remove('btn-outline-secondary');
         button.classList.add('btn-primary');
     } else {
         icon.className = 'bi bi-volume-mute';
-        button.title = 'Auto Voice Response Off - click to enable';
+        button.title = 'Auto voice response disabled - click to enable';
         button.classList.remove('btn-primary');
         button.classList.add('btn-outline-secondary');
     }
