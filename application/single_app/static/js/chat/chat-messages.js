@@ -633,7 +633,7 @@ export function appendMessage(
     // TTS button (only for AI messages)
     const ttsButtonHtml = (sender === 'AI' && typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) ? `
             <button class="btn btn-sm btn-link text-muted tts-play-btn" 
-                    title="Listen"
+                    title="Read this to me"
                     data-message-id="${messageId}"
                     onclick="if(window.chatTTS) window.chatTTS.handleButtonClick('${messageId}')">
                 <i class="bi bi-volume-up"></i>

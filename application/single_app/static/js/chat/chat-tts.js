@@ -11,6 +11,17 @@ let currentPlayingAudio = null;
 let currentPlayingMessageId = null;
 let audioQueue = []; // Queue for chunked audio playback
 let isQueueing = false; // Track if we're still loading chunks
+let wordHighlightInterval = null; // Track word highlighting interval
+let currentWordIndex = 0; // Current word being highlighted
+let totalWords = 0; // Total words in current chunk
+let wordOffset = 0; // Starting word index for current chunk
+let highlightState = null; // Store state for pause/resume: { messageId, chunkText, duration, startWordIndex, msPerWord }
+
+// Audio visualization
+let audioContext = null;
+let analyser = null;
+let volumeCheckInterval = null;
+let currentAudioSource = null;
 
 /**
  * Initialize TTS settings from user preferences
@@ -126,11 +137,18 @@ export async function playTTS(messageId, text) {
         const [firstAudio, secondAudio] = await Promise.all(parallelPromises);
         if (!firstAudio) return;
         
+        // Track word offsets for each chunk
+        let currentWordOffset = 0;
+        const firstChunkWordCount = firstChunk.trim().split(/\s+/).length;
+        
         // Queue chunk 2 immediately (it's already synthesized)
         if (secondChunk && secondAudio) {
+            const secondChunkWordCount = secondChunk.trim().split(/\s+/).length;
             audioQueue.push({
                 audio: secondAudio,
-                url: secondAudio.src
+                url: secondAudio.src,
+                text: secondChunk,
+                wordOffset: firstChunkWordCount // Start after first chunk's words
             });
             console.log('[TTS] Chunk 2 pre-queued, ready to play after chunk 1');
         }
@@ -141,13 +159,33 @@ export async function playTTS(messageId, text) {
         currentPlayingMessageId = messageId;
         
         // Setup audio event handlers
-        currentPlayingAudio.onplay = () => {
-            updateTTSButton(messageId, 'playing');
-            highlightPlayingMessage(messageId, true);
+        currentPlayingAudio.onloadedmetadata = () => {
+            // Audio metadata loaded, duration is now available
+            const duration = currentPlayingAudio.duration;
+            startWordHighlighting(messageId, firstChunk, duration, 0); // Start at word 0
         };
+        
+        // If metadata is already loaded, start highlighting immediately
+        if (currentPlayingAudio.duration && !isNaN(currentPlayingAudio.duration)) {
+            const duration = currentPlayingAudio.duration;
+            startWordHighlighting(messageId, firstChunk, duration, 0);
+        }
         
         currentPlayingAudio.onpause = () => {
             updateTTSButton(messageId, 'paused');
+            console.log('[TTS] Audio paused event fired');
+            pauseWordHighlighting();
+        };
+        
+        currentPlayingAudio.onplay = () => {
+            console.log('[TTS] Audio play event fired, highlightState exists:', !!highlightState, 'interval is null:', wordHighlightInterval === null);
+            updateTTSButton(messageId, 'playing');
+            highlightPlayingMessage(messageId, true);
+            // Resume word highlighting if we were paused (highlightState exists but no active interval)
+            if (highlightState && wordHighlightInterval === null) {
+                console.log('[TTS] Resuming from pause');
+                resumeWordHighlighting();
+            }
         };
         
         currentPlayingAudio.onended = () => {
@@ -171,7 +209,12 @@ export async function playTTS(messageId, text) {
         // Synthesize remaining chunks in groups while audio is playing
         if (chunks.length > 0) {
             isQueueing = true;
-            queueChunksInGroups(chunks, messageId).then(() => {
+            // Calculate starting word offset for remaining chunks (after chunks 1 and 2)
+            const firstChunkWords = firstChunk.trim().split(/\s+/).length;
+            const secondChunkWords = secondChunk ? secondChunk.trim().split(/\s+/).length : 0;
+            const startingOffset = firstChunkWords + secondChunkWords;
+            
+            queueChunksInGroups(chunks, messageId, startingOffset).then(() => {
                 isQueueing = false;
                 console.log(`[TTS] All chunks queued successfully`);
             }).catch(error => {
@@ -232,12 +275,13 @@ async function synthesizeChunk(text, messageId) {
  * - Group 1: Chunks 3-7 all in parallel (5 chunks)
  * - Group 2+: Remaining chunks in batches of 5, all parallel within each batch
  */
-async function queueChunksInGroups(chunks, messageId) {
+async function queueChunksInGroups(chunks, messageId, startingWordOffset = 0) {
     console.log(`[TTS] Queueing ${chunks.length} remaining chunks in groups of 5 (parallel within each group)`);
     
     try {
         let groupNum = 1;
         let chunkNumOffset = 3; // Start at chunk 3 since chunks 1 and 2 are already handled
+        let currentWordOffset = startingWordOffset;
         
         while (chunks.length > 0) {
             // Take up to 5 chunks for this group
@@ -250,12 +294,18 @@ async function queueChunksInGroups(chunks, messageId) {
             const synthesisPromises = groupChunks.map((text, index) => {
                 const chunkNum = chunkNumOffset + index;
                 const wordCount = text.split(/\s+/).length;
-                console.log(`[TTS] Starting synthesis for chunk ${chunkNum} (${wordCount} words)`);
+                const thisChunkOffset = currentWordOffset;
+                
+                // Increment offset for next chunk
+                currentWordOffset += wordCount;
+                
+                console.log(`[TTS] Starting synthesis for chunk ${chunkNum} (${wordCount} words, offset: ${thisChunkOffset})`);
                 return synthesizeChunk(text, messageId).then(audio => ({
                     chunkNum: chunkNum,
                     audio: audio,
                     url: audio ? audio.src : null,
-                    text: text
+                    text: text,
+                    wordOffset: thisChunkOffset
                 }));
             });
             
@@ -267,9 +317,11 @@ async function queueChunksInGroups(chunks, messageId) {
                 if (result.audio) {
                     audioQueue.push({
                         audio: result.audio,
-                        url: result.url
+                        url: result.url,
+                        text: result.text,
+                        wordOffset: result.wordOffset
                     });
-                    console.log(`[TTS] Chunk ${result.chunkNum} queued (${result.text.split(/\s+/).length} words), queue size: ${audioQueue.length}`);
+                    console.log(`[TTS] Chunk ${result.chunkNum} queued (${result.text.split(/\s+/).length} words, offset: ${result.wordOffset}), queue size: ${audioQueue.length}`);
                 }
             });
             
@@ -314,7 +366,8 @@ async function queueMultipleChunks(chunks, messageId) {
         results.forEach((result, i) => {
             audioQueue.push({
                 audio: result.audio,
-                url: result.url
+                url: result.url,
+                text: result.text
             });
             console.log(`[TTS] Queued chunk ${i + 1}: ${result.text.split(/\s+/).length} words, queue size: ${audioQueue.length}`);
         });
@@ -363,6 +416,41 @@ function playNextChunk(messageId) {
     currentPlayingAudio = nextChunk.audio;
     
     // Setup handlers for next chunk
+    currentPlayingAudio.onloadedmetadata = () => {
+        // Start word highlighting for this chunk when metadata is loaded
+        const duration = currentPlayingAudio.duration;
+        const chunkText = nextChunk.text || '';
+        const wordOffset = nextChunk.wordOffset || 0;
+        startWordHighlighting(messageId, chunkText, duration, wordOffset);
+    };
+    
+    // If metadata is already loaded, start highlighting immediately
+    if (currentPlayingAudio.duration && !isNaN(currentPlayingAudio.duration)) {
+        const duration = currentPlayingAudio.duration;
+        const chunkText = nextChunk.text || '';
+        const wordOffset = nextChunk.wordOffset || 0;
+        startWordHighlighting(messageId, chunkText, duration, wordOffset);
+    }
+    
+    currentPlayingAudio.onpause = () => {
+        // Audio paused - pause word highlighting
+        console.log('[TTS] Chunk audio paused event fired');
+        pauseWordHighlighting();
+    };
+    
+    currentPlayingAudio.onplay = () => {
+        // Audio playing/resumed - resume word highlighting and restart visualization
+        console.log('[TTS] Chunk audio play event fired, highlightState exists:', !!highlightState, 'interval is null:', wordHighlightInterval === null);
+        
+        // Restart audio visualization for new chunk
+        startAudioVisualization(messageId);
+        
+        if (highlightState && wordHighlightInterval === null) {
+            console.log('[TTS] Resuming from pause in chunk');
+            resumeWordHighlighting();
+        }
+    };
+    
     currentPlayingAudio.onended = () => {
         URL.revokeObjectURL(nextChunk.url);
         playNextChunk(messageId);
@@ -456,24 +544,25 @@ function updateTTSButton(messageId, state) {
         case 'loading':
             icon.className = 'bi bi-hourglass-split';
             button.disabled = true;
+            button.title = 'One moment, I’m taking a look';
             break;
             
         case 'playing':
             icon.className = 'bi bi-pause-fill';
             button.classList.add('btn-success');
-            button.title = 'Pause';
+            button.title = 'Hold on, pause what you are reading';
             break;
             
         case 'paused':
             icon.className = 'bi bi-volume-up';
             button.classList.add('btn-warning');
-            button.title = 'Resume';
+            button.title = 'Go ahead, continue reading';
             break;
             
         case 'stopped':
         default:
             icon.className = 'bi bi-volume-up';
-            button.title = 'Listen';
+            button.title = 'Read this to me';
             break;
     }
 }
@@ -481,14 +570,327 @@ function updateTTSButton(messageId, state) {
 /**
  * Highlight message being read
  */
+/**
+ * Prepare message text for word-by-word highlighting
+ */
+function prepareMessageForHighlighting(messageId) {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageElement) return;
+    
+    const messageTextDiv = messageElement.querySelector('.message-text');
+    if (!messageTextDiv || messageTextDiv.dataset.ttsWrapped === 'true') return;
+    
+    // Function to wrap words in text nodes only, not HTML
+    function wrapWordsInTextNodes(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            // This is a text node - wrap its words
+            const text = node.textContent;
+            if (text.trim().length === 0) return; // Skip whitespace-only nodes
+            
+            const words = text.split(/(\s+)/); // Split but keep whitespace
+            const fragment = document.createDocumentFragment();
+            
+            words.forEach(word => {
+                if (/\S/.test(word)) {
+                    // Non-whitespace word - wrap it
+                    const span = document.createElement('span');
+                    span.className = 'tts-word';
+                    span.textContent = word;
+                    fragment.appendChild(span);
+                } else {
+                    // Whitespace - keep as text
+                    fragment.appendChild(document.createTextNode(word));
+                }
+            });
+            
+            node.parentNode.replaceChild(fragment, node);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            // This is an element - recurse into its children
+            // Convert to array to avoid live NodeList issues
+            Array.from(node.childNodes).forEach(child => wrapWordsInTextNodes(child));
+        }
+    }
+    
+    wrapWordsInTextNodes(messageTextDiv);
+    messageTextDiv.dataset.ttsWrapped = 'true';
+}
+
+/**
+ * Start highlighting words progressively during playback
+ */
+function startWordHighlighting(messageId, chunkText, duration, startWordIndex = 0) {
+    // Clear any existing highlighting
+    stopWordHighlighting();
+    
+    // Validate duration
+    if (!duration || duration === 0 || isNaN(duration)) {
+        console.log('[TTS] Invalid duration for word highlighting, skipping');
+        return;
+    }
+    
+    // Prepare message for highlighting if not already done
+    prepareMessageForHighlighting(messageId);
+    
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageElement) return;
+    
+    const allWordElements = messageElement.querySelectorAll('.tts-word');
+    if (allWordElements.length === 0) return;
+    
+    // Count words in this chunk
+    const chunkWords = chunkText.trim().split(/\s+/).length;
+    
+    // Calculate which words to highlight for this chunk
+    wordOffset = startWordIndex;
+    totalWords = Math.min(chunkWords, allWordElements.length - wordOffset);
+    currentWordIndex = 0;
+    
+    if (totalWords <= 0) {
+        console.log('[TTS] No words to highlight for this chunk');
+        return;
+    }
+    
+    // Calculate time per word (in milliseconds)
+    const msPerWord = (duration * 1000) / totalWords;
+    
+    // Store state for pause/resume
+    highlightState = {
+        messageId: messageId,
+        chunkText: chunkText,
+        duration: duration,
+        startWordIndex: startWordIndex,
+        msPerWord: msPerWord,
+        allWordElements: allWordElements
+    };
+    
+    console.log(`[TTS] Word highlighting: chunk has ${chunkWords} words, highlighting words ${wordOffset} to ${wordOffset + totalWords - 1}, ${duration.toFixed(2)}s duration, ${msPerWord.toFixed(0)}ms per word`);
+    
+    // Highlight first word immediately
+    const firstWordIndex = wordOffset;
+    if (firstWordIndex < allWordElements.length) {
+        allWordElements[firstWordIndex].classList.add('tts-current-word');
+    }
+    
+    // Set interval to highlight next words
+    wordHighlightInterval = setInterval(() => {
+        // Check if audio is paused - if so, stop highlighting
+        if (currentPlayingAudio && currentPlayingAudio.paused) {
+            console.log('[TTS] Audio paused, stopping word highlight interval');
+            pauseWordHighlighting();
+            return;
+        }
+        
+        // Remove highlight from previous word
+        const prevIndex = wordOffset + currentWordIndex;
+        if (prevIndex < allWordElements.length) {
+            allWordElements[prevIndex].classList.remove('tts-current-word');
+        }
+        
+        currentWordIndex++;
+        
+        // Add highlight to current word
+        const nextIndex = wordOffset + currentWordIndex;
+        if (currentWordIndex < totalWords && nextIndex < allWordElements.length) {
+            allWordElements[nextIndex].classList.add('tts-current-word');
+        } else {
+            // Reached the end of this chunk, clear interval
+            stopWordHighlighting();
+        }
+    }, msPerWord);
+}
+
+/**
+ * Pause word highlighting (keep state for resume)
+ */
+function pauseWordHighlighting() {
+    console.log('[TTS] Pausing word highlighting, currentWordIndex:', currentWordIndex);
+    if (wordHighlightInterval) {
+        clearInterval(wordHighlightInterval);
+        wordHighlightInterval = null;
+    }
+    // Keep currentWordIndex, totalWords, wordOffset, and highlightState for resume
+}
+
+/**
+ * Resume word highlighting from current audio position
+ */
+function resumeWordHighlighting() {
+    if (!highlightState || !currentPlayingAudio) return;
+    
+    const { messageId, msPerWord, allWordElements } = highlightState;
+    
+    // Calculate current word position based on audio time
+    const elapsedTime = currentPlayingAudio.currentTime * 1000; // Convert to ms
+    const calculatedWordIndex = Math.floor(elapsedTime / msPerWord);
+    
+    // Update currentWordIndex to match audio position
+    currentWordIndex = Math.min(calculatedWordIndex, totalWords - 1);
+    
+    console.log(`[TTS] Resuming word highlighting from word ${currentWordIndex} (audio time: ${currentPlayingAudio.currentTime.toFixed(2)}s)`);
+    
+    // Highlight current word
+    const currentIndex = wordOffset + currentWordIndex;
+    if (currentIndex < allWordElements.length) {
+        allWordElements[currentIndex].classList.add('tts-current-word');
+    }
+    
+    // Continue highlighting from this point
+    wordHighlightInterval = setInterval(() => {
+        // Check if audio is paused - if so, stop highlighting
+        if (currentPlayingAudio && currentPlayingAudio.paused) {
+            console.log('[TTS] Audio paused during resume, stopping word highlight interval');
+            pauseWordHighlighting();
+            return;
+        }
+        
+        // Remove highlight from previous word
+        const prevIndex = wordOffset + currentWordIndex;
+        if (prevIndex < allWordElements.length) {
+            allWordElements[prevIndex].classList.remove('tts-current-word');
+        }
+        
+        currentWordIndex++;
+        
+        // Add highlight to current word
+        const nextIndex = wordOffset + currentWordIndex;
+        if (currentWordIndex < totalWords && nextIndex < allWordElements.length) {
+            allWordElements[nextIndex].classList.add('tts-current-word');
+        } else {
+            // Reached the end of this chunk, clear interval
+            stopWordHighlighting();
+        }
+    }, msPerWord);
+}
+
+/**
+ * Stop word highlighting
+ */
+function stopWordHighlighting() {
+    if (wordHighlightInterval) {
+        clearInterval(wordHighlightInterval);
+        wordHighlightInterval = null;
+    }
+    
+    // Remove all word highlights
+    if (currentPlayingMessageId) {
+        const messageElement = document.querySelector(`[data-message-id="${currentPlayingMessageId}"]`);
+        if (messageElement) {
+            const wordElements = messageElement.querySelectorAll('.tts-word');
+            wordElements.forEach(word => word.classList.remove('tts-current-word'));
+        }
+    }
+    
+    currentWordIndex = 0;
+    totalWords = 0;
+    highlightState = null;
+}
+
+/**
+ * Start audio visualization for avatar pulsing based on volume
+ */
+function startAudioVisualization(messageId) {
+    if (!currentPlayingAudio) return;
+    
+    try {
+        // Create AudioContext if not exists
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Create analyzer if not exists
+        if (!analyser) {
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+        }
+        
+        // Only create a new source if we don't have one or audio element changed
+        if (!currentAudioSource || currentAudioSource.mediaElement !== currentPlayingAudio) {
+            // Disconnect old source if exists
+            if (currentAudioSource) {
+                try {
+                    currentAudioSource.disconnect();
+                } catch (e) {
+                    // Ignore disconnect errors
+                }
+            }
+            
+            // Create new source and connect
+            currentAudioSource = audioContext.createMediaElementSource(currentPlayingAudio);
+            currentAudioSource.connect(analyser);
+            analyser.connect(audioContext.destination);
+        }
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const avatar = document.querySelector(`[data-message-id="${messageId}"] .avatar`);
+        
+        if (!avatar) return;
+        
+        // Clear any existing interval
+        if (volumeCheckInterval) {
+            clearInterval(volumeCheckInterval);
+        }
+        
+        // Update avatar glow based on volume
+        volumeCheckInterval = setInterval(() => {
+            if (!currentPlayingAudio || currentPlayingAudio.paused || currentPlayingAudio.ended) {
+                return; // Don't stop completely, just pause updates
+            }
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average volume
+            const sum = dataArray.reduce((a, b) => a + b, 0);
+            const average = sum / dataArray.length;
+            
+            // Remove all volume classes
+            avatar.classList.remove('volume-low', 'volume-medium', 'volume-high', 'volume-peak');
+            
+            // Add appropriate class based on volume level
+            if (average < 30) {
+                avatar.classList.add('volume-low');
+            } else if (average < 60) {
+                avatar.classList.add('volume-medium');
+            } else if (average < 90) {
+                avatar.classList.add('volume-high');
+            } else {
+                avatar.classList.add('volume-peak');
+            }
+        }, 50); // Update every 50ms for smooth visualization
+        
+    } catch (error) {
+        console.error('[TTS] Error setting up audio visualization:', error);
+    }
+}
+
+/**
+ * Stop audio visualization
+ */
+function stopAudioVisualization(messageId) {
+    if (volumeCheckInterval) {
+        clearInterval(volumeCheckInterval);
+        volumeCheckInterval = null;
+    }
+    
+    // Remove volume classes from avatar
+    if (messageId) {
+        const avatar = document.querySelector(`[data-message-id="${messageId}"] .avatar`);
+        if (avatar) {
+            avatar.classList.remove('volume-low', 'volume-medium', 'volume-high', 'volume-peak');
+        }
+    }
+}
+
 function highlightPlayingMessage(messageId, highlight) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
     
     if (highlight) {
         messageElement.classList.add('tts-playing');
+        startAudioVisualization(messageId);
     } else {
         messageElement.classList.remove('tts-playing');
+        stopAudioVisualization(messageId);
+        stopWordHighlighting();
     }
 }
 

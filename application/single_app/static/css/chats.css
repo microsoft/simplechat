@@ -1634,16 +1634,46 @@ mark.search-highlight {
     color: var(--bs-warning) !important;
 }
 
-.message.tts-playing {
-    animation: tts-pulse 2s ease-in-out infinite;
-    box-shadow: 0 0 10px rgba(var(--bs-primary-rgb), 0.3);
+.message.tts-playing .avatar {
+    animation: tts-avatar-pulse 0.3s ease-in-out infinite alternate;
+    border-radius: 50%;
 }
 
-@keyframes tts-pulse {
-    0%, 100% {
-        box-shadow: 0 0 10px rgba(var(--bs-primary-rgb), 0.3);
+.message.tts-playing .avatar.volume-low {
+    box-shadow: 0 0 8px rgba(13, 110, 253, 0.4);
+}
+
+.message.tts-playing .avatar.volume-medium {
+    box-shadow: 0 0 15px rgba(13, 110, 253, 0.6);
+}
+
+.message.tts-playing .avatar.volume-high {
+    box-shadow: 0 0 25px rgba(13, 110, 253, 0.8);
+}
+
+.message.tts-playing .avatar.volume-peak {
+    box-shadow: 0 0 35px rgba(13, 110, 253, 1);
+}
+
+/* Word-by-word highlighting for TTS */
+.tts-word {
+    display: inline;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.tts-word.tts-current-word {
+    background-color: rgba(var(--bs-primary-rgb), 0.3);
+    color: var(--bs-primary);
+    font-weight: 500;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+@keyframes tts-avatar-pulse {
+    0% {
+        transform: scale(1);
     }
-    50% {
-        box-shadow: 0 0 20px rgba(var(--bs-primary-rgb), 0.5);
+    100% {
+        transform: scale(1.05);
     }
 }
