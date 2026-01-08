@@ -432,6 +432,9 @@ def _get_error_description(status_code: int) -> str:
 def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
     """
     Analyze function parameters to generate parameter documentation.
+    Automatically detects:
+    - Path parameters from function signature
+    - Query parameters from request.args.get() calls in source code
     
     Args:
         func: Function to analyze
@@ -440,9 +443,10 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
         List of parameter definitions
     """
     try:
-        sig = inspect.signature(func)
         parameters = []
         
+        # First, check for path parameters from function signature
+        sig = inspect.signature(func)
         for param_name, param in sig.parameters.items():
             # Skip common Flask route parameters
             if param_name in ['args', 'kwargs']:
@@ -450,9 +454,9 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
                 
             param_def = {
                 "name": param_name,
-                "in": "path",  # Assume path parameters for now
+                "in": "path",
                 "required": param.default == inspect.Parameter.empty,
-                "description": f"Parameter: {param_name}",
+                "description": f"Path parameter: {param_name}",
                 "schema": {"type": "string"}
             }
             
@@ -469,9 +473,125 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
             
             parameters.append(param_def)
         
+        # Second, analyze source code for query parameters (request.args.get calls)
+        try:
+            source = inspect.getsource(func)
+            import textwrap
+            source = textwrap.dedent(source)
+            tree = ast.parse(source)
+            
+            query_params = {}  # {param_name: {type, default, description}}
+            
+            class QueryParameterVisitor(ast.NodeVisitor):
+                def visit_Assign(self, node):
+                    """Look for patterns like: page = int(request.args.get('page', 1))"""
+                    # Check if this is an assignment
+                    if isinstance(node.value, ast.Call):
+                        # Check for type conversion wrapper (int, str, float, bool)
+                        type_wrapper = None
+                        inner_call = node.value
+                        
+                        if (isinstance(node.value.func, ast.Name) and 
+                            node.value.func.id in ['int', 'str', 'float', 'bool'] and
+                            len(node.value.args) > 0 and
+                            isinstance(node.value.args[0], ast.Call)):
+                            type_wrapper = node.value.func.id
+                            inner_call = node.value.args[0]
+                        
+                        # Check if inner call is request.args.get()
+                        if (isinstance(inner_call.func, ast.Attribute) and
+                            isinstance(inner_call.func.value, ast.Attribute) and
+                            isinstance(inner_call.func.value.value, ast.Name) and
+                            inner_call.func.value.value.id == 'request' and
+                            inner_call.func.value.attr == 'args' and
+                            inner_call.func.attr == 'get'):
+                            
+                            # Extract parameter name
+                            if inner_call.args and isinstance(inner_call.args[0], ast.Constant):
+                                param_name = inner_call.args[0].value
+                                
+                                # Extract default value
+                                default_value = None
+                                if len(inner_call.args) > 1:
+                                    default_node = inner_call.args[1]
+                                    if isinstance(default_node, ast.Constant):
+                                        default_value = default_node.value
+                                
+                                # Determine type
+                                param_type = "string"  # default
+                                if type_wrapper == 'int':
+                                    param_type = "integer"
+                                elif type_wrapper == 'float':
+                                    param_type = "number"
+                                elif type_wrapper == 'bool':
+                                    param_type = "boolean"
+                                elif type_wrapper == 'str':
+                                    param_type = "string"
+                                
+                                # Extract variable name for description
+                                var_name = None
+                                if isinstance(node.targets[0], ast.Name):
+                                    var_name = node.targets[0].id
+                                
+                                query_params[param_name] = {
+                                    'type': param_type,
+                                    'default': default_value,
+                                    'var_name': var_name
+                                }
+                    
+                    self.generic_visit(node)
+            
+            visitor = QueryParameterVisitor()
+            visitor.visit(tree)
+            
+            # Also try to extract descriptions from docstring
+            docstring_descriptions = {}
+            if func.__doc__:
+                doc_lines = func.__doc__.strip().split('\n')
+                in_query_params_section = False
+                for line in doc_lines:
+                    stripped = line.strip()
+                    if 'Query Parameters:' in stripped or 'Parameters:' in stripped:
+                        in_query_params_section = True
+                        continue
+                    if in_query_params_section:
+                        # Look for patterns like: page (int): Description
+                        match = re.match(r'(\w+)\s*\([^)]+\):\s*(.+)', stripped)
+                        if match:
+                            param_name = match.group(1)
+                            description = match.group(2)
+                            docstring_descriptions[param_name] = description
+                        elif stripped and not stripped.startswith('-'):
+                            # End of parameters section if we hit non-parameter text
+                            if not any(c in stripped for c in ['(', ')']):
+                                in_query_params_section = False
+            
+            # Add query parameters to the parameters list
+            for param_name, param_info in query_params.items():
+                schema = {"type": param_info['type']}
+                if param_info['default'] is not None:
+                    schema['default'] = param_info['default']
+                
+                description = docstring_descriptions.get(param_name, f"Query parameter: {param_name}")
+                
+                param_def = {
+                    "name": param_name,
+                    "in": "query",
+                    "required": False,  # Query params with defaults are not required
+                    "description": description,
+                    "schema": schema
+                }
+                parameters.append(param_def)
+        
+        except Exception as e:
+            # If source code analysis fails, just return path parameters
+            print(f"Note: Could not analyze source code for query parameters in {func.__name__}: {e}")
+            pass
+        
         return parameters
         
-    except Exception:
+    except Exception as e:
+        print(f"Warning: Could not analyze parameters for {func.__name__}: {e}")
         return []
 
 def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
