@@ -10,7 +10,6 @@ def register_route_frontend_feedback(app):
     @app.route("/admin/feedback_review")
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
     @feedback_admin_required
     @enabled_required("enable_user_feedback")
     def admin_feedback_review():
