@@ -667,23 +667,22 @@ def feedback_admin_required(f):
         has_feedback_admin_role = 'roles' in user and 'FeedbackAdmin' in user['roles']
         has_admin_role = 'roles' in user and 'Admin' in user['roles']
         
-        # FeedbackAdmin role holders always have access
-        if has_feedback_admin_role:
-            return f(*args, **kwargs)
-        
         # If requirement is enabled, only FeedbackAdmin role grants access
         if require_member_of_feedback_admin:
-            is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-            if is_api_request:
-                return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
+            if has_feedback_admin_role:
+                return f(*args, **kwargs)
             else:
-                return "Forbidden: FeedbackAdmin role required", 403
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
+                else:
+                    return "Forbidden: FeedbackAdmin role required", 403
         
-        # If requirement is not enabled, regular admins can access
+        # If requirement is not enabled, only regular admins can access
         if has_admin_role:
             return f(*args, **kwargs)
         
-        # No access if no appropriate role
+        # No access if neither condition is met
         is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
         if is_api_request:
             return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
@@ -701,23 +700,22 @@ def safety_violation_admin_required(f):
         has_safety_admin_role = 'roles' in user and 'SafetyViolationAdmin' in user['roles']
         has_admin_role = 'roles' in user and 'Admin' in user['roles']
         
-        # SafetyViolationAdmin role holders always have access
-        if has_safety_admin_role:
-            return f(*args, **kwargs)
-        
         # If requirement is enabled, only SafetyViolationAdmin role grants access
         if require_member_of_safety_violation_admin:
-            is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-            if is_api_request:
-                return jsonify({"error": "Forbidden", "message": "Insufficient permissions (SafetyViolationAdmin role required)"}), 403
+            if has_safety_admin_role:
+                return f(*args, **kwargs)
             else:
-                return "Forbidden: SafetyViolationAdmin role required", 403
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (SafetyViolationAdmin role required)"}), 403
+                else:
+                    return "Forbidden: SafetyViolationAdmin role required", 403
         
-        # If requirement is not enabled, regular admins can access
+        # If requirement is not enabled, only regular admins can access
         if has_admin_role:
             return f(*args, **kwargs)
         
-        # No access if no appropriate role
+        # No access if neither condition is met
         is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
         if is_api_request:
             return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
