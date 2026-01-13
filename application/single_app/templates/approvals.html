@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+
+{% block title %}Approval Requests - {{ app_settings.app_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="bi bi-check-circle me-2"></i>Approval Requests
+                </h2>
+                <button type="button" class="btn btn-outline-primary" id="refreshApprovalsBtn">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                </button>
+            </div>
+
+            <!-- Approvals Controls -->
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="approvalsSearchInput" 
+                               placeholder="Search approvals...">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="approvalStatusFilterSelect">
+                        <option value="pending">Pending Only</option>
+                        <option value="all">All Statuses</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="approvalTypeFilterSelect">
+                        <option value="all">All Types</option>
+                        <option value="take_ownership">Take Ownership</option>
+                        <option value="transfer_ownership">Transfer Ownership</option>
+                        <option value="delete_documents">Delete Documents</option>
+                        <option value="delete_group">Delete Group</option>
+                        <option value="delete_user_documents">Delete User Documents</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <select class="form-select" id="approvalsPerPageSelect">
+                        <option value="10">10 per page</option>
+                        <option value="20" selected>20 per page</option>
+                        <option value="50">50 per page</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Approvals Table -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="approvalsTable">
+                            <thead>
+                                <tr>
+                                    <th>Request Type</th>
+                                    <th>Group Name</th>
+                                    <th>Requested By</th>
+                                    <th>Created</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="approvalsTableBody">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <div class="mt-2">Loading approvals...</div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <div class="text-muted small" id="approvalsPaginationInfo">
+                            <!-- Pagination info will be populated by JavaScript -->
+                        </div>
+                        <nav aria-label="Approvals pagination">
+                            <ul class="pagination mb-0">
+                                <li class="page-item">
+                                    <button class="page-link" id="approvalsPrevBtn" aria-label="Previous">
+                                        <span aria-hidden="true">&laquo;</span>
+                                    </button>
+                                </li>
+                                <li class="page-item">
+                                    <button class="page-link" id="approvalsNextBtn" aria-label="Next">
+                                        <span aria-hidden="true">&raquo;</span>
+                                    </button>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Approval Action Modal -->
+<div class="modal fade" id="approvalActionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="approvalActionModalTitle">Approval Action</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Cannot Approve Alert -->
+                <div class="alert alert-warning" id="cannotApproveAlert" style="display: none;">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Note:</strong> You cannot approve your own request. Another admin or group owner must review and approve this.
+                </div>
+                
+                <!-- Approval Details -->
+                <div class="mb-3">
+                    <h6>Request Details</h6>
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Request Type:</dt>
+                        <dd class="col-sm-8" id="approvalDetailType"></dd>
+                        
+                        <dt class="col-sm-4">Group:</dt>
+                        <dd class="col-sm-8" id="approvalDetailGroup"></dd>
+                        
+                        <dt class="col-sm-4">Requested By:</dt>
+                        <dd class="col-sm-8" id="approvalDetailRequester"></dd>
+                        
+                        <dt class="col-sm-4">Date:</dt>
+                        <dd class="col-sm-8" id="approvalDetailDate"></dd>
+                        
+                        <dt class="col-sm-4">Reason:</dt>
+                        <dd class="col-sm-8" id="approvalDetailReason"></dd>
+                    </dl>
+                </div>
+                
+                <!-- Comment Field -->
+                <div class="mb-3">
+                    <label for="approvalActionComment" class="form-label">
+                        <span id="approvalCommentLabel">Comment</span>
+                        <span class="text-danger" id="approvalCommentRequired" style="display:none;">*</span>
+                    </label>
+                    <textarea class="form-control" id="approvalActionComment" rows="3" 
+                              placeholder="Optional comment for approval or required reason for denial..."></textarea>
+                    <div class="form-text">
+                        <span id="approvalCommentHelpText">Provide additional context for this decision.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="approvalDenyBtn" style="display:none;">
+                    <i class="bi bi-x-circle me-1"></i>Deny Request
+                </button>
+                <button type="button" class="btn btn-success" id="approvalApproveBtn" style="display:none;">
+                    <i class="bi bi-check-circle me-1"></i>Approve & Execute
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Toast notification helper
+window.showToast = function(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        console.error('Toast container not found');
+        return;
+    }
+    
+    const toastId = 'toast-' + Date.now();
+    const bgClass = {
+        'success': 'bg-success',
+        'error': 'bg-danger',
+        'warning': 'bg-warning',
+        'info': 'bg-info'
+    }[type] || 'bg-info';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast align-items-center text-white ${bgClass} border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    `;
+    
+    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+    const toastElement = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastElement);
+    toast.show();
+    
+    toastElement.addEventListener('hidden.bs.toast', function () {
+        toastElement.remove();
+    });
+};
+
+window.ApprovalManager = {
+    currentPage: 1,
+    pageSize: 20,
+    totalApprovals: 0,
+    currentFilters: {
+        status: 'pending',
+        actionType: 'all',
+        searchQuery: ''
+    },
+    
+    // Initialize approval management functionality
+    init: function() {
+        this.bindEvents();
+        this.loadApprovals();
+    },
+    
+    // Bind event handlers
+    bindEvents: function() {
+        // Search and filter
+        document.getElementById('approvalsSearchInput')?.addEventListener('input', () => {
+            this.currentFilters.searchQuery = document.getElementById('approvalsSearchInput').value;
+            this.currentPage = 1;
+            this.loadApprovals();
+        });
+        
+        document.getElementById('approvalStatusFilterSelect')?.addEventListener('change', () => {
+            this.currentFilters.status = document.getElementById('approvalStatusFilterSelect').value;
+            this.currentPage = 1;
+            this.loadApprovals();
+        });
+        
+        document.getElementById('approvalTypeFilterSelect')?.addEventListener('change', () => {
+            this.currentFilters.actionType = document.getElementById('approvalTypeFilterSelect').value;
+            this.currentPage = 1;
+            this.loadApprovals();
+        });
+        
+        document.getElementById('approvalsPerPageSelect')?.addEventListener('change', () => {
+            this.pageSize = parseInt(document.getElementById('approvalsPerPageSelect').value);
+            this.currentPage = 1;
+            this.loadApprovals();
+        });
+        
+        // Refresh button
+        document.getElementById('refreshApprovalsBtn')?.addEventListener('click', () => {
+            this.loadApprovals();
+        });
+        
+        // Modal approval/denial buttons
+        document.getElementById('approvalApproveBtn')?.addEventListener('click', () => {
+            this.handleApprove();
+        });
+        
+        document.getElementById('approvalDenyBtn')?.addEventListener('click', () => {
+            this.handleDeny();
+        });
+    },
+    
+    // Load approvals from API
+    loadApprovals: async function(page = 1) {
+        this.currentPage = page;
+        const approvalsTableBody = document.getElementById('approvalsTableBody');
+        
+        if (!approvalsTableBody) {
+            console.error('Approvals table body not found');
+            return;
+        }
+        
+        try {
+            // Build query params
+            const params = new URLSearchParams({
+                page: this.currentPage,
+                page_size: this.pageSize,
+                status: this.currentFilters.status || 'pending'
+            });
+            
+            if (this.currentFilters.actionType && this.currentFilters.actionType !== 'all') {
+                params.append('action_type', this.currentFilters.actionType);
+            }
+            
+            if (this.currentFilters.searchQuery) {
+                params.append('search', this.currentFilters.searchQuery);
+            }
+            
+            const response = await fetch(`/api/approvals?${params.toString()}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to load approvals');
+            }
+            
+            const data = await response.json();
+            
+            // Clear table
+            approvalsTableBody.innerHTML = '';
+            
+            if (!data.approvals || data.approvals.length === 0) {
+                approvalsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No approval requests found
+                        </td>
+                    </tr>
+                `;
+                this.totalApprovals = 0;
+            } else {
+                // Render approval rows
+                data.approvals.forEach(approval => {
+                    const row = this.renderApprovalRow(approval);
+                    approvalsTableBody.appendChild(row);
+                });
+                
+                this.totalApprovals = data.total_count || data.approvals.length;
+            }
+            
+            // Update pagination
+            this.updatePagination(data.total_count || 0, data.page || 1, data.page_size || this.pageSize);
+            
+        } catch (error) {
+            console.error('Error loading approvals:', error);
+            approvalsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-danger py-4">
+                        <i class="bi bi-exclamation-circle fs-1 d-block mb-2"></i>
+                        Error loading approvals: ${error.message}
+                    </td>
+                </tr>
+            `;
+        }
+    },
+    
+    // Render a single approval row
+    renderApprovalRow: function(approval) {
+        const tr = document.createElement('tr');
+        
+        // Status badge
+        let statusBadge = '';
+        if (approval.status === 'pending') {
+            statusBadge = '<span class="badge bg-warning text-dark">Pending</span>';
+        } else if (approval.status === 'approved') {
+            statusBadge = '<span class="badge bg-success">Approved</span>';
+        } else if (approval.status === 'denied') {
+            if (approval.auto_denied) {
+                statusBadge = '<span class="badge bg-secondary">Auto-Denied</span>';
+            } else {
+                statusBadge = '<span class="badge bg-danger">Denied</span>';
+            }
+        } else if (approval.status === 'executed') {
+            statusBadge = '<span class="badge bg-primary">Executed</span>';
+        }
+        
+        // Request type badge
+        let actionBadge = '';
+        const requestType = approval.request_type || approval.action_type;
+        if (requestType === 'take_ownership') {
+            actionBadge = '<span class="badge bg-primary">Take Ownership</span>';
+        } else if (requestType === 'transfer_ownership') {
+            actionBadge = '<span class="badge bg-info">Transfer Ownership</span>';
+        } else if (requestType === 'delete_documents') {
+            actionBadge = '<span class="badge bg-warning text-dark">Delete Documents</span>';
+        } else if (requestType === 'delete_group') {
+            actionBadge = '<span class="badge bg-danger">Delete Group</span>';
+        } else if (requestType === 'delete_user_documents') {
+            actionBadge = '<span class="badge bg-warning text-dark">Delete User Documents</span>';
+        } else {
+            actionBadge = '<span class="badge bg-secondary">Unknown</span>';
+        }
+        
+        // Format timestamps
+        const createdDate = new Date(approval.created_at).toLocaleString();
+        
+        // Action buttons
+        let actionButtons = `
+            <button class="btn btn-sm btn-outline-primary" onclick="ApprovalManager.showApprovalModal('${approval.id}', '${approval.group_id}', 'view')" title="View Details">
+                <i class="bi bi-eye"></i> View
+            </button>
+        `;
+        
+        tr.innerHTML = `
+            <td>${actionBadge}</td>
+            <td><span class="text-truncate" style="max-width: 200px; display: inline-block;" title="${approval.group_name || approval.group_id}">${approval.group_name || approval.group_id}</span></td>
+            <td><small>${approval.requester_name || approval.requested_by || 'Unknown'}</small></td>
+            <td><small>${createdDate}</small></td>
+            <td>${statusBadge}</td>
+            <td>${actionButtons}</td>
+        `;
+        
+        return tr;
+    },
+    
+    // Show approval action modal
+    showApprovalModal: async function(approvalId, groupId, action) {
+        const modal = document.getElementById('approvalActionModal');
+        if (!modal) {
+            console.error('Approval action modal not found');
+            return;
+        }
+        
+        // Store approval details
+        modal.setAttribute('data-approval-id', approvalId);
+        modal.setAttribute('data-group-id', groupId);
+        modal.setAttribute('data-action', action);
+        
+        // Fetch full approval details from API
+        try {
+            const response = await fetch(`/api/approvals/${approvalId}?group_id=${groupId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch approval details');
+            }
+            const approval = await response.json();
+            
+            // Populate modal with approval details
+            this.populateApprovalDetails(approval, action);
+            
+            // Show modal
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+            
+        } catch (error) {
+            console.error('Error loading approval details:', error);
+            window.showToast('Error loading approval details: ' + error.message, 'error');
+        }
+    },
+    
+    // Populate approval modal with details
+    populateApprovalDetails: function(approval, action) {
+        const modal = document.getElementById('approvalActionModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const approveBtn = document.getElementById('approvalApproveBtn');
+        const denyBtn = document.getElementById('approvalDenyBtn');
+        const commentField = document.getElementById('approvalActionComment');
+        const commentFieldContainer = commentField.closest('.mb-3');
+        const cannotApproveAlert = document.getElementById('cannotApproveAlert');
+        
+        // Format request type
+        const requestTypeMap = {
+            'take_ownership': 'Take Ownership',
+            'transfer_ownership': 'Transfer Ownership',
+            'delete_documents': 'Delete All Documents',
+            'delete_group': 'Delete Entire Group',
+            'delete_user_documents': 'Delete User Documents'
+        };
+        const requestType = requestTypeMap[approval.request_type] || approval.request_type;
+        
+        // Populate detail fields
+        document.getElementById('approvalDetailType').textContent = requestType;
+        document.getElementById('approvalDetailGroup').textContent = approval.group_name || 'N/A';
+        document.getElementById('approvalDetailRequester').textContent = 
+            `${approval.requester_name || 'Unknown'} (${approval.requester_email || 'N/A'})`;
+        document.getElementById('approvalDetailDate').textContent = 
+            new Date(approval.created_at).toLocaleString();
+        document.getElementById('approvalDetailReason').textContent = approval.reason || 'No reason provided';
+        
+        // Update modal title and buttons based on action and status
+        if (approval.status !== 'pending') {
+            // Completed request - view-only mode with result
+            modalTitle.textContent = 'View Approval Request';
+            approveBtn.style.display = 'none';
+            denyBtn.style.display = 'none';
+            commentFieldContainer.style.display = 'none';
+            cannotApproveAlert.style.display = 'none';
+            
+            // Show approval result
+            let resultHtml = `
+                <div class="alert alert-${
+                    approval.status === 'approved' ? 'success' : 
+                    approval.status === 'denied' ? 'danger' : 'secondary'
+                } mb-0">
+                    <strong>Status:</strong> ${approval.status.charAt(0).toUpperCase() + approval.status.slice(1)}<br>
+                    <strong>By:</strong> ${approval.approved_by_name || 'Unknown'} (${approval.approved_by_email || 'N/A'})<br>
+                    <strong>Date:</strong> ${approval.approved_at ? new Date(approval.approved_at).toLocaleString() : 'N/A'}
+                    ${approval.approval_comment ? '<br><strong>Comment:</strong> ' + approval.approval_comment : ''}
+                    ${approval.execution_result ? '<br><strong>Execution:</strong> ' + approval.execution_result : ''}
+                </div>
+            `;
+            document.getElementById('approvalDetailReason').innerHTML = 
+                (approval.reason || 'No reason provided') + '<br><br>' + resultHtml;
+        } else if (action === 'view' && approval.can_approve) {
+            // View mode but user can approve - show buttons
+            modalTitle.textContent = 'View Approval Request';
+            approveBtn.style.display = 'inline-block';
+            denyBtn.style.display = 'inline-block';
+            commentFieldContainer.style.display = 'block';
+            commentField.placeholder = 'Optional comment for approval, required for denial...';
+            commentField.value = '';
+            commentField.required = false;
+            cannotApproveAlert.style.display = 'none';
+        } else if (action === 'view' && !approval.can_approve) {
+            // View mode and user cannot approve - show alert
+            modalTitle.textContent = 'View Approval Request';
+            approveBtn.style.display = 'none';
+            denyBtn.style.display = 'none';
+            commentFieldContainer.style.display = 'none';
+            cannotApproveAlert.style.display = 'block';
+        }
+    },
+    
+    // Handle approval
+    handleApprove: async function() {
+        const modal = document.getElementById('approvalActionModal');
+        const approvalId = modal.getAttribute('data-approval-id');
+        const groupId = modal.getAttribute('data-group-id');
+        const comment = document.getElementById('approvalActionComment').value.trim();
+        const approveBtn = document.getElementById('approvalApproveBtn');
+        
+        if (!approvalId) {
+            window.showToast('Error: No approval ID found', 'error');
+            return;
+        }
+        
+        // Disable button during request
+        approveBtn.disabled = true;
+        approveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Approving...';
+        
+        try {
+            const response = await fetch(`/api/approvals/${approvalId}/approve`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    group_id: groupId,
+                    comment: comment || null
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to approve request');
+            }
+            
+            const result = await response.json();
+            console.log('Approval result:', result);
+            
+            // Close modal
+            bootstrap.Modal.getInstance(modal).hide();
+            
+            // Show success message
+            window.showToast('Request approved successfully! The action has been executed.', 'success');
+            
+            // Refresh approvals list
+            this.loadApprovals();
+            
+        } catch (error) {
+            console.error('Error approving request:', error);
+            window.showToast('Error approving request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            approveBtn.disabled = false;
+            approveBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Approve & Execute';
+        }
+    },
+    
+    // Handle denial
+    handleDeny: async function() {
+        const modal = document.getElementById('approvalActionModal');
+        const approvalId = modal.getAttribute('data-approval-id');
+        const groupId = modal.getAttribute('data-group-id');
+        const comment = document.getElementById('approvalActionComment').value.trim();
+        const denyBtn = document.getElementById('approvalDenyBtn');
+        
+        if (!approvalId) {
+            window.showToast('Error: No approval ID found', 'error');
+            return;
+        }
+        
+        if (!comment) {
+            window.showToast('Please provide a reason for denying this request', 'warning');
+            document.getElementById('approvalActionComment').focus();
+            return;
+        }
+        
+        // Disable button during request
+        denyBtn.disabled = true;
+        denyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Denying...';
+        
+        try {
+            const response = await fetch(`/api/approvals/${approvalId}/deny`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    group_id: groupId,
+                    comment: comment
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to deny request');
+            }
+            
+            const result = await response.json();
+            console.log('Denial result:', result);
+            
+            // Close modal
+            bootstrap.Modal.getInstance(modal).hide();
+            
+            // Show success message
+            window.showToast('Request denied successfully.', 'success');
+            
+            // Refresh approvals list
+            this.loadApprovals();
+            
+        } catch (error) {
+            console.error('Error denying request:', error);
+            window.showToast('Error denying request: ' + error.message, 'error');
+        } finally {
+            // Re-enable button
+            denyBtn.disabled = false;
+            denyBtn.innerHTML = '<i class="bi bi-x-circle me-1"></i>Deny Request';
+        }
+    },
+    
+    // Update pagination controls
+    updatePagination: function(totalCount, currentPage, pageSize) {
+        const paginationInfo = document.getElementById('approvalsPaginationInfo');
+        const prevBtn = document.getElementById('approvalsPrevBtn');
+        const nextBtn = document.getElementById('approvalsNextBtn');
+        
+        const totalPages = Math.ceil(totalCount / pageSize);
+        const start = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+        const end = Math.min(currentPage * pageSize, totalCount);
+        
+        if (paginationInfo) {
+            paginationInfo.textContent = `Showing ${start}-${end} of ${totalCount} approval requests`;
+        }
+        
+        if (prevBtn) {
+            prevBtn.disabled = currentPage <= 1;
+            prevBtn.onclick = () => {
+                if (currentPage > 1) {
+                    this.loadApprovals(currentPage - 1);
+                }
+            };
+        }
+        
+        if (nextBtn) {
+            nextBtn.disabled = currentPage >= totalPages;
+            nextBtn.onclick = () => {
+                if (currentPage < totalPages) {
+                    this.loadApprovals(currentPage + 1);
+                }
+            };
+        }
+    }
+};
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing ApprovalManager...');
+    console.log('ApprovalManager object:', ApprovalManager);
+    try {
+        ApprovalManager.init();
+        console.log('ApprovalManager initialized successfully');
+    } catch (error) {
+        console.error('Error initializing ApprovalManager:', error);
+    }
+});
+</script>
+{% endblock %}

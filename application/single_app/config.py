@@ -64,7 +64,6 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
-import azure.cognitiveservices.speech as speechsdk
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
@@ -89,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.233.318"
+VERSION = "0.234.225"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -102,10 +101,13 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "img-src 'self' data: https: blob:; "
-        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "font-src 'self'; "
+        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
@@ -185,7 +187,6 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
-    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
@@ -392,6 +393,20 @@ cosmos_activity_logs_container_name = "activity_logs"
 cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_activity_logs_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_notifications_container_name = "notifications"
+cosmos_notifications_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_notifications_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document
+)
+
+cosmos_approvals_container_name = "approvals"
+cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_approvals_container_name,
+    partition_key=PartitionKey(path="/group_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
 )
 
 def ensure_custom_logo_file_exists(app, settings):

@@ -5,7 +5,10 @@ from functions_authentication import *
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
-from functions_documents import update_document
+from functions_approvals import *
+from functions_documents import update_document, delete_document, delete_document_chunks
+from functions_group import delete_group
+from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 import json
@@ -98,7 +101,7 @@ def enhance_user_with_activity(user, force_refresh=False):
             cached_metrics = user.get('settings', {}).get('metrics')
             if cached_metrics and cached_metrics.get('calculated_at'):
                 try:
-                    current_app.logger.debug(f"Using cached metrics for user {user.get('id')}")
+                    debug_print(f"Using cached metrics for user {user.get('id')}")
                     # Use cached data regardless of age when not forcing refresh
                     if 'login_metrics' in cached_metrics:
                         enhanced['activity']['login_metrics'] = cached_metrics['login_metrics']
@@ -112,14 +115,14 @@ def enhance_user_with_activity(user, force_refresh=False):
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
                     return enhanced
                 except Exception as cache_e:
-                    current_app.logger.debug(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
+                    debug_print(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
             
             # If no cached metrics and not forcing refresh, return with default/empty metrics
             # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
-            current_app.logger.debug(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
+            debug_print(f"No cached metrics for user {user.get('id')}, returning default values (use refresh button to calculate)")
             return enhanced
             
-        current_app.logger.debug(f"Force refresh requested - calculating fresh metrics for user {user.get('id')}")
+        debug_print(f"Force refresh requested - calculating fresh metrics for user {user.get('id')}")
         
         
         # Try to get comprehensive conversation metrics
@@ -214,10 +217,10 @@ def enhance_user_with_activity(user, force_refresh=False):
                         batch_size = size_result[0] if size_result else 0
                         total_message_size += batch_size or 0
                         
-                        current_app.logger.debug(f"Messages batch {i//batch_size + 1}: {batch_messages} messages, {batch_size or 0} bytes")
+                        debug_print(f"Messages batch {i//batch_size + 1}: {batch_messages} messages, {batch_size or 0} bytes")
                                 
                     except Exception as msg_e:
-                        current_app.logger.error(f"Could not query message sizes for batch {i//batch_size + 1}: {msg_e}")
+                        debug_print(f"Could not query message sizes for batch {i//batch_size + 1}: {msg_e}")
                         # Try individual conversation queries as fallback
                         for conv_id in batch_ids:
                             try:
@@ -250,15 +253,15 @@ def enhance_user_with_activity(user, force_refresh=False):
                                 total_message_size += size_result[0] if size_result and size_result[0] else 0
                                     
                             except Exception as individual_e:
-                                current_app.logger.debug(f"Could not query individual conversation {conv_id}: {individual_e}")
+                                debug_print(f"Could not query individual conversation {conv_id}: {individual_e}")
                                 continue
                 
                 enhanced['activity']['chat_metrics']['total_messages'] = total_messages
                 enhanced['activity']['chat_metrics']['total_message_size'] = total_message_size
-                current_app.logger.debug(f"Final chat metrics for user {user.get('id')}: {total_messages} messages, {total_message_size} bytes")
+                debug_print(f"Final chat metrics for user {user.get('id')}: {total_messages} messages, {total_message_size} bytes")
             
         except Exception as e:
-            current_app.logger.debug(f"Could not get chat metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get chat metrics for user {user.get('id')}: {e}")
         
         # Try to get comprehensive login metrics
         try:
@@ -291,7 +294,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                 enhanced['activity']['login_metrics']['last_login'] = login_record.get('timestamp') or login_record.get('created_at')
                 
         except Exception as e:
-            current_app.logger.debug(f"Could not get login metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get login metrics for user {user.get('id')}: {e}")
         
         # Try to get comprehensive document metrics
         try:
@@ -325,7 +328,7 @@ def enhance_user_with_activity(user, force_refresh=False):
             
             enhanced['activity']['document_metrics']['total_documents'] = total_docs
             # AI search size = pages × 80KB
-            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 22 * 1024  # 22KB per page
             
             # Last day upload tracking removed - keeping only document count and sizes
             
@@ -352,14 +355,14 @@ def enhance_user_with_activity(user, force_refresh=False):
                             total_storage_size += blob.size
                             blob_count += 1
                             debug_print(f"💾 [STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
-                            current_app.logger.debug(f"Storage blob {blob.name}: {blob.size} bytes")
+                            debug_print(f"Storage blob {blob.name}: {blob.size} bytes")
                         
                         debug_print(f"💾 [STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
-                        current_app.logger.debug(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
+                        debug_print(f"Total storage size for user {user.get('id')}: {total_storage_size} bytes")
                     else:
                         debug_print(f"💾 [STORAGE DEBUG] Storage client NOT available for user {user.get('id')}")
-                        current_app.logger.debug(f"Storage client not available for user {user.get('id')}")
+                        debug_print(f"Storage client not available for user {user.get('id')}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
                             SELECT c.file_name, c.number_of_pages FROM c 
@@ -394,16 +397,16 @@ def enhance_user_with_activity(user, force_refresh=False):
                         
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         debug_print(f"💾 [STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
-                        current_app.logger.debug(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
+                        debug_print(f"Estimated storage size for user {user.get('id')}: {total_storage_size} bytes")
                     
                 except Exception as storage_e:
                     debug_print(f"❌ [STORAGE DEBUG] Storage calculation failed for user {user.get('id')}: {storage_e}")
-                    current_app.logger.debug(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
+                    debug_print(f"Could not calculate storage size for user {user.get('id')}: {storage_e}")
                     # Set to 0 if we can't calculate
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                 
         except Exception as e:
-            current_app.logger.debug(f"Could not get document metrics for user {user.get('id')}: {e}")
+            debug_print(f"Could not get document metrics for user {user.get('id')}: {e}")
         
         # Save calculated metrics to user settings for caching (only if we calculated fresh data)
         if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
@@ -428,17 +431,17 @@ def enhance_user_with_activity(user, force_refresh=False):
                 update_success = update_user_settings(user.get('id'), settings_update)
                 
                 if update_success:
-                    current_app.logger.debug(f"Successfully cached metrics for user {user.get('id')}")
+                    debug_print(f"Successfully cached metrics for user {user.get('id')}")
                 else:
-                    current_app.logger.debug(f"Failed to cache metrics for user {user.get('id')}")
+                    debug_print(f"Failed to cache metrics for user {user.get('id')}")
                     
             except Exception as cache_save_e:
-                current_app.logger.debug(f"Error saving metrics cache for user {user.get('id')}: {cache_save_e}")
+                debug_print(f"Error saving metrics cache for user {user.get('id')}: {cache_save_e}")
         
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing user data: {e}")
+        debug_print(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
 
 def enhance_public_workspace_with_activity(workspace, force_refresh=False):
@@ -472,14 +475,16 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             'created_at': workspace.get('createdDate'),  # Alias for frontend
             
             # Flat fields expected by frontend
-            'owner_name': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'owner_name': owner_info.get('displayName') or owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
             'owner_email': owner_info.get('email', ''),
-            'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'created_by': owner_info.get('displayName') or owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
             'document_count': 0,  # Will be updated from database
+            'member_count': len(workspace.get('admins', [])) + len(workspace.get('documentManagers', [])) + (1 if owner_info else 0),  # Total members including owner
             'storage_size': 0,  # Will be updated from storage account
             'last_activity': None,  # Will be updated from public_documents
             'recent_activity_count': 0,  # Will be calculated
-            'status': 'active',  # default - can be determined by business logic
+            'status': workspace.get('status', 'active'),  # Read from workspace document, default to 'active'
+            'statusHistory': workspace.get('statusHistory', []),  # Include status change history
             
             # Keep nested structure for backward compatibility
             'activity': {
@@ -513,7 +518,12 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                             # Update flat fields
                             enhanced['document_count'] = doc_metrics.get('total_documents', 0)
                             enhanced['storage_size'] = doc_metrics.get('storage_account_size', 0)
-                            # Cached document metrics applied successfully
+                        
+                        # Apply cached activity metrics if available
+                        if 'last_activity' in cached_metrics:
+                            enhanced['last_activity'] = cached_metrics['last_activity']
+                        if 'recent_activity_count' in cached_metrics:
+                            enhanced['recent_activity_count'] = cached_metrics['recent_activity_count']
                         
                         debug_print(f"🌐 [PUBLIC WORKSPACE DEBUG] Returning cached data for {workspace_id}: {enhanced['activity']['document_metrics']}")
                         return enhanced
@@ -586,7 +596,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             ))
             
             total_pages = pages_sum_result[0] if pages_sum_result and pages_sum_result[0] else 0
-            ai_search_size = total_pages * 80 * 1024  # 80KB per page
+            ai_search_size = total_pages * 22 * 1024  # 22KB per page
             enhanced['activity']['document_metrics']['ai_search_size'] = ai_search_size
             
             debug_print(f"📊 [PUBLIC WORKSPACE DOCUMENT DEBUG] Workspace {workspace_id}: {total_documents} documents, {total_pages} pages, {ai_search_size} AI search size")
@@ -688,6 +698,8 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
             try:
                 metrics_cache = {
                     'document_metrics': enhanced['activity']['document_metrics'],
+                    'last_activity': enhanced.get('last_activity'),
+                    'recent_activity_count': enhanced.get('recent_activity_count', 0),
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
@@ -702,7 +714,7 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing public workspace data: {e}")
+        debug_print(f"Error enhancing public workspace data: {e}")
         return workspace  # Return original workspace data if enhancement fails
 
 def enhance_group_with_activity(group, force_refresh=False):
@@ -739,15 +751,16 @@ def enhance_group_with_activity(group, force_refresh=False):
             'created_at': group.get('createdDate'),  # Alias for frontend
             
             # Flat fields expected by frontend
-            'owner_name': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'owner_name': owner_info.get('displayName') or owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
             'owner_email': owner_info.get('email', ''),
-            'created_by': owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
-            'member_count': len(users_list) + (1 if owner_info else 0),
+            'created_by': owner_info.get('displayName') or owner_info.get('display_name') or owner_info.get('name', 'Unknown'),
+            'member_count': len(users_list),  # Owner is already included in users_list
             'document_count': 0,  # Will be updated from database
             'storage_size': 0,  # Will be updated from storage account
             'last_activity': None,  # Will be updated from group_documents
             'recent_activity_count': 0,  # Will be calculated
-            'status': 'active',  # default - can be determined by business logic
+            'status': group.get('status', 'active'),  # Read from group document, default to 'active'
+            'statusHistory': group.get('statusHistory', []),  # Include status change history
             
             # Keep nested structure for backward compatibility
             'activity': {
@@ -757,7 +770,7 @@ def enhance_group_with_activity(group, force_refresh=False):
                     'storage_account_size': 0  # Actual file sizes from storage
                 },
                 'member_metrics': {
-                    'total_members': len(users_list) + (1 if owner_info else 0),
+                    'total_members': len(users_list),  # Owner is already included in users_list
                     'admin_count': len(group.get('admins', [])),
                     'document_manager_count': len(group.get('documentManagers', [])),
                     'pending_count': len(group.get('pendingUsers', []))
@@ -853,11 +866,11 @@ def enhance_group_with_activity(group, force_refresh=False):
             
             enhanced['activity']['document_metrics']['total_documents'] = total_docs
             enhanced['document_count'] = total_docs  # Update flat field
-            # AI search size = pages × 80KB
-            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 80 * 1024  # 80KB per page
+            # AI search size = pages × 22KB
+            enhanced['activity']['document_metrics']['ai_search_size'] = total_pages * 22 * 1024  # 22KB per page
             
             debug_print(f"📄 [GROUP DOCUMENT DEBUG] Total documents for group {group_id}: {total_docs}")
-            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 80 * 1024} bytes")
+            debug_print(f"📊 [GROUP AI SEARCH DEBUG] Total pages for group {group_id}: {total_pages}, AI search size: {total_pages * 22 * 1024} bytes")
             
             # Last day upload tracking removed - keeping only document count and sizes
             debug_print(f"� [GROUP DOCUMENT DEBUG] Document metrics calculation complete for group {group_id}")
@@ -965,15 +978,15 @@ def enhance_group_with_activity(group, force_refresh=False):
                             total_storage_size += blob.size
                             blob_count += 1
                             debug_print(f"💾 [GROUP STORAGE DEBUG] Blob {blob.name}: {blob.size} bytes")
-                            current_app.logger.debug(f"Group storage blob {blob.name}: {blob.size} bytes")
+                            debug_print(f"Group storage blob {blob.name}: {blob.size} bytes")
                         
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Found {blob_count} blobs, total size: {total_storage_size} bytes")
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         enhanced['storage_size'] = total_storage_size  # Update flat field
-                        current_app.logger.debug(f"Total storage size for group {group_id}: {total_storage_size} bytes")
+                        debug_print(f"Total storage size for group {group_id}: {total_storage_size} bytes")
                     else:
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Storage client NOT available for group {group_id}")
-                        current_app.logger.debug(f"Storage client not available for group {group_id}")
+                        debug_print(f"Storage client not available for group {group_id}")
                         # Fallback to estimation if storage client not available
                         storage_size_query = """
                             SELECT c.file_name, c.number_of_pages FROM c 
@@ -1009,11 +1022,11 @@ def enhance_group_with_activity(group, force_refresh=False):
                         enhanced['activity']['document_metrics']['storage_account_size'] = total_storage_size
                         enhanced['storage_size'] = total_storage_size  # Update flat field
                         debug_print(f"💾 [GROUP STORAGE DEBUG] Fallback estimation complete: {total_storage_size} bytes")
-                        current_app.logger.debug(f"Estimated storage size for group {group_id}: {total_storage_size} bytes")
+                        debug_print(f"Estimated storage size for group {group_id}: {total_storage_size} bytes")
                     
                 except Exception as storage_e:
                     debug_print(f"❌ [GROUP STORAGE DEBUG] Storage calculation failed for group {group_id}: {storage_e}")
-                    current_app.logger.debug(f"Could not calculate storage size for group {group_id}: {storage_e}")
+                    debug_print(f"Could not calculate storage size for group {group_id}: {storage_e}")
                     # Set to 0 if we can't calculate
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
@@ -1037,7 +1050,7 @@ def enhance_group_with_activity(group, force_refresh=False):
         return enhanced
         
     except Exception as e:
-        current_app.logger.error(f"Error enhancing group data: {e}")
+        debug_print(f"Error enhancing group data: {e}")
         return group  # Return original group data if enhancement fails
 
 def get_activity_trends_data(start_date, end_date):
@@ -1063,10 +1076,18 @@ def get_activity_trends_data(start_date, end_date):
             date_key = current_date.strftime('%Y-%m-%d')
             daily_data[date_key] = {
                 'date': date_key,
-                'chats': 0,
-                'personal_documents': 0,  # Track personal documents separately
-                'group_documents': 0,     # Track group documents separately
-                'public_documents': 0,    # Track public documents separately
+                'chats_created': 0,
+                'chats_deleted': 0,
+                'chats': 0,  # Keep for backward compatibility
+                'personal_documents_created': 0,
+                'personal_documents_deleted': 0,
+                'group_documents_created': 0,
+                'group_documents_deleted': 0,
+                'public_documents_created': 0,
+                'public_documents_deleted': 0,
+                'personal_documents': 0,  # Keep for backward compatibility
+                'group_documents': 0,     # Keep for backward compatibility
+                'public_documents': 0,    # Keep for backward compatibility
                 'documents': 0,           # Keep for backward compatibility
                 'logins': 0,
                 'total': 0
@@ -1083,12 +1104,11 @@ def get_activity_trends_data(start_date, end_date):
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Query parameters: {parameters}")
         
-        # Query 1: Get chat activity from conversations and messages containers
+        # Query 1: Get chat activity from activity logs (both creation and deletion)
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying conversations...")
             
-            # Count conversations using activity_logs container (conversation_creation activity_type)
-            # This uses permanent activity log records instead of querying the conversations container
+            # Count conversation creations
             conversations_query = """
                 SELECT c.timestamp, c.created_at
                 FROM c 
@@ -1097,7 +1117,6 @@ def get_activity_trends_data(start_date, end_date):
                    OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Process conversations from activity logs
             conversations = list(cosmos_activity_logs_container.query_items(
                 query=conversations_query,
                 parameters=parameters,
@@ -1107,7 +1126,6 @@ def get_activity_trends_data(start_date, end_date):
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(conversations)} conversation creation logs")
             
             for conv in conversations:
-                # Use timestamp or created_at from activity log
                 timestamp = conv.get('timestamp') or conv.get('created_at')
                 if timestamp:
                     try:
@@ -1118,19 +1136,52 @@ def get_activity_trends_data(start_date, end_date):
                         
                         date_key = conv_date.strftime('%Y-%m-%d')
                         if date_key in daily_data:
-                            daily_data[date_key]['chats'] += 1
+                            daily_data[date_key]['chats_created'] += 1
+                            daily_data[date_key]['chats'] += 1  # Keep total for backward compatibility
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse conversation timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse conversation timestamp {timestamp}: {e}")
+            
+            # Count conversation deletions
+            deletions_query = """
+                SELECT c.timestamp, c.created_at
+                FROM c 
+                WHERE c.activity_type = 'conversation_deletion'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            deletions = list(cosmos_activity_logs_container.query_items(
+                query=deletions_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(deletions)} conversation deletion logs")
+            
+            for deletion in deletions:
+                timestamp = deletion.get('timestamp') or deletion.get('created_at')
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            del_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            del_date = timestamp
+                        
+                        date_key = del_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            daily_data[date_key]['chats_deleted'] += 1
+                    except Exception as e:
+                        debug_print(f"Could not parse deletion timestamp {timestamp}: {e}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query conversation activity logs: {e}")
+            debug_print(f"Could not query conversation activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying chats: {e}")
 
-        # Query 2: Get document activity from activity_logs container (document_creation activity_type)
-        # This uses permanent activity log records and unified workspace tracking
+        # Query 2: Get document activity from activity_logs (both creation and deletion)
         try:
             debug_print("🔍 [ACTIVITY TRENDS DEBUG] Querying documents from activity logs...")
             
+            # Document creations
             documents_query = """
                 SELECT c.timestamp, c.created_at, c.workspace_type
                 FROM c 
@@ -1139,7 +1190,6 @@ def get_activity_trends_data(start_date, end_date):
                    OR (c.created_at >= @start_date AND c.created_at <= @end_date))
             """
             
-            # Query activity logs for all document types
             docs = list(cosmos_activity_logs_container.query_items(
                 query=documents_query,
                 parameters=parameters,
@@ -1149,7 +1199,6 @@ def get_activity_trends_data(start_date, end_date):
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(docs)} document creation logs")
             
             for doc in docs:
-                # Use timestamp or created_at from activity log
                 timestamp = doc.get('timestamp') or doc.get('created_at')
                 workspace_type = doc.get('workspace_type', 'personal')
                 
@@ -1162,23 +1211,63 @@ def get_activity_trends_data(start_date, end_date):
                         
                         date_key = doc_date.strftime('%Y-%m-%d')
                         if date_key in daily_data:
-                            # Increment workspace-specific counter
                             if workspace_type == 'group':
+                                daily_data[date_key]['group_documents_created'] += 1
                                 daily_data[date_key]['group_documents'] += 1
                             elif workspace_type == 'public':
+                                daily_data[date_key]['public_documents_created'] += 1
                                 daily_data[date_key]['public_documents'] += 1
                             else:
+                                daily_data[date_key]['personal_documents_created'] += 1
                                 daily_data[date_key]['personal_documents'] += 1
                             
-                            # Keep total for backward compatibility
                             daily_data[date_key]['documents'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse document timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse document timestamp {timestamp}: {e}")
             
-            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)}")
+            # Document deletions
+            deletions_query = """
+                SELECT c.timestamp, c.created_at, c.workspace_type
+                FROM c 
+                WHERE c.activity_type = 'document_deletion'
+                AND ((c.timestamp >= @start_date AND c.timestamp <= @end_date)
+                   OR (c.created_at >= @start_date AND c.created_at <= @end_date))
+            """
+            
+            doc_deletions = list(cosmos_activity_logs_container.query_items(
+                query=deletions_query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Found {len(doc_deletions)} document deletion logs")
+            
+            for doc in doc_deletions:
+                timestamp = doc.get('timestamp') or doc.get('created_at')
+                workspace_type = doc.get('workspace_type', 'personal')
+                
+                if timestamp:
+                    try:
+                        if isinstance(timestamp, str):
+                            doc_date = datetime.fromisoformat(timestamp.replace('Z', '+00:00') if 'Z' in timestamp else timestamp)
+                        else:
+                            doc_date = timestamp
+                        
+                        date_key = doc_date.strftime('%Y-%m-%d')
+                        if date_key in daily_data:
+                            if workspace_type == 'group':
+                                daily_data[date_key]['group_documents_deleted'] += 1
+                            elif workspace_type == 'public':
+                                daily_data[date_key]['public_documents_deleted'] += 1
+                            else:
+                                daily_data[date_key]['personal_documents_deleted'] += 1
+                    except Exception as e:
+                        debug_print(f"Could not parse document deletion timestamp {timestamp}: {e}")
+            
+            debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Total documents found: {len(docs)} created, {len(doc_deletions)} deleted")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query document activity logs: {e}")
+            debug_print(f"Could not query document activity logs: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying documents: {e}")
 
         # Query 3: Get login activity from activity_logs container
@@ -1233,10 +1322,10 @@ def get_activity_trends_data(start_date, end_date):
                         if date_key in daily_data:
                             daily_data[date_key]['logins'] += 1
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse login timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse login timestamp {timestamp}: {e}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query activity logs for login data: {e}")
+            debug_print(f"Could not query activity logs for login data: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying logins: {e}")
 
         # Query 4: Get token usage from activity_logs (token_usage activity_type)
@@ -1286,12 +1375,12 @@ def get_activity_trends_data(start_date, end_date):
                         if date_key in token_daily_data:
                             token_daily_data[date_key][token_type] += token_count
                     except Exception as e:
-                        current_app.logger.debug(f"Could not parse token timestamp {timestamp}: {e}")
+                        debug_print(f"Could not parse token timestamp {timestamp}: {e}")
             
             debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Token daily data: {token_daily_data}")
                         
         except Exception as e:
-            current_app.logger.warning(f"Could not query activity logs for token usage: {e}")
+            debug_print(f"Could not query activity logs for token usage: {e}")
             print(f"❌ [ACTIVITY TRENDS DEBUG] Error querying tokens: {e}")
             # Initialize empty token data on error
             token_daily_data = {}
@@ -1312,20 +1401,36 @@ def get_activity_trends_data(start_date, end_date):
         # Group by activity type for chart display  
         result = {
             'chats': {},
+            'chats_created': {},
+            'chats_deleted': {},
             'documents': {},           # Keep for backward compatibility
-            'personal_documents': {},  # New: personal documents only
-            'group_documents': {},     # New: group documents only
-            'public_documents': {},    # New: public documents only
+            'personal_documents': {},  # Keep for backward compatibility
+            'group_documents': {},     # Keep for backward compatibility
+            'public_documents': {},    # Keep for backward compatibility
+            'personal_documents_created': {},
+            'personal_documents_deleted': {},
+            'group_documents_created': {},
+            'group_documents_deleted': {},
+            'public_documents_created': {},
+            'public_documents_deleted': {},
             'logins': {},
             'tokens': token_daily_data  # Token usage by type (embedding, chat)
         }
         
         for date_key, data in daily_data.items():
             result['chats'][date_key] = data['chats']
-            result['documents'][date_key] = data['documents']  # Total for backward compatibility
+            result['chats_created'][date_key] = data['chats_created']
+            result['chats_deleted'][date_key] = data['chats_deleted']
+            result['documents'][date_key] = data['documents']
             result['personal_documents'][date_key] = data['personal_documents']
             result['group_documents'][date_key] = data['group_documents']
             result['public_documents'][date_key] = data['public_documents']
+            result['personal_documents_created'][date_key] = data['personal_documents_created']
+            result['personal_documents_deleted'][date_key] = data['personal_documents_deleted']
+            result['group_documents_created'][date_key] = data['group_documents_created']
+            result['group_documents_deleted'][date_key] = data['group_documents_deleted']
+            result['public_documents_created'][date_key] = data['public_documents_created']
+            result['public_documents_deleted'][date_key] = data['public_documents_deleted']
             result['logins'][date_key] = data['logins']
         
         debug_print(f"🔍 [ACTIVITY TRENDS DEBUG] Final result: {result}")
@@ -1333,7 +1438,7 @@ def get_activity_trends_data(start_date, end_date):
         return result
 
     except Exception as e:
-        current_app.logger.error(f"Error getting activity trends data: {e}")
+        debug_print(f"Error getting activity trends data: {e}")
         print(f"❌ [ACTIVITY TRENDS DEBUG] Fatal error: {e}")
         return {
             'chats': {},
@@ -1934,7 +2039,7 @@ def get_raw_activity_trends_data(start_date, end_date, charts):
         return result
         
     except Exception as e:
-        current_app.logger.error(f"Error getting raw activity trends data: {e}")
+        debug_print(f"Error getting raw activity trends data: {e}")
         debug_print(f"❌ [RAW ACTIVITY DEBUG] Fatal error: {e}")
         return {}
 
@@ -1945,8 +2050,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_all_users():
         """
         Get all users with their settings, activity data, and access status.
@@ -2048,14 +2152,13 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting users: {e}")
+            debug_print(f"Error getting users: {e}")
             return jsonify({'error': 'Failed to retrieve users'}), 500
     
     @app.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_user_access(user_id):
         """
         Update user access permissions (allow/deny with optional time-based restriction).
@@ -2105,14 +2208,13 @@ def register_route_backend_control_center(app):
                 return jsonify({'error': 'Failed to update user access'}), 500
             
         except Exception as e:
-            current_app.logger.error(f"Error updating user access: {e}")
+            debug_print(f"Error updating user access: {e}")
             return jsonify({'error': 'Failed to update user access'}), 500
     
     @app.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_user_file_uploads(user_id):
         """
         Update user file upload permissions (allow/deny with optional time-based restriction).
@@ -2162,14 +2264,87 @@ def register_route_backend_control_center(app):
                 return jsonify({'error': 'Failed to update user file upload permissions'}), 500
             
         except Exception as e:
-            current_app.logger.error(f"Error updating user file uploads: {e}")
+            debug_print(f"Error updating user file uploads: {e}")
             return jsonify({'error': 'Failed to update user file upload permissions'}), 500
+    
+    @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_delete_user_documents_admin(user_id):
+        """
+        Create an approval request to delete all documents for a user.
+        Requires approval from another admin.
+        
+        Body:
+            reason (str): Explanation for deleting documents (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for document deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate user exists by trying to get their data from Cosmos
+            try:
+                user_doc = cosmos_user_settings_container.read_item(
+                    item=user_id,
+                    partition_key=user_id
+                )
+                user_email = user_doc.get('email', 'unknown')
+                user_name = user_doc.get('display_name', user_email)
+            except Exception:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Create approval request using user_id as both group_id (for partition) and storing user_id in metadata
+            from functions_approvals import create_approval_request, TYPE_DELETE_USER_DOCUMENTS
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_USER_DOCUMENTS,
+                group_id=user_id,  # Using user_id as partition key for user-related approvals
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'user_id': user_id,
+                    'user_name': user_name,
+                    'user_email': user_email
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete User Documents Request Created", {
+                "admin_user": admin_email,
+                "user_id": user_id,
+                "user_email": user_email,
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Document deletion request created successfully. Awaiting approval from another admin.',
+                'approval_id': approval['id']
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating user document deletion request: {e}")
+            log_event("[ControlCenter] Delete User Documents Request Failed", {
+                "error": str(e),
+                "user_id": user_id
+            })
+            return jsonify({'error': str(e)}), 500
     
     @app.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_bulk_user_action():
         """
         Perform bulk actions on multiple users (access control, file upload control).
@@ -2222,7 +2397,7 @@ def register_route_backend_control_center(app):
                     else:
                         failed_users.append(user_id)
                 except Exception as e:
-                    current_app.logger.error(f"Error updating user {user_id}: {e}")
+                    debug_print(f"Error updating user {user_id}: {e}")
                     failed_users.append(user_id)
             
             # Log admin action
@@ -2248,15 +2423,14 @@ def register_route_backend_control_center(app):
             return jsonify(result), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error performing bulk user action: {e}")
+            debug_print(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
     # Group Management APIs
     @app.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_all_groups():
         """
         Get all groups with their activity data and metrics.
@@ -2357,60 +2531,112 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting groups: {e}")
+            debug_print(f"Error getting groups: {e}")
             return jsonify({'error': 'Failed to retrieve groups'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_update_group_status(group_id):
         """
-        Update group status (active, locked, inactive, etc.)
+        Update group status (active, locked, upload_disabled, inactive)
+        Tracks who made the change and when, logs to activity_logs
         """
         try:
             data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
                 
-            status = data.get('status')
-            if not status:
+            new_status = data.get('status')
+            reason = data.get('reason')  # Optional reason for the status change
+            
+            if not new_status:
                 return jsonify({'error': 'Status is required'}), 400
+            
+            # Validate status values
+            valid_statuses = ['active', 'locked', 'upload_disabled', 'inactive']
+            if new_status not in valid_statuses:
+                return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
                 
             # Get the group
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
             except:
                 return jsonify({'error': 'Group not found'}), 404
-                
-            # Update group status (you may need to implement your own status logic)
-            group['status'] = status
-            group['modifiedDate'] = datetime.utcnow().isoformat()
             
-            # Update in database
-            cosmos_groups_container.upsert_item(group)
-            
-            # Log admin action
+            # Get admin user info
             admin_user = session.get('user', {})
-            log_event("[ControlCenter] Group Status Update", {
-                "admin_user": admin_user.get('preferred_username', 'unknown'),
-                "group_id": group_id,
-                "group_name": group.get('name'),
-                "new_status": status
-            })
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
             
-            return jsonify({'message': 'Group status updated successfully'}), 200
+            # Get old status for logging
+            old_status = group.get('status', 'active')  # Default to 'active' if not set
+            
+            # Only update and log if status actually changed
+            if old_status != new_status:
+                # Update group status
+                group['status'] = new_status
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                
+                # Add status change metadata
+                if 'statusHistory' not in group:
+                    group['statusHistory'] = []
+                
+                group['statusHistory'].append({
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'changed_by_user_id': admin_user_id,
+                    'changed_by_email': admin_email,
+                    'changed_at': datetime.utcnow().isoformat(),
+                    'reason': reason
+                })
+                
+                # Update in database
+                cosmos_groups_container.upsert_item(group)
+                
+                # Log to activity_logs container for audit trail
+                from functions_activity_logging import log_group_status_change
+                log_group_status_change(
+                    group_id=group_id,
+                    group_name=group.get('name', 'Unknown'),
+                    old_status=old_status,
+                    new_status=new_status,
+                    changed_by_user_id=admin_user_id,
+                    changed_by_email=admin_email,
+                    reason=reason
+                )
+                
+                # Log admin action (legacy logging)
+                log_event("[ControlCenter] Group Status Update", {
+                    "admin_user": admin_email,
+                    "admin_user_id": admin_user_id,
+                    "group_id": group_id,
+                    "group_name": group.get('name'),
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "reason": reason
+                })
+                
+                return jsonify({
+                    'message': 'Group status updated successfully',
+                    'old_status': old_status,
+                    'new_status': new_status
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Group status unchanged',
+                    'status': new_status
+                }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error updating group status: {e}")
+            debug_print(f"Error updating group status: {e}")
             return jsonify({'error': 'Failed to update group status'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_group_details_admin(group_id):
         """
         Get detailed information about a specific group
@@ -2428,93 +2654,658 @@ def register_route_backend_control_center(app):
             return jsonify(enhanced_group), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting group details: {e}")
+            debug_print(f"Error getting group details: {e}")
             return jsonify({'error': 'Failed to retrieve group details'}), 500
 
     @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_delete_group_admin(group_id):
         """
-        Delete a group and optionally its documents
+        Create an approval request to delete a group and all its documents.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting the group (required)
         """
         try:
             data = request.get_json() or {}
-            delete_documents = data.get('delete_documents', True)  # Default to True for safety
+            reason = data.get('reason', '').strip()
             
-            # Get the group first
+            if not reason:
+                return jsonify({'error': 'Reason is required for group deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate group exists
             try:
                 group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
             except:
                 return jsonify({'error': 'Group not found'}), 404
-                
-            # Initialize docs list
-            docs_to_delete = []
             
-            # If requested, delete all group documents
-            if delete_documents:
-                # Delete from group_documents container
-                docs_query = "SELECT c.id FROM c WHERE c.group_id = @group_id"
-                docs_params = [{"name": "@group_id", "value": group_id}]
-                
-                docs_to_delete = list(cosmos_group_documents_container.query_items(
-                    query=docs_query,
-                    parameters=docs_params,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in docs_to_delete:
-                    try:
-                        cosmos_group_documents_container.delete_item(
-                            item=doc['id'], 
-                            partition_key=doc['id']
-                        )
-                    except Exception as doc_e:
-                        current_app.logger.warning(f"Failed to delete document {doc['id']}: {doc_e}")
-                
-                # Delete files from Azure Storage
-                try:
-                    storage_client = CLIENTS.get("storage_account_office_docs_client")
-                    if storage_client:
-                        container_client = storage_client.get_container_client(storage_account_user_documents_container_name)
-                        group_folder_prefix = f"group-documents/{group_id}/"
-                        
-                        blob_list = container_client.list_blobs(name_starts_with=group_folder_prefix)
-                        for blob in blob_list:
-                            try:
-                                container_client.delete_blob(blob.name)
-                            except Exception as blob_e:
-                                current_app.logger.warning(f"Failed to delete blob {blob.name}: {blob_e}")
-                except Exception as storage_e:
-                    current_app.logger.warning(f"Error deleting storage files for group {group_id}: {storage_e}")
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_GROUP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'group_name': group.get('name'),
+                    'owner_id': group.get('owner', {}).get('id'),
+                    'owner_email': group.get('owner', {}).get('email')
+                }
+            )
             
-            # Delete the group
-            cosmos_groups_container.delete_item(item=group_id, partition_key=group_id)
-            
-            # Log admin action
-            admin_user = session.get('user', {})
-            log_event("[ControlCenter] Group Deletion", {
-                "admin_user": admin_user.get('preferred_username', 'unknown'),
+            # Log event
+            log_event("[ControlCenter] Delete Group Request Created", {
+                "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
-                "deleted_documents": delete_documents,
-                "document_count": len(docs_to_delete)
+                "approval_id": approval['id'],
+                "reason": reason
             })
             
-            return jsonify({'message': 'Group deleted successfully'}), 200
+            return jsonify({
+                'success': True,
+                'message': 'Group deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error deleting group: {e}")
-            return jsonify({'error': 'Failed to delete group'}), 500
+            debug_print(f"Error creating group deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_delete_group_documents_admin(group_id):
+        """
+        Create an approval request to delete all documents in a group.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting documents (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for document deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate group exists
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_DOCUMENTS,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'group_name': group.get('name')
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete Documents Request Created", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Document deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating document deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_get_group_members_admin(group_id):
+        """
+        Get list of group members for ownership transfer selection
+        """
+        try:
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Get member list with user details
+            members = []
+            for member in group.get('users', []):
+                # Skip the current owner from the list
+                if member.get('userId') == group.get('owner', {}).get('id'):
+                    continue
+                    
+                members.append({
+                    'userId': member.get('userId'),
+                    'email': member.get('email', 'No email'),
+                    'displayName': member.get('displayName', 'Unknown User')
+                })
+            
+            return jsonify({'members': members}), 200
+            
+        except Exception as e:
+            debug_print(f"Error getting group members: {e}")
+            return jsonify({'error': 'Failed to retrieve group members'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_take_group_ownership(group_id):
+        """
+        Create an approval request for admin to take ownership of a group.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            reason (str): Explanation for taking ownership (required)
+        """
+        try:
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            if not admin_user_id:
+                return jsonify({'error': 'Could not identify admin user'}), 400
+            
+            # Get request body
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
+            # Validate group exists
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_TAKE_OWNERSHIP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'old_owner_id': group.get('owner', {}).get('id'),
+                    'old_owner_email': group.get('owner', {}).get('email')
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Take Ownership Request Created", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Ownership transfer request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating take ownership request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_transfer_group_ownership(group_id):
+        """
+        Create an approval request to transfer group ownership to another member.
+        Requires approval from group owner or another admin.
+        
+        Body:
+            newOwnerId (str): User ID of the new owner (required)
+            reason (str): Explanation for ownership transfer (required)
+        """
+        try:
+            data = request.get_json()
+            new_owner_user_id = data.get('newOwnerId')
+            reason = data.get('reason', '').strip()
+            
+            if not new_owner_user_id:
+                return jsonify({'error': 'Missing newOwnerId'}), 400
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Find the new owner in members list
+            new_owner_member = None
+            for member in group.get('users', []):
+                if member.get('userId') == new_owner_user_id:
+                    new_owner_member = member
+                    break
+            
+            if not new_owner_member:
+                return jsonify({'error': 'Selected user is not a member of this group'}), 400
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_TRANSFER_OWNERSHIP,
+                group_id=group_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'new_owner_id': new_owner_user_id,
+                    'new_owner_email': new_owner_member.get('email'),
+                    'new_owner_name': new_owner_member.get('displayName'),
+                    'old_owner_id': group.get('owner', {}).get('id'),
+                    'old_owner_email': group.get('owner', {}).get('email')
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Transfer Ownership Request Created", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "new_owner": new_owner_member.get('email'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Ownership transfer request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating transfer ownership request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_add_group_member(group_id):
+        """
+        Admin adds a member to a group (used by both single add and CSV bulk upload)
+        """
+        try:
+            data = request.get_json()
+            user_id = data.get('userId')
+            # Support both 'name' (from CSV) and 'displayName' (from single add form)
+            name = data.get('displayName') or data.get('name')
+            email = data.get('email')
+            role = data.get('role', 'user').lower()
+            
+            if not user_id or not name or not email:
+                return jsonify({'error': 'Missing required fields: userId, name/displayName, email'}), 400
+            
+            # Validate role
+            valid_roles = ['admin', 'document_manager', 'user']
+            if role not in valid_roles:
+                return jsonify({'error': f'Invalid role. Must be: {", ".join(valid_roles)}'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            
+            # Get the group
+            try:
+                group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            except:
+                return jsonify({'error': 'Group not found'}), 404
+            
+            # Check if user already exists (skip duplicate)
+            existing_user = False
+            for member in group.get('users', []):
+                if member.get('userId') == user_id:
+                    existing_user = True
+                    break
+            
+            if existing_user:
+                return jsonify({
+                    'message': f'User {email} already exists in group',
+                    'skipped': True
+                }), 200
+            
+            # Add user to users array
+            group.setdefault('users', []).append({
+                'userId': user_id,
+                'email': email,
+                'displayName': name
+            })
+            
+            # Add to appropriate role array
+            if role == 'admin':
+                if user_id not in group.get('admins', []):
+                    group.setdefault('admins', []).append(user_id)
+            elif role == 'document_manager':
+                if user_id not in group.get('documentManagers', []):
+                    group.setdefault('documentManagers', []).append(user_id)
+            
+            # Update modification timestamp
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save group
+            cosmos_groups_container.upsert_item(group)
+            
+            # Determine the action source (single add vs bulk CSV)
+            source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
+            action_type = 'add_member_directly' if source == 'single' else 'admin_add_member_csv'
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': action_type,
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
+                'admin_email': admin_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'member_user_id': user_id,
+                'member_email': email,
+                'member_name': name,
+                'member_role': role,
+                'source': source,
+                'description': f"Admin {admin_email} added member {name} ({email}) to group {group.get('name', group_id)} as {role}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Add Group Member", {
+                "admin_user": admin_email,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "member_email": email,
+                "member_role": role
+            })
+            
+            return jsonify({
+                'message': f'Member {email} added successfully',
+                'skipped': False
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error adding group member: {e}")
+            return jsonify({'error': 'Failed to add member'}), 500
+
+    @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_get_group_activity(group_id):
+        """
+        Get activity timeline for a specific group from activity logs
+        Returns document creation/deletion, member changes, status changes, and conversations
+        """
+        try:
+            # Get time range filter (default: last 30 days)
+            days = request.args.get('days', '30')
+            
+            # Calculate date filter
+            cutoff_date = None
+            if days != 'all':
+                try:
+                    days_int = int(days)
+                    cutoff_date = (datetime.utcnow() - timedelta(days=days_int)).isoformat()
+                except ValueError:
+                    pass
+            
+            # Build queries - use two separate queries to avoid nested property access issues
+            # Query 1: Activities with c.group.group_id (member/status changes)
+            # Query 2: Activities with c.workspace_context.group_id (document operations)
+            
+            time_filter = "AND c.timestamp >= @cutoff_date" if cutoff_date else ""
+            
+            # Query 1: Member and status activities (all activity types with c.group.group_id)
+            # Use SELECT * to get complete raw documents for modal display
+            query1 = f"""
+                SELECT *
+                FROM c
+                WHERE c.group.group_id = @group_id
+                {time_filter}
+            """
+            
+            # Query 2: Document activities (all activity types with c.workspace_context.group_id)
+            # Use SELECT * to get complete raw documents for modal display
+            query2 = f"""
+                SELECT *
+                FROM c
+                WHERE c.workspace_context.group_id = @group_id
+                {time_filter}
+            """
+            
+            # Log the queries for debugging
+            debug_print(f"[Group Activity] Querying for group: {group_id}, days: {days}")
+            debug_print(f"[Group Activity] Query 1: {query1}")
+            debug_print(f"[Group Activity] Query 2: {query2}")
+            
+            parameters = [
+                {"name": "@group_id", "value": group_id}
+            ]
+            
+            if cutoff_date:
+                parameters.append({"name": "@cutoff_date", "value": cutoff_date})
+            
+            debug_print(f"[Group Activity] Parameters: {parameters}")
+            
+            # Execute both queries
+            activities = []
+            
+            try:
+                # Query 1: Member and status activities
+                activities1 = list(cosmos_activity_logs_container.query_items(
+                    query=query1,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"[Group Activity] Query 1 returned {len(activities1)} activities")
+                activities.extend(activities1)
+            except Exception as e:
+                debug_print(f"[Group Activity] Query 1 failed: {e}")
+            
+            try:
+                # Query 2: Document activities
+                activities2 = list(cosmos_activity_logs_container.query_items(
+                    query=query2,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"[Group Activity] Query 2 returned {len(activities2)} activities")
+                activities.extend(activities2)
+            except Exception as e:
+                debug_print(f"[Group Activity] Query 2 failed: {e}")
+            
+            # Sort combined results by timestamp descending
+            activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            
+            # Format activities for timeline display
+            formatted_activities = []
+            for activity in activities:
+                formatted = {
+                    'id': activity.get('id'),
+                    'type': activity.get('activity_type'),
+                    'timestamp': activity.get('timestamp'),
+                    'user_id': activity.get('user_id'),
+                    'description': activity.get('description', '')
+                }
+                
+                # Add type-specific details
+                activity_type = activity.get('activity_type')
+                
+                if activity_type == 'document_creation':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type'),
+                        'file_size_bytes': doc.get('file_size_bytes'),
+                        'page_count': doc.get('page_count')
+                    }
+                    formatted['icon'] = 'file-earmark-plus'
+                    formatted['color'] = 'success'
+                
+                elif activity_type == 'document_deletion':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type')
+                    }
+                    formatted['icon'] = 'file-earmark-minus'
+                    formatted['color'] = 'danger'
+                
+                elif activity_type == 'document_metadata_update':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name')
+                    }
+                    formatted['icon'] = 'pencil-square'
+                    formatted['color'] = 'info'
+                
+                elif activity_type == 'group_member_added':
+                    added_by = activity.get('added_by', {})
+                    added_member = activity.get('added_member', {})
+                    formatted['member'] = {
+                        'name': added_member.get('name'),
+                        'email': added_member.get('email'),
+                        'role': added_member.get('role')
+                    }
+                    formatted['added_by'] = {
+                        'email': added_by.get('email'),
+                        'role': added_by.get('role')
+                    }
+                    formatted['icon'] = 'person-plus'
+                    formatted['color'] = 'primary'
+                
+                elif activity_type == 'group_member_deleted':
+                    removed_by = activity.get('removed_by', {})
+                    removed_member = activity.get('removed_member', {})
+                    formatted['member'] = {
+                        'name': removed_member.get('name'),
+                        'email': removed_member.get('email')
+                    }
+                    formatted['removed_by'] = {
+                        'email': removed_by.get('email'),
+                        'role': removed_by.get('role')
+                    }
+                    formatted['icon'] = 'person-dash'
+                    formatted['color'] = 'warning'
+                
+                elif activity_type == 'group_status_change':
+                    status_change = activity.get('status_change', {})
+                    formatted['status_change'] = {
+                        'from_status': status_change.get('old_status'),  # Use old_status from log
+                        'to_status': status_change.get('new_status')    # Use new_status from log
+                    }
+                    formatted['icon'] = 'shield-lock'
+                    formatted['color'] = 'secondary'
+                
+                elif activity_type == 'conversation_creation':
+                    formatted['icon'] = 'chat-dots'
+                    formatted['color'] = 'info'
+                
+                elif activity_type == 'token_usage':
+                    usage = activity.get('usage', {})
+                    formatted['token_usage'] = {
+                        'total_tokens': usage.get('total_tokens'),
+                        'prompt_tokens': usage.get('prompt_tokens'),
+                        'completion_tokens': usage.get('completion_tokens'),
+                        'model': usage.get('model'),
+                        'token_type': activity.get('token_type')  # 'chat' or 'embedding'
+                    }
+                    # Add chat details if available
+                    chat_details = activity.get('chat_details', {})
+                    if chat_details:
+                        formatted['token_usage']['conversation_id'] = chat_details.get('conversation_id')
+                        formatted['token_usage']['message_id'] = chat_details.get('message_id')
+                    # Add embedding details if available
+                    embedding_details = activity.get('embedding_details', {})
+                    if embedding_details:
+                        formatted['token_usage']['document_id'] = embedding_details.get('document_id')
+                        formatted['token_usage']['file_name'] = embedding_details.get('file_name')
+                    formatted['icon'] = 'cpu'
+                    formatted['color'] = 'info'
+                
+                else:
+                    # Fallback for unknown activity types - still show them!
+                    formatted['icon'] = 'circle'
+                    formatted['color'] = 'secondary'
+                    # Keep any additional data that might be in the activity
+                    if activity.get('status_change'):
+                        formatted['status_change'] = activity.get('status_change')
+                    if activity.get('document'):
+                        formatted['document'] = activity.get('document')
+                    if activity.get('group'):
+                        formatted['group'] = activity.get('group')
+                
+                formatted_activities.append(formatted)
+            
+            return jsonify({
+                'group_id': group_id,
+                'activities': formatted_activities,
+                'raw_activities': activities,  # Include raw activities for modal display
+                'count': len(formatted_activities),
+                'time_range_days': days
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error fetching group activity: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
     # Public Workspaces API
     @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_control_center_public_workspaces():
         """
         Get paginated list of public workspaces with activity data for control center management.
@@ -2578,7 +3369,7 @@ def register_route_backend_control_center(app):
                     enhanced_workspace = enhance_public_workspace_with_activity(workspace, force_refresh=force_refresh)
                     enhanced_workspaces.append(enhanced_workspace)
                 except Exception as enhance_e:
-                    current_app.logger.error(f"Error enhancing workspace {workspace.get('id', 'unknown')}: {enhance_e}")
+                    debug_print(f"Error enhancing workspace {workspace.get('id', 'unknown')}: {enhance_e}")
                     # Include the original workspace if enhancement fails
                     enhanced_workspaces.append(workspace)
             
@@ -2613,15 +3404,1133 @@ def register_route_backend_control_center(app):
                 })
             
         except Exception as e:
-            current_app.logger.error(f"Error getting public workspaces for control center: {e}")
+            debug_print(f"Error getting public workspaces for control center: {e}")
             return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_update_public_workspace_status(workspace_id):
+        """
+        Update public workspace status (active, locked, upload_disabled, inactive)
+        Tracks who made the change and when, logs to activity_logs
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            new_status = data.get('status')
+            reason = data.get('reason')  # Optional reason for the status change
+            
+            if not new_status:
+                return jsonify({'error': 'Status is required'}), 400
+            
+            # Validate status values
+            valid_statuses = ['active', 'locked', 'upload_disabled', 'inactive']
+            if new_status not in valid_statuses:
+                return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+                
+            # Get the workspace
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Get admin user info
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
+            
+            # Get old status for logging
+            old_status = workspace.get('status', 'active')  # Default to 'active' if not set
+            
+            # Only update and log if status actually changed
+            if old_status != new_status:
+                # Update workspace status
+                workspace['status'] = new_status
+                workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                
+                # Add status change metadata
+                if 'statusHistory' not in workspace:
+                    workspace['statusHistory'] = []
+                
+                workspace['statusHistory'].append({
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'changed_by_user_id': admin_user_id,
+                    'changed_by_email': admin_email,
+                    'changed_at': datetime.utcnow().isoformat(),
+                    'reason': reason
+                })
+                
+                # Update in database
+                cosmos_public_workspaces_container.upsert_item(workspace)
+                
+                # Log to activity_logs container for audit trail
+                from functions_activity_logging import log_public_workspace_status_change
+                log_public_workspace_status_change(
+                    workspace_id=workspace_id,
+                    workspace_name=workspace.get('name', 'Unknown'),
+                    old_status=old_status,
+                    new_status=new_status,
+                    changed_by_user_id=admin_user_id,
+                    changed_by_email=admin_email,
+                    reason=reason
+                )
+                
+                # Log admin action (legacy logging)
+                log_event("[ControlCenter] Public Workspace Status Update", {
+                    "admin_user": admin_email,
+                    "admin_user_id": admin_user_id,
+                    "workspace_id": workspace_id,
+                    "workspace_name": workspace.get('name'),
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "reason": reason
+                })
+                
+                return jsonify({
+                    'message': 'Public workspace status updated successfully',
+                    'old_status': old_status,
+                    'new_status': new_status
+                }), 200
+            else:
+                return jsonify({
+                    'message': 'Status unchanged',
+                    'status': new_status
+                }), 200
+                
+        except Exception as e:
+            debug_print(f"Error updating public workspace status: {e}")
+            return jsonify({'error': 'Failed to update public workspace status'}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_bulk_public_workspace_action():
+        """
+        Perform bulk actions on multiple public workspaces.
+        Actions: lock, unlock, disable_uploads, enable_uploads, delete_documents
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+                
+            workspace_ids = data.get('workspace_ids', [])
+            action = data.get('action')
+            reason = data.get('reason')  # Optional reason
+            
+            if not workspace_ids or not isinstance(workspace_ids, list):
+                return jsonify({'error': 'workspace_ids must be a non-empty array'}), 400
+                
+            if not action:
+                return jsonify({'error': 'Action is required'}), 400
+            
+            # Validate action
+            valid_actions = ['lock', 'unlock', 'disable_uploads', 'enable_uploads', 'delete_documents']
+            if action not in valid_actions:
+                return jsonify({'error': f'Invalid action. Must be one of: {", ".join(valid_actions)}'}), 400
+            
+            # Get admin user info
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid', 'unknown')
+            admin_email = admin_user.get('preferred_username', 'unknown')
+            
+            # Map actions to status values
+            action_to_status = {
+                'lock': 'locked',
+                'unlock': 'active',
+                'disable_uploads': 'upload_disabled',
+                'enable_uploads': 'active'
+            }
+            
+            successful = []
+            failed = []
+            
+            for workspace_id in workspace_ids:
+                try:
+                    # Get the workspace
+                    workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+                    
+                    if action == 'delete_documents':
+                        # Delete all documents for this workspace
+                        # Query all documents
+                        doc_query = "SELECT c.id FROM c WHERE c.public_workspace_id = @workspace_id"
+                        doc_params = [{"name": "@workspace_id", "value": workspace_id}]
+                        
+                        docs_to_delete = list(cosmos_public_documents_container.query_items(
+                            query=doc_query,
+                            parameters=doc_params,
+                            enable_cross_partition_query=True
+                        ))
+                        
+                        deleted_count = 0
+                        for doc in docs_to_delete:
+                            try:
+                                delete_document_chunks(doc['id'])
+                                delete_document(doc['id'])
+                                deleted_count += 1
+                            except Exception as del_e:
+                                debug_print(f"Error deleting document {doc['id']}: {del_e}")
+                        
+                        successful.append({
+                            'workspace_id': workspace_id,
+                            'workspace_name': workspace.get('name', 'Unknown'),
+                            'action': action,
+                            'documents_deleted': deleted_count
+                        })
+                        
+                        # Log the action
+                        log_event("[ControlCenter] Bulk Public Workspace Documents Deleted", {
+                            "admin_user": admin_email,
+                            "admin_user_id": admin_user_id,
+                            "workspace_id": workspace_id,
+                            "workspace_name": workspace.get('name'),
+                            "documents_deleted": deleted_count,
+                            "reason": reason
+                        })
+                        
+                    else:
+                        # Status change action
+                        new_status = action_to_status[action]
+                        old_status = workspace.get('status', 'active')
+                        
+                        if old_status != new_status:
+                            workspace['status'] = new_status
+                            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                            
+                            # Add status history
+                            if 'statusHistory' not in workspace:
+                                workspace['statusHistory'] = []
+                            
+                            workspace['statusHistory'].append({
+                                'old_status': old_status,
+                                'new_status': new_status,
+                                'changed_by_user_id': admin_user_id,
+                                'changed_by_email': admin_email,
+                                'changed_at': datetime.utcnow().isoformat(),
+                                'reason': reason,
+                                'bulk_action': True
+                            })
+                            
+                            cosmos_public_workspaces_container.upsert_item(workspace)
+                            
+                            # Log activity
+                            from functions_activity_logging import log_public_workspace_status_change
+                            log_public_workspace_status_change(
+                                workspace_id=workspace_id,
+                                workspace_name=workspace.get('name', 'Unknown'),
+                                old_status=old_status,
+                                new_status=new_status,
+                                changed_by_user_id=admin_user_id,
+                                changed_by_email=admin_email,
+                                reason=f"Bulk action: {reason}" if reason else "Bulk action"
+                            )
+                        
+                        successful.append({
+                            'workspace_id': workspace_id,
+                            'workspace_name': workspace.get('name', 'Unknown'),
+                            'action': action,
+                            'old_status': old_status,
+                            'new_status': new_status
+                        })
+                    
+                except Exception as e:
+                    failed.append({
+                        'workspace_id': workspace_id,
+                        'error': str(e)
+                    })
+                    debug_print(f"Error processing workspace {workspace_id}: {e}")
+            
+            return jsonify({
+                'message': 'Bulk action completed',
+                'successful': successful,
+                'failed': failed,
+                'summary': {
+                    'total': len(workspace_ids),
+                    'success': len(successful),
+                    'failed': len(failed)
+                }
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error performing bulk public workspace action: {e}")
+            return jsonify({'error': 'Failed to perform bulk action'}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_get_public_workspace_details(workspace_id):
+        """
+        Get detailed information about a specific public workspace.
+        """
+        try:
+            # Get the workspace
+            workspace = cosmos_public_workspaces_container.read_item(
+                item=workspace_id,
+                partition_key=workspace_id
+            )
+            
+            # Enhance with activity information
+            enhanced_workspace = enhance_public_workspace_with_activity(workspace)
+            
+            return jsonify(enhanced_workspace), 200
+            
+        except Exception as e:
+            debug_print(f"Error getting public workspace details: {e}")
+            return jsonify({'error': 'Failed to retrieve workspace details'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_get_public_workspace_members(workspace_id):
+        """
+        Get all members of a specific public workspace with their roles.
+        Returns admins, document managers, and owner information.
+        """
+        try:
+            # Get the workspace
+            workspace = cosmos_public_workspaces_container.read_item(
+                item=workspace_id,
+                partition_key=workspace_id
+            )
+            
+            # Create members list with roles
+            members = []
+            
+            # Add owner - owner is an object with userId, email, displayName
+            owner = workspace.get('owner')
+            if owner:
+                members.append({
+                    'userId': owner.get('userId', ''),
+                    'email': owner.get('email', ''),
+                    'displayName': owner.get('displayName', owner.get('email', 'Unknown')),
+                    'role': 'owner'
+                })
+            
+            # Add admins - admins is an array of objects with userId, email, displayName
+            admins = workspace.get('admins', [])
+            for admin in admins:
+                # Handle both object format and string format (for backward compatibility)
+                if isinstance(admin, dict):
+                    members.append({
+                        'userId': admin.get('userId', ''),
+                        'email': admin.get('email', ''),
+                        'displayName': admin.get('displayName', admin.get('email', 'Unknown')),
+                        'role': 'admin'
+                    })
+                else:
+                    # Legacy format where admin is just a userId string
+                    try:
+                        user = cosmos_user_settings_container.read_item(
+                            item=admin,
+                            partition_key=admin
+                        )
+                        members.append({
+                            'userId': admin,
+                            'email': user.get('email', ''),
+                            'displayName': user.get('display_name', user.get('email', '')),
+                            'role': 'admin'
+                        })
+                    except:
+                        pass
+            
+            # Add document managers - documentManagers is an array of objects with userId, email, displayName
+            doc_managers = workspace.get('documentManagers', [])
+            for dm in doc_managers:
+                # Handle both object format and string format (for backward compatibility)
+                if isinstance(dm, dict):
+                    members.append({
+                        'userId': dm.get('userId', ''),
+                        'email': dm.get('email', ''),
+                        'displayName': dm.get('displayName', dm.get('email', 'Unknown')),
+                        'role': 'documentManager'
+                    })
+                else:
+                    # Legacy format where documentManager is just a userId string
+                    try:
+                        user = cosmos_user_settings_container.read_item(
+                            item=dm,
+                            partition_key=dm
+                        )
+                        members.append({
+                            'userId': dm,
+                            'email': user.get('email', ''),
+                            'displayName': user.get('display_name', user.get('email', '')),
+                            'role': 'documentManager'
+                        })
+                    except:
+                        pass
+            
+            return jsonify({
+                'success': True,
+                'members': members,
+                'workspace_name': workspace.get('name', 'Unknown')
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error getting workspace members: {e}")
+            return jsonify({'error': 'Failed to retrieve workspace members'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_add_workspace_member(workspace_id):
+        """
+        Admin adds a member to a public workspace (used by both single add and CSV bulk upload)
+        """
+        try:
+            data = request.get_json()
+            user_id = data.get('userId')
+            name = data.get('displayName') or data.get('name')
+            email = data.get('email')
+            role = data.get('role', 'user').lower()
+            
+            if not user_id or not name or not email:
+                return jsonify({'error': 'Missing required fields: userId, name/displayName, email'}), 400
+            
+            # Validate role
+            valid_roles = ['admin', 'document_manager', 'user']
+            if role not in valid_roles:
+                return jsonify({'error': f'Invalid role. Must be: {", ".join(valid_roles)}'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            
+            # Get the workspace
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Check if user already exists
+            owner = workspace.get('owner', {})
+            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+            admins = workspace.get('admins', [])
+            doc_managers = workspace.get('documentManagers', [])
+            
+            # Extract user IDs from arrays (handle both object and string formats)
+            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+            
+            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                return jsonify({
+                    'message': f'User {email} already exists in workspace',
+                    'skipped': True
+                }), 200
+            
+            # Create full user object
+            user_obj = {
+                'userId': user_id,
+                'displayName': name,
+                'email': email
+            }
+            
+            # Add to appropriate role array with full user object
+            if role == 'admin':
+                workspace.setdefault('admins', []).append(user_obj)
+            elif role == 'document_manager':
+                workspace.setdefault('documentManagers', []).append(user_obj)
+            # Note: 'user' role doesn't have a separate array in public workspaces
+            # They are implicit members through document access
+            
+            # Update modification timestamp
+            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save workspace
+            cosmos_public_workspaces_container.upsert_item(workspace)
+            
+            # Determine the action source
+            source = data.get('source', 'csv')
+            action_type = 'add_workspace_member_directly' if source == 'single' else 'admin_add_workspace_member_csv'
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': activity_type,
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
+                'admin_email': admin_email,
+                'workspace_id': workspace_id,
+                'workspace_name': workspace.get('name', 'Unknown'),
+                'member_user_id': user_id,
+                'member_email': email,
+                'member_name': name,
+                'member_role': role,
+                'source': source,
+                'description': f"Admin {admin_email} added member {name} ({email}) to workspace {workspace.get('name', workspace_id)} as {role}",
+                'workspace_context': {
+                    'public_workspace_id': workspace_id
+                }
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Add Workspace Member", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "member_email": email,
+                "member_role": role
+            })
+            
+            return jsonify({
+                'message': f'Member {email} added successfully',
+                'skipped': False
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error adding workspace member: {e}")
+            return jsonify({'error': 'Failed to add workspace member'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_add_workspace_member_single(workspace_id):
+        """
+        Admin adds a single member to a public workspace via the Add Member modal
+        """
+        try:
+            data = request.get_json()
+            user_id = data.get('userId')
+            display_name = data.get('displayName')
+            email = data.get('email')
+            role = data.get('role', 'document_manager').lower()
+            
+            if not user_id or not display_name or not email:
+                return jsonify({'error': 'Missing required fields: userId, displayName, email'}), 400
+            
+            # Validate role - workspaces only support admin and document_manager
+            valid_roles = ['admin', 'document_manager']
+            if role not in valid_roles:
+                return jsonify({'error': f'Invalid role. Must be: {", ".join(valid_roles)}'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            
+            # Get the workspace
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Check if user already exists
+            owner = workspace.get('owner', {})
+            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+            admins = workspace.get('admins', [])
+            doc_managers = workspace.get('documentManagers', [])
+            
+            # Extract user IDs from arrays (handle both object and string formats)
+            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+            
+            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                return jsonify({
+                    'error': f'User {email} already exists in workspace'
+                }), 400
+            
+            # Add to appropriate role array with full user info
+            user_obj = {
+                'userId': user_id,
+                'displayName': display_name,
+                'email': email
+            }
+            
+            if role == 'admin':
+                workspace.setdefault('admins', []).append(user_obj)
+            elif role == 'document_manager':
+                workspace.setdefault('documentManagers', []).append(user_obj)
+            
+            # Update modification timestamp
+            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+            
+            # Save workspace
+            cosmos_public_workspaces_container.upsert_item(workspace)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': 'add_workspace_member_directly',
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
+                'admin_email': admin_email,
+                'workspace_id': workspace_id,
+                'workspace_name': workspace.get('name', 'Unknown'),
+                'member_user_id': user_id,
+                'member_email': email,
+                'member_name': display_name,
+                'member_role': role,
+                'source': 'single',
+                'description': f"Admin {admin_email} added member {display_name} ({email}) to workspace {workspace.get('name', workspace_id)} as {role}",
+                'workspace_context': {
+                    'public_workspace_id': workspace_id
+                }
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to Application Insights
+            log_event("[ControlCenter] Admin Add Workspace Member (Single)", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "member_email": email,
+                "member_role": role
+            })
+            
+            return jsonify({
+                'message': f'Successfully added {display_name} as {role}',
+                'success': True
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error adding workspace member: {e}")
+            return jsonify({'error': 'Failed to add workspace member'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_get_public_workspace_activity(workspace_id):
+        """
+        Get activity timeline for a specific public workspace from activity logs
+        Returns document creation/deletion, member changes, status changes, and conversations
+        """
+        try:
+            # Get time range filter (default: last 30 days)
+            days = request.args.get('days', '30')
+            export = request.args.get('export', 'false').lower() == 'true'
+            
+            # Calculate date filter
+            cutoff_date = None
+            if days != 'all':
+                try:
+                    days_int = int(days)
+                    cutoff_date = (datetime.utcnow() - timedelta(days=days_int)).isoformat()
+                except ValueError:
+                    pass
+            
+            time_filter = "AND c.timestamp >= @cutoff_date" if cutoff_date else ""
+            
+            # Query: All activities for public workspaces (no activity type filter to show everything)
+            # Use SELECT * to get complete raw documents for modal display
+            query = f"""
+                SELECT *
+                FROM c
+                WHERE c.workspace_context.public_workspace_id = @workspace_id
+                {time_filter}
+                ORDER BY c.timestamp DESC
+            """
+            
+            # Log the query for debugging
+            debug_print(f"[Workspace Activity] Querying for workspace: {workspace_id}, days: {days}")
+            debug_print(f"[Workspace Activity] Query: {query}")
+            
+            parameters = [
+                {"name": "@workspace_id", "value": workspace_id}
+            ]
+            
+            if cutoff_date:
+                parameters.append({"name": "@cutoff_date", "value": cutoff_date})
+            
+            debug_print(f"[Workspace Activity] Parameters: {parameters}")
+            
+            # Execute query
+            activities = list(cosmos_activity_logs_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"[Workspace Activity] Query returned {len(activities)} activities")
+            
+            # Format activities for timeline display
+            formatted_activities = []
+            for activity in activities:
+                formatted = {
+                    'id': activity.get('id'),
+                    'type': activity.get('activity_type'),
+                    'timestamp': activity.get('timestamp'),
+                    'user_id': activity.get('user_id'),
+                    'description': activity.get('description', '')
+                }
+                
+                # Add type-specific details
+                activity_type = activity.get('activity_type')
+                
+                if activity_type == 'document_creation':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type'),
+                        'file_size_bytes': doc.get('file_size_bytes'),
+                        'page_count': doc.get('page_count')
+                    }
+                    formatted['icon'] = 'file-earmark-plus'
+                    formatted['color'] = 'success'
+                
+                elif activity_type == 'document_deletion':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name'),
+                        'file_type': doc.get('file_type')
+                    }
+                    formatted['icon'] = 'file-earmark-minus'
+                    formatted['color'] = 'danger'
+                
+                elif activity_type == 'document_metadata_update':
+                    doc = activity.get('document', {})
+                    formatted['document'] = {
+                        'file_name': doc.get('file_name')
+                    }
+                    formatted['icon'] = 'pencil-square'
+                    formatted['color'] = 'info'
+                
+                elif activity_type == 'public_workspace_status_change':
+                    status_change = activity.get('status_change', {})
+                    formatted['status_change'] = {
+                        'from_status': status_change.get('old_status'),
+                        'to_status': status_change.get('new_status'),
+                        'changed_by': activity.get('changed_by')
+                    }
+                    formatted['icon'] = 'shield-check'
+                    formatted['color'] = 'warning'
+                
+                elif activity_type == 'token_usage':
+                    usage = activity.get('usage', {})
+                    formatted['token_usage'] = {
+                        'total_tokens': usage.get('total_tokens'),
+                        'prompt_tokens': usage.get('prompt_tokens'),
+                        'completion_tokens': usage.get('completion_tokens'),
+                        'model': usage.get('model'),
+                        'token_type': activity.get('token_type')  # 'chat' or 'embedding'
+                    }
+                    # Add chat details if available
+                    chat_details = activity.get('chat_details', {})
+                    if chat_details:
+                        formatted['token_usage']['conversation_id'] = chat_details.get('conversation_id')
+                        formatted['token_usage']['message_id'] = chat_details.get('message_id')
+                    # Add embedding details if available
+                    embedding_details = activity.get('embedding_details', {})
+                    if embedding_details:
+                        formatted['token_usage']['document_id'] = embedding_details.get('document_id')
+                        formatted['token_usage']['file_name'] = embedding_details.get('file_name')
+                    formatted['icon'] = 'cpu'
+                    formatted['color'] = 'info'
+                
+                else:
+                    # Fallback for unknown activity types - still show them!
+                    formatted['icon'] = 'circle'
+                    formatted['color'] = 'secondary'
+                    # Keep any additional data that might be in the activity
+                    if activity.get('status_change'):
+                        formatted['status_change'] = activity.get('status_change')
+                    if activity.get('document'):
+                        formatted['document'] = activity.get('document')
+                    if activity.get('workspace_context'):
+                        formatted['workspace_context'] = activity.get('workspace_context')
+                
+                formatted_activities.append(formatted)
+            
+            if export:
+                # Return CSV for export
+                import io
+                import csv
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(['Timestamp', 'Type', 'User ID', 'Description', 'Details'])
+                for activity in formatted_activities:
+                    details = ''
+                    if activity.get('document'):
+                        doc = activity['document']
+                        details = f"{doc.get('file_name', '')} - {doc.get('file_type', '')}"
+                    elif activity.get('status_change'):
+                        sc = activity['status_change']
+                        details = f"{sc.get('from_status', '')} -> {sc.get('to_status', '')}"
+                    
+                    writer.writerow([
+                        activity['timestamp'],
+                        activity['type'],
+                        activity['user_id'],
+                        activity['description'],
+                        details
+                    ])
+                
+                csv_content = output.getvalue()
+                output.close()
+                
+                from flask import make_response
+                response = make_response(csv_content)
+                response.headers['Content-Type'] = 'text/csv'
+                response.headers['Content-Disposition'] = f'attachment; filename="workspace_{workspace_id}_activity.csv"'
+                return response
+            
+            return jsonify({
+                'success': True,
+                'activities': formatted_activities,
+                'raw_activities': activities  # Include raw activities for modal display
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error getting workspace activity: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to retrieve workspace activity'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_take_workspace_ownership(workspace_id):
+        """
+        Create an approval request for admin to take ownership of a public workspace.
+        Requires approval from workspace owner or another admin.
+        
+        Body:
+            reason (str): Explanation for taking ownership (required)
+        """
+        try:
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            if not admin_user_id:
+                return jsonify({'error': 'Could not identify admin user'}), 400
+            
+            # Get request body
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
+            # Validate workspace exists
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Workspace not found'}), 404
+            
+            # Get old owner info
+            old_owner = workspace.get('owner', {})
+            if isinstance(old_owner, dict):
+                old_owner_id = old_owner.get('userId')
+                old_owner_email = old_owner.get('email')
+            else:
+                old_owner_id = old_owner
+                old_owner_email = 'unknown'
+            
+            # Create approval request (use group_id parameter as partition key for workspace)
+            approval = create_approval_request(
+                request_type=TYPE_TAKE_OWNERSHIP,
+                group_id=workspace_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'old_owner_id': old_owner_id,
+                    'old_owner_email': old_owner_email,
+                    'entity_type': 'workspace'
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Take Workspace Ownership Request Created", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Ownership transfer request created and pending approval',
+                'approval_id': approval['id'],
+                'requires_approval': True,
+                'status': 'pending'
+            }), 201
+            
+        except Exception as e:
+            debug_print(f"Error creating take workspace ownership request: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_update_public_workspace_ownership(workspace_id):
+        """
+        Create an approval request to transfer public workspace ownership to another member.
+        Requires approval from workspace owner or another admin.
+        
+        Body:
+            newOwnerId (str): User ID of the new owner (required)
+            reason (str): Explanation for ownership transfer (required)
+        """
+        try:
+            data = request.get_json()
+            new_owner_user_id = data.get('newOwnerId')
+            reason = data.get('reason', '').strip()
+            
+            if not new_owner_user_id:
+                return jsonify({'error': 'Missing newOwnerId'}), 400
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for ownership transfer'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Get the workspace
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Workspace not found'}), 404
+            
+            # Get new owner user details
+            try:
+                new_owner_user = cosmos_user_settings_container.read_item(
+                    item=new_owner_user_id,
+                    partition_key=new_owner_user_id
+                )
+                new_owner_email = new_owner_user.get('email', 'unknown')
+                new_owner_name = new_owner_user.get('display_name', new_owner_email)
+            except:
+                return jsonify({'error': 'New owner user not found'}), 404
+            
+            # Check if new owner is a member of the workspace
+            is_member = False
+            current_owner = workspace.get('owner', {})
+            if isinstance(current_owner, dict):
+                if current_owner.get('userId') == new_owner_user_id:
+                    is_member = True
+            elif current_owner == new_owner_user_id:
+                is_member = True
+            
+            # Check admins
+            for admin in workspace.get('admins', []):
+                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                if admin_id == new_owner_user_id:
+                    is_member = True
+                    break
+            
+            # Check documentManagers
+            if not is_member:
+                for dm in workspace.get('documentManagers', []):
+                    dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                    if dm_id == new_owner_user_id:
+                        is_member = True
+                        break
+            
+            if not is_member:
+                return jsonify({'error': 'Selected user is not a member of this workspace'}), 400
+            
+            # Get old owner info
+            old_owner_id = None
+            old_owner_email = None
+            if isinstance(current_owner, dict):
+                old_owner_id = current_owner.get('userId')
+                old_owner_email = current_owner.get('email')
+            else:
+                old_owner_id = current_owner
+            
+            # Create approval request (use group_id parameter as partition key for workspace)
+            approval = create_approval_request(
+                request_type=TYPE_TRANSFER_OWNERSHIP,
+                group_id=workspace_id,
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'new_owner_id': new_owner_user_id,
+                    'new_owner_email': new_owner_email,
+                    'new_owner_name': new_owner_name,
+                    'old_owner_id': old_owner_id,
+                    'old_owner_email': old_owner_email,
+                    'entity_type': 'workspace'
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Transfer Workspace Ownership Request Created", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "new_owner": new_owner_email,
+                "old_owner_id": old_owner_id,
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'message': 'Ownership transfer approval request created',
+                'approval_id': approval['id'],
+                'requires_approval': True
+            }), 201
+            
+        except Exception as e:
+            debug_print(f"Error creating workspace ownership transfer request: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to create ownership transfer request'}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_delete_public_workspace_documents_admin(workspace_id):
+        """
+        Create an approval request to delete all documents in a public workspace.
+        Requires approval from workspace owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting documents (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for document deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate workspace exists
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_DOCUMENTS,
+                group_id=workspace_id,  # Use workspace_id as group_id for approval system
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'workspace_name': workspace.get('name'),
+                    'entity_type': 'workspace'
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete Public Workspace Documents Request Created", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Document deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating document deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+
+    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_delete_public_workspace_admin(workspace_id):
+        """
+        Create an approval request to delete an entire public workspace.
+        Requires approval from workspace owner or another admin.
+        
+        Body:
+            reason (str): Explanation for deleting the workspace (required)
+        """
+        try:
+            data = request.get_json() or {}
+            reason = data.get('reason', '').strip()
+            
+            if not reason:
+                return jsonify({'error': 'Reason is required for workspace deletion'}), 400
+            
+            admin_user = session.get('user', {})
+            admin_user_id = admin_user.get('oid') or admin_user.get('sub')
+            admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
+            admin_display_name = admin_user.get('name', admin_email)
+            
+            # Validate workspace exists
+            try:
+                workspace = cosmos_public_workspaces_container.read_item(
+                    item=workspace_id,
+                    partition_key=workspace_id
+                )
+            except:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            
+            # Create approval request
+            approval = create_approval_request(
+                request_type=TYPE_DELETE_GROUP,  # Reuse TYPE_DELETE_GROUP for workspace deletion
+                group_id=workspace_id,  # Use workspace_id as group_id for approval system
+                requester_id=admin_user_id,
+                requester_email=admin_email,
+                requester_name=admin_display_name,
+                reason=reason,
+                metadata={
+                    'workspace_name': workspace.get('name'),
+                    'entity_type': 'workspace'
+                }
+            )
+            
+            # Log event
+            log_event("[ControlCenter] Delete Public Workspace Request Created", {
+                "admin_user": admin_email,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "approval_id": approval['id'],
+                "reason": reason
+            })
+            
+            return jsonify({
+                'success': True,
+                'message': 'Workspace deletion request created and pending approval',
+                'approval_id': approval['id'],
+                'status': 'pending'
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error creating workspace deletion request: {e}")
+            return jsonify({'error': str(e)}), 500
 
     # Activity Trends API
     @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('dashboard')
     def api_get_activity_trends():
         """
         Get activity trends data for the control center dashboard.
@@ -2663,7 +4572,7 @@ def register_route_backend_control_center(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error getting activity trends: {e}")
+            debug_print(f"Error getting activity trends: {e}")
             print(f"❌ [Activity Trends API] Error: {e}")
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
@@ -2672,8 +4581,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('dashboard')
     def api_export_activity_trends():
         """
         Export activity trends raw data as CSV file based on selected charts and date range.
@@ -2856,14 +4764,13 @@ def register_route_backend_control_center(app):
             return response
             
         except Exception as e:
-            current_app.logger.error(f"Error exporting activity trends: {e}")
+            debug_print(f"Error exporting activity trends: {e}")
             return jsonify({'error': 'Failed to export data'}), 500
 
     @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('dashboard')
     def api_chat_activity_trends():
         """
         Create a new chat conversation with activity trends data as CSV message.
@@ -3012,15 +4919,14 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error creating activity trends chat: {e}")
+            debug_print(f"Error creating activity trends chat: {e}")
             return jsonify({'error': 'Failed to create chat conversation'}), 500
     
     # Data Refresh API
     @app.route('/api/admin/control-center/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_refresh_control_center_data():
         """
         Refresh all Control Center metrics data and update admin timestamp.
@@ -3028,7 +4934,7 @@ def register_route_backend_control_center(app):
         """
         try:
             debug_print("🔄 [REFRESH DEBUG] Starting Control Center data refresh...")
-            current_app.logger.info("Starting Control Center data refresh...")
+            debug_print("Starting Control Center data refresh...")
             
             # Check if request has specific user_id
             from flask import request
@@ -3067,14 +4973,14 @@ def register_route_backend_control_center(app):
                     refreshed_count += 1
                     
                     debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed user {user_id}")
-                    current_app.logger.debug(f"Refreshed metrics for user {user_id}")
+                    debug_print(f"Refreshed metrics for user {user_id}")
                 except Exception as user_error:
                     failed_count += 1
                     debug_print(f"❌ [REFRESH DEBUG] Failed to refresh user {user.get('id')}: {user_error}")
                     debug_print(f"❌ [REFRESH DEBUG] User error traceback:")
                     import traceback
                     debug_print(traceback.format_exc())
-                    current_app.logger.error(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
+                    debug_print(f"Failed to refresh metrics for user {user.get('id')}: {user_error}")
             
             debug_print(f"🔄 [REFRESH DEBUG] User refresh loop completed. Refreshed: {refreshed_count}, Failed: {failed_count}")
             
@@ -3102,18 +5008,18 @@ def register_route_backend_control_center(app):
                         groups_refreshed_count += 1
                         
                         debug_print(f"✅ [REFRESH DEBUG] Successfully refreshed group {group_id}")
-                        current_app.logger.debug(f"Refreshed metrics for group {group_id}")
+                        debug_print(f"Refreshed metrics for group {group_id}")
                     except Exception as group_error:
                         groups_failed_count += 1
                         debug_print(f"❌ [REFRESH DEBUG] Failed to refresh group {group.get('id')}: {group_error}")
                         debug_print(f"❌ [REFRESH DEBUG] Group error traceback:")
                         import traceback
                         debug_print(traceback.format_exc())
-                        current_app.logger.error(f"Failed to refresh metrics for group {group.get('id')}: {group_error}")
+                        debug_print(f"Failed to refresh metrics for group {group.get('id')}: {group_error}")
                         
             except Exception as groups_error:
                 debug_print(f"❌ [REFRESH DEBUG] Error querying groups: {groups_error}")
-                current_app.logger.error(f"Error querying groups for refresh: {groups_error}")
+                debug_print(f"Error querying groups for refresh: {groups_error}")
             
             debug_print(f"🔄 [REFRESH DEBUG] Group refresh loop completed. Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
             
@@ -3129,19 +5035,19 @@ def register_route_backend_control_center(app):
                     
                     if not update_success:
                         debug_print("⚠️ [REFRESH DEBUG] Failed to update admin settings")
-                        current_app.logger.warning("Failed to update admin settings with refresh timestamp")
+                        debug_print("Failed to update admin settings with refresh timestamp")
                     else:
                         debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
-                        current_app.logger.info("Updated admin settings with refresh timestamp")
+                        debug_print("Updated admin settings with refresh timestamp")
                 else:
                     debug_print("⚠️ [REFRESH DEBUG] Could not get admin settings")
                     
             except Exception as admin_error:
                 debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
-                current_app.logger.error(f"Error updating admin settings: {admin_error}")
+                debug_print(f"Error updating admin settings: {admin_error}")
             
             debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Users - Refreshed: {refreshed_count}, Failed: {failed_count}. Groups - Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
-            current_app.logger.info(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
+            debug_print(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")
             
             return jsonify({
                 'success': True,
@@ -3158,15 +5064,14 @@ def register_route_backend_control_center(app):
             debug_print("💥 [REFRESH DEBUG] Full traceback:")
             import traceback
             debug_print(traceback.format_exc())
-            current_app.logger.error(f"Error refreshing Control Center data: {e}")
+            debug_print(f"Error refreshing Control Center data: {e}")
             return jsonify({'error': 'Failed to refresh data'}), 500
     
     # Get refresh status API
     @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required  
+    @control_center_required('admin')  
     def api_get_refresh_status():
         """
         Get the last refresh timestamp for Control Center data.
@@ -3183,15 +5088,14 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting refresh status: {e}")
+            debug_print(f"Error getting refresh status: {e}")
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
     # Activity Log Migration APIs
     @app.route('/api/admin/control-center/migrate/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_migration_status():
         """
         Check if there are conversations and documents that need to be migrated to activity logs.
@@ -3221,7 +5125,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['conversations_without_logs'] = conversations_result[0] if conversations_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking conversations migration status: {e}")
+                debug_print(f"Error checking conversations migration status: {e}")
             
             # Check personal documents without the flag
             try:
@@ -3236,7 +5140,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['personal_documents_without_logs'] = personal_docs_result[0] if personal_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking personal documents migration status: {e}")
+                debug_print(f"Error checking personal documents migration status: {e}")
             
             # Check group documents without the flag
             try:
@@ -3251,7 +5155,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['group_documents_without_logs'] = group_docs_result[0] if group_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking group documents migration status: {e}")
+                debug_print(f"Error checking group documents migration status: {e}")
             
             # Check public documents without the flag
             try:
@@ -3266,7 +5170,7 @@ def register_route_backend_control_center(app):
                 ))
                 migration_status['public_documents_without_logs'] = public_docs_result[0] if public_docs_result else 0
             except Exception as e:
-                current_app.logger.warning(f"Error checking public documents migration status: {e}")
+                debug_print(f"Error checking public documents migration status: {e}")
             
             # Calculate totals
             migration_status['total_documents_without_logs'] = (
@@ -3285,14 +5189,13 @@ def register_route_backend_control_center(app):
             return jsonify(migration_status), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting migration status: {e}")
+            debug_print(f"Error getting migration status: {e}")
             return jsonify({'error': 'Failed to get migration status'}), 500
     
     @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_migrate_to_activity_logs():
         """
         Migrate all conversations and documents without activity logs.
@@ -3319,7 +5222,7 @@ def register_route_backend_control_center(app):
             }
             
             # Migrate conversations
-            current_app.logger.info("Starting conversation migration...")
+            debug_print("Starting conversation migration...")
             try:
                 conversations_query = """
                     SELECT * 
@@ -3331,7 +5234,7 @@ def register_route_backend_control_center(app):
                     enable_cross_partition_query=True
                 ))
                 
-                current_app.logger.info(f"Found {len(conversations)} conversations to migrate")
+                debug_print(f"Found {len(conversations)} conversations to migrate")
                 
                 for conv in conversations:
                     try:
@@ -3364,16 +5267,16 @@ def register_route_backend_control_center(app):
                     except Exception as conv_error:
                         results['conversations_failed'] += 1
                         error_msg = f"Failed to migrate conversation {conv.get('id')}: {str(conv_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during conversation migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate personal documents
-            current_app.logger.info("Starting personal documents migration...")
+            debug_print("Starting personal documents migration...")
             try:
                 personal_docs_query = """
                     SELECT * 
@@ -3430,16 +5333,16 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['personal_documents_failed'] += 1
                         error_msg = f"Failed to migrate personal document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during personal documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate group documents
-            current_app.logger.info("Starting group documents migration...")
+            debug_print("Starting group documents migration...")
             try:
                 group_docs_query = """
                     SELECT * 
@@ -3498,16 +5401,16 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['group_documents_failed'] += 1
                         error_msg = f"Failed to migrate group document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during group documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Migrate public documents
-            current_app.logger.info("Starting public documents migration...")
+            debug_print("Starting public documents migration...")
             try:
                 public_docs_query = """
                     SELECT * 
@@ -3566,12 +5469,12 @@ def register_route_backend_control_center(app):
                     except Exception as doc_error:
                         results['public_documents_failed'] += 1
                         error_msg = f"Failed to migrate public document {doc.get('id')}: {str(doc_error)}"
-                        current_app.logger.error(error_msg)
+                        debug_print(error_msg)
                         results['errors'].append(error_msg)
                         
             except Exception as e:
                 error_msg = f"Error during public documents migration: {str(e)}"
-                current_app.logger.error(error_msg)
+                debug_print(error_msg)
                 results['errors'].append(error_msg)
             
             # Calculate totals
@@ -3589,12 +5492,12 @@ def register_route_backend_control_center(app):
                 results['public_documents_failed']
             )
             
-            current_app.logger.info(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
+            debug_print(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
             
             return jsonify(results), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error during migration: {e}")
+            debug_print(f"Error during migration: {e}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': f'Migration failed: {str(e)}'}), 500
@@ -3602,8 +5505,7 @@ def register_route_backend_control_center(app):
     @app.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('admin')
     def api_get_activity_logs():
         """
         Get paginated and filtered activity logs from cosmos_activity_logs_container.
@@ -3648,8 +5550,8 @@ def register_route_backend_control_center(app):
                 OFFSET {offset} LIMIT {per_page}
             """
             
-            current_app.logger.info(f"Activity logs query: {logs_query}")
-            current_app.logger.info(f"Query parameters: {parameters}")
+            debug_print(f"Activity logs query: {logs_query}")
+            debug_print(f"Query parameters: {parameters}")
             
             logs = list(cosmos_activity_logs_container.query_items(
                 query=logs_query,
@@ -3716,7 +5618,1364 @@ def register_route_backend_control_center(app):
             }), 200
             
         except Exception as e:
-            current_app.logger.error(f"Error getting activity logs: {e}")
+            debug_print(f"Error getting activity logs: {e}")
             import traceback
             traceback.print_exc()
+            return jsonify({'error': 'Failed to fetch activity logs'}), 500
+
+    # ============================================================================
+    # APPROVAL WORKFLOW ENDPOINTS
+    # ============================================================================
+
+    @app.route('/api/admin/control-center/approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_get_approvals():
+        """
+        Get approval requests visible to the current user.
+        
+        Query Parameters:
+            page (int): Page number (default: 1)
+            page_size (int): Items per page (default: 20)
+            status (str): Filter by status (pending, approved, denied, all)
+            action_type (str): Filter by action type
+            search (str): Search by group name or reason
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            # Get user roles from session
+            user_roles = user.get('roles', [])
+            
+            # Get query parameters
+            page = int(request.args.get('page', 1))
+            page_size = int(request.args.get('page_size', 20))
+            status_filter = request.args.get('status', 'all')
+            action_type_filter = request.args.get('action_type', 'all')
+            search_query = request.args.get('search', '')
+            
+            # Determine include_completed based on status filter
+            include_completed = (status_filter == 'all' or status_filter in ['approved', 'denied'])
+            
+            # Map action_type to request_type_filter
+            request_type_filter = None if action_type_filter == 'all' else action_type_filter
+            
+            # Fetch approvals
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=page,
+                per_page=page_size,
+                include_completed=include_completed,
+                request_type_filter=request_type_filter
+            )
+            
+            # Add can_approve field to each approval
+            approvals_with_permission = []
+            for approval in result.get('approvals', []):
+                approval_copy = dict(approval)
+                # User can approve if they didn't create the request OR if they're the only admin
+                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approvals_with_permission.append(approval_copy)
+            
+            # Rename fields to match frontend expectations
+            return jsonify({
+                'success': True,
+                'approvals': approvals_with_permission,
+                'total_count': result.get('total', 0),
+                'page': result.get('page', 1),
+                'page_size': result.get('per_page', page_size),
+                'total_pages': result.get('total_pages', 0)
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error fetching approvals: {e}")
+            import traceback
+            debug_print(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_get_approval_by_id(approval_id):
+        """
+        Get a single approval request by ID.
+        
+        Query Parameters:
+            group_id (str): Group ID (partition key)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            group_id = request.args.get('group_id')
+            if not group_id:
+                return jsonify({'error': 'group_id query parameter is required'}), 400
+            
+            # Get the approval
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
+            
+            # Add can_approve field
+            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            
+            return jsonify(approval), 200
+            
+        except Exception as e:
+            debug_print(f"Error fetching approval {approval_id}: {e}")
+            import traceback
+            debug_print(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_approve_request(approval_id):
+        """
+        Approve an approval request and execute the action.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str, optional): Approval comment
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            # Approve the request
+            approval = approve_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                approver_id=user_id,
+                approver_email=user_email,
+                approver_name=user_name,
+                comment=comment
+            )
+            
+            # Execute the approved action
+            execution_result = _execute_approved_action(approval, user_id, user_email, user_name)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request approved and executed',
+                'approval': approval,
+                'execution_result': execution_result
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error approving request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_admin_deny_request(approval_id):
+        """
+        Deny an approval request.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str): Reason for denial (required)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
+            
+            # Deny the request
+            approval = deny_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                denier_id=user_id,
+                denier_email=user_email,
+                denier_name=user_name,
+                comment=comment,
+                auto_denied=False
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request denied',
+                'approval': approval
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error denying request: {e}")
+            return jsonify({'error': str(e)}), 500
+    
+    # New standalone approvals API endpoints (accessible to all users with permissions)
+    @app.route('/api/approvals', methods=['GET'])
+    @login_required
+    def api_get_approvals():
+        """
+        Get approval requests visible to the current user (admins, control center admins, and group owners).
+        
+        Query Parameters:
+            page (int): Page number (default: 1)
+            page_size (int): Items per page (default: 20)
+            status (str): Filter by status (pending, approved, denied, all)
+            action_type (str): Filter by action type
+            search (str): Search by group name or reason
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_roles = user.get('roles', [])
+            
+            # Get query parameters
+            page = int(request.args.get('page', 1))
+            page_size = int(request.args.get('page_size', 20))
+            status_filter = request.args.get('status', 'pending')
+            action_type_filter = request.args.get('action_type', 'all')
+            search_query = request.args.get('search', '')
+            
+            debug_print(f"📋 [APPROVALS API] Fetching approvals - status_filter: {status_filter}, action_type: {action_type_filter}")
+            
+            # Determine include_completed based on status filter
+            # 'all' means show everything, specific statuses mean show only those
+            include_completed = (status_filter in ['all', 'approved', 'denied', 'executed'])
+            
+            debug_print(f"📋 [APPROVALS API] include_completed: {include_completed}")
+            
+            # Map action_type to request_type_filter
+            request_type_filter = None if action_type_filter == 'all' else action_type_filter
+            
+            # Fetch approvals
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=page,
+                per_page=page_size,
+                include_completed=include_completed,
+                request_type_filter=request_type_filter,
+                status_filter=status_filter
+            )
+            
+            # Add can_approve field to each approval
+            approvals_with_permission = []
+            for approval in result.get('approvals', []):
+                approval_copy = dict(approval)
+                # User can approve if they didn't create the request
+                approval_copy['can_approve'] = (approval.get('requester_id') != user_id)
+                approvals_with_permission.append(approval_copy)
+            
+            return jsonify({
+                'success': True,
+                'approvals': approvals_with_permission,
+                'total_count': result.get('total', 0),
+                'page': result.get('page', 1),
+                'page_size': result.get('per_page', page_size),
+                'total_pages': result.get('total_pages', 0)
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error fetching approvals: {e}")
+            import traceback
+            debug_print(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_get_approval_by_id(approval_id):
+        """
+        Get a single approval request by ID.
+        
+        Query Parameters:
+            group_id (str): Group ID (partition key)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            
+            group_id = request.args.get('group_id')
+            if not group_id:
+                return jsonify({'error': 'group_id query parameter is required'}), 400
+            
+            # Get the approval
+            approval = cosmos_approvals_container.read_item(
+                item=approval_id,
+                partition_key=group_id
+            )
+            
+            # Add can_approve field
+            approval['can_approve'] = (approval.get('requester_id') != user_id)
+            
+            return jsonify(approval), 200
+            
+        except Exception as e:
+            debug_print(f"Error fetching approval {approval_id}: {e}")
+            import traceback
+            debug_print(traceback.format_exc())
+            return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_approve_request(approval_id):
+        """
+        Approve an approval request and execute the action.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str, optional): Approval comment
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            # Approve the request
+            approval = approve_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                approver_id=user_id,
+                approver_email=user_email,
+                approver_name=user_name,
+                comment=comment
+            )
+            
+            # Execute the approved action
+            execution_result = _execute_approved_action(approval, user_id, user_email, user_name)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request approved and executed',
+                'approval': approval,
+                'execution_result': execution_result
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error approving request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/approvals/<approval_id>/deny', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_deny_request(approval_id):
+        """
+        Deny an approval request.
+        
+        Body:
+            group_id (str): Group ID (partition key)
+            comment (str): Reason for denial (required)
+        """
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_email = user.get('preferred_username', user.get('email', 'unknown'))
+            user_name = user.get('name', user_email)
+            
+            data = request.get_json()
+            group_id = data.get('group_id')
+            comment = data.get('comment', '')
+            
+            if not group_id:
+                return jsonify({'error': 'group_id is required'}), 400
+            
+            if not comment:
+                return jsonify({'error': 'comment is required for denial'}), 400
+            
+            # Deny the request
+            approval = deny_request(
+                approval_id=approval_id,
+                group_id=group_id,
+                denier_id=user_id,
+                denier_email=user_email,
+                denier_name=user_name,
+                comment=comment,
+                auto_denied=False
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': 'Request denied',
+                'approval': approval
+            }), 200
+            
+        except Exception as e:
+            debug_print(f"Error denying request: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    def _execute_approved_action(approval, executor_id, executor_email, executor_name):
+        """
+        Execute the action specified in an approved request.
+        
+        Args:
+            approval: Approved request document
+            executor_id: User ID executing the action
+            executor_email: Email of executor
+            executor_name: Display name of executor
+        
+        Returns:
+            Result dictionary with success status and message
+        """
+        try:
+            request_type = approval['request_type']
+            group_id = approval['group_id']
+            
+            if request_type == TYPE_TAKE_OWNERSHIP:
+                # Execute take ownership
+                # Check if this is for a public workspace or group
+                if approval.get('metadata', {}).get('entity_type') == 'workspace':
+                    result = _execute_take_workspace_ownership(approval, executor_id, executor_email, executor_name)
+                else:
+                    result = _execute_take_ownership(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_TRANSFER_OWNERSHIP:
+                # Execute transfer ownership
+                # Check if this is for a public workspace or group
+                if approval.get('metadata', {}).get('entity_type') == 'workspace':
+                    result = _execute_transfer_workspace_ownership(approval, executor_id, executor_email, executor_name)
+                else:
+                    result = _execute_transfer_ownership(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_DOCUMENTS:
+                # Check if this is for a public workspace or group
+                if approval.get('metadata', {}).get('entity_type') == 'workspace':
+                    result = _execute_delete_public_workspace_documents(approval, executor_id, executor_email, executor_name)
+                else:
+                    result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_GROUP:
+                # Check if this is for a public workspace or group
+                if approval.get('metadata', {}).get('entity_type') == 'workspace':
+                    result = _execute_delete_public_workspace(approval, executor_id, executor_email, executor_name)
+                else:
+                    result = _execute_delete_group(approval, executor_id, executor_email, executor_name)
+            
+            elif request_type == TYPE_DELETE_USER_DOCUMENTS:
+                # Execute delete user documents
+                result = _execute_delete_user_documents(approval, executor_id, executor_email, executor_name)
+            
+            else:
+                result = {'success': False, 'message': f'Unknown request type: {request_type}'}
+            
+            # Mark approval as executed
+            mark_approval_executed(
+                approval_id=approval['id'],
+                group_id=group_id,
+                success=result['success'],
+                result_message=result['message']
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Mark as failed
+            mark_approval_executed(
+                approval_id=approval['id'],
+                group_id=approval['group_id'],
+                success=False,
+                result_message=f"Execution error: {str(e)}"
+            )
+            raise
+
+    def _execute_take_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute admin take ownership action."""
+        try:
+            group_id = approval['group_id']
+            requester_id = approval['requester_id']
+            requester_email = approval['requester_email']
+            
+            # Get the group
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            old_owner_email = old_owner.get('email', 'unknown')
+            
+            # Update owner to requester (the admin who requested)
+            group['owner'] = {
+                'id': requester_id,
+                'email': requester_email,
+                'displayName': approval['requester_name']
+            }
+            
+            # Remove requester from special roles if present
+            if requester_id in group.get('admins', []):
+                group['admins'].remove(requester_id)
+            if requester_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(requester_id)
+            
+            # Ensure requester is in users list
+            requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
+            if not requester_in_users:
+                group.setdefault('users', []).append({
+                    'userId': requester_id,
+                    'email': requester_email,
+                    'displayName': approval['requester_name']
+                })
+            
+            # Demote old owner to regular member
+            if old_owner_id:
+                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner.get('displayName', old_owner_email)
+                    })
+                
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'activity_type': 'admin_take_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_user_id': requester_id,
+                'admin_email': requester_email,
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': requester_id,
+                'new_owner_email': requester_email,
+                'approval_id': approval['id'],
+                'description': f"Admin {requester_email} took ownership (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f'Ownership transferred to {requester_email}'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to take ownership: {str(e)}'}
+
+    def _execute_take_workspace_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute admin take workspace ownership action."""
+        try:
+            workspace_id = approval.get('workspace_id') or approval.get('group_id')
+            requester_id = approval['requester_id']
+            requester_email = approval['requester_email']
+            requester_name = approval['requester_name']
+            
+            # Get the workspace
+            workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            
+            # Get old owner info
+            old_owner = workspace.get('owner', {})
+            if isinstance(old_owner, dict):
+                old_owner_id = old_owner.get('userId')
+                old_owner_email = old_owner.get('email')
+                old_owner_name = old_owner.get('displayName')
+            else:
+                # Old format where owner is just a string
+                old_owner_id = old_owner
+                # Try to get user info
+                try:
+                    old_owner_user = cosmos_user_settings_container.read_item(
+                        item=old_owner_id,
+                        partition_key=old_owner_id
+                    )
+                    old_owner_email = old_owner_user.get('email', 'unknown')
+                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
+                except:
+                    old_owner_email = 'unknown'
+                    old_owner_name = 'unknown'
+            
+            # Update owner to requester (the admin who requested) with full user object
+            workspace['owner'] = {
+                'userId': requester_id,
+                'email': requester_email,
+                'displayName': requester_name
+            }
+            
+            # Remove requester from admins/documentManagers if present
+            new_admins = []
+            for admin in workspace.get('admins', []):
+                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                if admin_id != requester_id:
+                    # Ensure admin is full object
+                    if isinstance(admin, dict):
+                        new_admins.append(admin)
+                    else:
+                        # Convert string ID to object if needed
+                        try:
+                            admin_user = cosmos_user_settings_container.read_item(
+                                item=admin,
+                                partition_key=admin
+                            )
+                            new_admins.append({
+                                'userId': admin,
+                                'email': admin_user.get('email', 'unknown'),
+                                'displayName': admin_user.get('display_name', 'unknown')
+                            })
+                        except:
+                            pass
+            workspace['admins'] = new_admins
+            
+            new_dms = []
+            for dm in workspace.get('documentManagers', []):
+                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                if dm_id != requester_id:
+                    # Ensure dm is full object
+                    if isinstance(dm, dict):
+                        new_dms.append(dm)
+                    else:
+                        # Convert string ID to object if needed
+                        try:
+                            dm_user = cosmos_user_settings_container.read_item(
+                                item=dm,
+                                partition_key=dm
+                            )
+                            new_dms.append({
+                                'userId': dm,
+                                'email': dm_user.get('email', 'unknown'),
+                                'displayName': dm_user.get('display_name', 'unknown')
+                            })
+                        except:
+                            pass
+            workspace['documentManagers'] = new_dms
+            
+            # Demote old owner to admin if not already there
+            if old_owner_id and old_owner_id != requester_id:
+                old_owner_in_admins = any(
+                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
+                    for a in workspace.get('admins', [])
+                )
+                old_owner_in_dms = any(
+                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
+                    for dm in workspace.get('documentManagers', [])
+                )
+                
+                if not old_owner_in_admins and not old_owner_in_dms:
+                    # Add old owner as admin
+                    workspace.setdefault('admins', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner_name
+                    })
+            
+            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_public_workspaces_container.upsert_item(workspace)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'workspace_ownership_change',
+                'activity_type': 'admin_take_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': requester_id,
+                'requester_email': requester_email,
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'workspace_id': workspace_id,
+                'workspace_name': workspace.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': requester_id,
+                'new_owner_email': requester_email,
+                'approval_id': approval['id'],
+                'description': f"Admin {requester_email} took ownership (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f"Ownership transferred to {requester_email}"
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to take workspace ownership: {str(e)}'}
+
+    def _execute_transfer_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute transfer ownership action."""
+        try:
+            group_id = approval['group_id']
+            new_owner_id = approval['metadata'].get('new_owner_id')
+            
+            if not new_owner_id:
+                return {'success': False, 'message': 'new_owner_id not found in approval metadata'}
+            
+            # Get the group
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            
+            # Find new owner in members
+            new_owner_member = None
+            for member in group.get('users', []):
+                if member.get('userId') == new_owner_id:
+                    new_owner_member = member
+                    break
+            
+            if not new_owner_member:
+                return {'success': False, 'message': 'New owner not found in group members'}
+            
+            old_owner = group.get('owner', {})
+            old_owner_id = old_owner.get('id')
+            
+            # Update owner
+            group['owner'] = {
+                'id': new_owner_id,
+                'email': new_owner_member.get('email'),
+                'displayName': new_owner_member.get('displayName')
+            }
+            
+            # Remove new owner from special roles
+            if new_owner_id in group.get('admins', []):
+                group['admins'].remove(new_owner_id)
+            if new_owner_id in group.get('documentManagers', []):
+                group['documentManagers'].remove(new_owner_id)
+            
+            # Demote old owner to member
+            if old_owner_id:
+                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                if not old_owner_in_users:
+                    group.setdefault('users', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner.get('email'),
+                        'displayName': old_owner.get('displayName')
+                    })
+                
+                if old_owner_id in group.get('admins', []):
+                    group['admins'].remove(old_owner_id)
+                if old_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(old_owner_id)
+            
+            group['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_groups_container.upsert_item(group)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_ownership_change',
+                'activity_type': 'transfer_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner.get('email'),
+                'new_owner_id': new_owner_id,
+                'new_owner_email': new_owner_member.get('email'),
+                'approval_id': approval['id'],
+                'description': f"Ownership transferred to {new_owner_member.get('email')} (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f"Ownership transferred to {new_owner_member.get('email')}"
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to transfer ownership: {str(e)}'}
+
+    def _execute_transfer_workspace_ownership(approval, executor_id, executor_email, executor_name):
+        """Execute transfer workspace ownership action."""
+        try:
+            workspace_id = approval.get('workspace_id') or approval.get('group_id')
+            new_owner_id = approval['metadata'].get('new_owner_id')
+            new_owner_email = approval['metadata'].get('new_owner_email')
+            new_owner_name = approval['metadata'].get('new_owner_name')
+            
+            if not new_owner_id:
+                return {'success': False, 'message': 'new_owner_id not found in approval metadata'}
+            
+            # Get the workspace
+            workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            
+            # Get old owner info
+            old_owner = workspace.get('owner', {})
+            if isinstance(old_owner, dict):
+                old_owner_id = old_owner.get('userId')
+                old_owner_email = old_owner.get('email')
+                old_owner_name = old_owner.get('displayName')
+            else:
+                # Handle case where owner is just a string (old format)
+                old_owner_id = old_owner
+                # Try to get full user info
+                try:
+                    old_owner_user = cosmos_user_settings_container.read_item(
+                        item=old_owner_id,
+                        partition_key=old_owner_id
+                    )
+                    old_owner_email = old_owner_user.get('email', 'unknown')
+                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
+                except:
+                    old_owner_email = 'unknown'
+                    old_owner_name = 'unknown'
+            
+            # Update owner with full user object
+            workspace['owner'] = {
+                'userId': new_owner_id,
+                'email': new_owner_email,
+                'displayName': new_owner_name
+            }
+            
+            # Remove new owner from admins/documentManagers if present
+            new_admins = []
+            for admin in workspace.get('admins', []):
+                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                if admin_id != new_owner_id:
+                    # Ensure admin is full object
+                    if isinstance(admin, dict):
+                        new_admins.append(admin)
+                    else:
+                        # Convert string ID to object if needed
+                        try:
+                            admin_user = cosmos_user_settings_container.read_item(
+                                item=admin,
+                                partition_key=admin
+                            )
+                            new_admins.append({
+                                'userId': admin,
+                                'email': admin_user.get('email', 'unknown'),
+                                'displayName': admin_user.get('display_name', 'unknown')
+                            })
+                        except:
+                            pass
+            workspace['admins'] = new_admins
+            
+            new_dms = []
+            for dm in workspace.get('documentManagers', []):
+                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                if dm_id != new_owner_id:
+                    # Ensure dm is full object
+                    if isinstance(dm, dict):
+                        new_dms.append(dm)
+                    else:
+                        # Convert string ID to object if needed
+                        try:
+                            dm_user = cosmos_user_settings_container.read_item(
+                                item=dm,
+                                partition_key=dm
+                            )
+                            new_dms.append({
+                                'userId': dm,
+                                'email': dm_user.get('email', 'unknown'),
+                                'displayName': dm_user.get('display_name', 'unknown')
+                            })
+                        except:
+                            pass
+            workspace['documentManagers'] = new_dms
+            
+            # Add old owner to admins if not already there
+            if old_owner_id and old_owner_id != new_owner_id:
+                old_owner_in_admins = any(
+                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
+                    for a in workspace.get('admins', [])
+                )
+                old_owner_in_dms = any(
+                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
+                    for dm in workspace.get('documentManagers', [])
+                )
+                
+                if not old_owner_in_admins and not old_owner_in_dms:
+                    # Add old owner as admin
+                    workspace.setdefault('admins', []).append({
+                        'userId': old_owner_id,
+                        'email': old_owner_email,
+                        'displayName': old_owner_name
+                    })
+            
+            workspace['modifiedDate'] = datetime.utcnow().isoformat()
+            cosmos_public_workspaces_container.upsert_item(workspace)
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'workspace_ownership_change',
+                'activity_type': 'transfer_ownership_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'workspace_id': workspace_id,
+                'workspace_name': workspace.get('name', 'Unknown'),
+                'old_owner_id': old_owner_id,
+                'old_owner_email': old_owner_email,
+                'new_owner_id': new_owner_id,
+                'new_owner_email': new_owner_email,
+                'approval_id': approval['id'],
+                'description': f"Ownership transferred to {new_owner_email} (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': f"Ownership transferred to {new_owner_email}"
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to transfer workspace ownership: {str(e)}'}
+
+    def _execute_delete_documents(approval, executor_id, executor_email, executor_name):
+        """Execute delete all documents action."""
+        try:
+            group_id = approval['group_id']
+            
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Starting deletion for group_id: {group_id}")
+            
+            # Query all document metadata for this group
+            query = "SELECT * FROM c WHERE c.group_id = @group_id AND c.type = 'document_metadata'"
+            parameters = [{"name": "@group_id", "value": group_id}]
+            
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Query: {query}")
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Parameters: {parameters}")
+            debug_print(f"🔍 [DELETE_GROUP_DOCS] Using partition_key: {group_id}")
+            
+            # Query with partition key for better performance
+            documents = list(cosmos_group_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=group_id
+            ))
+            
+            debug_print(f"📊 [DELETE_GROUP_DOCS] Found {len(documents)} documents with partition key query")
+            
+            # If no documents found with partition key, try cross-partition query
+            if len(documents) == 0:
+                debug_print(f"⚠️ [DELETE_GROUP_DOCS] No documents found with partition key, trying cross-partition query")
+                documents = list(cosmos_group_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"📊 [DELETE_GROUP_DOCS] Cross-partition query found {len(documents)} documents")
+                
+                # Log sample document for debugging
+                if len(documents) > 0:
+                    sample_doc = documents[0]
+                    debug_print(f"📄 [DELETE_GROUP_DOCS] Sample document structure: id={sample_doc.get('id')}, type={sample_doc.get('type')}, group_id={sample_doc.get('group_id')}")
+            
+            deleted_count = 0
+            
+            # Use proper deletion APIs for each document
+            for doc in documents:
+                try:
+                    doc_id = doc['id']
+                    debug_print(f"🗑️ [DELETE_GROUP_DOCS] Deleting document {doc_id}")
+                    
+                    # Use delete_document API which handles:
+                    # - Blob storage deletion
+                    # - AI Search index deletion
+                    # - Cosmos DB metadata deletion
+                    # Note: For group documents, we don't have a user_id, so we pass None
+                    delete_result = delete_document(
+                        user_id=None,
+                        document_id=doc_id,
+                        group_id=group_id
+                    )
+                    
+                    # Check if delete_result is valid and successful
+                    if delete_result and delete_result.get('success'):
+                        # Delete document chunks using proper API
+                        delete_document_chunks(
+                            document_id=doc_id,
+                            group_id=group_id
+                        )
+                        
+                        deleted_count += 1
+                        debug_print(f"✅ [DELETE_GROUP_DOCS] Successfully deleted document {doc_id}")
+                    else:
+                        error_msg = delete_result.get('message') if delete_result else 'delete_document returned None'
+                        debug_print(f"❌ [DELETE_GROUP_DOCS] Failed to delete document {doc_id}: {error_msg}")
+                    
+                except Exception as doc_error:
+                    debug_print(f"❌ [DELETE_GROUP_DOCS] Error deleting document {doc.get('id')}: {doc_error}")
+            
+            # Invalidate group search cache after deletion
+            try:
+                invalidate_group_search_cache(group_id)
+                debug_print(f"🔄 [DELETE_GROUP_DOCS] Invalidated search cache for group {group_id}")
+            except Exception as cache_error:
+                debug_print(f"⚠️ [DELETE_GROUP_DOCS] Could not invalidate search cache: {cache_error}")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_documents_deletion',
+                'activity_type': 'delete_all_documents_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': approval['group_name'],
+                'documents_deleted': deleted_count,
+                'approval_id': approval['id'],
+                'description': f"All documents deleted from group (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            debug_print(f"[ControlCenter] Group Documents Deleted (Approved) -- group_id: {group_id}, documents_deleted: {deleted_count}")
+            
+            return {
+                'success': True,
+                'message': f'Deleted {deleted_count} documents'
+            }
+            
+        except Exception as e:
+            debug_print(f"[DELETE_GROUP_DOCS] Fatal error: {e}")
+            return {'success': False, 'message': f'Failed to delete documents: {str(e)}'}
+
+    def _execute_delete_public_workspace_documents(approval, executor_id, executor_email, executor_name):
+        """Execute delete all documents in a public workspace."""
+        try:
+            workspace_id = approval['group_id']  # workspace_id is stored as group_id
+            
+            debug_print(f"🔍 [DELETE_WORKSPACE_DOCS] Starting deletion for workspace_id: {workspace_id}")
+            
+            # Query all documents for this workspace
+            query = "SELECT c.id FROM c WHERE c.public_workspace_id = @workspace_id"
+            parameters = [{"name": "@workspace_id", "value": workspace_id}]
+            
+            debug_print(f"🔍 [DELETE_WORKSPACE_DOCS] Query: {query}")
+            debug_print(f"🔍 [DELETE_WORKSPACE_DOCS] Parameters: {parameters}")
+            
+            documents = list(cosmos_public_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+            
+            debug_print(f"📊 [DELETE_WORKSPACE_DOCS] Found {len(documents)} documents")
+            
+            deleted_count = 0
+            for doc in documents:
+                try:
+                    doc_id = doc['id']
+                    debug_print(f"🗑️ [DELETE_WORKSPACE_DOCS] Deleting document {doc_id}")
+                    
+                    # Delete document chunks and metadata using proper APIs
+                    delete_document_chunks(
+                        document_id=doc_id,
+                        public_workspace_id=workspace_id
+                    )
+                    
+                    delete_document(
+                        user_id=None,
+                        document_id=doc_id,
+                        public_workspace_id=workspace_id
+                    )
+                    
+                    deleted_count += 1
+                    debug_print(f"✅ [DELETE_WORKSPACE_DOCS] Successfully deleted document {doc_id}")
+                    
+                except Exception as doc_error:
+                    debug_print(f"❌ [DELETE_WORKSPACE_DOCS] Error deleting document {doc_id}: {doc_error}")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'public_workspace_documents_deletion',
+                'activity_type': 'delete_all_documents_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'workspace_id': workspace_id,
+                'workspace_name': approval.get('metadata', {}).get('workspace_name', 'Unknown'),
+                'documents_deleted': deleted_count,
+                'approval_id': approval['id'],
+                'description': f"All documents deleted from public workspace (approved by {executor_email})",
+                'workspace_context': {
+                    'public_workspace_id': workspace_id
+                }
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            debug_print(f"[ControlCenter] Public Workspace Documents Deleted (Approved) -- workspace_id: {workspace_id}, documents_deleted: {deleted_count}")
+            
+            return {
+                'success': True,
+                'message': f'Deleted {deleted_count} documents from public workspace'
+            }
+            
+        except Exception as e:
+            debug_print(f"[DELETE_WORKSPACE_DOCS] Fatal error: {e}")
+            return {'success': False, 'message': f'Failed to delete workspace documents: {str(e)}'}
+
+    def _execute_delete_public_workspace(approval, executor_id, executor_email, executor_name):
+        """Execute delete entire public workspace action."""
+        try:
+            workspace_id = approval['group_id']  # workspace_id is stored as group_id
+            
+            debug_print(f"🔍 [DELETE_WORKSPACE] Starting deletion for workspace_id: {workspace_id}")
+            
+            # First delete all documents
+            doc_result = _execute_delete_public_workspace_documents(approval, executor_id, executor_email, executor_name)
+            
+            if not doc_result['success']:
+                return doc_result
+            
+            # Delete the workspace itself
+            try:
+                cosmos_public_workspaces_container.delete_item(
+                    item=workspace_id,
+                    partition_key=workspace_id
+                )
+                debug_print(f"✅ [DELETE_WORKSPACE] Successfully deleted workspace {workspace_id}")
+            except Exception as del_e:
+                debug_print(f"❌ [DELETE_WORKSPACE] Error deleting workspace {workspace_id}: {del_e}")
+                return {'success': False, 'message': f'Failed to delete workspace: {str(del_e)}'}
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'public_workspace_deletion',
+                'activity_type': 'delete_workspace_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'workspace_id': workspace_id,
+                'workspace_name': approval.get('metadata', {}).get('workspace_name', 'Unknown'),
+                'approval_id': approval['id'],
+                'description': f"Public workspace completely deleted (approved by {executor_email})",
+                'workspace_context': {
+                    'public_workspace_id': workspace_id
+                }
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            debug_print(f"[ControlCenter] Public Workspace Deleted (Approved) -- workspace_id: {workspace_id}")
+            
+            return {
+                'success': True,
+                'message': 'Public workspace and all documents deleted successfully'
+            }
+            
+        except Exception as e:
+            debug_print(f"[DELETE_WORKSPACE] Fatal error: {e}")
+            return {'success': False, 'message': f'Failed to delete workspace: {str(e)}'}
+
+    def _execute_delete_group(approval, executor_id, executor_email, executor_name):
+        """Execute delete entire group action."""
+        try:
+            group_id = approval['group_id']
+            
+            # First delete all documents
+            doc_result = _execute_delete_documents(approval, executor_id, executor_email, executor_name)
+            
+            # Delete group conversations (optional - could keep for audit)
+            try:
+                query = "SELECT * FROM c WHERE c.group_id = @group_id"
+                parameters = [{"name": "@group_id", "value": group_id}]
+                
+                conversations = list(cosmos_group_conversations_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                for conv in conversations:
+                    cosmos_group_conversations_container.delete_item(
+                        item=conv['id'],
+                        partition_key=group_id
+                    )
+            except Exception as conv_error:
+                debug_print(f"Error deleting conversations: {conv_error}")
+            
+            # Delete group messages (optional)
+            try:
+                messages = list(cosmos_group_messages_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                
+                for msg in messages:
+                    cosmos_group_messages_container.delete_item(
+                        item=msg['id'],
+                        partition_key=group_id
+                    )
+            except Exception as msg_error:
+                debug_print(f"Error deleting messages: {msg_error}")
+            
+            # Finally, delete the group itself using proper API
+            debug_print(f"🗑️ [DELETE GROUP] Deleting group document using delete_group() API")
+            delete_group(group_id)
+            debug_print(f"✅ [DELETE GROUP] Group {group_id} successfully deleted")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_deletion',
+                'activity_type': 'delete_group_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'group_id': group_id,
+                'group_name': approval['group_name'],
+                'approval_id': approval['id'],
+                'description': f"Group completely deleted (approved by {executor_email})"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            return {
+                'success': True,
+                'message': 'Group completely deleted'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'message': f'Failed to delete group: {str(e)}'}
+
+    def _execute_delete_user_documents(approval, executor_id, executor_email, executor_name):
+        """Execute delete all user documents action."""
+        try:
+            from functions_documents import delete_document, delete_document_chunks
+            from utils_cache import invalidate_personal_search_cache
+            
+            user_id = approval['metadata'].get('user_id')
+            user_email = approval['metadata'].get('user_email', 'unknown')
+            user_name = approval['metadata'].get('user_name', user_email)
+            
+            if not user_id:
+                return {'success': False, 'message': 'User ID not found in approval metadata'}
+            
+            # Query all personal documents for this user
+            # Personal documents are stored in cosmos_user_documents_container with user_id as partition key
+            query = "SELECT * FROM c WHERE c.user_id = @user_id"
+            parameters = [{"name": "@user_id", "value": user_id}]
+            
+            debug_print(f"🔍 [DELETE_USER_DOCS] Querying for user_id: {user_id}")
+            debug_print(f"🔍 [DELETE_USER_DOCS] Query: {query}")
+            debug_print(f"🔍 [DELETE_USER_DOCS] Container: cosmos_user_documents_container")
+            
+            documents = list(cosmos_user_documents_container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=user_id  # Use partition key for efficient query
+            ))
+            
+            debug_print(f"📊 [DELETE_USER_DOCS] Found {len(documents)} documents with partition key query")
+            if len(documents) > 0:
+                debug_print(f"📄 [DELETE_USER_DOCS] First document sample: id={documents[0].get('id', 'no-id')}, file_name={documents[0].get('file_name', 'no-filename')}, type={documents[0].get('type', 'no-type')}")
+            else:
+                # Try a cross-partition query to see if documents exist elsewhere
+                debug_print(f"⚠️ [DELETE_USER_DOCS] No documents found with partition key, trying cross-partition query...")
+                documents = list(cosmos_user_documents_container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"📊 [DELETE_USER_DOCS] Cross-partition query found {len(documents)} documents")
+                if len(documents) > 0:
+                    sample_doc = documents[0]
+                    debug_print(f"📄 [DELETE_USER_DOCS] Sample doc fields: {list(sample_doc.keys())}")
+                    debug_print(f"📄 [DELETE_USER_DOCS] Sample doc: id={sample_doc.get('id')}, type={sample_doc.get('type')}, user_id={sample_doc.get('user_id')}, file_name={sample_doc.get('file_name')}")
+            
+            deleted_count = 0
+            
+            # Use the existing delete_document function for proper cleanup
+            for doc in documents:
+                try:
+                    document_id = doc['id']
+                    debug_print(f"🗑️ [DELETE_USER_DOCS] Deleting document {document_id}: {doc.get('file_name', 'unknown')}")
+                    
+                    # Use the proper delete_document function which handles:
+                    # - Blob storage deletion
+                    # - AI Search index deletion
+                    # - Cosmos DB document deletion
+                    delete_document(user_id, document_id)
+                    delete_document_chunks(document_id)
+                    
+                    deleted_count += 1
+                    debug_print(f"✅ [DELETE_USER_DOCS] Successfully deleted document {document_id}")
+                    
+                except Exception as doc_error:
+                    debug_print(f"❌ [DELETE_USER_DOCS] Error deleting document {doc.get('id')}: {doc_error}")
+            
+            # Invalidate search cache for this user
+            try:
+                invalidate_personal_search_cache(user_id)
+                debug_print(f"🔄 [DELETE_USER_DOCS] Invalidated search cache for user {user_id}")
+            except Exception as cache_error:
+                debug_print(f"⚠️ [DELETE_USER_DOCS] Failed to invalidate search cache: {cache_error}")
+            
+            # Log to activity logs
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'user_documents_deletion',
+                'activity_type': 'delete_all_user_documents_approved',
+                'timestamp': datetime.utcnow().isoformat(),
+                'requester_id': approval['requester_id'],
+                'requester_email': approval['requester_email'],
+                'approver_id': executor_id,
+                'approver_email': executor_email,
+                'target_user_id': user_id,
+                'target_user_email': user_email,
+                'target_user_name': user_name,
+                'documents_deleted': deleted_count,
+                'approval_id': approval['id'],
+                'description': f"All documents deleted for user {user_name} ({user_email}) - approved by {executor_email}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+            
+            # Log to AppInsights
+            log_event("[ControlCenter] User Documents Deleted (Approved)", {
+                "executor": executor_email,
+                "user_id": user_id,
+                "user_email": user_email,
+                "documents_deleted": deleted_count,
+                "approval_id": approval['id']
+            })
+            
+            return {
+                'success': True,
+                'message': f'Deleted {deleted_count} documents for user {user_name}'
+            }
+            
+        except Exception as e:
+            debug_print(f"Error deleting user documents: {e}")
+            return {'success': False, 'message': f'Failed to delete user documents: {str(e)}'}
+
             return jsonify({'error': 'Failed to retrieve activity logs'}), 500

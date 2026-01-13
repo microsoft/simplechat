@@ -38,9 +38,7 @@ def get_kernel_agents():
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chat_api():
@@ -450,12 +448,22 @@ def register_route_backend_chats(app):
                         group_doc = find_group_by_id(active_group_id)
                         debug_print(f"Workspace search group lookup result: {group_doc}")
                         
-                        if group_doc and group_doc.get('name'):
-                            group_name = group_doc.get('name')
-                            user_metadata['workspace_search']['group_name'] = group_name
-                            debug_print(f"Workspace search - set group_name to: {group_name}")
+                        if group_doc:
+                            # Check if group status allows chat operations
+                            from functions_group import check_group_status_allows_operation
+                            allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                            
+                            if group_doc.get('name'):
+                                group_name = group_doc.get('name')
+                                user_metadata['workspace_search']['group_name'] = group_name
+                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                            else:
+                                debug_print(f"Workspace search - no name for group: {active_group_id}")
+                                user_metadata['workspace_search']['group_name'] = None
                         else:
-                            debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Workspace search - no group found for id: {active_group_id}")
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
@@ -465,6 +473,17 @@ def register_route_backend_chats(app):
                         traceback.print_exc()
                 
                 if document_scope == 'public' and active_public_workspace_id:
+                    # Check if public workspace status allows chat operations
+                    try:
+                        from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                        workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                        if workspace_doc:
+                            allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                    except Exception as e:
+                        debug_print(f"Error checking public workspace status: {e}")
+                    
                     user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
                 else:
                     user_metadata['workspace_search'] = {
@@ -2571,16 +2590,20 @@ def register_route_backend_chats(app):
                     try:
                         user_settings_obj = get_user_settings(user_id)
                         debug_print(f"[DEBUG] user_settings_obj type: {type(user_settings_obj)}")
-                        debug_print(f"[DEBUG] user_settings_obj: {user_settings_obj}")
+                        # Sanitize user_settings_obj to remove sensitive data (keys, base64, images) from debug logs
+                        sanitized_settings = sanitize_settings_for_logging(user_settings_obj) if isinstance(user_settings_obj, dict) else user_settings_obj
+                        debug_print(f"[DEBUG] user_settings_obj (sanitized): {sanitized_settings}")
                         
                         # user_settings_obj might be nested with 'settings' key
                         if isinstance(user_settings_obj, dict):
                             if 'settings' in user_settings_obj:
                                 user_settings = user_settings_obj['settings']
-                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key: {user_settings}")
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key (sanitized): {sanitized_user_settings}")
                             else:
                                 user_settings = user_settings_obj
-                                debug_print(f"[DEBUG] Using user_settings_obj directly: {user_settings}")
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Using user_settings_obj directly (sanitized): {sanitized_user_settings}")
                         
                         user_enable_agents = user_settings.get('enable_agents', False)
                         debug_print(f"[DEBUG] user_enable_agents={user_enable_agents}")
@@ -2800,6 +2823,18 @@ def register_route_backend_chats(app):
                             traceback.print_exc()
                     
                     if document_scope == 'public' and active_public_workspace_id:
+                        # Check if public workspace status allows chat operations
+                        try:
+                            from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                            workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                            if workspace_doc:
+                                allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                                if not allowed:
+                                    yield f"data: {json.dumps({'error': reason})}\n\n"
+                                    return
+                        except Exception as e:
+                            debug_print(f"Error checking public workspace status: {e}")
+                        
                         user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
                 else:
                     user_metadata['workspace_search'] = {
@@ -3489,6 +3524,41 @@ Assistant: The policy prohibits entities from using federal funds received throu
                     }
                     cosmos_messages_container.upsert_item(assistant_doc)
                     
+                    # Log chat token usage to activity_logs for easy reporting
+                    if token_usage_data and token_usage_data.get('total_tokens'):
+                        try:
+                            from functions_activity_logging import log_token_usage
+                            
+                            # Determine workspace type based on active group/public workspace
+                            workspace_type = 'personal'
+                            if active_public_workspace_id:
+                                workspace_type = 'public'
+                            elif active_group_id:
+                                workspace_type = 'group'
+                            
+                            log_token_usage(
+                                user_id=user_id,
+                                token_type='chat',
+                                total_tokens=token_usage_data.get('total_tokens'),
+                                model=final_model_used if use_agent_streaming else gpt_model,
+                                workspace_type=workspace_type,
+                                prompt_tokens=token_usage_data.get('prompt_tokens'),
+                                completion_tokens=token_usage_data.get('completion_tokens'),
+                                conversation_id=conversation_id,
+                                message_id=assistant_message_id,
+                                group_id=active_group_id,
+                                public_workspace_id=active_public_workspace_id,
+                                additional_context={
+                                    'agent_name': agent_name_used if use_agent_streaming else None,
+                                    'augmented': bool(system_messages_for_augmentation),
+                                    'reasoning_effort': reasoning_effort
+                                }
+                            )
+                            debug_print(f"✅ Logged streaming chat token usage: {token_usage_data.get('total_tokens')} tokens")
+                        except Exception as log_error:
+                            debug_print(f"⚠️  Warning: Failed to log streaming chat token usage: {log_error}")
+                            # Don't fail the chat flow if logging fails
+                    
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     
@@ -3591,9 +3661,7 @@ Assistant: The policy prohibits entities from using federal funds received throu
         )
 
     @app.route('/api/message/<message_id>/mask', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def mask_message_api(message_id):

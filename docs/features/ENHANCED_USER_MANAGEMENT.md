@@ -160,7 +160,7 @@ try:
     # Enhanced metrics collection
     enhanced_metrics = collect_user_metrics(user_id)
 except Exception as e:
-    current_app.logger.debug(f"Could not get metrics for user {user_id}: {e}")
+    debug_print(f"Could not get metrics for user {user_id}: {e}")
     # Return basic user data with default values
     return basic_user_data
 ```

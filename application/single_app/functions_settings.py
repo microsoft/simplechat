@@ -180,6 +180,7 @@ def get_settings(use_cosmos=False):
         'enable_content_safety': False,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
+        'require_member_of_control_center_dashboard_reader': False,
         'content_safety_endpoint': '',
         'content_safety_key': '',
         'content_safety_authentication_type': 'key',
@@ -247,11 +248,30 @@ def get_settings(use_cosmos=False):
         "speech_service_location": '',
         "speech_service_locale": "en-US",
         "speech_service_key": "",
+        "speech_service_authentication_type": "key",  # 'key' or 'managed_identity'
+        
+        # Speech-to-text chat input
+        "enable_speech_to_text_input": False,
+        
+        # Text-to-speech chat output
+        "enable_text_to_speech": False,
         
         #key vault settings
         'enable_key_vault_secret_storage': False,
         'key_vault_name': '',
         'key_vault_identity': '',
+        
+        # Retention Policy Settings
+        'enable_retention_policy_personal': False,
+        'enable_retention_policy_group': False,
+        'enable_retention_policy_public': False,
+        'retention_policy_execution_hour': 2,  # Run at 2 AM by default (0-23)
+        'retention_policy_last_run': None,  # ISO timestamp of last execution
+        'retention_policy_next_run': None,  # ISO timestamp of next scheduled execution
+        'retention_conversation_min_days': 1,
+        'retention_conversation_max_days': 3650,  # ~10 years
+        'retention_document_min_days': 1,
+        'retention_document_max_days': 3650,  # ~10 years
     }
 
     try:
@@ -713,9 +733,36 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             if "key" not in k.lower() and "storage_account_url" not in k.lower()}
 
 def sanitize_settings_for_logging(full_settings: dict) -> dict:
-    # Exclude any key containing "key", "base64", "storage_account_url"
-    return {k: v for k, v in full_settings.items() 
-            if "key" not in k.lower() and "base64" not in k.lower() and "image" not in k.lower() and "storage_account_url" not in k.lower()}
+    """
+    Recursively sanitize settings to remove sensitive data from debug logs.
+    Filters out keys containing: key, base64, image, storage_account_url
+    Also filters out values containing base64 data
+    """
+    if not isinstance(full_settings, dict):
+        return full_settings
+    
+    sanitized = {}
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    
+    for k, v in full_settings.items():
+        # Skip keys with sensitive terms
+        if any(term in k.lower() for term in sensitive_key_terms):
+            sanitized[k] = "[REDACTED]"
+            continue
+        
+        # Check if value is a string containing base64 data
+        if isinstance(v, str) and ("base64," in v or len(v) > 500):
+            sanitized[k] = "[BASE64_DATA_REDACTED]"
+        # Recursively sanitize nested dicts
+        elif isinstance(v, dict):
+            sanitized[k] = sanitize_settings_for_logging(v)
+        # Recursively sanitize lists
+        elif isinstance(v, list):
+            sanitized[k] = [sanitize_settings_for_logging(item) if isinstance(item, dict) else item for item in v]
+        else:
+            sanitized[k] = v
+    
+    return sanitized
 
 # Search history management functions
 def get_user_search_history(user_id):

@@ -7,13 +7,13 @@ from functions_logging import *
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta
 import json
+from functions_debug import debug_print
 
 def register_route_frontend_control_center(app):
     @app.route('/admin/control-center', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
-    @control_center_admin_required
+    @control_center_required('dashboard')
     def control_center():
         """
         Control Center main page for administrators.
@@ -27,14 +27,48 @@ def register_route_frontend_control_center(app):
             # Get basic statistics for dashboard
             stats = get_control_center_statistics()
             
+            # Check user's role for frontend conditional rendering
+            user = session.get('user', {})
+            has_admin_role = 'ControlCenterAdmin' in user.get('roles', [])
+            
             return render_template('control_center.html', 
                                  app_settings=public_settings, 
                                  settings=public_settings,
-                                 statistics=stats)
+                                 statistics=stats,
+                                 has_control_center_admin=has_admin_role)
         except Exception as e:
-            current_app.logger.error(f"Error loading control center: {e}")
+            debug_print(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")
             return redirect(url_for('admin_settings'))
+    
+    @app.route('/approvals', methods=['GET'])
+    @login_required
+    @user_required
+    def approvals():
+        """
+        Approval Requests page accessible to group owners, admins, and control center admins.
+        Shows approval requests based on user's role and permissions.
+        """
+        try:
+            # Get settings for configuration data
+            settings = get_settings()
+            public_settings = sanitize_settings_for_user(settings)
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
+            
+            return render_template('approvals.html', 
+                                 app_settings=public_settings, 
+                                 settings=public_settings,
+                                 user_settings=user_settings)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            debug_print(f"Error loading approvals: {e}\n{error_trace}")
+            print(f"ERROR IN APPROVALS ROUTE: {e}\n{error_trace}")
+            flash(f"Error loading approvals: {str(e)}", "error")
+            return redirect(url_for('index'))
 
 def get_control_center_statistics():
     """
@@ -66,24 +100,27 @@ def get_control_center_statistics():
             ))
             stats['total_users'] = user_result[0] if user_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get user count: {e}")
+            debug_print(f"Could not get user count: {e}")
         
-        # Get active users in last 30 days using lastUpdated
+        # Get active users in last 30 days using login activity logs
         try:
             thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
             active_users_query = """
-                SELECT VALUE COUNT(1) FROM c 
-                WHERE c.lastUpdated >= @thirty_days_ago
+                SELECT VALUE COUNT(1) FROM (
+                    SELECT DISTINCT c.user_id FROM c 
+                    WHERE c.activity_type = 'user_login' 
+                    AND c.timestamp >= @thirty_days_ago
+                )
             """
             active_users_params = [{"name": "@thirty_days_ago", "value": thirty_days_ago}]
-            active_users_result = list(cosmos_user_settings_container.query_items(
+            active_users_result = list(cosmos_activity_logs_container.query_items(
                 query=active_users_query,
                 parameters=active_users_params,
                 enable_cross_partition_query=True
             ))
             stats['active_users_30_days'] = active_users_result[0] if active_users_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get active users count: {e}")
+            debug_print(f"Could not get active users count: {e}")
         
         # Get total groups count
         try:
@@ -94,7 +131,7 @@ def get_control_center_statistics():
             ))
             stats['total_groups'] = groups_result[0] if groups_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get groups count: {e}")
+            debug_print(f"Could not get groups count: {e}")
         
         # Get groups created in last 30 days using createdDate
         try:
@@ -111,7 +148,7 @@ def get_control_center_statistics():
             ))
             stats['locked_groups'] = new_groups_result[0] if new_groups_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get new groups count: {e}")
+            debug_print(f"Could not get new groups count: {e}")
             
         # Get total public workspaces count
         try:
@@ -122,7 +159,7 @@ def get_control_center_statistics():
             ))
             stats['total_public_workspaces'] = workspaces_result[0] if workspaces_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get public workspaces count: {e}")
+            debug_print(f"Could not get public workspaces count: {e}")
             
         # Get public workspaces created in last 30 days using createdDate
         try:
@@ -139,7 +176,7 @@ def get_control_center_statistics():
             ))
             stats['hidden_workspaces'] = new_workspaces_result[0] if new_workspaces_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get new public workspaces count: {e}")
+            debug_print(f"Could not get new public workspaces count: {e}")
         
         # Get blocked users count
         try:
@@ -153,7 +190,7 @@ def get_control_center_statistics():
             ))
             stats['blocked_users'] = blocked_result[0] if blocked_result else 0
         except Exception as e:
-            current_app.logger.warning(f"Could not get blocked users count: {e}")
+            debug_print(f"Could not get blocked users count: {e}")
         
         # Get recent activity (last 24 hours)
         try:
@@ -200,7 +237,7 @@ def get_control_center_statistics():
             stats['recent_activity_24h']['documents'] = recent_docs[0] if recent_docs else 0
             
         except Exception as e:
-            current_app.logger.warning(f"Could not get recent activity: {e}")
+            debug_print(f"Could not get recent activity: {e}")
         
         # Add alerts for blocked users
         if stats['blocked_users'] > 0:
@@ -213,7 +250,7 @@ def get_control_center_statistics():
         return stats
         
     except Exception as e:
-        current_app.logger.error(f"Error getting control center statistics: {e}")
+        debug_print(f"Error getting control center statistics: {e}")
         return {
             'total_users': 0,
             'active_users_30_days': 0,
