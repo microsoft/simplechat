@@ -259,21 +259,46 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         import textwrap
         source = textwrap.dedent(source)
         
-        # Additional cleanup: ensure the first line starts at column 0
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
         lines = source.split('\n')
-        if lines:
-            # Find minimum indentation of non-empty lines
-            min_indent = float('inf')
-            for line in lines:
-                if line.strip():  # Skip empty lines
-                    indent = len(line) - len(line.lstrip())
-                    min_indent = min(min_indent, indent)
-            
-            # Remove the minimum indentation from all lines
-            if min_indent > 0 and min_indent != float('inf'):
-                source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
         
-        tree = ast.parse(source)
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
         
         responses = {}
         
@@ -497,21 +522,46 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
             import textwrap
             source = textwrap.dedent(source)
             
-            # Additional cleanup: ensure the first line starts at column 0
+            # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
             lines = source.split('\n')
-            if lines:
-                # Find minimum indentation of non-empty lines
-                min_indent = float('inf')
-                for line in lines:
-                    if line.strip():  # Skip empty lines
-                        indent = len(line) - len(line.lstrip())
-                        min_indent = min(min_indent, indent)
-                
-                # Remove the minimum indentation from all lines
-                if min_indent > 0 and min_indent != float('inf'):
-                    source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
+            if lines and lines[0]:  # If first line exists and is not empty
+                # Find how much leading whitespace the first non-empty line has
+                first_indent = len(lines[0]) - len(lines[0].lstrip())
+                if first_indent > 0:
+                    # Only remove whitespace from lines that have enough indentation
+                    # This preserves multi-line strings that may have less indentation
+                    dedented_lines = []
+                    for line in lines:
+                        if line.strip():  # Non-empty line
+                            # Calculate this line's leading whitespace
+                            line_leading = len(line) - len(line.lstrip())
+                            if line_leading >= first_indent:
+                                # Line has enough indentation - remove first_indent amount
+                                dedented_lines.append(line[first_indent:])
+                            else:
+                                # Line has less indentation - preserve it as-is
+                                dedented_lines.append(line)
+                        else:
+                            # Empty line - preserve
+                            dedented_lines.append(line)
+                    source = '\n'.join(dedented_lines)
             
-            tree = ast.parse(source)
+            try:
+                tree = ast.parse(source)
+            except SyntaxError as se:
+                # Log the problematic source for debugging
+                debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+                debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+                if se.lineno:
+                    # Show the problematic line and surrounding context
+                    source_lines = source.split('\n')
+                    start_line = max(0, se.lineno - 3)
+                    end_line = min(len(source_lines), se.lineno + 2)
+                    debug_print(f"Context around line {se.lineno}:")
+                    for i in range(start_line, end_line):
+                        marker = ">>>" if i == se.lineno - 1 else "   "
+                        debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+                raise
             
             query_params = {}  # {param_name: {type, default, description}}
             
@@ -647,21 +697,46 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         import textwrap
         source = textwrap.dedent(source)
         
-        # Additional cleanup: ensure the first line starts at column 0
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
         lines = source.split('\n')
-        if lines:
-            # Find minimum indentation of non-empty lines
-            min_indent = float('inf')
-            for line in lines:
-                if line.strip():  # Skip empty lines
-                    indent = len(line) - len(line.lstrip())
-                    min_indent = min(min_indent, indent)
-            
-            # Remove the minimum indentation from all lines
-            if min_indent > 0 and min_indent != float('inf'):
-                source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
         
-        tree = ast.parse(source)
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
         
         request_body_detected = False
         json_fields = set()
