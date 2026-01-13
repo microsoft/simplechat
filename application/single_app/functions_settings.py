@@ -144,6 +144,10 @@ def get_settings(use_cosmos=False):
         'number_of_historical_messages_to_summarize': 10,
         'enable_summarize_content_history_beyond_conversation_history_limit': False,
 
+        # Multi-Modal Vision Analysis
+        'enable_multimodal_vision': False,
+        'multimodal_vision_model': '',
+
         # Document Classification
         'enable_document_classification': False,
         'document_classification_categories': [

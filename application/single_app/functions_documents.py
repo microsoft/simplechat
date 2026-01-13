@@ -1688,6 +1688,57 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
         # This is expected for documents without metadata
         return None
 
+def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
+    """
+    Retrieve keywords and abstract from a document for creating metadata citations.
+    Used to enhance search results with additional context from document metadata.
+    
+    Args:
+        document_id: The document's unique identifier
+        user_id: User ID (for personal documents)
+        group_id: Group ID (for group documents) 
+        public_workspace_id: Public workspace ID (for public documents)
+        
+    Returns:
+        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+    
+    # Determine the correct container
+    if is_public_workspace:
+        cosmos_container = cosmos_public_documents_container
+    elif is_group:
+        cosmos_container = cosmos_group_documents_container
+    else:
+        cosmos_container = cosmos_user_documents_container
+
+    try:
+        # Read the document directly by ID
+        document_item = cosmos_container.read_item(
+            item=document_id,
+            partition_key=document_id
+        )
+        
+        # Extract keywords and abstract
+        keywords = document_item.get('keywords', [])
+        abstract = document_item.get('abstract', '')
+        
+        # Return only if we have actual content
+        if keywords or abstract:
+            return {
+                'keywords': keywords if keywords else [],
+                'abstract': abstract if abstract else '',
+                'file_name': document_item.get('file_name', 'Unknown')
+            }
+        
+        return None
+        
+    except Exception as e:
+        # Document not found or error reading - return None silently
+        # This is expected for documents without metadata
+        return None
+
 def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3036,8 +3087,13 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             'analysis': 'detailed analysis'
         } or None if vision analysis is disabled or fails
     """
+<<<<<<< HEAD
     debug_print(f"[VISION_ANALYSIS_V2] Function entry - document_id: {document_id}, user_id: {user_id}")
 
+=======
+    if not settings.get('enable_multimodal_vision', False):
+        return None
+>>>>>>> origin/main
         
     try:
         # Convert image to base64
@@ -3045,6 +3101,7 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             image_bytes = img_file.read()
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
         
+<<<<<<< HEAD
         image_size = len(image_bytes)
         base64_size = len(base64_image)
         debug_print(f"[VISION_ANALYSIS] Image conversion for {document_id}:")
@@ -3059,6 +3116,13 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
         # Get vision model settings
         vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
         debug_print(f"[VISION_ANALYSIS] Vision model selected: {vision_model}")
+=======
+        # Determine image mime type
+        mime_type = mimetypes.guess_type(image_path)[0] or 'image/jpeg'
+        
+        # Get vision model settings
+        vision_model = settings.get('multimodal_vision_model', 'gpt-4o')
+>>>>>>> origin/main
         
         if not vision_model:
             print(f"Warning: Multi-modal vision enabled but no model selected")
@@ -3066,6 +3130,7 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
         
         # Initialize client (reuse GPT configuration)
         enable_gpt_apim = settings.get('enable_gpt_apim', False)
+<<<<<<< HEAD
         debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
         
         if enable_gpt_apim:
@@ -3078,11 +3143,19 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
+=======
+        
+        if enable_gpt_apim:
+            gpt_client = AzureOpenAI(
+                api_version=settings.get('azure_apim_gpt_api_version'),
+                azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+>>>>>>> origin/main
                 api_key=settings.get('azure_apim_gpt_subscription_key')
             )
         else:
             # Use managed identity or key
             auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+<<<<<<< HEAD
             api_version = settings.get('azure_openai_gpt_api_version')
             endpoint = settings.get('azure_openai_gpt_endpoint')
             
@@ -3091,26 +3164,39 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             debug_print(f"  API Version: {api_version}")
             debug_print(f"  Auth Type: {auth_type}")
             
+=======
+>>>>>>> origin/main
             if auth_type == 'managed_identity':
                 token_provider = get_bearer_token_provider(
                     DefaultAzureCredential(), 
                     cognitive_services_scope
                 )
                 gpt_client = AzureOpenAI(
+<<<<<<< HEAD
                     api_version=api_version,
                     azure_endpoint=endpoint,
+=======
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+>>>>>>> origin/main
                     azure_ad_token_provider=token_provider
                 )
             else:
                 gpt_client = AzureOpenAI(
+<<<<<<< HEAD
                     api_version=api_version,
                     azure_endpoint=endpoint,
+=======
+                    api_version=settings.get('azure_openai_gpt_api_version'),
+                    azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
+>>>>>>> origin/main
                     api_key=settings.get('azure_openai_gpt_key')
                 )
         
         # Create vision prompt
         print(f"Analyzing image with vision model: {vision_model}")
         
+<<<<<<< HEAD
         # Determine which token parameter to use based on model type
         # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
         vision_model_lower = vision_model.lower()
@@ -3136,6 +3222,17 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
 Ensure your entire response is valid JSON. Include all four keys even if some are empty strings or empty arrays."""
         else:
             prompt_text = """Analyze this image and provide:
+=======
+        response = gpt_client.chat.completions.create(
+            model=vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": """Analyze this image and provide:
+>>>>>>> origin/main
 1. A detailed description of what you see
 2. List any objects, people, or notable elements
 3. Extract any visible text (OCR)
@@ -3148,6 +3245,7 @@ Format your response as JSON with these keys:
   "text": "...",
   "analysis": "..."
 }"""
+<<<<<<< HEAD
         
         api_params = {
             "model": vision_model,
@@ -3158,6 +3256,8 @@ Format your response as JSON with these keys:
                         {
                             "type": "text",
                             "text": prompt_text
+=======
+>>>>>>> origin/main
                         },
                         {
                             "type": "image_url",
@@ -3167,6 +3267,7 @@ Format your response as JSON with these keys:
                         }
                     ]
                 }
+<<<<<<< HEAD
             ]
         }
         
@@ -3204,10 +3305,16 @@ Format your response as JSON with these keys:
                 # Check finish reason
                 if hasattr(response.choices[0], 'finish_reason'):
                     debug_print(f"  Finish reason: {response.choices[0].finish_reason}")
+=======
+            ],
+            max_tokens=1000
+        )
+>>>>>>> origin/main
         
         # Parse response
         content = response.choices[0].message.content
         
+<<<<<<< HEAD
         # Handle None content
         if content is None:
             print(f"[VISION_ANALYSIS_V2] ⚠️ Response content is None!")
@@ -3237,10 +3344,14 @@ Format your response as JSON with these keys:
         has_code_fence = '```' in content
         debug_print(f"  Starts with JSON bracket: {is_json_like}")
         debug_print(f"  Contains code fence: {has_code_fence}")
+=======
+        debug_print(f"[VISION_ANALYSIS] Raw response for {document_id}: {content[:500]}...")
+>>>>>>> origin/main
         
         # Try to parse as JSON, fallback to raw text
         try:
             # Clean up potential markdown code fences
+<<<<<<< HEAD
             debug_print(f"[VISION_ANALYSIS] Attempting to clean JSON code fences...")
             content_cleaned = clean_json_codeFence(content)
             debug_print(f"  Cleaned length: {len(content_cleaned)} characters")
@@ -3265,10 +3376,23 @@ Format your response as JSON with these keys:
                 'parse_failed': True
             }
             debug_print(f"[VISION_ANALYSIS] Created fallback structure with raw response")
+=======
+            content_cleaned = clean_json_codeFence(content)
+            vision_analysis = json.loads(content_cleaned)
+            debug_print(f"[VISION_ANALYSIS] Parsed JSON successfully for {document_id}")
+        except Exception as parse_error:
+            debug_print(f"[VISION_ANALYSIS] Vision response not valid JSON: {parse_error}")
+            print(f"Vision response not valid JSON, using raw text")
+            vision_analysis = {
+                'description': content,
+                'raw_response': content
+            }
+>>>>>>> origin/main
         
         # Add model info to analysis
         vision_analysis['model'] = vision_model
         
+<<<<<<< HEAD
         debug_print(f"[VISION_ANALYSIS] Final analysis structure for {document_id}:")
         debug_print(f"  Model: {vision_model}")
         debug_print(f"  Has 'description': {'description' in vision_analysis}")
@@ -3290,6 +3414,13 @@ Format your response as JSON with these keys:
             txt = vision_analysis['text']
             debug_print(f"  Text length: {len(txt) if txt else 0} chars")
             debug_print(f"  Text preview: {txt[:100] if txt else 'None'}...")
+=======
+        debug_print(f"[VISION_ANALYSIS] Complete analysis for {document_id}:")
+        debug_print(f"  Model: {vision_model}")
+        debug_print(f"  Description: {vision_analysis.get('description', 'N/A')[:200]}...")
+        debug_print(f"  Objects: {vision_analysis.get('objects', [])}")
+        debug_print(f"  Text: {vision_analysis.get('text', 'N/A')[:100]}...")
+>>>>>>> origin/main
         
         print(f"Vision analysis completed for document: {document_id}")
         return vision_analysis
@@ -3801,6 +3932,355 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
         raise Exception(f"Failed processing {original_filename}: {e}")
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing XML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for XML structure preservation
+    max_chunk_size_chars = 4000
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_group:
+            args["group_id"] = group_id
+        elif is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read XML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading XML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with XML-aware separators
+        # This preserves XML structure better than simple word splitting
+        xml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the XML content
+        final_chunks = xml_splitter.split_text(xml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing XML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing YAML file...")
+    total_chunks_saved = 0
+    # Character-based chunking for YAML structure preservation
+    max_chunk_size_chars = 4000
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Read YAML content
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading YAML file {original_filename}: {e}")
+
+        # Use RecursiveCharacterTextSplitter with YAML-aware separators
+        # This preserves YAML structure better than simple word splitting
+        yaml_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size_chars,
+            chunk_overlap=0,
+            length_function=len,
+            separators=["\n\n", "\n", "- ", " ", ""],  # YAML-friendly separators
+            is_separator_regex=False
+        )
+
+        # Split the YAML content
+        final_chunks = yaml_splitter.split_text(yaml_content)
+
+        initial_chunk_count = len(final_chunks)
+        update_callback(number_of_pages=initial_chunk_count)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            # Skip empty chunks
+            if not chunk_content or not chunk_content.strip():
+                print(f"Skipping empty YAML chunk {idx}/{initial_chunk_count}")
+                continue
+
+            update_callback(
+                current_file_chunk=idx,
+                status=f"Saving chunk {idx}/{initial_chunk_count}..."
+            )
+            args = {
+                "page_text_content": chunk_content,
+                "page_number": total_chunks_saved + 1,
+                "file_name": original_filename,
+                "user_id": user_id,
+                "document_id": document_id
+            }
+
+            if is_public_workspace:
+                args["public_workspace_id"] = public_workspace_id
+            elif is_group:
+                args["group_id"] = group_id
+
+            save_chunks(**args)
+            total_chunks_saved += 1
+
+        # Final update with actual chunks saved
+        if total_chunks_saved != initial_chunk_count:
+            update_callback(number_of_pages=total_chunks_saved)
+            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+
+    except Exception as e:
+        print(f"Error during YAML processing for {original_filename}: {type(e).__name__}: {e}")
+        raise Exception(f"Failed processing YAML file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_log(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes LOG files using line-based chunking to maintain log record integrity."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing LOG file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 1000  # Word-based chunking for better semantic grouping
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by lines to maintain log record integrity
+        lines = content.splitlines(keepends=True)  # Keep line endings
+        
+        if not lines:
+            raise Exception(f"LOG file {original_filename} is empty")
+
+        # Chunk by accumulating lines until reaching target word count
+        final_chunks = []
+        current_chunk_lines = []
+        current_chunk_word_count = 0
+
+        for line in lines:
+            line_word_count = len(line.split())
+            
+            # If adding this line exceeds target AND we already have content
+            if current_chunk_word_count + line_word_count > target_words_per_chunk and current_chunk_lines:
+                # Finalize current chunk
+                final_chunks.append("".join(current_chunk_lines))
+                # Start new chunk with current line
+                current_chunk_lines = [line]
+                current_chunk_word_count = line_word_count
+            else:
+                # Add line to current chunk
+                current_chunk_lines.append(line)
+                current_chunk_word_count += line_word_count
+
+        # Add the last remaining chunk if it has content
+        if current_chunk_lines:
+            final_chunks.append("".join(current_chunk_lines))
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing LOG file {original_filename}: {e}")
+
+    return total_chunks_saved
+
+def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """
+    Processes .doc and .docm files using docx2txt library.
+    Note: .docx files still use Document Intelligence for better formatting preservation.
+    """
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
+    total_chunks_saved = 0
+    target_words_per_chunk = 400  # Consistent with other text-based chunking
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        # Import docx2txt here to avoid dependency issues if not installed
+        try:
+            import docx2txt
+        except ImportError:
+            raise Exception("docx2txt library is required for .doc and .docm file processing. Install with: pip install docx2txt")
+
+        # Extract text from .doc or .docm file
+        try:
+            text_content = docx2txt.process(temp_file_path)
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        if not text_content or not text_content.strip():
+            raise Exception(f"No text content extracted from {original_filename}")
+
+        # Split into words for chunking
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        # Create chunks of target_words_per_chunk words
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                save_chunks(**args)
+                total_chunks_saved += 1
+
+    except Exception as e:
+        raise Exception(f"Failed processing {original_filename}: {e}")
+
+    return total_chunks_saved
 
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes HTML files."""
@@ -4715,10 +5195,79 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             # Don't fail the whole proc, total_embedding_tokens, embedding_model_nameess, just update status
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
+<<<<<<< HEAD
     # Note: Vision analysis now happens BEFORE save_chunks (moved earlier in the flow)
     # This ensures vision_analysis is available in metadata when chunks are being saved
 
     return total_final_chunks_processed, total_embedding_tokens, embedding_model_name
+=======
+    # --- Multi-Modal Vision Analysis (for images only) ---
+    if is_image and enable_enhanced_citations:
+        enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
+        if enable_multimodal_vision:
+            try:
+                update_callback(status="Performing AI vision analysis...")
+                
+                vision_analysis = analyze_image_with_vision_model(
+                    temp_file_path,
+                    user_id,
+                    document_id,
+                    settings
+                )
+                
+                if vision_analysis:
+                    print(f"Vision analysis completed for image: {original_filename}")
+                    
+                    # Update document with vision analysis results
+                    update_fields = {
+                        'vision_analysis': vision_analysis,
+                        'vision_description': vision_analysis.get('description', ''),
+                        'vision_objects': vision_analysis.get('objects', []),
+                        'vision_extracted_text': vision_analysis.get('text', ''),
+                        'status': "AI vision analysis completed"
+                    }
+                    update_callback(**update_fields)
+                    
+                    # Save vision analysis as separate blob for citations
+                    vision_json_path = temp_file_path + '_vision.json'
+                    try:
+                        with open(vision_json_path, 'w', encoding='utf-8') as f:
+                            json.dump(vision_analysis, f, indent=2)
+                        
+                        vision_blob_filename = f"{os.path.splitext(original_filename)[0]}_vision_analysis.json"
+                        
+                        upload_blob_args = {
+                            "temp_file_path": vision_json_path,
+                            "user_id": user_id,
+                            "document_id": document_id,
+                            "blob_filename": vision_blob_filename,
+                            "update_callback": update_callback
+                        }
+                        
+                        if is_public_workspace:
+                            upload_blob_args["public_workspace_id"] = public_workspace_id
+                        elif is_group:
+                            upload_blob_args["group_id"] = group_id
+                        
+                        upload_to_blob(**upload_blob_args)
+                        print(f"Vision analysis saved to blob storage: {vision_blob_filename}")
+                        
+                    finally:
+                        if os.path.exists(vision_json_path):
+                            os.remove(vision_json_path)
+                else:
+                    print(f"Vision analysis returned no results for: {original_filename}")
+                    update_callback(status="Vision analysis completed (no results)")
+                    
+            except Exception as e:
+                print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the whole process, just update status
+                update_callback(status=f"Processing complete (vision analysis warning)")
+
+    return total_final_chunks_processed
+>>>>>>> origin/main
 
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
@@ -5023,6 +5572,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             args["group_id"] = group_id
 
         if file_ext == '.txt':
+<<<<<<< HEAD
             result = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
             # Handle tuple return (chunks, tokens, model_name)
             if isinstance(result, tuple) and len(result) == 3:
@@ -5053,6 +5603,17 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
+=======
+            total_chunks_saved = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext == '.xml':
+            total_chunks_saved = process_xml(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext in ('.yaml', '.yml'):
+            total_chunks_saved = process_yaml(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext == '.log':
+            total_chunks_saved = process_log(**{k: v for k, v in args.items() if k != "file_ext"})
+        elif file_ext in ('.doc', '.docm'):
+            total_chunks_saved = process_doc(**{k: v for k, v in args.items() if k != "file_ext"})
+>>>>>>> origin/main
         elif file_ext == '.html':
             result = process_html(**{k: v for k, v in args.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:

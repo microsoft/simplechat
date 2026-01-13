@@ -24,6 +24,7 @@ def register_route_backend_documents(app):
         user_id = get_current_user_id()
         conversation_id = data.get('conversation_id')
         file_id = data.get('file_id')
+        
         debug_print(f"[GET_FILE_CONTENT] Starting - user_id={user_id}, conversation_id={conversation_id}, file_id={file_id}")
 
         if not user_id:

@@ -42,7 +42,7 @@ def register_route_frontend_workspace(app):
             )
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
-
+        
         # Build allowed extensions string
         allowed_extensions = [
             "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",

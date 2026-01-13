@@ -955,12 +955,12 @@ def register_route_backend_chats(app):
                                 continue
 
                             processed_doc_ids.add(doc_id)
-
                             # Determine workspace type from the search result fields
                             doc_user_id = doc.get('user_id')
                             doc_group_id = doc.get('group_id')
                             doc_public_workspace_id = doc.get('public_workspace_id')
 
+                            
                             # Query Cosmos for this document's metadata
                             metadata = get_document_metadata_for_citations(
                                 document_id=doc_id,
@@ -969,17 +969,20 @@ def register_route_backend_chats(app):
                                 public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
                             )
 
+                            
                             # If we have metadata with content, create additional citations
                             if metadata:
                                 file_name = metadata.get('file_name', 'Unknown')
                                 keywords = metadata.get('keywords', [])
                                 abstract = metadata.get('abstract', '')
 
+                                
                                 # Create citation for keywords if they exist
                                 if keywords and len(keywords) > 0:
                                     keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
                                     keywords_citation_id = f"{doc_id}_keywords"
 
+                                    
                                     keywords_citation = {
                                         "file_name": file_name,
                                         "citation_id": keywords_citation_id,
@@ -1004,6 +1007,15 @@ def register_route_backend_chats(app):
                                 if abstract and len(abstract.strip()) > 0:
                                     abstract_citation_id = f"{doc_id}_abstract"
 
+                                    
+                                    # Add keywords to retrieved content for the model
+                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                    retrieved_texts.append(keywords_context)
+                                
+                                # Create citation for abstract if it exists
+                                if abstract and len(abstract.strip()) > 0:
+                                    abstract_citation_id = f"{doc_id}_abstract"
+                                    
                                     abstract_citation = {
                                         "file_name": file_name,
                                         "citation_id": abstract_citation_id,
@@ -1024,6 +1036,11 @@ def register_route_backend_chats(app):
                                     abstract_context = f"Document Abstract ({file_name}): {abstract}"
                                     retrieved_texts.append(abstract_context)
 
+                                    
+                                    # Add abstract to retrieved content for the model
+                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                    retrieved_texts.append(abstract_context)
+                                
                                 # Create citation for vision analysis if it exists
                                 vision_analysis = metadata.get('vision_analysis')
                                 if vision_analysis:
@@ -1062,6 +1079,7 @@ def register_route_backend_chats(app):
                                     vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
                                     retrieved_texts.append(vision_context)
 
+                        
                         # Update the system prompt with the enhanced content including metadata
                         if retrieved_texts:
                             retrieved_content = "\n\n".join(retrieved_texts)
@@ -1069,6 +1087,12 @@ def register_route_backend_chats(app):
                                 Retrieved Excerpts:
                                 {retrieved_content}
                                 Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
+
+                                Retrieved Excerpts:
+                                {retrieved_content}
+
+                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
+
                                 Example
                                 User: What is the policy on double dipping?
                                 Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
