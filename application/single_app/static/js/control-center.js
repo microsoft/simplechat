@@ -3895,6 +3895,9 @@ window.debugControlCenterElements = function() {
 document.addEventListener('DOMContentLoaded', function() {
     window.controlCenter = new ControlCenter();
     
+    // Export GroupTableSorter to window for global access
+    window.GroupTableSorter = GroupTableSorter;
+    
     // Wire up migration confirmation button
     const confirmMigrationBtn = document.getElementById('confirmMigrationBtn');
     if (confirmMigrationBtn) {

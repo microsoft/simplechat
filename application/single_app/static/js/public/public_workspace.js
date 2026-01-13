@@ -28,7 +28,7 @@ const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publ
 let publicSimplemde = null;
 const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
-  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false });
+  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
 
 // DOM elements

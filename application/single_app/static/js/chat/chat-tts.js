@@ -1000,12 +1000,12 @@ export async function toggleTTSAutoplay() {
         updateAutoplayButton();
         
         // Show toast notification
-        const message = ttsAutoplay ? 'TTS Autoplay enabled' : 'TTS Autoplay disabled';
+        const message = ttsAutoplay ? 'AI Voice enabled' : 'AI Voice disabled';
         showToast(message, 'success');
         
     } catch (error) {
-        console.error('Error saving TTS autoplay setting:', error);
-        showToast('Failed to save autoplay setting', 'danger');
+        console.error('Error saving AI Voice setting:', error);
+        showToast('Failed to save AI Voice setting', 'danger');
         // Revert the toggle
         ttsAutoplay = !ttsAutoplay;
     }

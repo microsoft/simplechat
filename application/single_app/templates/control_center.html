@@ -644,8 +644,9 @@
                                     <div class="d-flex justify-content-between align-items-center flex-wrap">
                                         <h5 class="mb-0">
                                             <i class="bi bi-graph-up me-2"></i>Activity Trends
-                                            <small>Real-time, does not require refresh</small>
+                                            
                                         </h5>
+                                        <small>Real-time, does not require refresh</small>
                                         <div class="d-flex align-items-center gap-2">
                                             <!-- Date Range Buttons -->
                                             <div class="btn-group" role="group">
@@ -2728,9 +2729,9 @@
 window.hasControlCenterAdmin = {{ 'true' if has_control_center_admin else 'false' }};
 </script>
 <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
-<script src="{{ url_for('static', filename='js/control-center.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/control-center.js') }}"></script>
 <script src="{{ url_for('static', filename='js/control-center-sidebar-nav.js') }}"></script>
-<script src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/workspace-manager.js') }}"></script>
 
 <script>
 // Function to navigate to specific tabs when stat cards are clicked
@@ -4687,18 +4688,5 @@ window.GroupManager = {
         }
     }
 };
-
-// Initialize table sorting when the page loads
-document.addEventListener('DOMContentLoaded', function() {
-    // Ensure managers are available globally
-    window.GroupManager = GroupManager;
-    
-    // Wait a bit for the control center to load
-    setTimeout(() => {
-        window.tableSorter = new TableSorter('usersTable');
-        window.groupTableSorter = new GroupTableSorter('groupsTable');
-        GroupManager.init();
-    }, 1000);
-});
 </script>
 {% endblock %}

@@ -1128,7 +1128,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     try {
       groupSimplemde = new SimpleMDE({
         element: groupPromptContentEl,
-        spellChecker: false
+        spellChecker: false,
+        autoDownloadFontAwesome: false
       });
     } catch (e) {
       console.error("Failed to initialize SimpleMDE for group prompts:", e);
