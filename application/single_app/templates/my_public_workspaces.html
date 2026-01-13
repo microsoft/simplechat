@@ -179,5 +179,6 @@
     window.canCreatePublicWorkspaces = {{ can_create_public_workspaces|tojson }};
     window.activeWorkspaceId = {{ active_public_workspace_id|tojson }};
   </script>
+  <script src="{{ url_for('static', filename='js/public/public_workspace_utility.js') }}"></script>
   <script src="{{ url_for('static', filename='js/public/my_public_workspaces.js') }}"></script>
 {% endblock %}

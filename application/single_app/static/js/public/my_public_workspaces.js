@@ -19,18 +19,6 @@ $(document).ready(function () {
   let pageSize           = parseInt(pageSizeSelect.val(), 10);
   let currentSearchQuery = "";
 
-  // Utility: escape HTML to avoid XSS
-  function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe
-      .toString()
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
   // Fetch and render the list of public workspaces
   function fetchWorkspaces() {
     // Show loading placeholder

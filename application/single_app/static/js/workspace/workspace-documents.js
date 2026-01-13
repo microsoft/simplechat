@@ -1264,11 +1264,13 @@ window.toggleSelectionMode = function() {
         
         // Show checkboxes and hide expand buttons
         checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'inline-block';
+            checkbox.classList.remove('d-none');
+            checkbox.classList.add('d-inline-block');
         });
         
         expandContainers.forEach(container => {
-            container.style.display = 'none';
+            container.classList.remove('d-inline-block');
+            container.classList.add('d-none');
         });
     } else {
         // Exit selection mode
@@ -1276,17 +1278,20 @@ window.toggleSelectionMode = function() {
         
         // Hide checkboxes and show expand buttons
         checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'none';
+            checkbox.classList.remove('d-inline-block');
+            checkbox.classList.add('d-none');
             checkbox.checked = false;
         });
         
         expandContainers.forEach(container => {
-            container.style.display = 'inline-block';
+            container.classList.remove('d-none');
+            container.classList.add('d-inline-block');
         });
         
         // Hide bulk actions bar
         if (bulkActionsBar) {
-            bulkActionsBar.style.display = 'none';
+            bulkActionsBar.classList.remove('d-block');
+            bulkActionsBar.classList.add('d-none');
         }
         
         // Clear selected documents
@@ -1314,7 +1319,8 @@ function updateBulkActionButtons() {
     if (selectedDocuments.size > 0) {
         // Show bulk actions bar with count
         if (bulkActionsBar) {
-            bulkActionsBar.style.display = 'block';
+            bulkActionsBar.classList.remove('d-none');
+            bulkActionsBar.classList.add('d-block');
         }
         if (selectedCountSpan) {
             selectedCountSpan.textContent = selectedDocuments.size;
@@ -1332,7 +1338,8 @@ function updateBulkActionButtons() {
     } else {
         // Hide bulk actions bar
         if (bulkActionsBar) {
-            bulkActionsBar.style.display = 'none';
+            bulkActionsBar.classList.remove('d-block');
+            bulkActionsBar.classList.add('d-none');
         }
     }
 }

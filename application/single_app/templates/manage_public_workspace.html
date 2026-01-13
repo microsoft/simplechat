@@ -893,5 +893,7 @@
     window.workspaceId = "{{ workspace_id }}";
     window.userId = "{{ session['user'].get('oid') }}";
   </script>
+  <script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/public/public_workspace_utility.js') }}"></script>
   <script src="{{ url_for('static', filename='js/public/manage_public_workspace.js') }}"></script>
 {% endblock %}

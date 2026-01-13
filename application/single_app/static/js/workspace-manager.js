@@ -121,13 +121,11 @@ window.WorkspaceManager = {
     },
 
     validateEmail: function(email) {
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        return re.test(email);
+        return ValidationUtils.validateEmail(email);
     },
 
     validateGuid: function(guid) {
-        const re = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        return re.test(guid);
+        return ValidationUtils.validateGuid(guid);
     },
 
     handleWorkspaceCsvFileSelect: function(event) {

@@ -1327,7 +1327,9 @@ class ControlCenter {
     // Activity Trends Methods
     async loadActivityTrends() {
         try {
-            console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] Loading activity trends for', this.currentTrendDays, 'days');
+            }
             
             // Build API URL with custom date range if specified
             let apiUrl = `/api/admin/control-center/activity-trends?days=${this.currentTrendDays}`;
@@ -1336,13 +1338,19 @@ class ControlCenter {
             }
             
             const response = await fetch(apiUrl);
-            console.log('🔍 [Frontend Debug] API response status:', response.status);
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] API response status:', response.status);
+            }
             
             const data = await response.json();
-            console.log('🔍 [Frontend Debug] API response data:', data);
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] API response data:', data);
+            }
             
             if (response.ok) {
-                console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
+                if (appSettings?.enable_debug_logging) {
+                    console.log('🔍 [Frontend Debug] Activity data received:', data.activity_data);
+                }
                 // Render all four charts
                 this.renderLoginsChart(data.activity_data);
                 this.renderChatsChart(data.activity_data);
@@ -1365,7 +1373,9 @@ class ControlCenter {
     }
     
     renderLoginsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering logins chart with data:', activityData.logins);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering logins chart with data:', activityData.logins);
+        }
         this.renderSingleChart('loginsChart', 'logins', activityData.logins, {
             label: 'Logins',
             backgroundColor: 'rgba(255, 193, 7, 0.2)',
@@ -1374,7 +1384,9 @@ class ControlCenter {
     }
     
     renderChatsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering chats chart with data:', activityData);
+        }
         
         // Check if Chart.js is available
         if (typeof Chart === 'undefined') {
@@ -1473,13 +1485,15 @@ class ControlCenter {
     }
     
     renderDocumentsChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering documents chart with creation/deletion data');
-        console.log('🔍 [Frontend Debug] Personal created:', activityData.personal_documents_created);
-        console.log('🔍 [Frontend Debug] Personal deleted:', activityData.personal_documents_deleted);
-        console.log('🔍 [Frontend Debug] Group created:', activityData.group_documents_created);
-        console.log('🔍 [Frontend Debug] Group deleted:', activityData.group_documents_deleted);
-        console.log('🔍 [Frontend Debug] Public created:', activityData.public_documents_created);
-        console.log('🔍 [Frontend Debug] Public deleted:', activityData.public_documents_deleted);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering documents chart with creation/deletion data');
+            console.log('🔍 [Frontend Debug] Personal created:', activityData.personal_documents_created);
+            console.log('🔍 [Frontend Debug] Personal deleted:', activityData.personal_documents_deleted);
+            console.log('🔍 [Frontend Debug] Group created:', activityData.group_documents_created);
+            console.log('🔍 [Frontend Debug] Group deleted:', activityData.group_documents_deleted);
+            console.log('🔍 [Frontend Debug] Public created:', activityData.public_documents_created);
+            console.log('🔍 [Frontend Debug] Public deleted:', activityData.public_documents_deleted);
+        }
         
         // Render combined chart with creations (lines) and deletions (bars)
         this.renderCombinedDocumentsChart('documentsChart', {
@@ -1690,7 +1704,9 @@ class ControlCenter {
     }
 
     renderTokensChart(activityData) {
-        console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Rendering tokens chart with data:', activityData.tokens);
+        }
         
         // Render combined chart with embedding and chat tokens
         this.renderCombinedTokensChart('tokensChart', activityData.tokens || {});
@@ -1721,13 +1737,17 @@ class ControlCenter {
         
         // Destroy existing chart if it exists
         if (this.tokensChart) {
-            console.log('🔍 [Frontend Debug] Destroying existing tokens chart');
+            if (appSettings?.enable_debug_logging) {
+                console.log('🔍 [Frontend Debug] Destroying existing tokens chart');
+            }
             this.tokensChart.destroy();
         }
         
         // Prepare data from tokens object (format: { "YYYY-MM-DD": { "embedding": count, "chat": count } })
         const allDates = Object.keys(tokensData).sort();
-        console.log('🔍 [Frontend Debug] Token dates:', allDates);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Token dates:', allDates);
+        }
         
         // Format labels for display
         const labels = allDates.map(dateStr => {
@@ -1739,8 +1759,10 @@ class ControlCenter {
         const embeddingTokens = allDates.map(date => tokensData[date]?.embedding || 0);
         const chatTokens = allDates.map(date => tokensData[date]?.chat || 0);
         
-        console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
-        console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Embedding tokens:', embeddingTokens);
+            console.log('🔍 [Frontend Debug] Chat tokens:', chatTokens);
+        }
         
         // Create datasets
         const datasets = [
@@ -2811,7 +2833,9 @@ class ControlCenter {
             this.groupDocumentsChart.destroy();
             this.groupDocumentsChart = null;
         }
-        console.log('🔍 [Frontend Debug] All charts destroyed');
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] All charts destroyed');
+        }
     }
     
     showAllChartsError() {
@@ -2823,7 +2847,9 @@ class ControlCenter {
         
         // Ensure main loading overlay is hidden when showing error
         this.showLoading(false);
-        console.log('🔍 [Frontend Debug] Main loading overlay hidden after all charts error');
+        if (appSettings?.enable_debug_logging) {
+            console.log('🔍 [Frontend Debug] Main loading overlay hidden after all charts error');
+        }
     }
     
     showChartError(canvasId, chartType) {

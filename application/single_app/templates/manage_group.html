@@ -913,5 +913,6 @@
   const userId = "{{ session['user'].get('oid') }}";
 </script>
 
+<script src="{{ url_for('static', filename='js/validation-utils.js') }}"></script>
 <script src="{{ url_for('static', filename='js/group/manage_group.js') }}"></script>
 {% endblock %}

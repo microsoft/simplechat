@@ -61,12 +61,6 @@ const publicPromptForm = document.getElementById('public-prompt-form');
 const publicPromptIdEl = document.getElementById('public-prompt-id');
 const publicPromptNameEl = document.getElementById('public-prompt-name');
 
-// Helper
-function escapeHtml(unsafe) {
-  if (!unsafe) return '';
-  return unsafe.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
 // Initialize
 document.addEventListener('DOMContentLoaded', ()=>{
   fetchUserPublics().then(()=>{
@@ -206,97 +200,14 @@ function updatePublicRoleDisplay(){
   }
 }
 
-// Update workspace status alert based on status
+// Update workspace status alert based on status - uses shared utility
 function updateWorkspaceStatusAlert() {
   if (!activePublicId) return;
   
-  const statusAlert = document.getElementById('workspace-status-alert');
-  const statusContent = document.getElementById('workspace-status-content');
-  
-  if (!statusAlert || !statusContent) return;
-  
-  const statusMessages = {
-    'locked': {
-      type: 'warning',
-      icon: 'bi-lock-fill',
-      title: '🔒 Locked (Read-Only)',
-      message: 'Workspace is in read-only mode',
-      details: [
-        '❌ New document uploads',
-        '❌ Document deletions',
-        '❌ Creating, editing, or deleting prompts',
-        '✅ Viewing existing documents',
-        '✅ Chat and search with existing documents',
-        '✅ Using existing prompts'
-      ]
-    },
-    'upload_disabled': {
-      type: 'info',
-      icon: 'bi-cloud-slash-fill',
-      title: '📁 Upload Disabled',
-      message: 'Restrict new content but allow other operations',
-      details: [
-        '❌ New document uploads',
-        '✅ Document deletions (cleanup)',
-        '✅ Full chat and search functionality',
-        '✅ Creating, editing, and deleting prompts'
-      ]
-    },
-    'inactive': {
-      type: 'danger',
-      icon: 'bi-exclamation-triangle-fill',
-      title: '⭕ Inactive',
-      message: 'Workspace is disabled',
-      details: [
-        '❌ ALL operations (uploads, chat, document access)',
-        '❌ Creating, editing, or deleting prompts',
-        '✅ Only admin viewing of workspace information',
-        'Use case: Decommissioned projects, suspended workspaces, compliance holds'
-      ]
-    }
-  };
-  
-  // Fetch workspace details to get status
-  fetch(`/api/public_workspaces/${activePublicId}`)
-    .then(response => response.json())
-    .then(workspace => {
-      const status = workspace.status || 'active';
-      
-      // Hide alert for active status
-      if (status === 'active') {
-        statusAlert.classList.add('d-none');
-        statusAlert.classList.remove('alert-warning', 'alert-info', 'alert-danger');
-        updateWorkspaceUIBasedOnStatus(status);
-        return;
-      }
-      
-      const config = statusMessages[status];
-      if (config) {
-        statusAlert.classList.remove('d-none', 'alert-warning', 'alert-info', 'alert-danger');
-        statusAlert.classList.add(`alert-${config.type}`);
-        
-        const detailsList = config.details.map(d => `<li class="mb-1">${d}</li>`).join('');
-        
-        statusContent.innerHTML = `
-          <div class="d-flex align-items-start">
-            <i class="bi ${config.icon} me-2 flex-shrink-0" style="font-size: 1.2rem;"></i>
-            <div>
-              <strong>${config.title}</strong> - ${config.message}
-              <ul class="mb-0 mt-2 small">
-                ${detailsList}
-              </ul>
-            </div>
-          </div>
-        `;
-      } else {
-        statusAlert.classList.add('d-none');
-      }
-      
-      updateWorkspaceUIBasedOnStatus(status);
-    })
-    .catch(err => {
-      console.error('Error fetching workspace status:', err);
-    });
+  fetchAndUpdateWorkspaceStatus(activePublicId, (workspace) => {
+    const status = workspace.status || 'active';
+    updateWorkspaceUIBasedOnStatus(status);
+  });
 }
 
 // Update UI elements based on workspace status
