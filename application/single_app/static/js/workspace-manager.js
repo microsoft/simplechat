@@ -1,6 +1,8 @@
 // workspace-manager.js
 // Public Workspace Management Functionality
 
+import { showToast } from "./chat/chat-toast.js";
+
 window.WorkspaceManager = {
     currentWorkspaceId: null,
     
@@ -245,7 +247,7 @@ window.WorkspaceManager = {
 
     startWorkspaceCsvUpload: async function() {
         if (!WorkspaceManager.csvParsedData || WorkspaceManager.csvParsedData.length === 0) {
-            alert('No valid data to upload');
+            showToast('No valid data to upload', 'warning');
             return;
         }
 
@@ -418,7 +420,7 @@ window.WorkspaceManager = {
             
         } catch (error) {
             console.error('Error loading workspace details:', error);
-            alert(`Error loading workspace details: ${error.message}`);
+            showToast(`Error loading workspace details: ${error.message}`, 'danger');
         }
     },
 
@@ -509,7 +511,7 @@ window.WorkspaceManager = {
             if (ownershipAction && ownershipAction !== '') {
                 const reason = document.getElementById('workspaceOwnershipReason').value;
                 if (!reason || reason.trim() === '') {
-                    alert('Please provide a reason for the ownership change');
+                    showToast('Please provide a reason for the ownership change', 'warning');
                     saveButton.disabled = false;
                     saveButton.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Changes';
                     return;
@@ -521,7 +523,7 @@ window.WorkspaceManager = {
                     // Transfer to another member
                     const newOwnerId = document.getElementById('workspaceNewOwnerSelect').value;
                     if (!newOwnerId) {
-                        alert('Please select a new owner');
+                        showToast('Please select a new owner', 'warning');
                         saveButton.disabled = false;
                         saveButton.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Changes';
                         return;
@@ -543,18 +545,18 @@ window.WorkspaceManager = {
                 
                 if (ownershipResponse && !ownershipResponse.ok) {
                     const error = await ownershipResponse.json().catch(() => ({ error: 'Failed to process ownership change' }));
-                    alert(`Ownership change request failed: ${error.message || error.error}`);
+                    showToast(`Ownership change request failed: ${error.message || error.error}`, 'danger');
                 } else if (ownershipResponse) {
                     const result = await ownershipResponse.json();
                     if (result.requires_approval || result.status === 'pending') {
-                        alert(`Ownership change approval request created successfully. Approval ID: ${result.approval_id}\n\nThe request is pending approval from the workspace owner or another admin.`);
+                        showToast(`Ownership change approval request created successfully. Approval ID: ${result.approval_id}. The request is pending approval from the workspace owner or another admin.`, 'success');
                     } else {
-                        alert('Ownership change completed successfully!');
+                        showToast('Ownership change completed successfully!', 'success');
                     }
                 }
             }
             
-            alert('Workspace updated successfully!');
+            showToast('Workspace updated successfully!', 'success');
             
             // Close modal and refresh table
             bootstrap.Modal.getInstance(document.getElementById('publicWorkspaceManagementModal')).hide();
@@ -564,7 +566,7 @@ window.WorkspaceManager = {
             
         } catch (error) {
             console.error('Error saving workspace changes:', error);
-            alert(`Error saving changes: ${error.message}`);
+            showToast(`Error saving changes: ${error.message}`, 'danger');
         } finally {
             saveButton.disabled = false;
             saveButton.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Changes';
@@ -592,11 +594,7 @@ window.WorkspaceManager = {
         const confirmBtn = document.getElementById('confirmDeleteWorkspaceDocumentsBtn');
         
         if (!reason) {
-            if (window.controlCenter && window.controlCenter.showToast) {
-                window.controlCenter.showToast('Please provide a reason for this action.', 'warning');
-            } else {
-                alert('Please provide a reason for this action.');
-            }
+            showToast('Please provide a reason for this action.', 'warning');
             document.getElementById('deleteWorkspaceDocumentsReason').focus();
             return;
         }
@@ -627,22 +625,14 @@ window.WorkspaceManager = {
             bootstrap.Modal.getInstance(document.getElementById('deleteWorkspaceDocumentsModal')).hide();
             
             // Show success message
-            if (window.controlCenter && window.controlCenter.showToast) {
-                window.controlCenter.showToast(
-                    `Document deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the workspace owner or another admin.`,
-                    'success'
-                );
-            } else {
-                alert(`Document deletion request submitted successfully! Approval ID: ${result.approval_id}`);
-            }
+            showToast(
+                `Document deletion request submitted! Status: Pending Approval (ID: ${result.approval_id}). The request requires approval from the workspace owner or another admin.`,
+                'success'
+            );
             
         } catch (error) {
             console.error('Error creating document deletion request:', error);
-            if (window.controlCenter && window.controlCenter.showToast) {
-                window.controlCenter.showToast(`Error: ${error.message}`, 'danger');
-            } else {
-                alert(`Error: ${error.message}`);
-            }
+            showToast(`Error: ${error.message}`, 'danger');
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Submit Request';
@@ -666,7 +656,7 @@ window.WorkspaceManager = {
                 throw new Error('Failed to delete workspace');
             }
             
-            alert('Workspace deleted successfully!');
+            showToast('Workspace deleted successfully!', 'success');
             
             // Close all modals
             bootstrap.Modal.getInstance(document.getElementById('deleteWorkspaceModal')).hide();
@@ -679,7 +669,7 @@ window.WorkspaceManager = {
             
         } catch (error) {
             console.error('Error deleting workspace:', error);
-            alert(`Error deleting workspace: ${error.message}`);
+            showToast(`Error deleting workspace: ${error.message}`, 'danger');
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.innerHTML = '<i class="bi bi-trash me-1"></i>Delete Workspace';
@@ -743,7 +733,7 @@ window.WorkspaceManager = {
             
         } catch (error) {
             console.error('Error loading workspace members:', error);
-            alert(`Error loading members: ${error.message}`);
+            showToast(`Error loading members: ${error.message}`, 'danger');
         }
     },
 
@@ -798,7 +788,7 @@ window.WorkspaceManager = {
             
         } catch (error) {
             console.error('[Activity] Error in viewActivity:', error);
-            alert(`Error loading workspace activity: ${error.message}`);
+            showToast(`Error loading workspace activity: ${error.message}`, 'danger');
         }
     },
 
@@ -1034,7 +1024,7 @@ window.WorkspaceManager = {
     // Show raw activity modal (matching group modal functionality)
     showRawActivityModal: function(activityIndex) {
         if (!WorkspaceManager.currentActivities || activityIndex >= WorkspaceManager.currentActivities.length) {
-            alert('Activity data not available');
+            showToast('Activity data not available', 'warning');
             return;
         }
 
@@ -1043,7 +1033,7 @@ window.WorkspaceManager = {
         const modalTitle = document.getElementById('rawWorkspaceActivityModalTitle');
         
         if (!modalBody || !modalTitle) {
-            alert('Modal elements not found');
+            showToast('Modal elements not found', 'danger');
             return;
         }
 
@@ -1064,20 +1054,16 @@ window.WorkspaceManager = {
     copyRawWorkspaceActivityToClipboard: function() {
         const rawText = document.getElementById('rawWorkspaceActivityModalBody')?.textContent;
         if (!rawText) {
-            alert('No activity data to copy');
+            showToast('No activity data to copy', 'warning');
             return;
         }
 
         navigator.clipboard.writeText(rawText).then(() => {
-            // Show success message - need to access the toast method if available
-            if (window.controlCenter && window.controlCenter.showToast) {
-                window.controlCenter.showToast('Activity data copied to clipboard', 'success');
-            } else {
-                alert('Activity data copied to clipboard');
-            }
+            // Show success message
+            showToast('Activity data copied to clipboard', 'success');
         }).catch(err => {
             console.error('Failed to copy:', err);
-            alert('Failed to copy to clipboard');
+            showToast('Failed to copy to clipboard', 'danger');
         });
     },
 

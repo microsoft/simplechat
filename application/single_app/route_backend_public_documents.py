@@ -35,14 +35,10 @@ def register_route_backend_public_documents(app):
         if not ws_doc:
             return jsonify({'error': 'Active public workspace not found'}), 404
 
-        # Check if workspace status allows uploads
-        from functions_public_workspaces import check_public_workspace_status_allows_operation
         allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'upload')
         if not allowed:
             return jsonify({'error': reason}), 403
 
-        # check role
-        from functions_public_workspaces import get_user_role_in_public_workspace
         role = get_user_role_in_public_workspace(ws_doc, user_id)
         if role not in ['Owner', 'Admin', 'DocumentManager']:
             return jsonify({'error': 'Insufficient permissions'}), 403

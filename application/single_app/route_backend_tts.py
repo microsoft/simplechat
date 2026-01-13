@@ -148,6 +148,7 @@ def register_route_backend_tts(app):
                     if retry_count < max_retries and ("timeout" in str(e).lower() or "connection" in str(e).lower()):
                         delay = 0.05 + (retry_count * 0.1) + random.uniform(0, 0.75)
                         debug_print(f"[TTS] Transient error, retrying in {delay*1000:.0f}ms: {str(e)}")
+                        log_event("warning", f"TTS transient error, retrying: {str(e)}")
                         time.sleep(delay)
                         retry_count += 1
                         last_error = str(e)
@@ -188,6 +189,7 @@ def register_route_backend_tts(app):
             return jsonify({"error": f"Invalid parameter: {str(e)}"}), 400
         except Exception as e:
             debug_print(f"[TTS] ERROR - Exception: {str(e)}")
+            log_event("error", f"TTS synthesis failed: {str(e)}")
             print(f"[ERROR] TTS synthesis exception: {str(e)}")
             import traceback
             traceback.print_exc()

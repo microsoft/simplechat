@@ -2,6 +2,8 @@
 // Control Center JavaScript functionality
 // Handles user management, pagination, modals, and API interactions
 
+import { showToast } from "./chat/chat-toast.js";
+
 // Group Table Sorter - similar to user table but for groups
 class GroupTableSorter {
     constructor(tableId) {
@@ -2054,12 +2056,12 @@ class ControlCenter {
         const endDate = document.getElementById('endDate').value;
         
         if (!startDate || !endDate) {
-            alert('Please select both start and end dates.');
+            showToast('Please select both start and end dates.', 'warning');
             return;
         }
         
         if (new Date(startDate) > new Date(endDate)) {
-            alert('Start date must be before end date.');
+            showToast('Start date must be before end date.', 'warning');
             return;
         }
         
@@ -2106,7 +2108,7 @@ class ControlCenter {
             if (document.getElementById('exportTokens').checked) selectedCharts.push('tokens');
             
             if (selectedCharts.length === 0) {
-                alert('Please select at least one chart to export.');
+                showToast('Please select at least one chart to export.', 'warning');
                 return;
             }
             
@@ -2125,12 +2127,12 @@ class ControlCenter {
                 const endDate = document.getElementById('exportEndDate').value;
                 
                 if (!startDate || !endDate) {
-                    alert('Please select both start and end dates for custom range.');
+                    showToast('Please select both start and end dates for custom range.', 'warning');
                     return;
                 }
                 
                 if (new Date(startDate) > new Date(endDate)) {
-                    alert('Start date must be before end date.');
+                    showToast('Start date must be before end date.', 'warning');
                     return;
                 }
                 
@@ -2591,7 +2593,7 @@ class ControlCenter {
             
         } catch (error) {
             console.error('Error exporting activity logs:', error);
-            alert('Failed to export activity logs. Please try again.');
+            showToast('Failed to export activity logs. Please try again.', 'danger');
         }
     }
 
@@ -2644,7 +2646,7 @@ class ControlCenter {
 
     showRawLogModal(logIndex) {
         if (!this.currentActivityLogs || !this.currentActivityLogs[logIndex]) {
-            alert('Log data not available');
+            showToast('Log data not available', 'warning');
             return;
         }
 
@@ -2653,7 +2655,7 @@ class ControlCenter {
         const modalTitle = document.getElementById('rawLogModalTitle');
         
         if (!modalBody || !modalTitle) {
-            alert('Modal elements not found');
+            showToast('Modal elements not found', 'danger');
             return;
         }
 
@@ -2673,7 +2675,7 @@ class ControlCenter {
     copyRawLogToClipboard() {
         const rawLogText = document.getElementById('rawLogModalBody')?.textContent;
         if (!rawLogText) {
-            alert('No log data to copy');
+            showToast('No log data to copy', 'warning');
             return;
         }
 
@@ -2681,7 +2683,7 @@ class ControlCenter {
             this.showToast('Log data copied to clipboard', 'success');
         }).catch(err => {
             console.error('Failed to copy:', err);
-            alert('Failed to copy to clipboard');
+            showToast('Failed to copy to clipboard', 'danger');
         });
     }
 
@@ -2730,7 +2732,7 @@ class ControlCenter {
             if (document.getElementById('chatDocuments').checked) selectedCharts.push('documents');
             
             if (selectedCharts.length === 0) {
-                alert('Please select at least one chart to include in the chat.');
+                showToast('Please select at least one chart to include in the chat.', 'warning');
                 return;
             }
             
@@ -2749,12 +2751,12 @@ class ControlCenter {
                 const endDate = document.getElementById('chatEndDate').value;
                 
                 if (!startDate || !endDate) {
-                    alert('Please select both start and end dates for custom range.');
+                    showToast('Please select both start and end dates for custom range.', 'warning');
                     return;
                 }
                 
                 if (new Date(startDate) > new Date(endDate)) {
-                    alert('Start date must be before end date.');
+                    showToast('Start date must be before end date.', 'warning');
                     return;
                 }
                 
@@ -3083,7 +3085,7 @@ class ControlCenter {
             GroupManager.manageGroup(groupId);
         } else {
             console.error('GroupManager not found or manageGroup method not available');
-            alert('Group management functionality is not available');
+            showToast('Group management functionality is not available', 'danger');
         }
     }
 
@@ -3273,7 +3275,7 @@ class ControlCenter {
         if (window.WorkspaceManager) {
             WorkspaceManager.manageWorkspace(workspaceId);
         } else {
-            alert('Workspace manager not loaded');
+            showToast('Workspace manager not loaded', 'danger');
         }
     }
 
@@ -3804,9 +3806,16 @@ function hideMigrationBanner() {
 }
 
 async function performMigration() {
-    // Confirm with user
-    if (!confirm('This migration may take several minutes and could affect system performance. Are you sure you want to continue?\n\nRecommended to run during off-peak hours.')) {
-        return;
+    // Show confirmation modal
+    const modal = new bootstrap.Modal(document.getElementById('migrationConfirmModal'));
+    modal.show();
+}
+
+async function executeMigration() {
+    // Close the confirmation modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('migrationConfirmModal'));
+    if (modal) {
+        modal.hide();
     }
     
     try {
@@ -3842,18 +3851,13 @@ async function performMigration() {
                 const totalMigrated = result.total_migrated || 0;
                 const totalFailed = result.total_failed || 0;
                 
-                let message = `Migration completed successfully!\n\n`;
-                message += `✓ Conversations migrated: ${result.conversations_migrated || 0}\n`;
-                message += `✓ Personal documents migrated: ${result.personal_documents_migrated || 0}\n`;
-                message += `✓ Group documents migrated: ${result.group_documents_migrated || 0}\n`;
-                message += `✓ Public documents migrated: ${result.public_documents_migrated || 0}\n`;
-                message += `\nTotal: ${totalMigrated} records migrated`;
+                let message = `Migration completed! Conversations: ${result.conversations_migrated || 0}, Personal docs: ${result.personal_documents_migrated || 0}, Group docs: ${result.group_documents_migrated || 0}, Public docs: ${result.public_documents_migrated || 0}. Total: ${totalMigrated} records migrated`;
                 
                 if (totalFailed > 0) {
-                    message += `\n\n⚠ ${totalFailed} records failed to migrate (check logs for details)`;
+                    message += `. Warning: ${totalFailed} records failed (check logs)`;
                 }
                 
-                alert(message);
+                showToast(message, 'success');
                 
                 // Refresh activity trends to show new data
                 if (window.controlCenter) {
@@ -3865,7 +3869,7 @@ async function performMigration() {
     } catch (error) {
         console.error('Migration error:', error);
         hideMigrationProgress();
-        alert('Migration failed: ' + error.message + '\n\nPlease check the console and server logs for details.');
+        showToast(`Migration failed: ${error.message}. Check console and server logs for details.`, 'danger');
     }
 }
 
@@ -3890,6 +3894,12 @@ window.debugControlCenterElements = function() {
 // Initialize Control Center when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     window.controlCenter = new ControlCenter();
+    
+    // Wire up migration confirmation button
+    const confirmMigrationBtn = document.getElementById('confirmMigrationBtn');
+    if (confirmMigrationBtn) {
+        confirmMigrationBtn.addEventListener('click', executeMigration);
+    }
     
     // Debug: Log element availability
     console.log('Control Center Elements Check on DOM Ready:');

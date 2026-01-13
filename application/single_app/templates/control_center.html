@@ -2690,6 +2690,35 @@
             </div>
         </div>
     </div>
+
+    <!-- Database Migration Confirmation Modal -->
+    <div class="modal fade" id="migrationConfirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle me-2"></i>Confirm Database Migration
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">
+                        This migration may take several minutes and could affect system performance during execution.
+                    </p>
+                    <div class="alert alert-warning mb-0">
+                        <i class="bi bi-clock me-2"></i>
+                        <strong>Recommendation:</strong> Run this migration during off-peak hours to minimize impact on users.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="confirmMigrationBtn">
+                        <i class="bi bi-arrow-repeat me-1"></i>Start Migration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Control Center Scripts -->
