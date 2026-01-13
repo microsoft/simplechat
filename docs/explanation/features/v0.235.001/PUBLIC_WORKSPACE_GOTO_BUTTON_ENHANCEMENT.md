@@ -1,6 +1,6 @@
 # Public Workspace Management Enhancement: Go to Public Workspace Button
 
-**Version:** 0.229.058
+**Version implemented:** 0.230.001
 
 ## Feature Description
 
@@ -34,7 +34,6 @@ Added a "Go to Public Workspace" button to the Public Workspace Management page,
 **New Route Added:**
 ```python
 @app.route('/set_active_public_workspace', methods=['POST'])
-@swagger_route(security=get_auth_security())
 @login_required
 @user_required
 @enabled_required("enable_public_workspaces")
