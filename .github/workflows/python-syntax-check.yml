@@ -1,0 +1,50 @@
+name: Python Syntax Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'application/single_app/**.py'
+      - '.github/workflows/python-syntax-check.yml'
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Run Python compilation check
+      run: |
+        cd application/single_app
+        echo "🔍 Running Python compilation checks on all .py files..."
+        failed_files=()
+        
+        for file in *.py; do
+          echo ""
+          echo "=== Compiling $file ==="
+          if python -m py_compile "$file" 2>&1; then
+            echo "✓ $file - OK"
+          else
+            echo "✗ $file - FAILED"
+            failed_files+=("$file")
+          fi
+        done
+        
+        echo ""
+        echo "================================"
+        if [ ${#failed_files[@]} -eq 0 ]; then
+          echo "✅ All Python files compiled successfully!"
+          exit 0
+        else
+          echo "❌ ${#failed_files[@]} file(s) failed compilation:"
+          printf '  - %s\n' "${failed_files[@]}"
+          exit 1
+        fi
