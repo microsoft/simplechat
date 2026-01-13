@@ -3,6 +3,7 @@
 from config import *
 from functions_authentication import *
 from swagger_wrapper import swagger_route, get_auth_security
+import traceback
 
 def register_route_frontend_profile(app):
     @app.route('/profile')
@@ -54,7 +55,8 @@ def register_route_frontend_profile(app):
                     return jsonify({"error": "Failed to update profile image settings"}), 500
                     
         except Exception as e:
-            print(f"Error refreshing profile image for user {user_id}: {e}")
+            debug_print(f"Error refreshing profile image for user {user_id}: {e}")
+            log_event(f"Error refreshing profile image for user {user_id}: {str(e)}", level=logging.ERROR)
             return jsonify({"error": "Internal server error"}), 500
     
     @app.route('/api/user/activity-trends', methods=['GET'])
@@ -116,7 +118,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching login trends: {e}")
+                debug_print(f"Error fetching login trends: {e}")
+                log_event(f"Error fetching login trends: {str(e)}", level=logging.ERROR)
             
             # Query 2: Get conversation creation activity from activity_logs
             try:
@@ -146,7 +149,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching conversation trends: {e}")
+                debug_print(f"Error fetching conversation trends: {e}")
+                log_event(f"Error fetching conversation trends: {str(e)}", level=logging.ERROR)
             
             # Query 2b: Get conversation deletion activity from activity_logs
             try:
@@ -172,7 +176,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching conversation deletion trends: {e}")
+                debug_print(f"Error fetching conversation deletion trends: {e}")
+                log_event(f"Error fetching conversation deletion trends: {str(e)}", level=logging.ERROR)
             
             # Query 3: Get document upload activity from activity_logs
             try:
@@ -202,7 +207,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching document upload trends: {e}")
+                debug_print(f"Error fetching document upload trends: {e}")
+                log_event(f"Error fetching document upload trends: {str(e)}", level=logging.ERROR)
             
             # Query 3b: Get document delete activity from activity_logs
             try:
@@ -228,7 +234,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching document delete trends: {e}")
+                debug_print(f"Error fetching document delete trends: {e}")
+                log_event(f"Error fetching document delete trends: {str(e)}", level=logging.ERROR)
             
             # Query 4: Get token usage from activity_logs
             try:
@@ -261,7 +268,8 @@ def register_route_frontend_profile(app):
                         except:
                             pass
             except Exception as e:
-                print(f"Error fetching token usage trends: {e}")
+                debug_print(f"Error fetching token usage trends: {e}")
+                log_event(f"Error fetching token usage trends: {str(e)}", level=logging.ERROR)
             
             # Generate complete date range (last 30 days)
             date_range = []
@@ -302,8 +310,8 @@ def register_route_frontend_profile(app):
             }), 200
             
         except Exception as e:
-            print(f"Error fetching user activity trends: {e}")
-            import traceback
+            debug_print(f"Error fetching user activity trends: {e}")
+            log_event(f"Error fetching user activity trends: {str(e)}", level=logging.ERROR)
             traceback.print_exc()
             return jsonify({"error": "Failed to fetch activity trends"}), 500
     
@@ -348,7 +356,7 @@ def register_route_frontend_profile(app):
             return jsonify(response_data), 200
             
         except Exception as e:
-            print(f"Error fetching user settings: {e}")
-            import traceback
+            debug_print(f"Error fetching user settings: {e}")
+            log_event(f"Error fetching user settings: {str(e)}", level=logging.ERROR)
             traceback.print_exc()
             return jsonify({"error": "Failed to fetch user settings"}), 500
