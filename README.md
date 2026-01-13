@@ -166,9 +166,8 @@ azd up
 
 - **Supported File Types**:
 
-  -   Text: `txt`, `md`, `html`, `json`
-
-  *   Documents: `pdf`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
-  *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
-  *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm`
-  *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a`
+  -   **Text**: `txt`, `md`, `html`, `json`, `xml`, `yaml`, `yml`, `log`
+  -   **Documents**: `pdf`, `doc`, `docm`, `docx`, `pptx`, `xlsx`, `xlsm`, `xls`, `csv`
+  -   **Images**: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
+  -   **Video**: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `flv`, `mxf`, `gxf`, `ts`, `ps`, `3gp`, `3gpp`, `mpg`, `asf`, `m4v`, `isma`, `ismv`, `dvr-ms`
+  -   **Audio**: `wav`, `m4a`
