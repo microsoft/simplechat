@@ -57,6 +57,7 @@ def register_route_backend_chats(app):
             user_message = data.get('message', '')
             conversation_id = data.get('conversation_id')
             hybrid_search_enabled = data.get('hybrid_search')
+            web_search_enabled = data.get('web_search_enabled')
             selected_document_id = data.get('selected_document_id')
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
@@ -174,6 +175,8 @@ def register_route_backend_chats(app):
             # Convert toggles from string -> bool if needed
             if isinstance(hybrid_search_enabled, str):
                 hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
+            if isinstance(web_search_enabled, str):
+                web_search_enabled = web_search_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
 
@@ -264,7 +267,7 @@ def register_route_backend_chats(app):
                 debug_print(f"Error initializing GPT client/model: {e}")
                 # Handle error appropriately - maybe return 500 or default behavior
                 return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
-
+        # region 1 - Load or Create Conversation
             # ---------------------------------------------------------------------
             # 1) Load or create conversation
             # ---------------------------------------------------------------------
@@ -358,7 +361,7 @@ def register_route_backend_chats(app):
                 elif document_scope == 'public':
                     actual_chat_type = 'public'
                 debug_print(f"New conversation - using legacy logic: {actual_chat_type}")
-
+        # region 2 - Append User Message
             # ---------------------------------------------------------------------
             # 2) Append the user message to conversation immediately (or use existing for retry)
             # ---------------------------------------------------------------------
@@ -408,7 +411,8 @@ def register_route_backend_chats(app):
                 # Button states and selections
                 user_metadata['button_states'] = {
                     'image_generation': image_gen_enabled,
-                    'document_search': hybrid_search_enabled
+                    'document_search': hybrid_search_enabled,
+                    'web_search': bool(web_search_enabled)
                 }
                 
                 # Document search scope and selections
@@ -616,7 +620,7 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
-
+        # region 3 - Content Safety
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
             #    If blocked, add a "safety" role message & skip GPT.
@@ -722,7 +726,7 @@ def register_route_backend_chats(app):
                     debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
                     debug_print(f"[Content Safety] Unexpected error: {ex}")
-
+        # region 4 - Augmentation
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
             # ---------------------------------------------------------------------
@@ -1406,6 +1410,11 @@ def register_route_backend_chats(app):
                         'error': user_friendly_message
                     }), status_code
 
+            # Web Search placeholder (until Foundry agent is wired)
+            if web_search_enabled:
+                perform_web_search()
+            
+        # region 5 - FINAL conversation history preparation
             # ---------------------------------------------------------------------
             # 5) Prepare FINAL conversation history for GPT (including summarization)
             # ---------------------------------------------------------------------
@@ -1685,6 +1694,7 @@ def register_route_backend_chats(app):
                 debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
 
+        # region 6 - Final GPT Call
             # ---------------------------------------------------------------------
             # 6) Final GPT Call
             # ---------------------------------------------------------------------
@@ -2388,7 +2398,7 @@ def register_route_backend_chats(app):
                         exceptionTraceback=True
                     )
 
-
+        # region 7 - Save GPT Response
             # ---------------------------------------------------------------------
             # 7) Save GPT response (or error message)
             # ---------------------------------------------------------------------
@@ -2831,7 +2841,8 @@ def register_route_backend_chats(app):
                 
                 user_metadata['button_states'] = {
                     'image_generation': False,
-                    'document_search': hybrid_search_enabled
+                    'document_search': hybrid_search_enabled,
+                    'web_search': bool(web_search_enabled)
                 }
                 
                 # Document search scope and selections
@@ -3156,16 +3167,15 @@ def register_route_backend_chats(app):
                         
                         retrieved_content = "\n\n".join(retrieved_texts)
                         system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+                                                Retrieved Excerpts:
+                                                {retrieved_content}
 
-Retrieved Excerpts:
-{retrieved_content}
+                                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
 
-Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
-
-Example
-User: What is the policy on double dipping?
-Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
-"""
+                                                Example
+                                                User: What is the policy on double dipping?
+                                                Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+                                                """
                         
                         system_messages_for_augmentation.append({
                             'role': 'system',
@@ -3176,6 +3186,9 @@ Assistant: The policy prohibits entities from using federal funds received throu
                         # Reorder hybrid citations list in descending order based on page_number
                         hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
                 
+                if web_search_enabled:
+                    perform_web_search()
+
                 # Update message chat type
                 message_chat_type = None
                 if hybrid_search_enabled and search_results and len(search_results) > 0:
@@ -3887,3 +3900,22 @@ def remove_masked_content(content, masked_ranges):
             result = result[:start] + result[end:]
     
     return result
+
+def perform_web_search():
+    # Web Search placeholder (until Foundry agent is wired)
+    log_event(
+        "[WebSearch] Placeholder invoked – routing would call Foundry web search agent here",
+        extra={
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "doc_scope": document_scope,
+            "group_id": active_group_id,
+            "public_workspace_id": active_public_workspace_id,
+        },
+        level=logging.INFO,
+    )
+    # Optionally surface a hint to the model/UI
+    system_messages_for_augmentation.append({
+        "role": "system",
+        "content": "Web search placeholder: request was flagged for web search, but no agent is configured yet."
+    })

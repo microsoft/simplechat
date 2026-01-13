@@ -245,6 +245,7 @@ def register_route_frontend_admin_settings(app):
             return render_template(
                 'admin_settings.html',
                 settings=settings,
+                app_settings=settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url
@@ -628,11 +629,20 @@ def register_route_frontend_admin_settings(app):
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
 
-                # Search (Web Search Direct & APIM)
+                # Search (Web Search via Azure AI Foundry agent)
                 'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
-                'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
-                'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
+                'web_search_agent': {
+                    'agent_type': 'aifoundry',
+                    'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
+                    'azure_openai_gpt_api_version': form_data.get('web_search_foundry_api_version', '').strip(),
+                    'azure_openai_gpt_deployment': form_data.get('web_search_foundry_deployment', '').strip(),
+                    'other_settings': {
+                        'azure_ai_foundry': {
+                            'agent_id': form_data.get('web_search_foundry_agent_id', '').strip(),
+                            'notes': form_data.get('web_search_foundry_notes', '').strip()
+                        }
+                    }
+                },
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),
@@ -700,6 +710,16 @@ def register_route_frontend_admin_settings(app):
                 del new_settings['semantic_kernel_agents']
             if 'semantic_kernel_plugins' in new_settings:
                 del new_settings['semantic_kernel_plugins']
+
+            # Remove legacy web search keys if present
+            for legacy_key in [
+                'bing_search_key',
+                'enable_web_search_apim',
+                'azure_apim_web_search_endpoint',
+                'azure_apim_web_search_subscription_key'
+            ]:
+                if legacy_key in new_settings:
+                    del new_settings[legacy_key]
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):

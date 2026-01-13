@@ -1566,18 +1566,11 @@ function setupToggles() {
     }
 
     const enableWebSearch = document.getElementById('enable_web_search');
-    if (enableWebSearch) {
+    const webSearchFoundrySettings = document.getElementById('web_search_foundry_settings');
+    if (enableWebSearch && webSearchFoundrySettings) {
+        webSearchFoundrySettings.style.display = enableWebSearch.checked ? 'block' : 'none';
         enableWebSearch.addEventListener('change', function () {
-            document.getElementById('web_search_settings').style.display = this.checked ? 'block' : 'none';
-            markFormAsModified();
-        });
-    }
-
-    const enableWebSearchApim = document.getElementById('enable_web_search_apim');
-    if (enableWebSearchApim) {
-        enableWebSearchApim.addEventListener('change', function () {
-            document.getElementById('non_apim_web_search_settings').style.display = this.checked ? 'none' : 'block';
-            document.getElementById('apim_web_search_settings').style.display = this.checked ? 'block' : 'none';
+            webSearchFoundrySettings.style.display = this.checked ? 'block' : 'none';
             markFormAsModified();
         });
     }

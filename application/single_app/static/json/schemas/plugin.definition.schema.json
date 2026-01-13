@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "plugin.definition.schema.json",
+  "title": "Plugin Definition",
+  "description": "Controls plugin creation constraints such as allowed authentication types.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "allowedAuthTypes": {
+      "type": "array",
+      "description": "List of auth types this plugin supports. Values must match auth.type in plugin.schema.json.",
+      "items": {
+        "$ref": "plugin.schema.json#/definitions/AuthType"
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    }
+  },
+  "required": ["allowedAuthTypes"]
+}

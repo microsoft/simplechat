@@ -15,6 +15,24 @@
       
       <!-- Progress Steps Indicator -->
       <div class="modal-body pb-0">
+        <!-- Agent type selector -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold mb-2">Agent Type</label>
+          <div class="d-flex flex-wrap gap-2" id="agent-type-selector">
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="agent-type" id="agent-type-local" value="local" checked>
+              <label class="form-check-label" for="agent-type-local">Local</label>
+              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Local agents run in the application, leverage language models, use actions and instruction sets."></i>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="agent-type" id="agent-type-aifoundry" value="aifoundry">
+              <label class="form-check-label" for="agent-type-aifoundry">Azure AI Foundry</label>
+              <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Azure AI Foundry agents run in Azure AI Foundry, leverage Azure AI services, and use tools. They are created in a Foundry resource by a person with Azure AI User RBAC role."></i>
+            </div>
+          </div>
+          <div class="form-text" id="agent-type-helper">Choose the provider for this agent. Foundry agents cannot attach local actions.</div>
+        </div>
+
         <div class="d-flex justify-content-between mb-4">
           <div class="step-indicator" data-step="1">
             <div class="step-circle active">1</div>
@@ -64,6 +82,33 @@
         <!-- Step 2: Model & Connection -->
         <div class="agent-step d-none" id="agent-step-2">
           <h6 class="mb-3">Model & Connection</h6>
+
+          <!-- Foundry-specific fields (shown only when agent_type = aifoundry) -->
+          <div id="agent-foundry-fields" class="d-none">
+            <div class="alert alert-warning py-2 small" role="note">
+              Azure AI Foundry agents use Azure-managed tools; local actions are disabled for this agent type.
+            </div>
+            <div class="mb-3">
+              <label for="agent-foundry-endpoint" class="form-label">Azure AI Foundry Endpoint <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-endpoint" placeholder="https://&lt;resource&gt;.openai.azure.com/" />
+            </div>
+            <div class="mb-3">
+              <label for="agent-foundry-api-version" class="form-label">Azure AI Foundry API Version <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-api-version" placeholder="2024-10-01-preview" />
+            </div>
+            <div class="mb-3">
+              <label for="agent-foundry-deployment" class="form-label">Foundry Deployment / Project <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-deployment" placeholder="deployment or project identifier" />
+            </div>
+            <div class="mb-3">
+              <label for="agent-foundry-agent-id" class="form-label">Foundry Agent ID <span class="text-danger" title="Required">*</span></label>
+              <input type="text" class="form-control" id="agent-foundry-agent-id" placeholder="GUID from Azure AI Foundry" />
+            </div>
+            <div class="mb-3">
+              <label for="agent-foundry-notes" class="form-label">Admin Notes (optional)</label>
+              <textarea class="form-control" id="agent-foundry-notes" rows="2" placeholder="Internal notes for this Foundry agent"></textarea>
+            </div>
+          </div>
           
           <!-- Model Selection -->
           <div class="mb-3" id="agent-global-model-group">
@@ -161,7 +206,10 @@
         <!-- Step 3: Instructions -->
         <div class="agent-step d-none" id="agent-step-3">
           <h6 class="mb-3">Instructions</h6>
-          <div class="mb-3">
+          <div class="alert alert-info d-none" id="agent-instructions-foundry-note" role="alert">
+            Instructions are managed in Azure AI Foundry.
+          </div>
+          <div class="mb-3" id="agent-instructions-container">
             <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent's behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
             <textarea class="form-control" id="agent-instructions" rows="8" placeholder="Define how this agent should behave, what it should do, and any specific guidelines it should follow..."></textarea>
@@ -173,6 +221,9 @@
 
         <!-- Step 4: Action Selection -->
         <div class="agent-step d-none" id="agent-step-4">
+          <div id="agent-actions-disabled" class="alert alert-info d-none" role="alert">
+            Actions are not available for Azure AI Foundry agents. Foundry-managed tools are used automatically.
+          </div>
           <!-- Header Section -->
           <div class="card border-0 shadow-sm mb-4">
             <div class="card-header text-white" style="background: linear-gradient(135deg, #17a2b8, #138496);">
@@ -355,8 +406,8 @@
                 <div class="col-md-4">
                   <div class="summary-item">
                     <label class="fw-bold text-muted small">Agent Type:</label>
-                    <div class="text-dark">
-                      <span class="badge bg-info">Custom Agent</span>
+                    <div class="text-dark" id="summary-agent-type">
+                      <span class="badge bg-info" id="summary-agent-type-badge">Custom Agent</span>
                     </div>
                   </div>
                 </div>

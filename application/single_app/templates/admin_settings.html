@@ -565,11 +565,16 @@
                     Safety
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security
+                </button>
+            </li>
             
             <!-- User Features -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
-                    Agents
+                    Agents and Actions
                 </button>
             </li>
             
@@ -2618,6 +2623,49 @@
                     Configure Azure AI Search, Document Intelligence, and multimedia support settings.
                 </p>
 
+                <div class="card p-3 mb-3" id="web-search-foundry-section">
+                    <h5><i class="bi bi-globe me-2"></i>Web Search (Azure AI Foundry Agent)</h5>
+                    <p class="text-muted mb-2">Enable web search by routing queries through an Azure AI Foundry agent configured by admins.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_web_search"
+                            name="enable_web_search"
+                            {% if settings.enable_web_search %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_web_search">Enable Web Search via Foundry Agent</label>
+                    </div>
+
+                    <div id="web_search_foundry_settings" {% if not settings.enable_web_search %}style="display: none;"{% endif %}>
+                        <div class="alert alert-warning py-2 small">
+                            <strong>Note:</strong> Configure the Azure AI Foundry agent that will execute web searches. This agent is stored in global settings (not in the agents list).
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="web_search_foundry_endpoint" class="form-label">Foundry Endpoint</label>
+                                <input type="text" class="form-control" id="web_search_foundry_endpoint" name="web_search_foundry_endpoint" value="{{ settings.web_search_agent.azure_openai_gpt_endpoint or '' }}" placeholder="https://<resource>.openai.azure.com/">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="web_search_foundry_api_version" class="form-label">Foundry API Version</label>
+                                <input type="text" class="form-control" id="web_search_foundry_api_version" name="web_search_foundry_api_version" value="{{ settings.web_search_agent.azure_openai_gpt_api_version or '' }}" placeholder="2024-10-01-preview">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="web_search_foundry_deployment" class="form-label">Foundry Deployment / Project</label>
+                                <input type="text" class="form-control" id="web_search_foundry_deployment" name="web_search_foundry_deployment" value="{{ settings.web_search_agent.azure_openai_gpt_deployment or '' }}" placeholder="deployment or project">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="web_search_foundry_agent_id" class="form-label">Foundry Agent ID</label>
+                                <input type="text" class="form-control" id="web_search_foundry_agent_id" name="web_search_foundry_agent_id" value="{{ settings.web_search_agent.other_settings.azure_ai_foundry.agent_id if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}" placeholder="GUID from Azure AI Foundry">
+                            </div>
+                            <div class="col-12">
+                                <label for="web_search_foundry_notes" class="form-label">Notes (optional)</label>
+                                <textarea class="form-control" id="web_search_foundry_notes" name="web_search_foundry_notes" rows="2" placeholder="Where to find these values in Azure AI Foundry or any internal notes.">{{ settings.web_search_agent.other_settings.azure_ai_foundry.notes if settings.web_search_agent.other_settings and settings.web_search_agent.other_settings.azure_ai_foundry else '' }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 
                 <div class="card p-3 mb-3" id="azure-ai-search-section">
                     <h5><i class="bi bi-search me-2"></i>Azure AI Search</h5>
@@ -3055,7 +3103,63 @@
                 </div>
             </div>
 
-        </div> 
+        </div>
+        <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
+                 <p class="text-muted">
+                    Configure Security Settings.
+                </p>
+                <div class="card p-3 mb-3" id="keyvault-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted">
+                        Configure Key Vault settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_key_vault_secret_storage"
+                            name="enable_key_vault_secret_storage"
+                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_key_vault_secret_storage">
+                            Enable Key Vault for Agent and Action Secrets
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
+                    </div>
+                    <div id="key-vault-warning" class="alert alert-warning mt-2">
+                        <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
+                    </div>
+                    <div class="mb-3">
+                        <label for="key_vault_name" class="form-label">Key Vault Name</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
+                        <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
+                    </div>
+                    <div class="mb-3">
+                        <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
+                        <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-secondary mt-3"
+                        style="width: auto;"
+                        id="test_key_vault_button"
+                    >
+                        Test Key Vault Connection
+                    </button>
+                    <div id="test_key_vault_result" class="mt-2">
+                    </div>
+                </div>
+            </div>
+        </div> <!-- End of Admin tab content -->
     </form>
     
     <!-- Floating Save Button -->
@@ -3075,6 +3179,9 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
