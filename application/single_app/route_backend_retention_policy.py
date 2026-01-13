@@ -39,7 +39,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error fetching retention policy settings: {e}")
-            log_event("error", f"Fetching retention policy settings failed: {e}")
+            log_event(f"Fetching retention policy settings failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': 'Failed to fetch retention policy settings'
@@ -99,7 +99,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error updating retention policy settings: {e}")
-            log_event("error", f"Retention policy settings update failed: {e}")
+            log_event(f"Retention policy settings update failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': 'Failed to update retention policy settings'
@@ -148,7 +148,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error executing retention policy manually: {e}")
-            log_event("error", f"Manual retention policy execution failed: {e}")
+            log_event(f"Manual retention policy execution failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': f'Failed to execute retention policy: {str(e)}'
@@ -239,7 +239,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error updating user retention settings: {e}")
-            log_event("error", f"User retention settings update failed: {e}")
+            log_event(f"User retention settings update failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': 'Failed to update retention settings'
@@ -349,7 +349,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error updating group retention settings: {e}")
-            log_event("error", f"Group retention settings update failed: {e}")
+            log_event(f"Group retention settings update failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': 'Failed to update retention settings'
@@ -459,7 +459,7 @@ def register_route_backend_retention_policy(app):
             
         except Exception as e:
             debug_print(f"Error updating public workspace retention settings: {e}")
-            log_event("error", f"Public workspace retention settings update failed: {e}")
+            log_event(f"Public workspace retention settings update failed: {e}", level=logging.ERROR)
             return jsonify({
                 'success': False,
                 'error': 'Failed to update retention settings'

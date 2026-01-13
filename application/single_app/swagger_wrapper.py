@@ -94,6 +94,7 @@ import json
 import re
 import inspect
 import ast
+import logging
 from datetime import datetime, timedelta
 import hashlib
 import time
@@ -206,7 +207,7 @@ class SwaggerCache:
                     
             except Exception as e:
                 debug_print(f"Error generating swagger spec: {e}")
-                log_event("error", f"Swagger spec generation failed: {str(e)}")
+                log_event(f"Swagger spec generation failed: {str(e)}", level=logging.ERROR)
                 error_response = {"error": "Failed to generate specification"}
                 return error_response, 500, 'application/json'
     
@@ -336,7 +337,7 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
     except Exception as e:
         # Fallback to default responses if analysis fails
         debug_print(f"Warning: Could not analyze return statements for {func.__name__}: {e}")
-        log_event("warning", f"Return statement analysis failed for {func.__name__}: {str(e)}")
+        log_event(f"Return statement analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return {
             "200": {
                 "description": "Success",
@@ -589,14 +590,14 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
         except Exception as e:
             # If source code analysis fails, just return path parameters
             debug_print(f"Note: Could not analyze source code for query parameters in {func.__name__}: {e}")
-            log_event("warning", f"Query parameter analysis failed for {func.__name__}: {str(e)}")
+            log_event(f"Query parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
             pass
         
         return parameters
         
     except Exception as e:
         debug_print(f"Warning: Could not analyze parameters for {func.__name__}: {e}")
-        log_event("warning", f"Parameter analysis failed for {func.__name__}: {str(e)}")
+        log_event(f"Parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return []
 
 def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
@@ -839,7 +840,7 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
     except Exception as e:
         # If analysis fails, return None (no auto-generated request body)
         debug_print(f"Warning: Could not analyze request body for {func.__name__}: {e}")
-        log_event("warning", f"Request body analysis failed for {func.__name__}: {str(e)}")
+        log_event(f"Request body analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return None
 
 def _infer_form_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
