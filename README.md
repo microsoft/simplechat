@@ -56,7 +56,6 @@ The following script will create an Entra Enterprise Application, with an App Re
 
 ```========================================
 App Registration Created Successfully!
-========================================
 Application Name:       <registered application name>
 Client ID:              <clientID>
 Tenant ID:              <tenantID>
@@ -74,13 +73,13 @@ In addition, the script will note additional steps that must be taken for the ap
     - Go to API permissions
     - Click 'Grant admin consent for [Tenant]'
 
-1.  Assign Users/Groups to Enterprise Application:
+2.  Assign Users/Groups to Enterprise Application:
     - Navigate to Azure Portal > Entra ID > Enterprise applications
     - Find app: *\<registered application name\>*
     - Go to Users and groups
     - Add user/group assignments with appropriate app roles
 
-1.  Store the Client Secret Securely:
+3.  Store the Client Secret Securely:
     - Save the client secret in Azure Key Vault or secure credential store
     - The secret value is shown above and will not be displayed again
 
@@ -119,7 +118,7 @@ azd env select <environment>
 This step will begin the deployment process.  
 
 ```powershell
-azd up
+Use azd up 
 ```
 
 ## Architecture
@@ -129,41 +128,23 @@ azd up
 ## Features
 
 - **Chat with AI**: Interact with an AI model based on Azure OpenAI’s GPT and Thinking models.
-
 - **RAG with Hybrid Search**: Upload documents and perform hybrid searches (vector + keyword), retrieving relevant information from your files to augment AI responses.
-
 - **Document Management**: Upload, store, and manage multiple versions of documents—personal ("Your Workspace") or group-level ("Group Workspaces").
-
 - **Group Management**: Create and join groups to share access to group-specific documents, enabling collaboration with Role-Based Access Control (RBAC).
-
 - **Ephemeral (Single-Convo) Documents**: Upload temporary documents available only during the current chat session, without persistent storage in Azure AI Search.
-
 - **Conversation Archiving (Optional)**: Retain copies of user conversations—even after deletion from the UI—in a dedicated Cosmos DB container for audit, compliance, or legal requirements.
-
 - **Content Safety (Optional)**: Integrate Azure AI Content Safety to review every user message *before* it reaches AI models, search indexes, or image generation services. Enforce custom filters and compliance policies, with an optional `SafetyAdmin` role for viewing violations.
-
 - **Feedback System (Optional)**: Allow users to rate AI responses (thumbs up/down) and provide contextual comments on negative feedback. Includes user and admin dashboards, governed by an optional `FeedbackAdmin` role.
-
 - **Bing Web Search (Optional)**: Augment AI responses with live Bing search results, providing up-to-date information. Configurable via Admin Settings.
-
 - **Image Generation (Optional)**: Enable on-demand image creation using Azure OpenAI's DALL-E models, controlled via Admin Settings.
-
 - **Video Extraction (Optional)**: Utilize Azure Video Indexer to transcribe speech and perform Optical Character Recognition (OCR) on video frames. Segments are timestamp-chunked for precise retrieval and enhanced citations linking back to the video timecode.
-
 - **Audio Extraction (Optional)**: Leverage Azure Speech Service to transcribe audio files into timestamped text chunks, making audio content searchable and enabling enhanced citations linked to audio timecodes.
-
 - **Document Classification (Optional)**: Admins define custom classification types and associated colors. Users tag uploaded documents with these labels, which flow through to AI conversations, providing lineage and insight into data sensitivity or type.
-
 - **Enhanced Citation (Optional)**: Store processed, chunked files in Azure Storage (organized into user- and document-scoped folders). Display interactive citations in the UI—showing page numbers or timestamps—that link directly to the source document preview.
-
 - **Metadata Extraction (Optional)**: Apply an AI model (configurable GPT model via Admin Settings) to automatically generate keywords, two-sentence summaries, and infer author/date for uploaded documents. Allows manual override for richer search context.
-
 - **File Processing Logs (Optional)**: Enable verbose logging for all ingestion pipelines (workspaces and ephemeral chat uploads) to aid in debugging, monitoring, and auditing file processing steps.
-
 - **Redis Cache (Optional)**: Integrate Azure Cache for Redis to provide a distributed, high-performance session store. This enables true horizontal scaling and high availability by decoupling user sessions from individual app instances.
-
 - **Authentication & RBAC**: Secure access via Azure Active Directory (Entra ID) using MSAL. Supports Managed Identities for Azure service authentication, group-based controls, and custom application roles (`Admin`, `User`, `CreateGroup`, `SafetyAdmin`, `FeedbackAdmin`).
-
 - **Supported File Types**:
 
   -   **Text**: `txt`, `md`, `html`, `json`, `xml`, `yaml`, `yml`, `log`
