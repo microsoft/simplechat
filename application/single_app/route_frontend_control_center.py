@@ -43,6 +43,7 @@ def register_route_frontend_control_center(app):
     
     @app.route('/approvals', methods=['GET'])
     @login_required
+    @user_required
     def approvals():
         """
         Approval Requests page accessible to group owners, admins, and control center admins.

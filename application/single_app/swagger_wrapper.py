@@ -259,6 +259,20 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         import textwrap
         source = textwrap.dedent(source)
         
+        # Additional cleanup: ensure the first line starts at column 0
+        lines = source.split('\n')
+        if lines:
+            # Find minimum indentation of non-empty lines
+            min_indent = float('inf')
+            for line in lines:
+                if line.strip():  # Skip empty lines
+                    indent = len(line) - len(line.lstrip())
+                    min_indent = min(min_indent, indent)
+            
+            # Remove the minimum indentation from all lines
+            if min_indent > 0 and min_indent != float('inf'):
+                source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
+        
         tree = ast.parse(source)
         
         responses = {}
@@ -482,6 +496,21 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
             source = inspect.getsource(func)
             import textwrap
             source = textwrap.dedent(source)
+            
+            # Additional cleanup: ensure the first line starts at column 0
+            lines = source.split('\n')
+            if lines:
+                # Find minimum indentation of non-empty lines
+                min_indent = float('inf')
+                for line in lines:
+                    if line.strip():  # Skip empty lines
+                        indent = len(line) - len(line.lstrip())
+                        min_indent = min(min_indent, indent)
+                
+                # Remove the minimum indentation from all lines
+                if min_indent > 0 and min_indent != float('inf'):
+                    source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
+            
             tree = ast.parse(source)
             
             query_params = {}  # {param_name: {type, default, description}}
@@ -617,6 +646,20 @@ def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
         # Remove leading indentation to avoid parse errors
         import textwrap
         source = textwrap.dedent(source)
+        
+        # Additional cleanup: ensure the first line starts at column 0
+        lines = source.split('\n')
+        if lines:
+            # Find minimum indentation of non-empty lines
+            min_indent = float('inf')
+            for line in lines:
+                if line.strip():  # Skip empty lines
+                    indent = len(line) - len(line.lstrip())
+                    min_indent = min(min_indent, indent)
+            
+            # Remove the minimum indentation from all lines
+            if min_indent > 0 and min_indent != float('inf'):
+                source = '\n'.join(line[min_indent:] if len(line) > min_indent else line for line in lines)
         
         tree = ast.parse(source)
         
