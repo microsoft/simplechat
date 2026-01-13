@@ -14,9 +14,111 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ## Quick Deploy
 
-Use azd up [MORE DETAILS TO COME]
+[Detailed deployment Guide](./deployers/bicep/README.md)
+
+### Pre-Configuration:
+
+The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenant. 
+
+#### Create the application registration:
+
+```powershell
+cd ./deployers
+```
+
+Define your application name and your environment:
 
 ```
+appName = 
+```
+
+```
+environment = 
+```
+
+The following script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  
+
+> [!TIP]
+>
+> The web service name may be overriden with the `-AppServceName` parameter. 
+
+> [!TIP]
+>
+> A different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
+
+```powershell
+.\Initialize-EntraApplication.ps1 -AppName "<appName>" -Environment "<environment>"  -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"
+```
+
+> [!NOTE]
+>
+> Be sure to save this information as it will not be available after the window is closed.*
+
+```========================================
+App Registration Created Successfully!
+========================================
+Application Name:       <registered application name>
+Client ID:              <clientID>
+Tenant ID:              <tenantID>
+Service Principal ID:   <servicePrincipalId>
+Client Secret:          <clientSecret>
+Secret Expiration:      <yyyy-mm-dd>
+```
+
+In addition, the script will note additional steps that must be taken for the app registration step to be completed.
+
+1.  Grant Admin Consent for API Permissions:
+
+    - Navigate to Azure Portal > Entra ID > App registrations
+    - Find app: *\<registered application name\>*
+    - Go to API permissions
+    - Click 'Grant admin consent for [Tenant]'
+
+1.  Assign Users/Groups to Enterprise Application:
+    - Navigate to Azure Portal > Entra ID > Enterprise applications
+    - Find app: *\<registered application name\>*
+    - Go to Users and groups
+    - Add user/group assignments with appropriate app roles
+
+1.  Store the Client Secret Securely:
+    - Save the client secret in Azure Key Vault or secure credential store
+    - The secret value is shown above and will not be displayed again
+
+#### Configure AZD Environment
+
+Using the bash terminal in Visual Studio Code
+
+```powershell
+cd ./deployers
+```
+
+If you work with other Azure clouds, you may need to update your cloud like `azd config set cloud.name AzureUSGovernment` - more information here - [Use Azure Developer CLI in sovereign clouds | Microsoft Learn](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/sovereign-clouds)
+
+```powershell
+azd config set cloud.name AzureCloud
+```
+
+This will open a browser window that the user with Owner level permissions to the target subscription will need to authenticate with.
+
+```powershell
+azd auth login
+```
+
+Use the same value for the \<environment\> that was used in the application registration.
+
+```powershell
+azd env new <environment>
+```
+
+Select the new environment
+
+```powershell
+azd env select <environment>
+```
+
+This step will begin the deployment process.  
+
+```powershell
 azd up
 ```
 
@@ -70,7 +172,3 @@ azd up
   *   Images: `jpg`, `jpeg`, `png`, `bmp`, `tiff`, `tif`, `heif`
   *   Video: `mp4`, `mov`, `avi`, `wmv`, `mkv`, `webm`
   *   Audio: `mp3`, `wav`, `ogg`, `aac`, `flac`, `m4a`
-
-## Demos
-
-ADD DEMOS HERE
