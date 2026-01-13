@@ -1,0 +1,150 @@
+# Site settings
+title: Simple Chat Documentation
+email: simplechat@microsoft.com
+description: >-
+  Documentation for Simple Chat - a comprehensive, web-based platform for secure
+  and context-aware interactions with generative AI models using Azure OpenAI
+  and Retrieval-Augmented Generation (RAG) capabilities.
+baseurl: "/simplechat"   # adjust if your site lives under a subpath
+url: "https://microsoft.github.io"  # replace if using a custom domain
+lang: en
+
+# Theme configuration (using local theme files)
+# remote_theme: olivier3lanc/Jekyll-LibDoc  # Disabled - using custom theme
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+
+# Permalinks (pretty URLs)
+permalink: pretty
+
+# Site branding
+logo:
+  light_url: /images/logo-lightmode.png
+  dark_url: /images/logo-darkmode.png
+title_hidden: false
+favicon: /images/favicon.ico
+
+# GitHub integration
+github:
+  repository_url: https://github.com/microsoft/simplechat
+  repository_name: microsoft/simplechat
+
+# Contact information
+contact:
+  enabled: true
+  email: simplechat@microsoft.com
+
+# Classification banner (optional)
+classification_banner:
+  enabled: false
+  text: ""
+  color: "#ffc107"
+
+# Navigation configuration
+navigation:
+  show_sections: true
+  main_links:
+    - title: Home
+      url: /
+      icon: bi bi-house-fill
+    - title: Getting Started
+      url: /setup_instructions/
+      icon: bi bi-rocket-takeoff
+    - title: Features
+      url: /features/
+      icon: bi bi-stars
+    - title: FAQ
+      url: /faqs/
+      icon: bi bi-question-circle
+  external_links:
+    - title: GitHub Repository
+      url: https://github.com/microsoft/simplechat
+      icon: bi bi-github
+    - title: Contact
+      url: mailto:simplechat@microsoft.com
+      icon: bi bi-envelope me-2
+  external_links_force_menu: false
+  external_links_menu_name: "External Links"
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+sass:
+  sass_dir: _sass
+  style: compressed
+
+# Collections
+collections:
+  tutorials:
+    output: true
+    permalink: /:collection/:name/
+  how-to:
+    output: true
+    permalink: /:collection/:name/
+  reference:
+    output: true
+    permalink: /:collection/:name/
+  explanation:
+    output: true
+    permalink: /:collection/:name/
+
+# Default layouts and settings
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: page
+      show_nav: true
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: page
+      show_nav: true
+  - scope:
+      path: "tutorials"
+      type: "tutorials"
+    values:
+      layout: page
+      section: "tutorials"
+      show_nav: true
+  - scope:
+      path: "how-to"
+      type: "how-to"
+    values:
+      layout: page
+      section: "how-to"
+      show_nav: true
+  - scope:
+      path: "reference"
+      type: "reference"
+    values:
+      layout: page
+      section: "reference"
+      show_nav: true
+  - scope:
+      path: "explanation"
+      type: "explanation"
+    values:
+      layout: page
+      section: "explanation"
+      show_nav: true
+
+# Exclude from processing
+exclude:
+  - .sass-cache/
+  - .jekyll-cache/
+  - gemfiles/
+  - Gemfile
+  - Gemfile.lock
+  - node_modules/
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/

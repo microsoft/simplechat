@@ -8,12 +8,11 @@ from functions_documents import *
 from functions_group import find_group_by_id
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
 
 def register_route_frontend_chats(app):
     @app.route('/chats', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chats():
@@ -31,28 +30,38 @@ def register_route_frontend_chats(app):
             group_doc = find_group_by_id(active_group_id)
             if group_doc:
                 active_group_name = group_doc.get("name", "")
+        
+        # Get active public workspace ID from user settings
+        active_public_workspace_id = user_settings["settings"].get("activePublicWorkspaceOid", "")
+        
         categories_list = public_settings.get("document_classification_categories","")
 
         if not user_id:
             return redirect(url_for('login'))
+        
+        # Get user display name from user settings
+        user_display_name = user_settings.get('display_name', '')
+        
         return render_template(
             'chats.html',
             settings=public_settings,
             enable_user_feedback=enable_user_feedback,
             active_group_id=active_group_id,
             active_group_name=active_group_name,
+            active_public_workspace_id=active_public_workspace_id,
             enable_enhanced_citations=enable_enhanced_citations,
             enable_document_classification=enable_document_classification,
             document_classification_categories=categories_list,
             enable_extract_meta_data=enable_extract_meta_data,
+            user_id=user_id,
+            user_display_name=user_display_name,
         )
     
     @app.route('/upload', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @file_upload_required
     def upload_file():
         settings = get_settings()
         user_id = get_current_user_id()
@@ -234,6 +243,18 @@ def register_route_frontend_chats(app):
                     
                     print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
                     
+                    # Threading logic for file upload
+                    previous_thread_id = None
+                    try:
+                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except:
+                        pass
+
+                    current_thread_id = str(uuid.uuid4())
+                    
                     # Create main image document with first chunk
                     main_image_doc = {
                         'id': file_message_id,
@@ -250,7 +271,13 @@ def register_route_frontend_chats(app):
                             'total_chunks': total_chunks,
                             'chunk_index': 0,
                             'original_size': len(image_base64_url),
-                            'is_user_upload': True
+                            'is_user_upload': True,
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
                         }
                     }
                     
@@ -284,6 +311,18 @@ def register_route_frontend_chats(app):
                     print(f"Created {total_chunks} chunked image documents for {filename}")
                 else:
                     # Small enough to store in single document
+                    # Threading logic for file upload
+                    previous_thread_id = None
+                    try:
+                        last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                        last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except:
+                        pass
+
+                    current_thread_id = str(uuid.uuid4())
+                    
                     image_message = {
                         'id': file_message_id,
                         'conversation_id': conversation_id,
@@ -297,7 +336,13 @@ def register_route_frontend_chats(app):
                         'metadata': {
                             'is_chunked': False,
                             'original_size': len(image_base64_url),
-                            'is_user_upload': True
+                            'is_user_upload': True,
+                            'thread_info': {
+                                'thread_id': current_thread_id,
+                                'previous_thread_id': previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
                         }
                     }
                     
@@ -311,6 +356,18 @@ def register_route_frontend_chats(app):
                     print(f"Created single image document for {filename}")
             else:
                 # Non-image file or failed to convert to base64, store as 'file' role
+                # Threading logic for file upload
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp DESC"
+                    last_msgs = list(cosmos_messages_container.query_items(query=last_msg_query, partition_key=conversation_id))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except:
+                    pass
+
+                current_thread_id = str(uuid.uuid4())
+                
                 file_message = {
                     'id': file_message_id,
                     'conversation_id': conversation_id,
@@ -319,7 +376,15 @@ def register_route_frontend_chats(app):
                     'file_content': extracted_content,
                     'is_table': is_table,
                     'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None
+                    'model_deployment_name': None,
+                    'metadata': {
+                        'thread_info': {
+                            'thread_id': current_thread_id,
+                            'previous_thread_id': previous_thread_id,
+                            'active_thread': True,
+                            'thread_attempt': 1
+                        }
+                    }
                 }
                 
                 # Add vision analysis if available
@@ -329,6 +394,28 @@ def register_route_frontend_chats(app):
                 cosmos_messages_container.upsert_item(file_message)
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            
+            # Check if this is the first message in the conversation (excluding the current file upload)
+            # and update conversation title based on filename if it's still "New Conversation"
+            try:
+                if conversation_item.get('title') == 'New Conversation':
+                    # Query to count existing messages (excluding the one we just created)
+                    count_query = f"SELECT VALUE COUNT(1) FROM c WHERE c.conversation_id = '{conversation_id}'"
+                    message_counts = list(cosmos_messages_container.query_items(query=count_query, partition_key=conversation_id))
+                    message_count = message_counts[0] if message_counts else 0
+                    
+                    # If this is the first or only message, set title based on filename
+                    if message_count <= 1:
+                        # Remove file extension and create a clean title
+                        base_filename = os.path.splitext(filename)[0]
+                        # Limit title length to 50 characters
+                        new_title = base_filename[:50] if len(base_filename) > 50 else base_filename
+                        conversation_item['title'] = new_title
+                        print(f"Auto-generated conversation title from filename: {new_title}")
+            except Exception as title_error:
+                # Don't fail the upload if title generation fails
+                print(f"Warning: Failed to auto-generate conversation title: {title_error}")
+            
             cosmos_conversations_container.upsert_item(conversation_item)
 
         except Exception as e:
@@ -338,14 +425,13 @@ def register_route_frontend_chats(app):
 
         return jsonify({
             'message': 'File added to the conversation successfully',
-            'conversation_id': conversation_id
+            'conversation_id': conversation_id,
+            'title': conversation_item.get('title', 'New Conversation')
         }), 200
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER
     @app.route("/view_pdf", methods=["GET"])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_pdf():
@@ -500,9 +586,7 @@ def register_route_frontend_chats(app):
 
     # --- Updated route ---
     @app.route('/view_document')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_document():

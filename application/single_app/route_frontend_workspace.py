@@ -7,9 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_workspace(app):
     @app.route('/workspace', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_user_workspace")

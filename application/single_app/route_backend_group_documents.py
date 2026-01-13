@@ -5,6 +5,9 @@ from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from utils_cache import invalidate_group_search_cache
+from functions_debug import *
+from functions_activity_logging import log_document_upload
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -38,6 +41,12 @@ def register_route_backend_group_documents(app):
         group_doc = find_group_by_id(group_id=active_group_id)
         if not group_doc:
             return jsonify({'error': 'Active group not found'}), 404
+
+        # Check if group status allows uploads
+        from functions_group import check_group_status_allows_operation
+        allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
 
         role = get_user_role_in_group(group_doc, user_id)
         if role not in ["Owner", "Admin", "DocumentManager"]:
@@ -120,6 +129,10 @@ def register_route_backend_group_documents(app):
         response_status = 200 if processed_docs and not upload_errors else 207
         if not processed_docs and upload_errors:
             response_status = 400
+
+        # Invalidate group search cache since documents were added
+        if processed_docs:
+            invalidate_group_search_cache(active_group_id)
 
         return jsonify({
             'message': f'Processed {len(processed_docs)} file(s). Check status periodically.',
@@ -329,6 +342,9 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': 'You do not have permission to update documents in this group'}), 403
 
         data = request.get_json()
+        
+        # Track which fields were updated
+        updated_fields = {}
 
         try:
             if 'title' in data:
@@ -338,6 +354,7 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     title=data['title']
                 )
+                updated_fields['title'] = data['title']
             if 'abstract' in data:
                 update_document(
                     document_id=document_id,
@@ -345,6 +362,7 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     abstract=data['abstract']
                 )
+                updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 if isinstance(data['keywords'], list):
                     update_document(
@@ -353,13 +371,16 @@ def register_route_backend_group_documents(app):
                         user_id=user_id,
                         keywords=data['keywords']
                     )
+                    updated_fields['keywords'] = data['keywords']
                 else:
+                    keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
                     update_document(
                         document_id=document_id,
                         group_id=active_group_id,
                         user_id=user_id,
-                        keywords=[kw.strip() for kw in data['keywords'].split(',')]
+                        keywords=keywords_list
                     )
+                    updated_fields['keywords'] = keywords_list
             if 'publication_date' in data:
                 update_document(
                     document_id=document_id,
@@ -367,6 +388,7 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     publication_date=data['publication_date']
                 )
+                updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
                 update_document(
                     document_id=document_id,
@@ -374,6 +396,7 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     document_classification=data['document_classification']
                 )
+                updated_fields['document_classification'] = data['document_classification']
             if 'authors' in data:
                 if isinstance(data['authors'], list):
                     update_document(
@@ -382,12 +405,32 @@ def register_route_backend_group_documents(app):
                         user_id=user_id,
                         authors=data['authors']
                     )
+                    updated_fields['authors'] = data['authors']
                 else:
+                    authors_list = [data['authors']]
                     update_document(
                         document_id=document_id,
                         group_id=active_group_id,
                         user_id=user_id,
-                        authors=[data['authors']]
+                        authors=authors_list
+                    )
+                    updated_fields['authors'] = authors_list
+
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                # Get document details for logging
+                from functions_documents import get_document
+                doc = get_document(user_id, document_id, group_id=active_group_id)
+                if doc:
+                    from functions_activity_logging import log_document_metadata_update_transaction
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=document_id,
+                        workspace_type='group',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type'),
+                        group_id=active_group_id
                     )
 
             return jsonify({'message': 'Group document metadata updated successfully'}), 200
@@ -418,6 +461,12 @@ def register_route_backend_group_documents(app):
         if not group_doc:
             return jsonify({'error': 'Active group not found'}), 404
 
+        # Check if group status allows deletions
+        from functions_group import check_group_status_allows_operation
+        allowed, reason = check_group_status_allows_operation(group_doc, 'delete')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
         role = get_user_role_in_group(group_doc, user_id)
         if role not in ["Owner", "Admin", "DocumentManager"]:
             return jsonify({'error': 'You do not have permission to delete documents in this group'}), 403
@@ -425,6 +474,10 @@ def register_route_backend_group_documents(app):
         try:
             delete_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
             delete_document_chunks(document_id=document_id, group_id=active_group_id)
+            
+            # Invalidate group search cache since document was deleted
+            invalidate_group_search_cache(active_group_id)
+            
             return jsonify({'message': 'Group document deleted successfully'}), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
@@ -614,6 +667,9 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     shared_group_ids=new_shared_group_ids
                 )
+                # Invalidate cache for the group that approved
+                invalidate_group_search_cache(active_group_id)
+            
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
@@ -681,6 +737,10 @@ def register_route_backend_group_documents(app):
                     shared_group_ids=shared_group_ids
                 )
                 
+                # Invalidate cache for both groups
+                invalidate_group_search_cache(active_group_id)
+                invalidate_group_search_cache(target_group_id)
+                
             return jsonify({
                 'message': 'Document shared successfully',
                 'document_id': document_id,
@@ -746,6 +806,10 @@ def register_route_backend_group_documents(app):
                     user_id=user_id,
                     shared_group_ids=shared_group_ids
                 )
+                
+                # Invalidate cache for both groups
+                invalidate_group_search_cache(active_group_id)
+                invalidate_group_search_cache(target_group_id)
                 
             return jsonify({
                 'message': 'Document sharing removed successfully',

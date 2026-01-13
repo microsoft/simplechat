@@ -57,6 +57,11 @@
         "enable_agent_gpt_apim": {
           "type": "boolean"
         },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "minimal", "low", "medium", "high"],
+          "description": "Reasoning effort level for models that support it (e.g., gpt-5, o1, o3)"
+        },
         "default_agent": {
           "type": "boolean",
           "description": "(deprecated) Use selected_agent for agent selection."
@@ -65,6 +70,16 @@
           "type": "boolean",
           "description": "True if this agent is a global agent; required for agent selection and UI badging.",
           "default": false
+        },
+        "is_group": {
+          "type": "boolean",
+          "description": "True if this agent is a group agent; required for agent selection and UI badging.",
+          "default": false
+        },
+        "agent_type": {
+          "type": "string",
+          "enum": ["local", "aifoundry", "copilot"],
+          "description": "Type of agent that needs to be instantiated."
         },
         "instructions": {
           "type": "string"
@@ -75,6 +90,12 @@
         },
         "other_settings": {
           "type": "object"
+        },
+        "max_completion_tokens": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 512000,
+          "default": 4096
         }
       },
       "required": [
@@ -83,9 +104,12 @@
         "display_name",
         "description",
         "is_global",
+        "is_group",
         "instructions",
         "actions_to_load",
-        "other_settings"
+        "other_settings",
+        "max_completion_tokens",
+        "agent_type"
       ],
       "title": "Agent"
     }

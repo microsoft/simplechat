@@ -3,13 +3,12 @@
 from config import *
 from functions_authentication import *
 from functions_debug import debug_print
+from functions_chat import sort_messages_by_thread
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_conversations(app):
     @app.route('/conversations')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def conversations():
@@ -30,9 +29,7 @@ def register_route_frontend_conversations(app):
         return render_template('conversations.html', conversations=items)
 
     @app.route('/conversation/<conversation_id>', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_conversation(conversation_id):
@@ -59,9 +56,7 @@ def register_route_frontend_conversations(app):
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_conversation_messages(conversation_id):
@@ -84,9 +79,46 @@ def register_route_frontend_conversations(app):
             partition_key=conversation_id
         ))
 
-        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items")
+        debug_print(f"Frontend endpoint - Query returned {len(all_items)} total items (before filtering)")
+        
+        # Filter for active_thread = True OR active_thread is not defined (backwards compatibility)
+        filtered_items = []
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            active = thread_info.get('active_thread')
+            
+            # Include if: active_thread is True, OR active_thread is not defined, OR active_thread is None
+            if active is True or active is None or 'active_thread' not in thread_info:
+                filtered_items.append(item)
+                debug_print(f"Frontend endpoint - ✅ Including: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+            else:
+                debug_print(f"Frontend endpoint - ❌ Excluding: id={item.get('id')}, role={item.get('role')}, active={active}, attempt={thread_info.get('thread_attempt', 'N/A')}")
+        
+        all_items = filtered_items
+        debug_print(f"Frontend endpoint - After filtering: {len(all_items)} items remaining")
+
+        # Log thread info BEFORE sorting
+        debug_print(f"Frontend endpoint - BEFORE SORT:")
+        for item in all_items:
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
+
+        # Sort messages using threading logic
+        all_items = sort_messages_by_thread(all_items)
+        
+        # Log thread info AFTER sorting
+        debug_print(f"Frontend endpoint - AFTER SORT:")
         for i, item in enumerate(all_items):
-            debug_print(f"Frontend endpoint - Item {i}: id={item.get('id')}, role={item.get('role')}")
+            thread_info = item.get('metadata', {}).get('thread_info', {})
+            thread_id = thread_info.get('thread_id', 'NO_THREAD_ID')
+            prev_thread_id = thread_info.get('previous_thread_id', 'NO_PREV')
+            timestamp = item.get('timestamp', 'NO_TIMESTAMP')
+            attempt = thread_info.get('thread_attempt', 'N/A')
+            debug_print(f"  {i+1}. {item.get('id')}: thread_id={thread_id}, prev={prev_thread_id}, attempt={attempt}, timestamp={timestamp}")
 
         # Process messages and reassemble chunked images
         messages = []
@@ -159,9 +191,7 @@ def register_route_frontend_conversations(app):
         return jsonify({'messages': messages})
 
     @app.route('/api/message/<message_id>/metadata', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def get_message_metadata(message_id):
@@ -198,9 +228,18 @@ def register_route_frontend_conversations(app):
                 except CosmosResourceNotFoundError:
                     return jsonify({'error': 'Conversation not found'}), 404
             
-            # Return the metadata from the message
-            metadata = message.get('metadata', {})
-            return jsonify(metadata)
+            # Return appropriate data based on message role
+            # User messages: return metadata object only (has user_info, button_states, etc.)
+            # Other messages: return full document (has id, role, augmented, etc. at top level)
+            message_role = message.get('role', '')
+            
+            if message_role == 'user':
+                # User messages - return nested metadata object
+                metadata = message.get('metadata', {})
+                return jsonify(metadata)
+            else:
+                # Assistant, image, file messages - return full document
+                return jsonify(message)
             
         except Exception as e:
             print(f"Error fetching message metadata: {str(e)}")

@@ -9,6 +9,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_external_health(app):
     @app.route('/external/healthcheck', methods=['GET'])
+    @swagger_route(security=get_auth_security())
     @swagger_route()
     @enabled_required("enable_external_healthcheck")
     def external_health_check():

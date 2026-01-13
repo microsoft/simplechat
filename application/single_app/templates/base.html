@@ -215,7 +215,7 @@
 <body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
-         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: #fff; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }}; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
       {{ app_settings.classification_banner_text }}
     </div>
   {% endif %}
@@ -336,6 +336,8 @@
   <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
+  <!-- Notifications JavaScript (for badge polling on all pages) -->
+  <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 

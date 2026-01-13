@@ -2,6 +2,7 @@
 // Multi-step modal functionality for agent creation
 import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
+import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 export class AgentModalStepper {
   constructor(isAdmin = false) {
@@ -22,6 +23,7 @@ export class AgentModalStepper {
     const prevBtn = document.getElementById('agent-modal-prev');
     const saveBtn = document.getElementById('agent-modal-save-btn');
     const skipBtn = document.getElementById('agent-modal-skip');
+    const powerUserToggle = document.getElementById('agent-power-user-toggle');
     
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.nextStep());
@@ -35,9 +37,15 @@ export class AgentModalStepper {
     if (skipBtn) {
       skipBtn.addEventListener('click', () => this.skipToEnd());
     }
+    if (powerUserToggle) {
+      powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
+    }
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+    
+    // Set up model change listener for reasoning effort
+    this.setupModelChangeListener();
   }
 
   setupNameGeneration() {
@@ -50,6 +58,78 @@ export class AgentModalStepper {
         const generatedName = this.generateAgentName(displayName);
         generatedNameInput.value = generatedName;
       });
+    }
+  }
+
+  setupModelChangeListener() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    if (globalModelSelect) {
+      globalModelSelect.addEventListener('change', () => {
+        this.updateReasoningEffortForModel();
+      });
+    }
+  }
+
+  updateReasoningEffortForModel() {
+    const globalModelSelect = document.getElementById('agent-global-model-select');
+    const reasoningEffortSelect = document.getElementById('agent-reasoning-effort');
+    const reasoningEffortGroup = reasoningEffortSelect?.closest('.mb-3');
+    
+    if (!globalModelSelect || !reasoningEffortSelect || !reasoningEffortGroup) {
+      return;
+    }
+    
+    const selectedModel = globalModelSelect.value;
+    if (!selectedModel) {
+      // No model selected, hide reasoning effort
+      reasoningEffortGroup.style.display = 'none';
+      return;
+    }
+    
+    // Get supported levels for the selected model
+    const supportedLevels = getModelSupportedLevels(selectedModel);
+    
+    // If model only supports 'none', hide the field
+    if (supportedLevels.length === 1 && supportedLevels[0] === 'none') {
+      reasoningEffortGroup.style.display = 'none';
+      reasoningEffortSelect.value = ''; // Clear selection
+      return;
+    }
+    
+    // Show the field
+    reasoningEffortGroup.style.display = 'block';
+    
+    // Update available options based on supported levels
+    const currentValue = reasoningEffortSelect.value;
+    const allOptions = reasoningEffortSelect.querySelectorAll('option');
+    
+    // Show/hide options based on supported levels
+    allOptions.forEach(option => {
+      const value = option.value;
+      if (value === '') {
+        // Always show the "inherit" option
+        option.style.display = '';
+        option.disabled = false;
+      } else if (supportedLevels.includes(value)) {
+        option.style.display = '';
+        option.disabled = false;
+      } else {
+        option.style.display = 'none';
+        option.disabled = true;
+      }
+    });
+    
+    // If current value is not supported, reset to inherit
+    if (currentValue && currentValue !== '' && !supportedLevels.includes(currentValue)) {
+      reasoningEffortSelect.value = '';
+    }
+  }
+
+  togglePowerUserMode(isEnabled) {
+    console.log('Toggling power user mode:', isEnabled);
+    const powerUserSection = document.getElementById('agent-power-user-settings');
+    if (powerUserSection) {
+      powerUserSection.classList.toggle('d-none', !isEnabled);
     }
   }
 
@@ -180,6 +260,9 @@ export class AgentModalStepper {
       
       if (globalModelSelect) {
         agentsCommon.populateGlobalModelDropdown(globalModelSelect, models, selectedModel);
+        
+        // Update reasoning effort options based on selected model
+        this.updateReasoningEffortForModel();
       }
     } catch (error) {
       console.error('Failed to load models for agent modal:', error);
@@ -202,6 +285,19 @@ export class AgentModalStepper {
     // Use shared function to populate all fields
     if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
       agentsCommon.setAgentModalFields(agent);
+    }
+
+    // any agent advanced settings
+    if (this.currentAgent 
+        && this.currentAgent.max_completion_tokens != -1) {
+      const powerUserToggle = document.getElementById('agent-power-user-toggle');
+      if (powerUserToggle) {
+        powerUserToggle.checked = true; // true/false from your agent data
+        const agentPowerUserSettings = document.getElementById('agent-power-user-settings');
+        if (agentPowerUserSettings) {
+          agentPowerUserSettings.classList.remove('d-none');
+        }
+      }
     }
 
     // Show/hide custom connection fields as needed
@@ -249,9 +345,32 @@ export class AgentModalStepper {
     }
   }
 
-  skipToEnd() {
+  async skipToEnd() {
     // Skip to the summary step (step 6)
-    this.goToStep(this.maxSteps);
+    //if (this.actionsToSelect != null && this.actionsToSelect.length > 0) {
+    //  this.setSelectedActions(this.actionsToSelect);
+    //}
+    const skipBtn = document.getElementById('agent-modal-skip');
+    const originalText = skipBtn.innerHTML;
+    if (skipBtn) {
+      skipBtn.disabled = true;
+      skipBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Skipping...`;
+    }
+    try {
+      await this.loadAvailableActions();
+      this.goToStep(this.maxSteps);
+    } catch (error) {
+      console.error('Error loading actions:', error);
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    } finally {
+      if (skipBtn) {
+        skipBtn.disabled = false;
+        skipBtn.innerHTML = originalText;
+      }
+    }
   }
 
   goToStep(stepNumber) {
@@ -965,7 +1084,7 @@ export class AgentModalStepper {
       
       // Selected actions
       const currentActions = this.getSelectedActionIds();
-      const originalActions = this.originalAgent.actions || [];
+      const originalActions = this.originalAgent.actions_to_load || [];
       
       // Compare fields
       if (currentDisplayName !== (this.originalAgent.display_name || '')) {
@@ -1095,6 +1214,7 @@ export class AgentModalStepper {
     try {
       // Get agent data from form
       const agentData = this.getAgentFormData();
+      agentData.agent_type = (this.originalAgent?.agent_type) || agentData.agent_type || 'local';
       
       // Validate required fields
       if (!agentData.display_name || !agentData.name) {
@@ -1139,6 +1259,11 @@ export class AgentModalStepper {
         agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
       
+      // Clean up empty reasoning_effort (inherit from model default)
+      if (!agentData.reasoning_effort || agentData.reasoning_effort === '') {
+        delete agentData.reasoning_effort;
+      }
+      
       // Clean up form-specific fields that shouldn't be sent to backend
       const formOnlyFields = ['custom_connection', 'model'];
       formOnlyFields.forEach(field => {
@@ -1147,30 +1272,23 @@ export class AgentModalStepper {
         }
       });
       
-      // Validate with schema if available
-      try {
-        if (!window.validateAgent) {
-          window.validateAgent = (await import('/static/js/validateAgent.mjs')).default;
-        }
-        const valid = window.validateAgent(agentData);
-        if (!valid) {
-          let errorMsg = 'Validation error: Invalid agent data.';
-          if (window.validateAgent.errors && window.validateAgent.errors.length) {
-            errorMsg += '\n' + window.validateAgent.errors.map(e => `${e.instancePath} ${e.message}`).join('\n');
-          }
-          throw new Error(errorMsg);
-        }
-      } catch (e) {
-        console.warn('Schema validation failed:', e.message);
-      }
-      
       // Use appropriate endpoint and save method based on context
-      if (this.isAdmin) {
-        // Admin context - save to global agents
-        await this.saveGlobalAgent(agentData);
-      } else {
-        // User context - save to personal agents
-        await this.savePersonalAgent(agentData);
+      let saveBtn = document.getElementById('agent-modal-save-btn');
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+      saveBtn.disabled = true;
+      try {
+        if (this.isAdmin) {
+          // Admin context - save to global agents
+          await this.saveGlobalAgent(agentData);
+        } else {
+          // User context - save to personal agents
+          await this.savePersonalAgent(agentData);
+        }
+      //No catch to allow outer catch to handle errors
+      } finally {
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
       }
       
     } catch (error) {
@@ -1193,7 +1311,10 @@ export class AgentModalStepper {
       instructions: document.getElementById('agent-instructions')?.value || '',
       model: document.getElementById('agent-global-model-select')?.value || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
-      other_settings: document.getElementById('agent-additional-settings')?.value || '{}'
+      other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
+      max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
+      reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
+      agent_type: 'local'
     };
     
     // Handle model and deployment configuration

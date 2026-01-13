@@ -6,7 +6,9 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
+from functions_debug import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_public_documents(app):
@@ -33,8 +35,10 @@ def register_route_backend_public_documents(app):
         if not ws_doc:
             return jsonify({'error': 'Active public workspace not found'}), 404
 
-        # check role
-        from functions_public_workspaces import get_user_role_in_public_workspace
+        allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
         role = get_user_role_in_public_workspace(ws_doc, user_id)
         if role not in ['Owner', 'Admin', 'DocumentManager']:
             return jsonify({'error': 'Insufficient permissions'}), 403
@@ -95,6 +99,11 @@ def register_route_backend_public_documents(app):
                 if tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
 
         status = 200 if processed and not errors else (207 if processed else 400)
+        
+        # Invalidate public workspace search cache since documents were added
+        if processed:
+            invalidate_public_workspace_search_cache(active_ws)
+        
         return jsonify({
             'message': f'Processed {len(processed)} file(s)',
             'document_ids': [d['id'] for d in processed],
@@ -264,21 +273,48 @@ def register_route_backend_public_documents(app):
         if role not in ['Owner','Admin','DocumentManager']:
             return jsonify({'error':'Access denied'}), 403
         data = request.get_json() or {}
+        
+        # Track which fields were updated
+        updated_fields = {}
+        
         try:
             if 'title' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, title=data['title'])
+                updated_fields['title'] = data['title']
             if 'abstract' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, abstract=data['abstract'])
+                updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 kws = data['keywords'] if isinstance(data['keywords'],list) else [k.strip() for k in data['keywords'].split(',')]
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, keywords=kws)
+                updated_fields['keywords'] = kws
             if 'authors' in data:
                 auths = data['authors'] if isinstance(data['authors'],list) else [data['authors']]
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, authors=auths)
+                updated_fields['authors'] = auths
             if 'publication_date' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, publication_date=data['publication_date'])
+                updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
                 update_document(document_id=doc_id, public_workspace_id=active_ws, user_id=user_id, document_classification=data['document_classification'])
+                updated_fields['document_classification'] = data['document_classification']
+            
+            # Log the metadata update transaction if any fields were updated
+            if updated_fields:
+                from functions_documents import get_document
+                from functions_activity_logging import log_document_metadata_update_transaction
+                doc = get_document(user_id, doc_id, public_workspace_id=active_ws)
+                if doc:
+                    log_document_metadata_update_transaction(
+                        user_id=user_id,
+                        document_id=doc_id,
+                        workspace_type='public',
+                        file_name=doc.get('file_name', 'Unknown'),
+                        updated_fields=updated_fields,
+                        file_type=doc.get('file_type'),
+                        public_workspace_id=active_ws
+                    )
+            
             return jsonify({'message':'Metadata updated'}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500
@@ -293,6 +329,14 @@ def register_route_backend_public_documents(app):
         settings = get_user_settings(user_id)
         active_ws = settings['settings'].get('activePublicWorkspaceOid')
         ws_doc = find_public_workspace_by_id(active_ws) if active_ws else None
+        
+        # Check if workspace status allows deletions
+        if ws_doc:
+            from functions_public_workspaces import check_public_workspace_status_allows_operation
+            allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'delete')
+            if not allowed:
+                return jsonify({'error': reason}), 403
+        
         from functions_public_workspaces import get_user_role_in_public_workspace
         role = get_user_role_in_public_workspace(ws_doc, user_id) if ws_doc else None
         if role not in ['Owner','Admin','DocumentManager']:
@@ -300,6 +344,10 @@ def register_route_backend_public_documents(app):
         try:
             delete_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
             delete_document_chunks(document_id=doc_id, public_workspace_id=active_ws)
+            
+            # Invalidate public workspace search cache since document was deleted
+            invalidate_public_workspace_search_cache(active_ws)
+            
             return jsonify({'message':'Deleted'}), 200
         except Exception as e:
             return jsonify({'error':str(e)}), 500

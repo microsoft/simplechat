@@ -1,11 +1,10 @@
 # requirements.txt
 pandas==2.2.3
 azure-monitor-query==1.4.1
-opencensus-ext-azure==1.1.15
 Flask==2.2.5
 Flask-WTF==1.2.1
 gunicorn
-Werkzeug==3.0.6
+Werkzeug==3.1.4
 requests==2.32.4
 openai==1.67
 docx2txt==0.8
@@ -30,11 +29,12 @@ azure-identity==1.23.0
 azure-ai-contentsafety==1.0.0
 azure-storage-blob==12.24.1
 azure-storage-queue==12.12.0
-pypdf==6.0.0
+azure-keyvault-secrets==4.10.0
+pypdf==6.4.0
 python-docx==1.1.2
 flask-executor==1.0.0
 PyMuPDF==1.25.3
-langchain-text-splitters==0.3.7
+langchain-text-splitters==0.3.9
 beautifulsoup4==4.13.3
 openpyxl==3.1.5
 xlrd==2.0.1
@@ -51,3 +51,5 @@ cython
 pyyaml==6.0.2
 aiohttp==3.12.15
 html2text==2025.4.15
+matplotlib==3.10.7
+azure-cognitiveservices-speech==1.47.0

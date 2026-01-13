@@ -1,8 +1,77 @@
 # functions_search.py
 
+import logging
+from typing import List, Dict, Any
 from config import *
 from functions_content import *
 from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
+from utils_cache import (
+    generate_search_cache_key,
+    get_cached_search_results,
+    cache_search_results,
+    DEBUG_ENABLED
+)
+from functions_debug import *
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown") -> List[Dict[str, Any]]:
+    """
+    Normalize search scores to [0, 1] range using min-max normalization.
+    
+    This ensures scores from different indexes (user, group, public) are comparable
+    when merged together. Without normalization, scores from indexes with different
+    document counts or characteristics may not be directly comparable.
+    
+    Args:
+        results: List of search results with 'score' field
+        index_name: Name of the index for debug logging
+        
+    Returns:
+        Same results list with normalized scores (original score preserved)
+    """
+    if not results or len(results) == 0:
+        debug_print(f"No results to normalize from {index_name}", "NORMALIZE")
+        return results
+    
+    scores = [r['score'] for r in results]
+    min_score = min(scores)
+    max_score = max(scores)
+    score_range = max_score - min_score if max_score > min_score else 1.0
+    
+    debug_print(
+        f"Score distribution BEFORE normalization ({index_name})",
+        "NORMALIZE",
+        index=index_name,
+        count=len(results),
+        min=f"{min_score:.4f}",
+        max=f"{max_score:.4f}",
+        range=f"{score_range:.4f}"
+    )
+    
+    # Apply min-max normalization
+    for r in results:
+        original_score = r['score']
+        normalized_score = (original_score - min_score) / score_range if score_range > 0 else 0.5
+        
+        # Store both scores for transparency
+        r['original_score'] = original_score
+        r['original_index'] = index_name
+        r['score'] = normalized_score
+    
+    # Log normalized distribution
+    normalized_scores = [r['score'] for r in results]
+    debug_print(
+        f"Score distribution AFTER normalization ({index_name})",
+        "NORMALIZE",
+        index=index_name,
+        count=len(results),
+        min=f"{min(normalized_scores):.4f}",
+        max=f"{max(normalized_scores):.4f}"
+    )
+    
+    return results
 
 def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", active_group_id=None, active_public_workspace_id=None, enable_file_sharing=True):
     """
@@ -11,8 +80,63 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
     If document_id is None, we just search the user index for the user's docs
     OR you could unify that logic further (maybe search both).
     enable_file_sharing: If False, do not include shared_user_ids in filters.
+    
+    This function uses document-set-aware caching to ensure consistent results
+    across identical queries against the same document set.
     """
-    query_embedding = generate_embedding(query)
+    
+    # Generate cache key including document set fingerprints
+    cache_key = generate_search_cache_key(
+        query=query,
+        user_id=user_id,
+        document_id=document_id,
+        doc_scope=doc_scope,
+        active_group_id=active_group_id,
+        active_public_workspace_id=active_public_workspace_id,
+        top_n=top_n,
+        enable_file_sharing=enable_file_sharing
+    )
+    
+    # Check cache first (pass scope parameters for correct partition key)
+    cached_results = get_cached_search_results(
+        cache_key, 
+        user_id, 
+        doc_scope, 
+        active_group_id, 
+        active_public_workspace_id
+    )
+    if cached_results is not None:
+        debug_print(
+            "Returning CACHED search results",
+            "SEARCH",
+            query=query[:40],
+            scope=doc_scope,
+            result_count=len(cached_results)
+        )
+        logger.info(f"Returning cached search results for query: '{query[:50]}...'")
+        return cached_results
+    
+    # Cache miss - proceed with search
+    debug_print(
+        "Cache MISS - Executing Azure AI Search",
+        "SEARCH",
+        query=query[:40],
+        scope=doc_scope,
+        top_n=top_n
+    )
+    logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
+    
+    # Unpack tuple from generate_embedding (returns embedding, token_usage)
+    result = generate_embedding(query)
+    if result is None:
+        return None
+    
+    # Handle both tuple (new) and single value (backward compatibility)
+    if isinstance(result, tuple):
+        query_embedding, _ = result  # Ignore token_usage for search
+    else:
+        query_embedding = result
+    
     if query_embedding is None:
         return None
     
@@ -141,10 +265,32 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
                 select=["id", "chunk_text", "chunk_id", "file_name", "public_workspace_id", "version", "chunk_sequence", "upload_date", "document_classification", "page_number", "author", "chunk_keywords", "title", "chunk_summary"]
             )
 
+        # Extract results from each index
         user_results_final = extract_search_results(user_results, top_n)
         group_results_final = extract_search_results(group_results, top_n)
         public_results_final = extract_search_results(public_results, top_n)
-        results = user_results_final + group_results_final + public_results_final
+        
+        debug_print(
+            "Extracted raw results from indexes",
+            "SEARCH",
+            user_count=len(user_results_final),
+            group_count=len(group_results_final),
+            public_count=len(public_results_final)
+        )
+        
+        # Normalize scores from each index to [0, 1] range for fair comparison
+        user_results_normalized = normalize_scores(user_results_final, "user_index")
+        group_results_normalized = normalize_scores(group_results_final, "group_index")
+        public_results_normalized = normalize_scores(public_results_final, "public_index")
+        
+        # Merge normalized results
+        results = user_results_normalized + group_results_normalized + public_results_normalized
+        
+        debug_print(
+            "Merged results from all indexes",
+            "SEARCH",
+            total_count=len(results)
+        )
 
     elif doc_scope == "personal":
         if document_id:
@@ -263,8 +409,85 @@ def hybrid_search(query, user_id, document_id=None, top_n=12, doc_scope="all", a
             )
             results = extract_search_results(public_results, top_n)
     
-    results = sorted(results, key=lambda x: x['score'], reverse=True)[:top_n]
-
+    # Log pre-sort statistics
+    if results:
+        scores = [r['score'] for r in results]
+        debug_print(
+            "Results BEFORE final sorting",
+            "SORT",
+            total_results=len(results),
+            min_score=f"{min(scores):.4f}",
+            max_score=f"{max(scores):.4f}",
+            avg_score=f"{sum(scores)/len(scores):.4f}"
+        )
+        
+        # Show top 5 results before sorting (for debugging)
+        if DEBUG_ENABLED and len(results) > 0:
+            import os
+            if os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1':
+                for i, r in enumerate(results[:5]):
+                    debug_print(
+                        f"Pre-sort #{i+1}",
+                        "SORT",
+                        file=r['file_name'][:30],
+                        score=f"{r['score']:.4f}",
+                        original_score=f"{r.get('original_score', r['score']):.4f}",
+                        index=r.get('original_index', 'N/A'),
+                        chunk=r['chunk_sequence']
+                    )
+    
+    # Sort with deterministic tie-breaking to ensure consistent ordering
+    # Primary: score (descending)
+    # Secondary: file_name (ascending) - ensures consistent order when scores are equal
+    # Tertiary: chunk_sequence (ascending) - final tie-breaker for same file
+    results = sorted(
+        results,
+        key=lambda x: (
+            -x['score'],           # Negative for descending order
+            x['file_name'],        # Alphabetical for tie-breaking
+            x['chunk_sequence']    # Chunk order for same file
+        )
+    )[:top_n]
+    
+    # Log post-sort results
+    debug_print(
+        f"Results AFTER sorting (top {top_n})",
+        "SORT",
+        final_count=len(results)
+    )
+    
+    # Show top results after sorting
+    if DEBUG_ENABLED and len(results) > 0:
+        import os
+        if os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1':
+            for i, r in enumerate(results[:5]):
+                debug_print(
+                    f"Final #{i+1}",
+                    "SORT",
+                    file=r['file_name'][:30],
+                    score=f"{r['score']:.4f}",
+                    original_score=f"{r.get('original_score', r['score']):.4f}",
+                    index=r.get('original_index', 'N/A'),
+                    chunk=r['chunk_sequence']
+                )
+    
+    # Cache the results before returning (pass scope parameters for correct partition key)
+    cache_search_results(
+        cache_key, 
+        results, 
+        user_id, 
+        doc_scope, 
+        active_group_id, 
+        active_public_workspace_id
+    )
+    
+    debug_print(
+        "Search complete - returning results",
+        "SEARCH",
+        query=query[:40],
+        final_result_count=len(results)
+    )
+    
     return results
 
 def extract_search_results(paged_results, top_n):

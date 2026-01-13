@@ -130,6 +130,18 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
                 </a>
               </li>
+              {% if settings.allow_group_agents and settings.enable_semantic_kernel %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab">
+                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
+                  </a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab">
+                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
+                  </a>
+                </li>
+              {% endif %}
             </ul>
             {% else %}
             <!-- Regular Groups workspace link when not on group workspace page -->
@@ -288,7 +300,7 @@
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="agents">
-              <i class="bi bi-robot me-2"></i><span class="nav-text">Agents</span>
+              <i class="bi bi-robot me-2"></i><span class="nav-text">Agents and Actions</span>
             </a>
             <ul class="nav flex-column ms-3" style="display: none;" id="agents-submenu">
               <li class="nav-item">
@@ -337,10 +349,15 @@
               </li>
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="front-door-section">
-                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Front Door</span>
+                  <i class="bi bi-door-open me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure Front Door</span>
                 </a>
               </li>
             </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="control-center-config">
+              <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Control Center</span>
+            </a>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
@@ -375,6 +392,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="document-classification-section">
                   <i class="bi bi-tags me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Classification</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="retention-policy-section">
+                  <i class="bi bi-hourglass-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Retention Policy</span>
                 </a>
               </li>
             </ul>
@@ -424,6 +446,18 @@
             </ul>
           </li>
           <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="security">
+              <i class="bi bi-shield-lock me-2"></i><span class="nav-text">Security</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="security-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="security" data-section="keyvault-section">
+                  <i class="bi bi-safe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Key Vault</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="search-extract">
               <i class="bi bi-search me-2"></i><span class="nav-text">Search & Extract</span>
             </a>
@@ -450,6 +484,63 @@
     </div>
     {% endif %}
 
+    <!-- Control Center Section - Show when on control center page for admins OR users with ControlCenter roles -->
+    {% if request.endpoint == 'control_center' and ((session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader)) %}
+    <div class="overflow-auto">
+      <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;">
+        <div class="d-flex align-items-center">
+          <span class="nav-text">Control Center</span>
+          <i id="control-center-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
+        </div>
+        <button id="control-center-search-btn" class="btn btn-sm p-1" style="border: none; background: none; color: inherit;" title="Search Control Center">
+          <i class="bi bi-search" style="font-size: 0.9em;"></i>
+        </button>
+      </div>
+      
+      <!-- Control Center Search Field -->
+      <div id="control-center-search-container" class="px-3 mb-2" style="display: none;">
+        <div class="input-group input-group-sm">
+          <input type="text" id="control-center-search-input" class="form-control form-control-sm" placeholder="Search control center..." style="font-size: 0.85em;">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="control-center-search-clear">
+            <i class="bi bi-x" style="font-size: 0.8em;"></i>
+          </button>
+        </div>
+      </div>
+      <div id="control-center-section">
+        <ul class="nav flex-column mb-2">
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="dashboard">
+              <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Dashboard</span>
+            </a>
+          </li>
+          {# Only show admin tabs if user has ControlCenterAdmin role #}
+          {% if session.get('user') and 'ControlCenterAdmin' in session['user']['roles'] %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="users">
+              <i class="bi bi-people me-2"></i><span class="nav-text">User Management</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="groups">
+              <i class="bi bi-collection me-2"></i><span class="nav-text">Group Management</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="workspaces">
+              <i class="bi bi-folder2-open me-2"></i><span class="nav-text">Public Workspaces</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center control-center-nav-tab" href="#" data-tab="activity-logs">
+              <i class="bi bi-clock-history me-2"></i><span class="nav-text">Activity Logs</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'chats' %}
     <div id="conversations-section" class="flex-grow-1 overflow-auto">
@@ -458,9 +549,35 @@
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;"></i>
         </div>
-        <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
-          <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
-            <i class="bi bi-trash-fill"></i>
+        <div class="d-flex align-items-center">
+          <button id="sidebar-search-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Search conversations">
+            <i class="bi bi-search" style="font-size: 0.9em;"></i>
+          </button>
+          <button id="sidebar-conversations-settings-btn" class="btn btn-sm btn-link text-muted p-0 me-1" style="padding: 2px 6px; font-size: 0.75rem; border: none; background: none;" title="Show/Hide hidden conversations">
+            <i class="bi bi-eye" style="font-size: 0.9em;"></i>
+          </button>
+          <div id="conversations-actions" class="d-flex align-items-center" style="display: none !important;">
+            <button id="sidebar-pin-selected-btn" class="btn btn-sm btn-outline-primary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Pin selected conversations">
+              <i class="bi bi-pin-angle"></i>
+            </button>
+            <button id="sidebar-hide-selected-btn" class="btn btn-sm btn-outline-secondary me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Hide selected conversations">
+              <i class="bi bi-eye-slash"></i>
+            </button>
+            <button id="sidebar-delete-selected-btn" class="btn btn-sm btn-outline-danger me-1" style="display: none; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px;" title="Delete selected conversations">
+              <i class="bi bi-trash-fill"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- Search input container (hidden by default) -->
+      <div id="sidebar-search-container" class="px-3 mb-2" style="display: none;">
+        <div class="input-group input-group-sm">
+          <input type="text" id="sidebar-search-input" class="form-control form-control-sm" placeholder="Search by title..." style="font-size: 0.85em;">
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="sidebar-search-clear" title="Clear search">
+            <i class="bi bi-x" style="font-size: 0.8em;"></i>
+          </button>
+          <button class="btn btn-outline-primary btn-sm" type="button" id="sidebar-search-expand" title="Advanced search">
+            <i class="bi bi-arrows-angle-expand" style="font-size: 0.8em;"></i>
           </button>
         </div>
       </div>
@@ -479,7 +596,7 @@
       <div class="dropdown">
         <a class="nav-link dropdown-toggle p-0 d-flex align-items-center w-100" href="#" id="sidebarUserDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
           {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
-          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+          <div id="sidebar-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px; position: relative;">
             {% if profile_image %}
               <!-- Render profile image directly from server data -->
               <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
@@ -487,6 +604,8 @@
               <!-- Fallback to initials with class for JS targeting -->
               <span class="text-white fw-bold sidebar-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
             {% endif %}
+            <!-- Notification badge - positioned at bottom-right corner -->
+            <span id="sidebar-notification-badge" class="position-absolute badge rounded-circle bg-danger align-items-center justify-content-center" style="display: none; font-size: 0.6rem; font-weight: 700; bottom: -2px; right: -2px; width: 18px; height: 18px; padding: 0; line-height: 1; border: 2px solid white;"></span>
           </div>
           <div class="d-flex flex-column justify-content-center flex-grow-1" style="line-height: 1; min-width: 0;">
             <span class="fw-semibold text-truncate" style="font-size: 1rem;" title="{{ session['user'].get('name', 'User') }}">{{ session['user'].get('name', 'User') }}</span>
@@ -516,7 +635,27 @@
             </a>
           </li>
           <li>
-            <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Top Nav</a>
+            <a class="dropdown-item nav-layout-toggle" href="#">
+              <span id="sidebarSwitchToLeftNavText" class="">
+                <i class="bi bi-layout-sidebar me-2"></i>Left Nav
+              </span>
+              <span id="sidebarSwitchToTopNavText" class="d-none">
+                <i class="bi bi-window-dock me-2"></i>Top Nav
+              </span>
+            </a>
+          </li>
+          <li><hr class="dropdown-divider"></li>
+          <!-- Notifications -->
+          <li>
+            <a class="dropdown-item" href="{{ url_for('notifications') }}">
+              <i class="bi bi-bell me-2"></i>Notifications
+              <span id="sidebar-notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('approvals') }}">
+              <i class="bi bi-check-circle me-2"></i>Approval Requests
+            </a>
           </li>
           <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces %}
@@ -547,20 +686,28 @@
           <li>
             <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
           </li>
+          {% endif %}
+          {# Control Center - accessible to admins OR users with ControlCenter roles #}
+          {% if (session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader) %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+          </li>
+          {% endif %}
+          {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_content_safety %}
-            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+            {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
             </li>
             {% endif %}
           {% endif %}
+          {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_user_feedback %}
-            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+            {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
             </li>
             {% endif %}
-          {% endif %}
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li>

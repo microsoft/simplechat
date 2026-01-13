@@ -3,13 +3,14 @@ import builtins
 import logging
 import pickle
 import json
+import os
 
+import app_settings_cache
+from config import *
 from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
 
-from azure.monitor.opentelemetry import configure_azure_monitor
-
-from config import *
+#from azure.monitor.opentelemetry import configure_azure_monitor
 
 from functions_authentication import *
 from functions_content import *
@@ -17,6 +18,7 @@ from functions_documents import *
 from functions_search import *
 from functions_settings import *
 from functions_appinsights import *
+from functions_activity_logging import *
 
 import threading
 import time
@@ -25,6 +27,7 @@ from datetime import datetime
 from route_frontend_authentication import *
 from route_frontend_profile import *
 from route_frontend_admin_settings import *
+from route_frontend_control_center import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
 from route_frontend_conversations import *
@@ -33,6 +36,7 @@ from route_frontend_group_workspaces import *
 from route_frontend_public_workspaces import *
 from route_frontend_safety import *
 from route_frontend_feedback import *
+from route_frontend_notifications import *
 
 from route_backend_chats import *
 from route_backend_conversations import *
@@ -46,18 +50,30 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_control_center import *
+from route_backend_notifications import *
+from route_backend_retention_policy import *
 from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plugins_bp
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_public_workspaces import *
 from route_backend_public_documents import *
 from route_backend_public_prompts import *
+from route_backend_speech import register_route_backend_speech
+from route_backend_tts import register_route_backend_tts
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
+from functions_debug import debug_print
 
-app = Flask(__name__)
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+
+app = Flask(__name__, static_url_path='/static', static_folder='static')
+
+disable_flask_instrumentation = os.environ.get("DISABLE_FLASK_INSTRUMENTATION", "0")
+if not (disable_flask_instrumentation == "1" or disable_flask_instrumentation.lower() == "true"):
+    FlaskInstrumentor().instrument_app(app)
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
@@ -66,6 +82,14 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
+
+# Ensure filesystem session directory (when used) points to a writable path inside container.
+if SESSION_TYPE == 'filesystem':
+    app.config['SESSION_FILE_DIR'] = SESSION_FILE_DIR if 'SESSION_FILE_DIR' in globals() else os.environ.get('SESSION_FILE_DIR', '/app/flask_session')
+    try:
+        os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+    except Exception as e:
+        print(f"WARNING: Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}")
 
 Session(app)
 
@@ -82,6 +106,12 @@ register_openapi_routes(app)
 # Register Enhanced Citations routes
 register_enhanced_citations_routes(app)
 
+# Register Speech routes
+register_route_backend_speech(app)
+
+# Register TTS routes
+register_route_backend_tts(app)
+
 # Register Swagger documentation routes
 from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
@@ -95,15 +125,84 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
-configure_azure_monitor()
+# =================== Session Configuration ===================
+def configure_sessions(settings):
+    """Configure session backend (Redis or filesystem) once.
 
+    Falls back to filesystem if Redis settings are incomplete. Supports managed identity
+    or key auth for Azure Redis. Uses SESSION_FILE_DIR already prepared in config/app init.
+    """
+    try:
+        if settings.get('enable_redis_cache'):
+            redis_url = settings.get('redis_url', '').strip()
+            redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+
+            if redis_url:
+                redis_client = None
+                try:
+                    if redis_auth_type == 'managed_identity':
+                        print("Redis enabled using Managed Identity")
+                        from config import get_redis_cache_infrastructure_endpoint
+                        credential = DefaultAzureCredential()
+                        redis_hostname = redis_url.split('.')[0]
+                        cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
+                        token = credential.get_token(cache_endpoint)
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=token.token,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    else:
+                        redis_key = settings.get('redis_key', '').strip()
+                        print("Redis enabled using Access Key")
+                        redis_client = Redis(
+                            host=redis_url,
+                            port=6380,
+                            db=0,
+                            password=redis_key,
+                            ssl=True,
+                            socket_connect_timeout=5,
+                            socket_timeout=5
+                        )
+                    
+                    # Test the connection
+                    redis_client.ping()
+                    print("✅ Redis connection successful")
+                    app.config['SESSION_TYPE'] = 'redis'
+                    app.config['SESSION_REDIS'] = redis_client
+                    
+                except Exception as redis_error:
+                    print(f"⚠️  WARNING: Redis connection failed: {redis_error}")
+                    print("Falling back to filesystem sessions for reliability")
+                    app.config['SESSION_TYPE'] = 'filesystem'
+            else:
+                print("Redis enabled but URL missing; falling back to filesystem.")
+                app.config['SESSION_TYPE'] = 'filesystem'
+        else:
+            app.config['SESSION_TYPE'] = 'filesystem'
+    except Exception as e:
+        print(f"⚠️  WARNING: Session configuration error; falling back to filesystem: {e}")
+        app.config['SESSION_TYPE'] = 'filesystem'
+
+    # Initialize session interface
+    Session(app)
 
 # =================== Helper Functions ===================
 @app.before_first_request
 def before_first_request():
     print("Initializing application...")
-    settings = get_settings()
-    print(f"DEBUG:Application settings: {settings}")
+    settings = get_settings(use_cosmos=True)
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
+    sanitized_settings = sanitize_settings_for_logging(settings)
+    debug_print(f"DEBUG:Application settings: {sanitized_settings}")
+    sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
+    debug_print(f"DEBUG:App settings cache initialized: {'Using Redis cache:' + str(app_settings_cache.app_cache_is_using_redis)} {sanitized_settings_cache}")
+
     initialize_clients(settings)
     ensure_custom_logo_file_exists(app, settings)
     # Enable Application Insights logging globally if configured
@@ -135,7 +234,7 @@ def before_first_request():
                             turnoff_time = None
                     
                     if turnoff_time and current_time >= turnoff_time:
-                        print(f"Debug logging timer expired at {turnoff_time}. Disabling debug logging.")
+                        debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
                         settings['enable_debug_logging'] = False
                         settings['debug_logging_timer_enabled'] = False
                         settings['debug_logging_turnoff_time'] = None
@@ -176,42 +275,85 @@ def before_first_request():
     timer_thread.start()
     print("Logging timer background task started.")
 
+    # Background task to check for expired approval requests
+    def check_expired_approvals():
+        """Background task that checks for expired approval requests and auto-denies them"""
+        while True:
+            try:
+                from functions_approvals import auto_deny_expired_approvals
+                denied_count = auto_deny_expired_approvals()
+                if denied_count > 0:
+                    print(f"Auto-denied {denied_count} expired approval request(s).")
+            except Exception as e:
+                print(f"Error in approval expiration check: {e}")
+            
+            # Check every 6 hours (21600 seconds)
+            time.sleep(21600)
 
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
+    # Start the approval expiration check thread
+    approval_thread = threading.Thread(target=check_expired_approvals, daemon=True)
+    approval_thread.start()
+    print("Approval expiration background task started.")
 
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
+    # Background task to check retention policy execution time
+    def check_retention_policy():
+        """Background task that executes retention policy at scheduled time"""
+        while True:
+            try:
+                settings = get_settings()
+                
+                # Check if any retention policy is enabled
+                personal_enabled = settings.get('enable_retention_policy_personal', False)
+                group_enabled = settings.get('enable_retention_policy_group', False)
+                public_enabled = settings.get('enable_retention_policy_public', False)
+                
+                if personal_enabled or group_enabled or public_enabled:
+                    current_time = datetime.now(timezone.utc)
+                    execution_hour = settings.get('retention_policy_execution_hour', 2)
+                    
+                    # Check if we're in the execution hour
+                    if current_time.hour == execution_hour:
+                        # Check if we haven't run today yet
+                        last_run = settings.get('retention_policy_last_run')
+                        should_run = False
+                        
+                        if last_run:
+                            try:
+                                last_run_dt = datetime.fromisoformat(last_run)
+                                # Run if last run was more than 23 hours ago
+                                if (current_time - last_run_dt).total_seconds() > (23 * 3600):
+                                    should_run = True
+                            except:
+                                should_run = True
+                        else:
+                            should_run = True
+                        
+                        if should_run:
+                            print(f"Executing scheduled retention policy at {current_time.isoformat()}")
+                            from functions_retention_policy import execute_retention_policy
+                            results = execute_retention_policy(manual_execution=False)
+                            
+                            if results.get('success'):
+                                print(f"Retention policy execution completed: "
+                                     f"{results['personal']['conversations']} personal conversations, "
+                                     f"{results['personal']['documents']} personal documents, "
+                                     f"{results['group']['conversations']} group conversations, "
+                                     f"{results['group']['documents']} group documents, "
+                                     f"{results['public']['conversations']} public conversations, "
+                                     f"{results['public']['documents']} public documents deleted.")
+                            else:
+                                print(f"Retention policy execution failed: {results.get('errors')}")
+                
+            except Exception as e:
+                print(f"Error in retention policy check: {e}")
+            
+            # Check every hour
+            time.sleep(3600)
+
+    # Start the retention policy check thread
+    retention_thread = threading.Thread(target=check_retention_policy, daemon=True)
+    retention_thread.start()
+    print("Retention policy background task started.")
 
     # Initialize Semantic Kernel and plugins
     enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
@@ -220,85 +362,8 @@ def before_first_request():
         print("Semantic Kernel is enabled. Initializing...")
         initialize_semantic_kernel()
 
-    Session(app)
-
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
-
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
-
-    Session(app)
-
-    # Setup session handling
-    if settings.get('enable_redis_cache'):
-        redis_url = settings.get('redis_url', '').strip()
-        redis_auth_type = settings.get('redis_auth_type', 'key').strip().lower()
-
-        if redis_url:
-            app.config['SESSION_TYPE'] = 'redis'
-
-            if redis_auth_type == 'managed_identity':
-                print("Redis enabled using Managed Identity")
-                credential = DefaultAzureCredential()
-                redis_hostname = redis_url.split('.')[0]  # Extract the first part of the hostname
-                token = credential.get_token(f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=token.token,
-                    ssl=True
-                )
-            else:
-                # Default to key-based auth
-                redis_key = settings.get('redis_key', '').strip()
-                print("Redis enabled using Access Key")
-                app.config['SESSION_REDIS'] = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
-        else:
-            print("Redis enabled but URL missing; falling back to filesystem.")
-            app.config['SESSION_TYPE'] = 'filesystem'
-    else:
-        app.config['SESSION_TYPE'] = 'filesystem'
-
-    Session(app)
+    # Unified session setup
+    configure_sessions(settings)
 
 @app.context_processor
 def inject_settings():
@@ -378,6 +443,7 @@ app.jinja_env.filters['markdown'] = markdown_filter
 
 # =================== Default Routes =====================
 @app.route('/')
+@swagger_route(security=get_auth_security())
 def index():
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
@@ -391,14 +457,17 @@ def index():
     return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
 
 @app.route('/robots933456.txt')
+@swagger_route(security=get_auth_security())
 def robots():
     return send_from_directory('static', 'robots.txt')
 
 @app.route('/favicon.ico')
+@swagger_route(security=get_auth_security())
 def favicon():
     return send_from_directory('static', 'favicon.ico')
 
 @app.route('/static/js/<path:filename>')
+@swagger_route(security=get_auth_security())
 def serve_js_modules(filename):
     """Serve JavaScript modules with correct MIME type."""
     from flask import send_from_directory, Response
@@ -411,10 +480,12 @@ def serve_js_modules(filename):
         return send_from_directory('static/js', filename)
 
 @app.route('/acceptable_use_policy.html')
+@swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
 
 @app.route('/api/semantic-kernel/plugins')
+@swagger_route(security=get_auth_security())
 def list_semantic_kernel_plugins():
     """Test endpoint: List loaded Semantic Kernel plugins and their functions."""
     global kernel
@@ -435,6 +506,9 @@ register_route_frontend_profile(app)
 
 # ------------------- Admin Settings Routes --------------
 register_route_frontend_admin_settings(app)
+
+# ------------------- Control Center Routes --------------
+register_route_frontend_control_center(app)
 
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
@@ -457,6 +531,9 @@ register_route_frontend_safety(app)
 
 # ------------------- Feedback Routes -------------------
 register_route_frontend_feedback(app)
+
+# ------------------- Notifications Routes --------------
+register_route_frontend_notifications(app)
 
 # ------------------- API Chat Routes --------------------
 register_route_backend_chats(app)
@@ -494,6 +571,15 @@ register_route_backend_prompts(app)
 # ------------------- API Group Prompts Routes ----------
 register_route_backend_group_prompts(app)
 
+# ------------------- API Control Center Routes ---------
+register_route_backend_control_center(app)
+
+# ------------------- API Notifications Routes ----------
+register_route_backend_notifications(app)
+
+# ------------------- API Retention Policy Routes --------
+register_route_backend_retention_policy(app)
+
 # ------------------- API Public Workspaces Routes -------
 register_route_backend_public_workspaces(app)
 
@@ -507,16 +593,21 @@ register_route_backend_public_prompts(app)
 register_route_external_health(app)
 
 if __name__ == '__main__':
-    settings = get_settings()
+    settings = get_settings(use_cosmos=True)
+    app_settings_cache.configure_app_cache(settings, get_redis_cache_infrastructure_endpoint(settings.get('redis_url', '').strip().split('.')[0]))
+    app_settings_cache.update_settings_cache(settings)
     initialize_clients(settings)
 
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
 
     if debug_mode:
         # Local development with HTTPS
-        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc')
+        # use_reloader=False prevents too_many_retries errors with static files
+        # Disable excessive logging for static file requests in development
+        werkzeug_logger = logging.getLogger('werkzeug')
+        werkzeug_logger.setLevel(logging.ERROR)
+        app.run(host="0.0.0.0", port=5000, debug=True, ssl_context='adhoc', threaded=True, use_reloader=False)
     else:
         # Production
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port, debug=False)
-

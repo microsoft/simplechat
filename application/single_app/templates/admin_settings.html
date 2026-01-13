@@ -119,7 +119,7 @@
 
 <div class="container">
     <h2>Admin Settings</h2>
-    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;">
+    <form method="post" enctype="multipart/form-data" id="admin-settings-form" style="padding-bottom:80px;" novalidate>
         <p class="text-muted">Use this form to configure the administrative settings for your application.</p>
         <p class="text-muted">
             Version: {{ config['VERSION'] }}
@@ -369,7 +369,7 @@
                             <strong>Required:</strong> Audio support configuration is required if workspaces are enabled.
                         </div>
                         
-                        <p class="mb-3">Use the <strong>Audio Support</strong> settings in the Workspaces tab to enable and configure audio file processing.</p>
+                        <p class="mb-3">Use the <strong>Audio Support</strong> settings on the Search & Extract tab to enable and configure audio file processing.</p>
                         
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -377,10 +377,16 @@
                                 <span id="audio-endpoint-badge" class="badge bg-danger">Required</span>
                             </li>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <span>Speech Service Key</span>
-                                <span id="audio-key-badge" class="badge bg-danger">Required</span>
+                                <span>Authentication</span>
+                                <span id="speech-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
+                        
+                        <div class="alert alert-info">
+                            <strong>Note:</strong> If using Managed Identity authentication ensure the Service Principal has been assigned the Cognitive Services Speech Contributor role on the Azure Speech Service and that the Speech endpoint is configured with a custom domain name.
+                            
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a Cognitive Service has a custom domain name, the endpoint will typically look like https://<resource-name>.cognitiveservices.azure.<com or us> instead of https://<location>.cognitiveservices.azure.<com or us>"></i>
+                        </div>
                     </div>
 
                     <!-- Step 10: Content Safety -->
@@ -491,7 +497,6 @@
                 </button>
             </li>
             
-            <!-- Security -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
                     type="button" role="tab" aria-controls="safety" aria-selected="false">
@@ -499,22 +504,37 @@
                 </button>
             </li>
             
-            <!-- User Features -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security"
+                    type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security
+                </button>
+            </li>
+            
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" 
+                    type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
                 </button>
             </li>
             
-            <!-- System Administration -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
                     type="button" role="tab" aria-controls="scale" aria-selected="false">
                     Scale
                 </button>
             </li>
+
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
+                <button class="nav-link" id="control-center-config-tab" data-bs-toggle="tab" data-bs-target="#control-center-config"
+                    type="button" role="tab" aria-controls="control-center-config" aria-selected="false">
+                    Control Center
+                </button>
+            </li>
+
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" 
+                    type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
             </li>
@@ -522,7 +542,65 @@
         {% endif %}
         
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            <!-- Agents Tab Content (Consolidated: Agents + Actions) -->
+            <div class="tab-pane fade show active" id="security" role="tabpanel" aria-labelledby="security-tab">
+                <p class="text-muted">
+                    Manage security settings for key vault and other security configurations.
+                <div class="card p-3 mb-3" id="keyvault-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted">
+                        Configure Key Vault settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_key_vault_secret_storage"
+                            name="enable_key_vault_secret_storage"
+                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_key_vault_secret_storage">
+                            Enable Key Vault for Agent and Action Secrets
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
+                    </div>
+                    
+                    <div id="key_vault_settings" {% if not settings.enable_key_vault_secret_storage %}style="display: none;"{% endif %}>
+                        <div id="key-vault-warning" class="alert alert-warning mt-2 mb-3">
+                            <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_name" class="form-label">Key Vault Name</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
+                            <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
+                            <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-secondary mt-3"
+                            style="width: auto;"
+                            id="test_key_vault_button"
+                        >
+                            Test Key Vault Connection
+                        </button>
+                        <div id="test_key_vault_result" class="mt-2">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
             <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
                 
                 <p class="text-muted">
@@ -1099,8 +1177,13 @@
                             value="{{ settings.classification_banner_color or '#ffc107' }}" style="width: 3rem; height: 2rem;">
                     </div>
                     <div class="mb-2">
+                        <label for="classification_banner_text_color" class="form-label">Banner Text Color</label>
+                        <input type="color" class="form-control form-control-color" id="classification_banner_text_color" name="classification_banner_text_color"
+                            value="{{ settings.classification_banner_text_color or '#ffffff' }}" style="width: 3rem; height: 2rem;">
+                    </div>
+                    <div class="mb-2">
                         <span id="classification-banner-preview"
-                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:{{ settings.classification_banner_text_color or '#ffffff' }}; background:{{ settings.classification_banner_color or '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
                     </div>
@@ -1315,6 +1398,7 @@
                     <div class="mb-3">
                         <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
                         <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
                         <input type="text" class="form-control" id="azure_apim_gpt_deployment"
                             name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
                     </div>
@@ -1645,6 +1729,119 @@
                 </div>
             </div>
 
+            <!-- Control Center Configuration Tab -->
+            <div class="tab-pane fade" id="control-center-config" role="tabpanel" aria-labelledby="control-center-config-tab">
+                <p class="text-muted">
+                    Configure Control Center access and permissions for administrators.
+                </p>
+
+                <!-- Control Center Overview Card -->
+                <div class="card p-4 mb-4 border-success shadow-sm" id="control-center-overview-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-speedometer2 fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
+                                </h4>
+                                <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#controlCenterRolesInfoModal">
+                            <i class="bi bi-question-circle me-1"></i>Role Setup Guide
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        <strong>About Control Center:</strong> The Control Center is a powerful administrative dashboard that provides user management, group oversight, public workspace control, and detailed activity monitoring. Use role-based access controls below to delegate administrative responsibilities.
+                    </div>
+
+                    <!-- ControlCenterAdmin Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_admin"
+                                name="require_member_of_control_center_admin"
+                                {% if settings.require_member_of_control_center_admin %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_admin">
+                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin Role for Full Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, <strong>only users with the ControlCenterAdmin role</strong> can access the Control Center and all its features (User Management, Group Management, Public Workspaces, Activity Logs). Regular Admins will lose access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-people-fill me-1"></i> User Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-collection me-1"></i> Group Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-folder2-open me-1"></i> Public Workspaces
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis">
+                                <i class="bi bi-clock-history me-1"></i> Activity Logs
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- ControlCenterDashboardReader Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_dashboard_reader"
+                                name="require_member_of_control_center_dashboard_reader"
+                                {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
+                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader Role for Dashboard-Only Access
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            When enabled, users with <strong>ControlCenterDashboardReader role</strong> can view the Control Center Dashboard tab (read-only statistics and metrics only). Users with <strong>ControlCenterAdmin role</strong> can also access the dashboard in addition to all management features. Regular Admins will lose dashboard access when this is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-speedometer2 me-1"></i> Dashboard Statistics
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-graph-up me-1"></i> Activity Trends
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis">
+                                <i class="bi bi-bar-chart-line me-1"></i> Usage Metrics
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning-subtle border-warning mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <strong>Important:</strong> Configure these roles in your identity provider (Entra ID). When role requirements are enabled, standard Admins without the specific roles will be denied access to Control Center features.
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="border-top pt-3">
+                        <h5 class="mb-3">
+                            <i class="bi bi-lightbulb-fill me-2"></i>Best Practices
+                        </h5>
+                        <ul class="text-muted small">
+                            <li><strong>ControlCenterAdmin:</strong> Grant to IT administrators who need full control over users, groups, and workspaces</li>
+                            <li><strong>ControlCenterDashboardReader:</strong> Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
+                            <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
+                            <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
                 <p class="text-muted">
                     Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
@@ -1788,6 +1985,23 @@
                     
                     <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
                         <hr> 
+                        
+                        <!-- Disable Group Creation Setting -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="disable_group_creation"
+                                name="disable_group_creation"
+                                {% if not settings.enable_group_creation %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="disable_group_creation">
+                                Disable Group Creation
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of role membership."></i>
+                        </div>
+                        <p class="text-muted small mb-3">
+                            When enabled, no users will be able to create new groups, regardless of their role membership. This is a global setting that overrides the 'Require Membership to Create Groups' setting below.
+                        </p>
+                        
                         <div class="form-group form-check form-switch mb-2">
                             <input type="checkbox"
                                 class="form-check-input"
@@ -1977,7 +2191,7 @@
                                 {% endfor %}
                             {% endif %}
                         </select>
-                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision). Only vision-capable models are shown.</div>
+                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision, gpt-5, gpt-5-nano, etc.). Only vision-capable models are shown.</div>
                         
                         <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
                             <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
@@ -2032,7 +2246,101 @@
                     </div>
                 </div>
                 
-
+                <!-- Retention Policy Section -->
+                <div class="card p-3 mb-3" id="retention-policy-section">
+                    <h5>
+                        <i class="bi bi-hourglass-split me-2"></i>Retention Policy
+                    </h5>
+                    <p class="text-muted">Automatically delete aged conversations and documents based on configurable retention periods. Users, group owners, and public workspace admins can set their own retention policies.</p>
+                    
+                    <div class="alert alert-info mb-3" role="alert">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>How it works:</strong> Enable retention policy for workspace types below. Users/owners can then configure how many days to retain conversations and documents. Items older than the configured period are automatically deleted. Default is "none" (no deletion) until explicitly set by each user/owner.
+                    </div>
+                    
+                    <!-- Enable toggles for different workspace types -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_personal" name="enable_retention_policy_personal" {% if settings.enable_retention_policy_personal %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_personal">
+                                    Enable for Personal Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure retention policies for their personal conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_group" name="enable_retention_policy_group" {% if settings.enable_retention_policy_group %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_group">
+                                    Enable for Group Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group owners and admins to configure retention policies for group conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_public" name="enable_retention_policy_public" {% if settings.enable_retention_policy_public %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_public">
+                                    Enable for Public Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace owners and admins to configure retention policies for workspace conversations and documents."></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Scheduled execution time -->
+                    <div class="mb-3">
+                        <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
+                        <select class="form-select" id="retention_policy_execution_hour" name="retention_policy_execution_hour" style="max-width: 300px;">
+                            {% for hour in range(24) %}
+                            <option value="{{ hour }}" {% if settings.retention_policy_execution_hour == hour %}selected{% endif %}>
+                                {{ "%02d"|format(hour) }}:00 ({{ "Midnight" if hour == 0 else ("%d AM"|format(hour) if hour < 12 else ("Noon" if hour == 12 else "%d PM"|format(hour - 12))) }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Retention policy will run once daily at this hour (UTC timezone).</small>
+                    </div>
+                    
+                    <!-- Status information -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Last Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_last_run %}
+                                    <span class="text-success">{{ settings.retention_policy_last_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Never run</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Next Scheduled Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_next_run %}
+                                    <span class="text-info">{{ settings.retention_policy_next_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Not scheduled</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Manual execution button -->
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-warning" onclick="showManualExecutionModal()">
+                            <i class="bi bi-play-circle me-2"></i>Manual Execution
+                        </button>
+                        <small class="form-text text-muted d-block mt-2">
+                            Trigger retention policy execution immediately for selected workspace types, bypassing the scheduled time.
+                        </small>
+                    </div>
+                    
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
+                    </div>
+                </div>
             </div>
 
             
@@ -2681,37 +2989,71 @@
                     </div>
                 </div>
 
-                <!-- Multimedia Support Section -->
-                <div class="card p-3 mb-3" id="multimedia-support-section">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="mb-0"><i class="bi bi-play-circle me-2"></i>Multimedia Support</h5>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
-                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                <!-- AI Video Intelligence Card -->
+                <div class="card p-4 mb-4 border-info shadow-sm" id="video-intelligence-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-info text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-camera-video-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-play-circle me-2"></i>AI Video Intelligence
+                                </h4>
+                                <p class="text-muted mb-0 small">Extract insights and make video content searchable and interactive</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#videoIndexerInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Setup Guide
                         </button>
                     </div>
-                    <p class="text-muted mb-3">
-                        Support video and audio file upload for transcription, indexing, and embedding.
-                    </p>
 
-                    <!-- Video File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_video_file_support"
-                            name="enable_video_file_support"
-                            {% if settings.enable_video_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_video_file_support">
-                            Enable Video File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow video file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-lightbulb-fill me-2"></i>
+                        <strong>Make Video Content Fully Searchable:</strong> Upload videos to your workspace and automatically extract transcripts, identify speakers, detect topics, and generate searchable timestamps. Your AI can then answer questions about video content, cite specific moments, and provide deep insights.
                     </div>
 
-                    <div id="video_indexer_settings" class="card mb-3 p-3"
+                    <!-- Video File Support Toggle -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_video_file_support"
+                                name="enable_video_file_support"
+                                {% if settings.enable_video_file_support %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="enable_video_file_support">
+                                <i class="bi bi-camera-video me-1"></i> Enable Video File Upload & Processing
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            Upload video files (MP4, AVI, MOV, etc.) to workspaces where Azure Video Indexer automatically processes them. 
+                            Extract spoken content, identify speakers, detect faces, recognize brands, and generate searchable metadata—perfect for meetings, presentations, training videos, and recorded content.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-search me-1"></i> Full-Text Search
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-person-badge me-1"></i> Speaker ID
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis me-2">
+                                <i class="bi bi-clock-history me-1"></i> Timestamped Citations
+                            </span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis">
+                                <i class="bi bi-translate me-1"></i> Multi-Language
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Video Indexer Configuration (collapsible) -->
+                    <div id="video_indexer_settings" class="border-top pt-3"
                             {% if not settings.enable_video_file_support %}style="display: none;"{% endif %}>
-                        <h5>Azure Video Indexer Settings</h5>
-                        <p class="text-muted">Configure Azure Video Indexer for transcription & indexing using Managed Identity authentication.</p>
+                        <h5 class="mb-3">
+                            <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
+                        </h5>
+                        <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
                         
                         <div class="alert alert-info">
                             <strong><i class="bi bi-info-circle"></i> Prerequisites:</strong>
@@ -2791,32 +3133,121 @@
                         </div>
                     </div>
 
-                    <!-- Audio File Support -->
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_audio_file_support"
-                            name="enable_audio_file_support"
-                            {% if settings.enable_audio_file_support %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_audio_file_support">
-                            Enable Audio File Support
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow audio file uploads with automatic transcription and indexing for AI-powered content search and analysis."></i>
-                    </div>
+                    <!-- AI Voice Chat Card -->
+                    <div class="card p-4 mb-4 border-primary shadow-sm" id="ai-voice-chat-section">
+                        <div class="d-flex align-items-center mb-3">
+                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-mic-fill fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-soundwave me-2"></i>AI Voice Conversations
+                                </h4>
+                                <p class="text-muted mb-0 small">Transform your AI experience with natural voice interactions</p>
+                            </div>
+                        </div>
 
-                    <div id="audio_service_settings" class="card mb-3 p-3"
-                            {% if not settings.enable_audio_file_support %}style="display: none;"{% endif %}>
-                        <h5>Speech Service Settings</h5>
-                        <p class="text-muted">Configure Azure Speech Service for audio transcription & embedding.</p>
+                        <div class="alert alert-info mb-4">
+                            <i class="bi bi-lightbulb-fill me-2"></i>
+                            <strong>Create a Complete Voice Experience:</strong> Enable both features together for seamless two-way voice conversations—speak your questions and hear AI responses aloud. Perfect for hands-free workflows, accessibility, and natural interactions.
+                        </div>
+
+                        <!-- Audio File Support -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_audio_file_support"
+                                    name="enable_audio_file_support"
+                                    {% if settings.enable_audio_file_support %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_audio_file_support">
+                                    <i class="bi bi-file-earmark-music me-1"></i> Enable Audio File Upload & Processing
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-0">
+                                Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed. 
+                                The AI can then search, analyze, and answer questions about audio content—perfect for meetings, interviews, lectures, and podcasts.
+                            </p>
+                        </div>
+
+                        <!-- Speech-to-Text -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_speech_to_text_input"
+                                    name="enable_speech_to_text_input"
+                                    {% if settings.enable_speech_to_text_input %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_speech_to_text_input">
+                                    <i class="bi bi-mic me-1"></i> Enable Voice Input (Speech-to-Text)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Talk to your AI instead of typing. Record voice messages up to 90 seconds directly in the chat interface. 
+                                Azure Speech Service instantly transcribes your speech with high accuracy, supporting multiple languages and accents.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-hand-thumbs-up-fill me-1"></i> Hands-Free
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                    <i class="bi bi-universal-access me-1"></i> Accessible
+                                </span>
+                                <span class="badge bg-success-subtle text-success-emphasis">
+                                    <i class="bi bi-lightning-fill me-1"></i> Fast Input
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Text-to-Speech -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_text_to_speech"
+                                    name="enable_text_to_speech"
+                                    {% if settings.enable_text_to_speech %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_text_to_speech">
+                                    <i class="bi bi-volume-up me-1"></i> Enable Voice Responses (Text-to-Speech)
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-2">
+                                Hear AI responses read aloud in natural, human-like voices powered by Azure's advanced neural Text-to-Speech. 
+                                Each message includes a speaker button—click to listen while multitasking, commuting, or whenever reading isn't convenient.
+                            </p>
+                            <div class="ms-4 ps-3">
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-ear-fill me-1"></i> Natural Voices
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                    <i class="bi bi-arrows-fullscreen me-1"></i> Multitask-Friendly
+                                </span>
+                                <span class="badge bg-info-subtle text-info-emphasis">
+                                    <i class="bi bi-globe me-1"></i> Multi-Language
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Speech Service Configuration (collapsible) -->
+                        <div id="audio_service_settings" class="border-top pt-3"
+                                {% if not (settings.enable_audio_file_support or settings.enable_speech_to_text_input or settings.enable_text_to_speech) %}style="display: none;"{% endif %}>
+                            <h5 class="mb-3">
+                                <i class="bi bi-gear-fill me-2"></i>Azure Speech Service Configuration
+                            </h5>
+                            <p class="text-muted small mb-3">Connect to your Azure Speech Service for audio transcription, voice input, and text-to-speech capabilities.</p>
 
                         <div class="mb-3">
                             <label for="speech_service_endpoint" class="form-label">Endpoint</label>
                             <input type="text" class="form-control"
                                 id="speech_service_endpoint" name="speech_service_endpoint"
                                 value="{{ settings.speech_service_endpoint or '' }}"
-                                placeholder="https://<location>.cognitiveservices.azure.<com or us>/">
+                                placeholder="https://<location or custom domain>.cognitiveservices.azure.<com or us>/">
                         </div>
 
                         <div class="mb-3">
@@ -2834,17 +3265,41 @@
                         </div>
 
                         <div class="mb-3">
-                            <label for="speech_service_key" class="form-label">API Key</label>
+                            <label for="speech_service_authentication_type" class="form-label">
+                                Authentication Type
+                            </label>
+                            <select class="form-select" id="speech_service_authentication_type" name="speech_service_authentication_type">
+                                <option value="key" {% if settings.speech_service_authentication_type == 'key' or not settings.speech_service_authentication_type %}selected{% endif %}>
+                                    Key
+                                </option>
+                                <option value="managed_identity" {% if settings.speech_service_authentication_type == 'managed_identity' %}selected{% endif %}>
+                                    Managed Identity
+                                </option>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="speech_service_key_container" {% if settings.speech_service_authentication_type == 'managed_identity' %}style="display: none;"{% endif %}>
+                            <label for="speech_service_key" class="form-label">
+                                API Key
+                            </label>
                             <div class="input-group">
-                            <input type="password" class="form-control"
-                                    id="speech_service_key" name="speech_service_key"
-                                    value="{{ settings.speech_service_key or '' }}">
-                            <button type="button" class="btn btn-outline-secondary"
-                                    id="toggle_speech_service_key">Show</button>
+                                <input
+                                    type="password"
+                                    class="form-control"
+                                    id="speech_service_key"
+                                    name="speech_service_key"
+                                    value="{{ settings.speech_service_key or '' }}"
+                                >
+                                <button
+                                    type="button"
+                                    class="btn btn-outline-secondary"
+                                    id="toggle_speech_service_key"
+                                >
+                                    Show
+                                </button>
                             </div>
                         </div>
-                    </div>
 
+                    </div>
                     <p class="mt-2 mb-0">
                         <small class="text-muted">
                             <a href="#citation" onclick="switchTab(event, 'citation-tab')">
@@ -2855,6 +3310,7 @@
                     </p>
                 </div>
             </div>
+            
 
         </div> 
     </form>
@@ -2876,6 +3332,9 @@
 
         <!-- Health Check Info Modal -->
         {% include '_health_check_info.html' %}
+
+        <!-- Control Center Roles Info Modal -->
+        {% include '_control_center_roles_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
@@ -2936,8 +3395,73 @@
             </div>
         </div>
 
+        <!-- Manual Retention Policy Execution Modal -->
+        <div class="modal fade" id="manualExecutionModal" tabindex="-1" aria-labelledby="manualExecutionModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="manualExecutionModalLabel">
+                            <i class="bi bi-play-circle me-2"></i>Manual Retention Policy Execution
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which workspace types to process. The retention policy will execute immediately for the selected scopes, deleting conversations and documents that exceed their configured retention periods.</p>
+                        
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Warning:</strong> This action will permanently delete items (or archive them if archiving is enabled). This cannot be undone.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Workspace Scopes:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_personal" value="personal">
+                                <label class="form-check-label" for="manual_exec_personal">
+                                    Personal Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_group" value="group">
+                                <label class="form-check-label" for="manual_exec_group">
+                                    Group Workspaces
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="manual_exec_public" value="public">
+                                <label class="form-check-label" for="manual_exec_public">
+                                    Public Workspaces
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-status" class="mt-3" style="display: none;">
+                            <div class="alert alert-info">
+                                <i class="bi bi-hourglass-split me-2"></i>
+                                <span id="execution-status-text">Processing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="execution-results" class="mt-3" style="display: none;">
+                            <h6>Execution Results:</h6>
+                            <div id="results-content"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="modal-close-btn">Close</button>
+                        <button type="button" class="btn btn-danger" onclick="executeRetentionPolicy()" id="execute-btn">
+                            <i class="bi bi-play-circle me-1"></i>Execute Now
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
     </div>
 </div>
 {% endblock %}
@@ -2946,15 +3470,17 @@
     document.addEventListener('DOMContentLoaded', function() {
         const textInput = document.getElementById('classification_banner_text');
         const colorInput = document.getElementById('classification_banner_color');
+        const textColorInput = document.getElementById('classification_banner_text_color');
         const preview = document.getElementById('classification-banner-preview');
         function updatePreview() {
             preview.textContent = textInput.value || 'Banner Preview';
             preview.style.background = colorInput.value;
-            preview.style.color = '#fff'; // Always white text for preview
+            preview.style.color = textColorInput.value;
         }
-        if (textInput && colorInput && preview) {
+        if (textInput && colorInput && textColorInput && preview) {
             textInput.addEventListener('input', updatePreview);
             colorInput.addEventListener('input', updatePreview);
+            textColorInput.addEventListener('input', updatePreview);
         }
     });
 </script>
@@ -2986,6 +3512,7 @@
         if (!simplemde) {
             simplemde = new SimpleMDE({
                 element: document.getElementById("landing_page_text_editor"),
+                autoDownloadFontAwesome: false,
                 // Optionally add any SimpleMDE config here:
                 // placeholder: "Enter your landing page markdown..."
             });
@@ -3113,14 +3640,36 @@
         
         // Handle audio support toggle in main form
         const audioSupportToggle = document.getElementById('enable_audio_file_support');
+        const speechInputToggle = document.getElementById('enable_speech_to_text_input');
+        const ttsToggle = document.getElementById('enable_text_to_speech');
+        
+        function updateAudioServiceSettings() {
+            const audioServiceSettings = document.getElementById('audio_service_settings');
+            const audioEnabled = audioSupportToggle?.checked || false;
+            const speechInputEnabled = speechInputToggle?.checked || false;
+            const ttsEnabled = ttsToggle?.checked || false;
+            
+            if (audioServiceSettings) {
+                if (audioEnabled || speechInputEnabled || ttsEnabled) {
+                    audioServiceSettings.style.display = 'block';
+                } else {
+                    audioServiceSettings.style.display = 'none';
+                }
+            }
+            
+            updateWalkthroughRequirements();
+        }
+        
         if (audioSupportToggle) {
-            audioSupportToggle.addEventListener('change', function() {
-                updateWalkthroughRequirements();
-                
-                // Recalculate available steps and refresh navigation
-                const currentStep = getCurrentWalkthroughStep();
-                navigateToWalkthroughStep(currentStep);
-            });
+            audioSupportToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (speechInputToggle) {
+            speechInputToggle.addEventListener('change', updateAudioServiceSettings);
+        }
+        
+        if (ttsToggle) {
+            ttsToggle.addEventListener('change', updateAudioServiceSettings);
         }
         
         // Handle Front Door toggle in main form
@@ -3355,6 +3904,106 @@
         updateTimerLimits('debug');
         updateTimerLimits('file');
     });
+
+    // Retention Policy Functions
+    function showManualExecutionModal() {
+        const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));
+        
+        // Reset modal state
+        document.getElementById('execution-status').style.display = 'none';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('manual_exec_personal').checked = false;
+        document.getElementById('manual_exec_group').checked = false;
+        document.getElementById('manual_exec_public').checked = false;
+        document.getElementById('execute-btn').disabled = false;
+        
+        modal.show();
+    }
+
+    function executeRetentionPolicy() {
+        const personal = document.getElementById('manual_exec_personal').checked;
+        const group = document.getElementById('manual_exec_group').checked;
+        const publicWs = document.getElementById('manual_exec_public').checked;
+        
+        const scopes = [];
+        if (personal) scopes.push('personal');
+        if (group) scopes.push('group');
+        if (publicWs) scopes.push('public');
+        
+        if (scopes.length === 0) {
+            alert('Please select at least one workspace scope.');
+            return;
+        }
+        
+        // Confirm before executing
+        if (!confirm(`Are you sure you want to execute retention policy for ${scopes.join(', ')} workspaces? This will delete aged items according to configured retention periods.`)) {
+            return;
+        }
+        
+        // Show processing status
+        document.getElementById('execution-status').style.display = 'block';
+        document.getElementById('execution-status-text').textContent = 'Processing...';
+        document.getElementById('execution-results').style.display = 'none';
+        document.getElementById('execute-btn').disabled = true;
+        
+        // Execute via API
+        fetch('/api/admin/retention-policy/execute', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ scopes: scopes })
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            
+            if (data.success) {
+                const results = data.results;
+                let html = '<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i><strong>Execution completed successfully!</strong></div>';
+                
+                html += '<div class="table-responsive"><table class="table table-sm">';
+                html += '<thead><tr><th>Workspace Type</th><th>Conversations Deleted</th><th>Documents Deleted</th><th>Workspaces/Users Affected</th></tr></thead>';
+                html += '<tbody>';
+                
+                if (scopes.includes('personal')) {
+                    html += `<tr><td>Personal</td><td>${results.personal.conversations}</td><td>${results.personal.documents}</td><td>${results.personal.users_affected} users</td></tr>`;
+                }
+                if (scopes.includes('group')) {
+                    html += `<tr><td>Group</td><td>${results.group.conversations}</td><td>${results.group.documents}</td><td>${results.group.workspaces_affected} groups</td></tr>`;
+                }
+                if (scopes.includes('public')) {
+                    html += `<tr><td>Public</td><td>${results.public.conversations}</td><td>${results.public.documents}</td><td>${results.public.workspaces_affected} workspaces</td></tr>`;
+                }
+                
+                html += '</tbody></table></div>';
+                html += '<p class="text-muted small mt-2">Affected users/owners will receive notifications with details of deleted items.</p>';
+                
+                document.getElementById('results-content').innerHTML = html;
+            } else {
+                document.getElementById('results-content').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Execution failed:</strong> ${data.error || 'Unknown error'}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('execute-btn').disabled = false;
+        })
+        .catch(error => {
+            document.getElementById('execution-status').style.display = 'none';
+            document.getElementById('execution-results').style.display = 'block';
+            document.getElementById('results-content').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Error:</strong> ${error.message}
+                </div>
+            `;
+            document.getElementById('execute-btn').disabled = false;
+        });
+    }
 
 </script>
 {% endblock %}

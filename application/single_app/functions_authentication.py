@@ -2,6 +2,7 @@
 
 from config import *
 from functions_settings import *
+from functions_debug import debug_print
 
 # Default redirect path for OAuth consent flow (must match your Azure AD app registration)
 REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
@@ -37,7 +38,7 @@ def _load_cache():
             cache.deserialize(session["token_cache"])
         except Exception as e:
             # Handle potential corruption or format issues gracefully
-            print(f"Warning: Could not deserialize token cache: {e}. Starting fresh.")
+            debug_print(f"Warning: Could not deserialize token cache: {e}. Starting fresh.")
             session.pop("token_cache", None) # Clear corrupted cache
     return cache
 
@@ -47,7 +48,7 @@ def _save_cache(cache):
         try:
             session["token_cache"] = cache.serialize()
         except Exception as e:
-            print(f"Error: Could not serialize token cache: {e}")
+            debug_print(f"Error: Could not serialize token cache: {e}")
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
@@ -82,7 +83,7 @@ def get_valid_access_token(scopes=None):
     Returns the access token string or None if refresh failed or user not logged in.
     """
     if "user" not in session:
-        print("get_valid_access_token: No user in session.")
+        debug_print("get_valid_access_token: No user in session.")
         return None # User not logged in
 
     required_scopes = scopes or SCOPE # Use default SCOPE if none provided
@@ -105,37 +106,40 @@ def get_valid_access_token(scopes=None):
                  break
         if not account:
              account = accounts[0] # Fallback to first account if no perfect match
-             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+             debug_print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
 
     if account:
         # Try to get token silently (checks cache, then uses refresh token)
         result = msal_app.acquire_token_silent(required_scopes, account=account)
         _save_cache(msal_app.token_cache) # Save cache state AFTER attempt
 
+        debug_print(f"User account name: {account.get('username')}")
+        debug_print(f"All roles assigned to user: {user_info.get('roles')}")
+
         if result and "access_token" in result:
             # Optional: Check expiry if you want fine-grained control, but MSAL usually handles it
             # expires_in = result.get('expires_in', 0)
             # if expires_in > 60: # Check if token is valid for at least 60 seconds
-            #     print("get_valid_access_token: Token acquired silently.")
+            #     debug_print("get_valid_access_token: Token acquired silently.")
             #     return result['access_token']
             # else:
-            #     print("get_valid_access_token: Silent token expired or about to expire.")
+            #     debug_print("get_valid_access_token: Silent token expired or about to expire.")
             #     # MSAL should have refreshed, but if not, fall through
-            print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+            debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
             return result['access_token']
         else:
             # acquire_token_silent failed (e.g., refresh token expired, needs interaction)
-            print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
+            debug_print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication.")
             # Log the specific error if available in result
             if result and ('error' in result or 'error_description' in result):
-                print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
+                debug_print(f"MSAL Error: {result.get('error')}, Description: {result.get('error_description')}")
             # Optionally clear session or specific keys if refresh consistently fails
             # session.pop("token_cache", None)
             # session.pop("user", None)
             return None # Indicate failure to get a valid token
 
     else:
-        print("get_valid_access_token: No matching account found in MSAL cache.")
+        debug_print("get_valid_access_token: No matching account found in MSAL cache.")
         # This might happen if the cache was cleared or the user logged in differently
         return None # Cannot acquire token without an account context
 
@@ -146,7 +150,7 @@ def get_valid_access_token_for_plugins(scopes=None):
     Returns the access token string or None if refresh failed or user not logged in.
     """
     if "user" not in session:
-        print("get_valid_access_token: No user in session.")
+        debug_print("get_valid_access_token: No user in session.")
         return {
             "error": "not_logged_in",
             "message": "User is not logged in.",
@@ -174,10 +178,10 @@ def get_valid_access_token_for_plugins(scopes=None):
                  break
         if not account:
              account = accounts[0] # Fallback to first account if no perfect match
-             print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
+             debug_print(f"Warning: Using first account found ({account.get('username')}) as home_account_id match failed.")
 
     if not account:
-        print("get_valid_access_token: No matching account found in MSAL cache.")
+        debug_print("get_valid_access_token: No matching account found in MSAL cache.")
         return {
             "error": "no_account",
             "message": "No matching account found in MSAL cache.",
@@ -189,13 +193,13 @@ def get_valid_access_token_for_plugins(scopes=None):
     _save_cache(msal_app.token_cache)
 
     if result and "access_token" in result:
-        print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
+        debug_print(f"get_valid_access_token: Token acquired silently for scopes: {required_scopes}")
         return {"access_token": result['access_token']}
 
     # If we reach here, it means silent acquisition failed
-    print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
+    debug_print("get_valid_access_token: acquire_token_silent failed. Needs re-authentication or received invalid grants.")
     if result is None: # Assume invalid grants or no token
-        print("result is None: get_valid_access_token: Consent required.")
+        debug_print("result is None: get_valid_access_token: Consent required.")
         host_url = request.host_url.rstrip('/')
         # Only enforce https if not localhost or 127.0.0.1
         if not (host_url.startswith('http://localhost') or host_url.startswith('http://127.0.0.1')):
@@ -216,7 +220,7 @@ def get_valid_access_token_for_plugins(scopes=None):
 
     error_code = result.get('error') if result else None
     error_desc = result.get('error_description') if result else None
-    print(f"MSAL Error: {error_code}, Description: {error_desc}")
+    debug_print(f"MSAL Error: {error_code}, Description: {error_desc}")
 
     if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
         host_url = request.host_url.rstrip('/')
@@ -272,6 +276,8 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     """
     from functions_debug import debug_print
     
+    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
+    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
     debug_print(f"[VIDEO INDEXER AUTH] Using managed identity authentication")
     
     # 1) ARM token
@@ -289,7 +295,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
         debug_print(f"[VIDEO INDEXER AUTH] DefaultAzureCredential initialized successfully")
         arm_token = credential.get_token(arm_scope).token
         debug_print(f"[VIDEO INDEXER AUTH] ARM token acquired successfully (length: {len(arm_token) if arm_token else 0})")
-        print("[VIDEO] ARM token acquired", flush=True)
+        debug_print("[VIDEO] ARM token acquired", flush=True)
     except Exception as e:
         debug_print(f"[VIDEO INDEXER AUTH] ERROR acquiring ARM token: {str(e)}")
         raise
@@ -356,7 +362,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
             raise ValueError("No accessToken found in ARM API response")
             
         debug_print(f"[VIDEO INDEXER AUTH] Account token acquired successfully (length: {len(ai)})")
-        print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
+        debug_print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
         return ai
     except requests.exceptions.RequestException as e:
         debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {str(e)}")
@@ -387,7 +393,7 @@ def get_microsoft_entra_jwks():
             jwks_response = requests.get(jwks_uri).json()
             JWKS_CACHE = {key['kid']: key for key in jwks_response['keys']}
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching JWKS: {e}")
+            debug_print(f"Error fetching JWKS: {e}")
             return None
     return JWKS_CACHE
 
@@ -442,7 +448,7 @@ def accesstoken_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
 
-        print("accesstoken_required")
+        debug_print("accesstoken_required")
 
         auth_header = request.headers.get('Authorization')
         if not auth_header:
@@ -462,7 +468,7 @@ def accesstoken_required(f):
         if not roles or "ExternalApi" not in roles:
             return jsonify({"message": "Forbidden: ExternalApi role required"}), 403
 
-        print("User is valid")
+        debug_print("User is valid")
 
         # You can now access claims from `data`, e.g., data['sub'], data['name'], data['roles']
         #kwargs['user_claims'] = data # Pass claims to the decorated function # NOT NEEDED FOR NOW
@@ -479,10 +485,10 @@ def login_required(f):
             ) or request.path.startswith('/api/')
 
             if is_api_request:
-                print(f"API request to {request.path} blocked (401 Unauthorized). No valid session.")
+                debug_print(f"API request to {request.path} blocked (401 Unauthorized). No valid session.")
                 return jsonify({"error": "Unauthorized", "message": "Authentication required"}), 401
             else:
-                print(f"Browser request to {request.path} redirected ta login. No valid session.")
+                debug_print(f"Browser request to {request.path} redirected ta login. No valid session.")
                 # Get settings from database, with environment variable fallback
                 from functions_settings import get_settings
                 settings = get_settings()
@@ -502,6 +508,53 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def check_user_access_status(user_id):
+    """
+    Check if user access is currently allowed based on Control Center settings.
+    Returns (is_allowed: bool, reason: str)
+    """
+    try:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        
+        access_settings = user_settings.get('settings', {}).get('access', {})
+        status = access_settings.get('status', 'allow')
+        
+        if status == 'allow':
+            return True, None
+        
+        if status == 'deny':
+            datetime_to_allow = access_settings.get('datetime_to_allow')
+            if datetime_to_allow:
+                try:
+                    # Check if time-based restriction has expired
+                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                    current_time = datetime.now(timezone.utc)
+                    
+                    if current_time >= allow_time:
+                        # Time-based restriction has expired, automatically restore access
+                        from functions_settings import update_user_settings
+                        update_user_settings(user_id, {
+                            'access': {
+                                'status': 'allow',
+                                'datetime_to_allow': None
+                            }
+                        })
+                        return True, None
+                    else:
+                        return False, f"Access denied until {datetime_to_allow}"
+                except ValueError:
+                    # Invalid datetime format, treat as permanent deny
+                    return False, "Access denied by administrator"
+            else:
+                return False, "Access denied by administrator"
+        
+        return True, None  # Default to allow if status is unknown
+        
+    except Exception as e:
+        debug_print(f"Error checking user access status: {e}")
+        return True, None  # Default to allow on error to prevent lockouts
+
 def user_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -511,6 +564,85 @@ def user_required(f):
                   return jsonify({"error": "Forbidden", "message": "Insufficient permissions (User/Admin role required)"}), 403
              else:
                   return "Forbidden", 403
+        
+        # Check access control restrictions (admins bypass access control)
+        if 'Admin' not in user.get('roles', []):
+            user_id = user.get('oid') or user.get('sub')
+            if user_id:
+                is_allowed, reason = check_user_access_status(user_id)
+                if not is_allowed:
+                    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                        return jsonify({"error": "Access Denied", "message": reason}), 403
+                    else:
+                        return f"Access Denied: {reason}", 403
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+def file_upload_required(f):
+    """
+    Decorator to check if user is allowed to upload files to their personal workspace.
+    Should be used in addition to @login_required and @user_required.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = session.get('user', {})
+        
+        # Admins bypass file upload restrictions
+        if 'Admin' in user.get('roles', []):
+            return f(*args, **kwargs)
+        
+        user_id = user.get('oid') or user.get('sub')
+        if user_id:
+            try:
+                from functions_settings import get_user_settings
+                user_settings = get_user_settings(user_id)
+                
+                file_upload_settings = user_settings.get('settings', {}).get('file_uploads', {})
+                status = file_upload_settings.get('status', 'allow')
+                
+                if status == 'deny':
+                    datetime_to_allow = file_upload_settings.get('datetime_to_allow')
+                    if datetime_to_allow:
+                        try:
+                            # Check if time-based restriction has expired
+                            allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
+                            current_time = datetime.now(timezone.utc)
+                            
+                            if current_time >= allow_time:
+                                # Time-based restriction has expired, automatically restore access
+                                from functions_settings import update_user_settings
+                                update_user_settings(user_id, {
+                                    'file_uploads': {
+                                        'status': 'allow',
+                                        'datetime_to_allow': None
+                                    }
+                                })
+                                return f(*args, **kwargs)  # Allow the upload
+                            else:
+                                reason = f"File uploads to personal workspace are disabled until {datetime_to_allow}"
+                                if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                    return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                                else:
+                                    return f"File Upload Denied: {reason}", 403
+                        except ValueError:
+                            # Invalid datetime format, treat as permanent deny
+                            reason = "File uploads to personal workspace are disabled by administrator"
+                            if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                                return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                            else:
+                                return f"File Upload Denied: {reason}", 403
+                    else:
+                        # Permanent deny
+                        reason = "File uploads to personal workspace are disabled by administrator"
+                        if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
+                            return jsonify({"error": "File Upload Denied", "message": reason}), 403
+                        else:
+                            return f"File Upload Denied: {reason}", 403
+            except Exception as e:
+                debug_print(f"Error checking file upload permissions: {e}")
+                # Default to allow on error to prevent breaking functionality
+        
         return f(*args, **kwargs)
     return decorated_function
 
@@ -533,14 +665,30 @@ def feedback_admin_required(f):
         settings = get_settings()
         require_member_of_feedback_admin = settings.get("require_member_of_feedback_admin", False)
 
+        has_feedback_admin_role = 'roles' in user and 'FeedbackAdmin' in user['roles']
+        has_admin_role = 'roles' in user and 'Admin' in user['roles']
+        
+        # If requirement is enabled, only FeedbackAdmin role grants access
         if require_member_of_feedback_admin:
-            if 'roles' not in user or 'FeedbackAdmin' not in user['roles']:
-                 is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-                 if is_api_request:
-                      return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
-                 else:
-                      return "Forbidden: FeedbackAdmin role required", 403
-        return f(*args, **kwargs)
+            if has_feedback_admin_role:
+                return f(*args, **kwargs)
+            else:
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (FeedbackAdmin role required)"}), 403
+                else:
+                    return "Forbidden: FeedbackAdmin role required", 403
+        
+        # If requirement is not enabled, only regular admins can access
+        if has_admin_role:
+            return f(*args, **kwargs)
+        
+        # No access if neither condition is met
+        is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+        if is_api_request:
+            return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
+        else:
+            return "Forbidden", 403
     return decorated_function
     
 def safety_violation_admin_required(f):
@@ -550,15 +698,85 @@ def safety_violation_admin_required(f):
         settings = get_settings()
         require_member_of_safety_violation_admin = settings.get("require_member_of_safety_violation_admin", False)
 
+        has_safety_admin_role = 'roles' in user and 'SafetyViolationAdmin' in user['roles']
+        has_admin_role = 'roles' in user and 'Admin' in user['roles']
+        
+        # If requirement is enabled, only SafetyViolationAdmin role grants access
         if require_member_of_safety_violation_admin:
-            if 'roles' not in user or 'SafetyViolationAdmin' not in user['roles']:
+            if has_safety_admin_role:
+                return f(*args, **kwargs)
+            else:
                 is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
                 if is_api_request:
                     return jsonify({"error": "Forbidden", "message": "Insufficient permissions (SafetyViolationAdmin role required)"}), 403
                 else:
                     return "Forbidden: SafetyViolationAdmin role required", 403
-        return f(*args, **kwargs)
+        
+        # If requirement is not enabled, only regular admins can access
+        if has_admin_role:
+            return f(*args, **kwargs)
+        
+        # No access if neither condition is met
+        is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+        if is_api_request:
+            return jsonify({"error": "Forbidden", "message": "Insufficient permissions"}), 403
+        else:
+            return "Forbidden", 403
     return decorated_function
+
+def control_center_required(access_level='admin'):
+    """
+    Unified Control Center access control decorator.
+    
+    Args:
+        access_level: 'admin' for full admin access, 'dashboard' for dashboard-only access
+    
+    Access logic:
+    - ControlCenterAdmin role → Full access to everything (admin + dashboard)
+    - ControlCenterDashboardReader role → Dashboard access only
+    - Regular admins → Access when role requirements are disabled (default)
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            user = session.get('user', {})
+            settings = get_settings()
+            require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
+            require_member_of_control_center_dashboard_reader = settings.get("require_member_of_control_center_dashboard_reader", False)
+
+            has_admin_role = 'roles' in user and 'ControlCenterAdmin' in user['roles']
+            has_dashboard_reader_role = 'roles' in user and 'ControlCenterDashboardReader' in user['roles']
+            
+            # ControlCenterAdmin always has full access
+            if has_admin_role:
+                return f(*args, **kwargs)
+            
+            # For dashboard access, check if DashboardReader role grants access
+            if access_level == 'dashboard':
+                if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
+                    return f(*args, **kwargs)
+            
+            # Check if role requirements are enforced
+            if require_member_of_control_center_admin:
+                # Admin role required but user doesn't have it
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterAdmin role required)"}), 403
+                else:
+                    return "Forbidden: ControlCenterAdmin role required", 403
+            
+            if access_level == 'dashboard' and require_member_of_control_center_dashboard_reader:
+                # Dashboard reader role required but user doesn't have it
+                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
+                if is_api_request:
+                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterDashboardReader role required)"}), 403
+                else:
+                    return "Forbidden: ControlCenterDashboardReader role required", 403
+            
+            # No role requirements enabled → allow all admins (default behavior)
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 def create_group_role_required(f):
     @wraps(f)
@@ -617,7 +835,7 @@ def get_user_profile_image():
     """
     token = get_valid_access_token()
     if not token:
-        print("get_user_profile_image: Could not acquire access token")
+        debug_print("get_user_profile_image: Could not acquire access token")
         return None
 
     # Determine the correct Graph endpoint based on Azure environment
@@ -648,15 +866,15 @@ def get_user_profile_image():
             
         elif response.status_code == 404:
             # User has no profile image
-            print("get_user_profile_image: User has no profile image")
+            debug_print("get_user_profile_image: User has no profile image")
             return None
         else:
-            print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
+            debug_print(f"get_user_profile_image: Failed to fetch profile image. Status: {response.status_code}")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"get_user_profile_image: Request failed: {e}")
+        debug_print(f"get_user_profile_image: Request failed: {e}")
         return None
     except Exception as e:
-        print(f"get_user_profile_image: Unexpected error: {e}")
+        debug_print(f"get_user_profile_image: Unexpected error: {e}")
         return None

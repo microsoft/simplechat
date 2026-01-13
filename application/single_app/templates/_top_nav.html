@@ -99,14 +99,16 @@
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle p-0" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="display: flex; align-items: center; gap: 0.5rem;">
             {% set profile_image = user_settings.get("settings", {}).get("profileImage", "") %}
-            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+            <div id="top-nav-profile-avatar" class="rounded-circle bg-secondary d-flex align-items-center justify-content-center" style="width: 28px; height: 28px; position: relative;">
               {% if profile_image %}
                 <!-- Render profile image directly from server data -->
-                <img src="data:image/jpeg;base64,{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
+                <img src="{{ profile_image }}" alt="Profile" class="rounded-circle" style="width: 28px; height: 28px; object-fit: cover;">
               {% else %}
                 <!-- Fallback to initials with class for JS targeting -->
                 <span class="text-white fw-bold nav-initials" style="font-size: 1rem;">{{ session['user'].get('name', '')[:2] }}</span>
               {% endif %}
+              <!-- Notification badge - positioned at bottom-right corner -->
+              <span id="notification-badge" class="position-absolute badge rounded-circle bg-danger align-items-center justify-content-center" style="display: none; font-size: 0.6rem; font-weight: 700; bottom: -2px; right: -2px; width: 18px; height: 18px; padding: 0; line-height: 1; border: 2px solid white;"></span>
             </div>
             <div class="d-flex flex-column justify-content-center" style="line-height: 1;">
               <span class="fw-semibold" style="font-size: 1rem;">{{ session['user'].get('name', 'User') }}</span>
@@ -137,7 +139,27 @@
               </a>
             </li>
             <li>
-              <a class="dropdown-item nav-layout-toggle" href="#"><i class="bi bi-window-sidebar me-2"></i>Left Nav</a>
+              <a class="dropdown-item nav-layout-toggle" href="#">
+                <span id="switchToLeftNavText" class="">
+                  <i class="bi bi-layout-sidebar me-2"></i>Left Nav
+                </span>
+                <span id="switchToTopNavText" class="d-none">
+                  <i class="bi bi-window-dock me-2"></i>Top Nav
+                </span>
+              </a>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <!-- Notifications -->
+            <li>
+              <a class="dropdown-item" href="{{ url_for('notifications') }}">
+                <i class="bi bi-bell me-2"></i>Notifications
+                <span id="notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('approvals') }}">
+                <i class="bi bi-check-circle me-2"></i>Approval Requests
+              </a>
             </li>
             <li><hr class="dropdown-divider"></li>
             {% if app_settings.enable_group_workspaces %}
@@ -168,20 +190,28 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
             </li>
+            {% endif %}
+            {# Control Center - accessible to admins OR users with ControlCenter roles #}
+            {% if (session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader) %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+            </li>
+            {% endif %}
+            {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
             {% if app_settings.enable_content_safety %}
-              {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or not app_settings.require_member_of_safety_violation_admin %}
+              {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
               <li>
                 <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
               </li>
               {% endif %}
             {% endif %}
+            {# Feedback Review - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
             {% if app_settings.enable_user_feedback %}
-              {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or not app_settings.require_member_of_feedback_admin %}
+              {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
               <li>
                 <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
               </li>
               {% endif %}
-            {% endif %}
             {% endif %}
             <li><hr class="dropdown-divider"></li>
             <li>

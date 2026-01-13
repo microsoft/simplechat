@@ -355,6 +355,23 @@
           </div>
           <!-- End Metadata Filters -->
 
+          <!-- Bulk Actions Bar (shown when documents are selected) -->
+          <div id="bulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+            <div class="d-flex align-items-center justify-content-between">
+              <div>
+                <strong><span id="selectedCount">0</span> document(s) selected</strong>
+              </div>
+              <div>
+                <button type="button" class="btn btn-sm btn-danger" id="delete-selected-btn">
+                  <i class="bi bi-trash me-1"></i>Delete Selected
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary ms-2" id="clear-selection-btn">
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Documents List -->
           <table class="table table-striped" id="documents-table">
             <thead>
@@ -364,17 +381,7 @@
                 </th>
                 <th>File Name</th>
                 <th>Title</th>
-                <th>Actions
-                  <span id="bulk-actions" style="display: none; margin-left: 20px;">
-                    <!-- Bulk action buttons will appear here when documents are selected -->
-                    <button id="delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
-                      <i class="bi bi-trash"></i> Delete
-                    </button>
-                    <button id="remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
-                      <i class="bi bi-x-circle"></i> Remove
-                    </button>
-                  </span>
-                </th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>

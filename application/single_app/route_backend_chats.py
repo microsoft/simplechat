@@ -11,6 +11,7 @@ from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 import builtins
 import asyncio, types
 import json
+from typing import Any, Dict, List
 from config import *
 from flask import g
 from functions_authentication import *
@@ -21,6 +22,7 @@ from functions_group import find_group_by_id
 from functions_chat import *
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_debug import debug_print
+from functions_activity_logging import log_chat_activity, log_conversation_creation
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -36,9 +38,7 @@ def get_kernel_agents():
 
 def register_route_backend_chats(app):
     @app.route('/api/chat', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chat_api():
@@ -58,11 +58,84 @@ def register_route_backend_chats(app):
             selected_document_id = data.get('selected_document_id')
             image_gen_enabled = data.get('image_generation')
             document_scope = data.get('doc_scope')
+            reload_messages_required = False
+
+            def parse_json_string(candidate: str) -> Any:
+                """Parse JSON content when strings look like serialized structures."""
+                trimmed = candidate.strip()
+                if not trimmed or trimmed[0] not in ('{', '['):
+                    return None
+                try:
+                    return json.loads(trimmed)
+                except Exception as exc:
+                    log_event(
+                        f"[result_requires_message_reload] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
+                        level=logging.DEBUG
+                    )
+                    return None
+
+            def dict_requires_reload(payload: Dict[str, Any]) -> bool:
+                """Inspect dictionary payloads for any signal that messages were persisted."""
+                if payload.get('reload_messages') or payload.get('requires_message_reload'):
+                    return True
+
+                metadata = payload.get('metadata')
+                if isinstance(metadata, dict) and metadata.get('requires_message_reload'):
+                    return True
+
+                image_url = payload.get('image_url')
+                if isinstance(image_url, dict) and image_url.get('url'):
+                    return True
+                if isinstance(image_url, str) and image_url.strip():
+                    return True
+
+                result_type = payload.get('type')
+                if isinstance(result_type, str) and result_type.lower() == 'image_url':
+                    return True
+
+                mime = payload.get('mime')
+                if isinstance(mime, str) and mime.startswith('image/'):
+                    return True
+
+                for value in payload.values():
+                    if result_requires_message_reload(value):
+                        return True
+                return False
+
+            def list_requires_reload(items: List[Any]) -> bool:
+                """Evaluate list items for reload requirements."""
+                return any(result_requires_message_reload(item) for item in items)
+
+            def result_requires_message_reload(result: Any) -> bool:
+                """Heuristically detect plugin outputs that inject new Cosmos messages (e.g., chart images)."""
+                if result is None:
+                    return False
+                if isinstance(result, str):
+                    parsed = parse_json_string(result)
+                    return result_requires_message_reload(parsed) if parsed is not None else False
+                if isinstance(result, list):
+                    return list_requires_reload(result)
+                if isinstance(result, dict):
+                    return dict_requires_reload(result)
+                return False
             active_group_id = data.get('active_group_id')
+            active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
             frontend_gpt_model = data.get('model_deployment')
             top_n_results = data.get('top_n')  # Extract top_n parameter from request
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
+            reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+            
+            # Check if this is a retry or edit request (both work the same way - reuse existing user message)
+            retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
+            retry_thread_id = data.get('retry_thread_id')
+            retry_thread_attempt = data.get('retry_thread_attempt')
+            is_retry = bool(retry_user_message_id)
+            is_edit = bool(data.get('edited_user_message_id'))
+            
+            if is_retry:
+                operation_type = 'Edit' if is_edit else 'Retry'
+                debug_print(f"🔍 Chat API - {operation_type} detected! user_message_id={retry_user_message_id}, thread_id={retry_thread_id}, attempt={retry_thread_attempt}")
             
             # Store conversation_id in Flask context for plugin logger access
             g.conversation_id = conversation_id
@@ -186,7 +259,7 @@ def register_route_backend_chats(app):
                     raise ValueError("GPT Client or Model could not be initialized.")
 
             except Exception as e:
-                print(f"Error initializing GPT client/model: {e}")
+                debug_print(f"Error initializing GPT client/model: {e}")
                 # Handle error appropriately - maybe return 500 or default behavior
                 return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
 
@@ -205,6 +278,18 @@ def register_route_backend_chats(app):
                     'strict': False
                 }
                 cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Log conversation creation
+                log_conversation_creation(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    title='New Conversation',
+                    workspace_type='personal'
+                )
+                
+                # Mark as logged to activity logs to prevent duplicate migration
+                conversation_item['added_to_activity_log'] = True
+                cosmos_conversations_container.upsert_item(conversation_item)
             else:
                 try:
                     conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
@@ -221,10 +306,22 @@ def register_route_backend_chats(app):
                         'strict': False
                     }
                     # Optionally log that a conversation was expected but not found
-                    print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
+                    debug_print(f"Warning: Conversation ID {conversation_id} not found, creating new.")
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    
+                    # Log conversation creation
+                    log_conversation_creation(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        title='New Conversation',
+                        workspace_type='personal'
+                    )
+                    
+                    # Mark as logged to activity logs to prevent duplicate migration
+                    conversation_item['added_to_activity_log'] = True
                     cosmos_conversations_container.upsert_item(conversation_item)
                 except Exception as e:
-                    print(f"Error reading conversation {conversation_id}: {e}")
+                    debug_print(f"Error reading conversation {conversation_id}: {e}")
                     return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
 
             # Determine the actual chat context based on existing conversation or document usage
@@ -235,7 +332,7 @@ def register_route_backend_chats(app):
             if conversation_item.get('chat_type'):
                 # Use existing chat_type from conversation metadata
                 actual_chat_type = conversation_item['chat_type']
-                print(f"Using existing chat_type from conversation: {actual_chat_type}")
+                debug_print(f"Using existing chat_type from conversation: {actual_chat_type}")
             elif conversation_item.get('context'):
                 # Fallback: determine from existing context
                 primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
@@ -246,11 +343,11 @@ def register_route_backend_chats(app):
                         actual_chat_type = 'public'
                     elif primary_context.get('scope') == 'personal':
                         actual_chat_type = 'personal'
-                    print(f"Determined chat_type from existing primary context: {actual_chat_type}")
+                    debug_print(f"Determined chat_type from existing primary context: {actual_chat_type}")
                 else:
                     # No primary context exists - model-only conversation
                     actual_chat_type = None  # This will result in no badges
-                    print(f"No primary context found - model-only conversation")
+                    debug_print(f"No primary context found - model-only conversation")
             else:
                 # New conversation - will be determined by document usage during metadata collection
                 # For now, use the legacy logic as fallback
@@ -258,41 +355,68 @@ def register_route_backend_chats(app):
                     actual_chat_type = 'group'
                 elif document_scope == 'public':
                     actual_chat_type = 'public'
-                print(f"New conversation - using legacy logic: {actual_chat_type}")
+                debug_print(f"New conversation - using legacy logic: {actual_chat_type}")
 
             # ---------------------------------------------------------------------
-            # 2) Append the user message to conversation immediately
+            # 2) Append the user message to conversation immediately (or use existing for retry)
             # ---------------------------------------------------------------------
-            user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
             
-            # Collect comprehensive metadata for user message
-            user_metadata = {}
-            
-            # Get current user information
-            current_user = get_current_user_info()
-            if current_user:
-                user_metadata['user_info'] = {
-                    'user_id': current_user.get('userId'),
-                    'username': current_user.get('userPrincipalName'),
-                    'display_name': current_user.get('displayName'),
-                    'email': current_user.get('email'),
-                    'timestamp': datetime.utcnow().isoformat()
+            if is_retry:
+                # For retry, use the provided user message ID and thread info
+                user_message_id = retry_user_message_id
+                current_user_thread_id = retry_thread_id
+                latest_thread_id = current_user_thread_id
+                
+                # Read the existing user message to get metadata
+                try:
+                    user_message_doc = cosmos_messages_container.read_item(
+                        item=user_message_id,
+                        partition_key=conversation_id
+                    )
+                    previous_thread_id = user_message_doc.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    # Extract user_metadata from existing message for later use
+                    user_metadata = user_message_doc.get('metadata', {})
+                    
+                    debug_print(f"🔍 Chat API - Read retry user message:")
+                    debug_print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
+                    debug_print(f"    previous_thread_id: {previous_thread_id}")
+                    debug_print(f"    attempt: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_attempt')}")
+                    debug_print(f"    active: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('active_thread')}")
+                except Exception as e:
+                    debug_print(f"Error reading retry user message: {e}")
+                    return jsonify({'error': 'Retry user message not found'}), 404
+            else:
+                # Normal flow: create new user message
+                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                
+                # Collect comprehensive metadata for user message
+                user_metadata = {}
+                
+                # Get current user information
+                current_user = get_current_user_info()
+                if current_user:
+                    user_metadata['user_info'] = {
+                        'user_id': current_user.get('userId'),
+                        'username': current_user.get('userPrincipalName'),
+                        'display_name': current_user.get('displayName'),
+                        'email': current_user.get('email'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                
+                # Button states and selections
+                user_metadata['button_states'] = {
+                    'image_generation': image_gen_enabled,
+                    'document_search': hybrid_search_enabled
                 }
-            
-            # Button states and selections
-            user_metadata['button_states'] = {
-                'image_generation': image_gen_enabled,
-                'document_search': hybrid_search_enabled
-            }
-            
-            # Document search scope and selections
-            if hybrid_search_enabled:
-                user_metadata['workspace_search'] = {
-                    'search_enabled': True,
-                    'document_scope': document_scope,
-                    'selected_document_id': selected_document_id,
-                    'classification': classifications_to_send
-                }
+                
+                # Document search scope and selections
+                if hybrid_search_enabled:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': True,
+                        'document_scope': document_scope,
+                        'selected_document_id': selected_document_id,
+                        'classification': classifications_to_send
+                    }
                 
                 # Get document details if specific document selected
                 if selected_document_id and selected_document_id != "all":
@@ -302,7 +426,7 @@ def register_route_backend_chats(app):
                             cosmos_container = cosmos_group_documents_container
                         elif document_scope == 'public':
                             cosmos_container = cosmos_public_documents_container
-                        else:
+                        elif document_scope == 'personal':
                             cosmos_container = cosmos_user_documents_container
                         
                         doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
@@ -315,7 +439,7 @@ def register_route_backend_chats(app):
                             user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
                             user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
                     except Exception as e:
-                        print(f"Error retrieving document details: {e}")
+                        debug_print(f"Error retrieving document details: {e}")
                 
                 # Add scope-specific details
                 if document_scope == 'group' and active_group_id:
@@ -324,109 +448,193 @@ def register_route_backend_chats(app):
                         group_doc = find_group_by_id(active_group_id)
                         debug_print(f"Workspace search group lookup result: {group_doc}")
                         
-                        if group_doc and group_doc.get('name'):
-                            group_name = group_doc.get('name')
-                            user_metadata['workspace_search']['group_name'] = group_name
-                            debug_print(f"Workspace search - set group_name to: {group_name}")
+                        if group_doc:
+                            # Check if group status allows chat operations
+                            from functions_group import check_group_status_allows_operation
+                            allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                            
+                            if group_doc.get('name'):
+                                group_name = group_doc.get('name')
+                                user_metadata['workspace_search']['group_name'] = group_name
+                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                            else:
+                                debug_print(f"Workspace search - no name for group: {active_group_id}")
+                                user_metadata['workspace_search']['group_name'] = None
                         else:
-                            debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                            debug_print(f"Workspace search - no group found for id: {active_group_id}")
                             user_metadata['workspace_search']['group_name'] = None
                             
                     except Exception as e:
-                        print(f"Error retrieving group details: {e}")
+                        debug_print(f"Error retrieving group details: {e}")
                         user_metadata['workspace_search']['group_name'] = None
                         import traceback
                         traceback.print_exc()
-            else:
-                user_metadata['workspace_search'] = {
-                    'search_enabled': False
-                }
+                
+                if document_scope == 'public' and active_public_workspace_id:
+                    # Check if public workspace status allows chat operations
+                    try:
+                        from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                        workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                        if workspace_doc:
+                            allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                            if not allowed:
+                                return jsonify({'error': reason}), 403
+                    except Exception as e:
+                        debug_print(f"Error checking public workspace status: {e}")
+                    
+                    user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                else:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': False
+                    }
             
-            # Agent selection (if available)
-            if hasattr(g, 'kernel_agents') and g.kernel_agents:
+                # Agent selection (if available)
+                if hasattr(g, 'kernel_agents') and g.kernel_agents:
+                    try:
+                        # Try to get selected agent info from user settings or global settings
+                        selected_agent_info = None
+                        if user_id:
+                            try:
+                                user_settings_doc = cosmos_user_settings_container.read_item(
+                                    item=user_id, partition_key=user_id
+                                )
+                                selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
+                            except:
+                                pass
+                        
+                        if not selected_agent_info:
+                            # Fallback to global selected agent
+                            selected_agent_info = settings.get('global_selected_agent')
+                        
+                        if selected_agent_info:
+                            user_metadata['agent_selection'] = {
+                                'selected_agent': selected_agent_info.get('name'),
+                                'agent_display_name': selected_agent_info.get('display_name'),
+                                'is_global': selected_agent_info.get('is_global', False),
+                                'is_group': selected_agent_info.get('is_group', False),
+                                'group_id': selected_agent_info.get('group_id'),
+                                'group_name': selected_agent_info.get('group_name'),
+                                'agent_id': selected_agent_info.get('id')
+                            }
+                    except Exception as e:
+                        debug_print(f"Error retrieving agent details: {e}")
+                
+                # Prompt selection (extract from message if available)
+                prompt_info = data.get('prompt_info')
+                if prompt_info:
+                    user_metadata['prompt_selection'] = {
+                        'selected_prompt_index': prompt_info.get('index'),
+                        'selected_prompt_text': prompt_info.get('content'),
+                        'prompt_name': prompt_info.get('name'),
+                        'prompt_id': prompt_info.get('id')
+                    }
+                
+                # Agent selection (from frontend if available, override settings-based selection)
+                agent_info = data.get('agent_info')
+                if agent_info:
+                    user_metadata['agent_selection'] = {
+                        'selected_agent': agent_info.get('name'),
+                        'agent_display_name': agent_info.get('display_name'),
+                        'is_global': agent_info.get('is_global', False),
+                        'is_group': agent_info.get('is_group', False),
+                        'group_id': agent_info.get('group_id'),
+                        'group_name': agent_info.get('group_name'),
+                        'agent_id': agent_info.get('id')
+                    }
+                
+                # Model selection information
+                user_metadata['model_selection'] = {
+                    'selected_model': gpt_model,
+                    'frontend_requested_model': frontend_gpt_model,
+                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'streaming': 'Disabled'
+                }
+                
+                # Chat type and group context for this specific message
+                user_metadata['chat_context'] = {
+                    'conversation_id': conversation_id
+                }
+                
+                # Note: Message-level chat_type will be determined after document search is completed
+                
+                # --- Threading Logic ---
+                # Find the last message in the conversation to establish the chain
+                previous_thread_id = None
                 try:
-                    # Try to get selected agent info from user settings or global settings
-                    selected_agent_info = None
-                    if user_id:
-                        try:
-                            user_settings_doc = cosmos_user_settings_container.read_item(
-                                item=user_id, partition_key=user_id
-                            )
-                            selected_agent_info = user_settings_doc.get('settings', {}).get('selected_agent')
-                        except:
-                            pass
-                    
-                    if not selected_agent_info:
-                        # Fallback to global selected agent
-                        selected_agent_info = settings.get('global_selected_agent')
-                    
-                    if selected_agent_info:
-                        user_metadata['agent_selection'] = {
-                            'selected_agent': selected_agent_info.get('name'),
-                            'agent_display_name': selected_agent_info.get('display_name'),
-                            'is_global': selected_agent_info.get('is_global', False)
-                        }
+                    # Query for the last message in this conversation
+                    last_msg_query = f"""
+                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                        FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        ORDER BY c.timestamp DESC
+                    """
+                    last_msgs = list(cosmos_messages_container.query_items(
+                        query=last_msg_query,
+                        partition_key=conversation_id
+                    ))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
                 except Exception as e:
-                    print(f"Error retrieving agent details: {e}")
-            
-            # Prompt selection (extract from message if available)
-            prompt_info = data.get('prompt_info')
-            if prompt_info:
-                user_metadata['prompt_selection'] = {
-                    'selected_prompt_index': prompt_info.get('index'),
-                    'selected_prompt_text': prompt_info.get('content'),
-                    'prompt_name': prompt_info.get('name'),
-                    'prompt_id': prompt_info.get('id')
-                }
-            
-            # Agent selection (from frontend if available, override settings-based selection)
-            agent_info = data.get('agent_info')
-            if agent_info:
-                user_metadata['agent_selection'] = {
-                    'selected_agent': agent_info.get('name'),
-                    'agent_display_name': agent_info.get('display_name'),
-                    'is_global': agent_info.get('is_global', False)
-                }
-            
-            # Model selection information
-            user_metadata['model_selection'] = {
-                'selected_model': gpt_model,
-                'frontend_requested_model': frontend_gpt_model
-            }
-            
-            # Chat type and group context for this specific message
-            user_metadata['chat_context'] = {
-                'conversation_id': conversation_id
-            }
-            
-            # Note: Message-level chat_type will be determined after document search is completed
-            
-            user_message_doc = {
-                'id': user_message_id,
-                'conversation_id': conversation_id,
-                'role': 'user',
-                'content': user_message,
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None,  # Model not used for user message
-                'metadata': user_metadata, 
-            }
-            
-            # Debug: Print the complete metadata being saved
-            debug_print(f"Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
-            debug_print(f"Final chat_context for message: {user_metadata['chat_context']}")
-            debug_print(f"document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
-            
-            # Note: Message-level chat_type will be updated after document search
-            
-            cosmos_messages_container.upsert_item(user_message_doc)
+                    debug_print(f"Error fetching last message for threading: {e}")
 
-            # Set conversation title if it's still the default
-            if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
-                new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
-                conversation_item['title'] = new_title
+                # Generate thread_id for the user message
+                # We track the 'tip' of the thread in latest_thread_id
+                import uuid
+                current_user_thread_id = str(uuid.uuid4())
+                latest_thread_id = current_user_thread_id
+                
+                # Add thread information to user metadata
+                user_metadata['thread_info'] = {
+                    'thread_id': current_user_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
+                }
+                
+                user_message_doc = {
+                    'id': user_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'user',
+                    'content': user_message,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None,  # Model not used for user message
+                    'metadata': user_metadata
+                }
+                
+                # Debug: Print the complete metadata being saved
+                debug_print(f"Complete user_metadata being saved: {json.dumps(user_metadata, indent=2, default=str)}")
+                debug_print(f"Final chat_context for message: {user_metadata['chat_context']}")
+                debug_print(f"document_search: {hybrid_search_enabled}, has_search_results: {bool(search_results)}")
+                
+                # Note: Message-level chat_type will be updated after document search
+                
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Log chat activity for real-time tracking
+                try:
+                    log_chat_activity(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_type='user_message',
+                        message_length=len(user_message) if user_message else 0,
+                        has_document_search=hybrid_search_enabled,
+                        has_image_generation=image_gen_enabled,
+                        document_scope=document_scope,
+                        chat_context=actual_chat_type
+                    )
+                except Exception as e:
+                    # Don't let activity logging errors interrupt chat flow
+                    debug_print(f"Activity logging error: {e}")
+                    
+                # Set conversation title if it's still the default
+                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+                    conversation_item['title'] = new_title
 
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
 
             # ---------------------------------------------------------------------
             # 3) Check Content Safety (but DO NOT return 403).
@@ -530,9 +738,9 @@ def register_route_backend_chats(app):
                         }), 200
 
                 except HttpResponseError as e:
-                    print(f"[Content Safety Error] {e}")
+                    debug_print(f"[Content Safety Error] {e}")
                 except Exception as ex:
-                    print(f"[Content Safety] Unexpected error: {ex}")
+                    debug_print(f"[Content Safety] Unexpected error: {ex}")
 
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
@@ -557,24 +765,41 @@ def register_route_backend_chats(app):
 
                         if last_messages_asc and len(last_messages_asc) >= conversation_history_limit:
                             summary_prompt_search = "Please summarize the key topics or questions from this recent conversation history in 50 words or less:\n\n"
-                            message_texts_search = [f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}" for msg in last_messages_asc]
-                            summary_prompt_search += "\n".join(message_texts_search)
+                            
+                            # Filter out inactive thread messages before summarizing
+                            message_texts_search = []
+                            for msg in last_messages_asc:
+                                thread_info = msg.get('metadata', {}).get('thread_info', {})
+                                active_thread = thread_info.get('active_thread')
+                                
+                                # Exclude messages with active_thread=False
+                                if active_thread is False:
+                                    debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from search summary")
+                                    continue
+                                    
+                                message_texts_search.append(f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}")
+                            
+                            if not message_texts_search:
+                                # No active messages to summarize
+                                debug_print("[THREAD] No active thread messages available for search summary")
+                            else:
+                                summary_prompt_search += "\n".join(message_texts_search)
 
-                            try:
-                                # Use the already initialized gpt_client and gpt_model
-                                summary_response_search = gpt_client.chat.completions.create(
-                                    model=gpt_model,
-                                    messages=[{"role": "system", "content": summary_prompt_search}],
-                                    max_tokens=100 # Keep summary short
-                                )
-                                summary_for_search = summary_response_search.choices[0].message.content.strip()
-                                if summary_for_search:
-                                    search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
-                            except Exception as e:
-                                print(f"Error summarizing conversation for search: {e}")
-                                # Proceed with original user_message as search_query
+                                try:
+                                    # Use the already initialized gpt_client and gpt_model
+                                    summary_response_search = gpt_client.chat.completions.create(
+                                        model=gpt_model,
+                                        messages=[{"role": "system", "content": summary_prompt_search}],
+                                        max_tokens=100 # Keep summary short
+                                    )
+                                    summary_for_search = summary_response_search.choices[0].message.content.strip()
+                                    if summary_for_search:
+                                        search_query = f"Based on the recent conversation about: '{summary_for_search}', the user is now asking: {user_message}"
+                                except Exception as e:
+                                    debug_print(f"Error summarizing conversation for search: {e}")
+                                    # Proceed with original user_message as search_query
                     except Exception as e:
-                        print(f"Error fetching messages for search summarization: {e}")
+                        debug_print(f"Error fetching messages for search summarization: {e}")
 
 
                 # Perform the search
@@ -612,18 +837,23 @@ def register_route_backend_chats(app):
                     if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
                         search_args["active_group_id"] = active_group_id
     
+                    # Add active_public_workspace_id when:
+                    # 1. Document scope is 'public' or
+                    # 2. Document scope is 'all' and public workspaces are enabled
+                    if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
+                        search_args["active_public_workspace_id"] = active_public_workspace_id
                         
                     if selected_document_id:
                         search_args["document_id"] = selected_document_id
                     
                     # Log if a non-default top_n value is being used
                     if top_n != default_top_n:
-                        print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
+                        debug_print(f"Using custom top_n value: {top_n} (requested: {top_n_results})")
                     
                     # Public scope now automatically searches all visible public workspaces
                     search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
                 except Exception as e:
-                    print(f"Error during hybrid search: {e}")
+                    debug_print(f"Error during hybrid search: {e}")
                     # Only treat as error if the exception is from embedding failure
                     return jsonify({
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
@@ -711,25 +941,25 @@ def register_route_backend_chats(app):
                     # Only if extract_metadata is enabled
                     if settings.get('enable_extract_meta_data', False):
                         from functions_documents import get_document_metadata_for_citations
-                        
+
                         # Track which documents we've already processed to avoid duplicates
                         processed_doc_ids = set()
-                        
+
                         for doc in search_results:
                             # Get document ID (from the chunk's document reference)
                             # AI Search chunks contain references to their parent document
                             doc_id = doc.get('id', '').split('_')[0] if doc.get('id') else None
-                            
+
                             # Skip if we've already processed this document
                             if not doc_id or doc_id in processed_doc_ids:
                                 continue
-                            
+
                             processed_doc_ids.add(doc_id)
-                            
                             # Determine workspace type from the search result fields
                             doc_user_id = doc.get('user_id')
                             doc_group_id = doc.get('group_id')
                             doc_public_workspace_id = doc.get('public_workspace_id')
+
                             
                             # Query Cosmos for this document's metadata
                             metadata = get_document_metadata_for_citations(
@@ -738,17 +968,20 @@ def register_route_backend_chats(app):
                                 group_id=doc_group_id if doc_group_id else None,
                                 public_workspace_id=doc_public_workspace_id if doc_public_workspace_id else None
                             )
+
                             
                             # If we have metadata with content, create additional citations
                             if metadata:
                                 file_name = metadata.get('file_name', 'Unknown')
                                 keywords = metadata.get('keywords', [])
                                 abstract = metadata.get('abstract', '')
+
                                 
                                 # Create citation for keywords if they exist
                                 if keywords and len(keywords) > 0:
                                     keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
                                     keywords_citation_id = f"{doc_id}_keywords"
+
                                     
                                     keywords_citation = {
                                         "file_name": file_name,
@@ -765,6 +998,15 @@ def register_route_backend_chats(app):
                                     }
                                     hybrid_citations_list.append(keywords_citation)
                                     combined_documents.append(keywords_citation)  # Add to combined_documents too
+
+                                    # Add keywords to retrieved content for the model
+                                    keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                    retrieved_texts.append(keywords_context)
+
+                                # Create citation for abstract if it exists
+                                if abstract and len(abstract.strip()) > 0:
+                                    abstract_citation_id = f"{doc_id}_abstract"
+
                                     
                                     # Add keywords to retrieved content for the model
                                     keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
@@ -789,6 +1031,11 @@ def register_route_backend_chats(app):
                                     }
                                     hybrid_citations_list.append(abstract_citation)
                                     combined_documents.append(abstract_citation)  # Add to combined_documents too
+
+                                    # Add abstract to retrieved content for the model
+                                    abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                    retrieved_texts.append(abstract_context)
+
                                     
                                     # Add abstract to retrieved content for the model
                                     abstract_context = f"Document Abstract ({file_name}): {abstract}"
@@ -831,11 +1078,15 @@ def register_route_backend_chats(app):
                                     # Add vision analysis to retrieved content for the model
                                     vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
                                     retrieved_texts.append(vision_context)
+
                         
                         # Update the system prompt with the enhanced content including metadata
                         if retrieved_texts:
                             retrieved_content = "\n\n".join(retrieved_texts)
                             system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+                                Retrieved Excerpts:
+                                {retrieved_content}
+                                Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
 
                                 Retrieved Excerpts:
                                 {retrieved_content}
@@ -899,7 +1150,7 @@ def register_route_backend_chats(app):
                             user_metadata['chat_context']['group_name'] = None
                             
                     except Exception as e:
-                        print(f"Error retrieving group name for chat context: {e}")
+                        debug_print(f"Error retrieving group name for chat context: {e}")
                         user_metadata['chat_context']['group_name'] = None
                         import traceback
                         traceback.print_exc()
@@ -1043,6 +1294,22 @@ def register_route_backend_chats(app):
                         
                         
                         # Create main image document with metadata
+                        
+                        # Get user_info and thread_id from the user message for ownership tracking and threading
+                        user_info_for_chunked_image = None
+                        user_thread_id = None
+                        user_previous_thread_id = None
+                        try:
+                            user_msg = cosmos_messages_container.read_item(
+                                item=user_message_id,
+                                partition_key=conversation_id
+                            )
+                            user_info_for_chunked_image = user_msg.get('metadata', {}).get('user_info')
+                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                        except Exception as e:
+                            debug_print(f"Warning: Could not retrieve user_info from user message for chunked image: {e}")
+                        
                         main_image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
@@ -1053,12 +1320,20 @@ def register_route_backend_chats(app):
                             'timestamp': datetime.utcnow().isoformat(),
                             'model_deployment_name': image_gen_model,
                             'metadata': {
+                                'user_info': user_info_for_chunked_image,  # Track which user created this image
                                 'is_chunked': True,
                                 'total_chunks': total_chunks,
                                 'chunk_index': 0,
-                                'original_size': len(generated_image_url)
+                                'original_size': len(generated_image_url),
+                                'thread_info': {
+                                    'thread_id': user_thread_id,  # Same thread as user message
+                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
                             }
                         }
+                        # Image message shares the same thread as user message
                         
                         # Create additional chunk documents
                         chunk_docs = []
@@ -1099,6 +1374,21 @@ def register_route_backend_chats(app):
                         # Small image - store normally in single document
                         debug_print(f"Small image ({len(generated_image_url)} bytes), storing in single document")
                         
+                        # Get user_info and thread_id from the user message for ownership tracking and threading
+                        user_info_for_image = None
+                        user_thread_id = None
+                        user_previous_thread_id = None
+                        try:
+                            user_msg = cosmos_messages_container.read_item(
+                                item=user_message_id,
+                                partition_key=conversation_id
+                            )
+                            user_info_for_image = user_msg.get('metadata', {}).get('user_info')
+                            user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                            user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                        except Exception as e:
+                            debug_print(f"Warning: Could not retrieve user_info from user message for image: {e}")
+                        
                         image_doc = {
                             'id': image_message_id,
                             'conversation_id': conversation_id,
@@ -1109,12 +1399,20 @@ def register_route_backend_chats(app):
                             'timestamp': datetime.utcnow().isoformat(),
                             'model_deployment_name': image_gen_model,
                             'metadata': {
+                                'user_info': user_info_for_image,  # Track which user created this image
                                 'is_chunked': False,
-                                'original_size': len(generated_image_url)
+                                'original_size': len(generated_image_url),
+                                'thread_info': {
+                                    'thread_id': user_thread_id,  # Same thread as user message
+                                    'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
                             }
                         }
                         cosmos_messages_container.upsert_item(image_doc)
                         response_image_url = generated_image_url
+                        # Image message shares the same thread as user message
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
@@ -1166,6 +1464,9 @@ def register_route_backend_chats(app):
                     query=all_messages_query, parameters=params_all, partition_key=conversation_id, enable_cross_partition_query=True
                 ))
 
+                # Sort messages using threading logic
+                all_messages = sort_messages_by_thread(all_messages)
+
                 total_messages = len(all_messages)
 
                 # Determine which messages are "recent" and which are "older"
@@ -1178,7 +1479,7 @@ def register_route_backend_chats(app):
 
                 # Summarize older messages if needed and present
                 if enable_summarize_content_history_beyond_conversation_history_limit and older_messages_to_summarize:
-                    print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
+                    debug_print(f"Summarizing {len(older_messages_to_summarize)} older messages for conversation {conversation_id}")
                     summary_prompt_older = (
                         "Summarize the following conversation history concisely (around 50-100 words), "
                         "focusing on key facts, decisions, or context that might be relevant for future turns. "
@@ -1188,6 +1489,17 @@ def register_route_backend_chats(app):
                     message_texts_older = []
                     for msg in older_messages_to_summarize:
                         role = msg.get('role', 'user')
+                        metadata = msg.get('metadata', {})
+                        
+                        # Check active_thread flag - skip messages with active_thread=False
+                        thread_info = metadata.get('thread_info', {})
+                        active_thread = thread_info.get('active_thread')
+                        
+                        # Exclude content when active_thread is explicitly False
+                        if active_thread is False:
+                            debug_print(f"[THREAD] Skipping inactive thread message {msg.get('id')} from summary")
+                            continue
+                        
                         # Skip roles that shouldn't be in summary (adjust as needed)
                         if role in ['system', 'safety', 'blocked', 'image', 'file']: continue
                         content = msg.get('content', '')
@@ -1204,12 +1516,12 @@ def register_route_backend_chats(app):
                                 temperature=0.3 # Lower temp for factual summary
                             )
                             summary_of_older = summary_response_older.choices[0].message.content.strip()
-                            print(f"Generated summary: {summary_of_older}")
+                            debug_print(f"Generated summary: {summary_of_older}")
                         except Exception as e:
-                            print(f"Error summarizing older conversation history: {e}")
+                            debug_print(f"Error summarizing older conversation history: {e}")
                             summary_of_older = "" # Failed, proceed without summary
                     else:
-                        print("No summarizable content found in older messages.")
+                        debug_print("No summarizable content found in older messages.")
 
 
                 # Construct the final history for the API call
@@ -1229,6 +1541,22 @@ def register_route_backend_chats(app):
 
                     # 5. Create the final system_doc dictionary for Cosmos DB upsert
                     system_message_id = f"{conversation_id}_system_aug_{int(time.time())}_{random.randint(1000,9999)}"
+                    
+                    # Get user_info and thread_id from the user message for ownership tracking and threading
+                    user_info_for_system = None
+                    user_thread_id = None
+                    user_previous_thread_id = None
+                    try:
+                        user_msg = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        user_info_for_system = user_msg.get('metadata', {}).get('user_info')
+                        user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                        user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    except Exception as e:
+                        debug_print(f"Warning: Could not retrieve user_info from user message for system message: {e}")
+                    
                     system_doc = {
                         'id': system_message_id,
                         'conversation_id': conversation_id,
@@ -1238,10 +1566,19 @@ def register_route_backend_chats(app):
                         'user_message': user_message, # Include the original user message for context
                         'model_deployment_name': None, # As per your original structure
                         'timestamp': datetime.utcnow().isoformat(),
-                        'metadata': {}
+                        'metadata': {
+                            'user_info': user_info_for_system,
+                            'thread_info': {
+                                'thread_id': user_thread_id,  # Same thread as user message
+                                'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            }
+                        }
                     }
                     cosmos_messages_container.upsert_item(system_doc)
                     conversation_history_for_api.append(aug_msg) # Add to API context
+                    # System message shares the same thread as user message, no thread update needed
 
                     # --- NEW: Save plugin output as agent citation ---
                     agent_citations_list.append({
@@ -1260,6 +1597,30 @@ def register_route_backend_chats(app):
                 for message in recent_messages:
                     role = message.get('role')
                     content = message.get('content')
+                    metadata = message.get('metadata', {})
+                    
+                    # Check active_thread flag - skip messages with active_thread=False
+                    # This handles both threaded messages and legacy messages with the flag set
+                    thread_info = metadata.get('thread_info', {})
+                    active_thread = thread_info.get('active_thread')
+                    
+                    # Exclude content when active_thread is explicitly False
+                    # Include when: active_thread is True, None, or not present (legacy messages)
+                    if active_thread is False:
+                        debug_print(f"[THREAD] Skipping inactive thread message {message.get('id')} (thread_id: {thread_info.get('thread_id')}, attempt: {thread_info.get('thread_attempt')})")
+                        continue
+                    
+                    # Check if message is fully masked - skip it entirely
+                    if metadata.get('masked', False):
+                        debug_print(f"[MASK] Skipping fully masked message {message.get('id')}")
+                        continue
+                    
+                    # Check for partially masked content
+                    masked_ranges = metadata.get('masked_ranges', [])
+                    if masked_ranges and content:
+                        # Remove masked portions from content
+                        content = remove_masked_content(content, masked_ranges)
+                        debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
 
                     if role in allowed_roles_in_history:
                         conversation_history_for_api.append({"role": role, "content": content})
@@ -1328,7 +1689,7 @@ def register_route_backend_chats(app):
                             
                             # Verify we're not accidentally including base64 data
                             if 'data:image/' in image_context_content or ';base64,' in image_context_content:
-                                print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
+                                debug_print(f"WARNING: Base64 image data detected in chat history for {filename}! Removing to save tokens.")
                                 # This should never happen, but safety check just in case
                                 image_context_content = f"[User uploaded an image named '{filename}' - image data excluded from chat history to conserve tokens]"
                             
@@ -1351,7 +1712,7 @@ def register_route_backend_chats(app):
 
                 # Ensure the very last message is the current user's message (it should be if fetched correctly)
                 if not conversation_history_for_api or conversation_history_for_api[-1]['role'] != 'user':
-                    print("Warning: Last message in history is not the user's current message. Appending.")
+                    debug_print("Warning: Last message in history is not the user's current message. Appending.")
                     # This might happen if 'recent_messages' somehow didn't include the latest user message saved in step 2
                     # Or if the last message had an ignored role. Find the actual user message:
                     user_msg_found = False
@@ -1364,7 +1725,7 @@ def register_route_backend_chats(app):
                         conversation_history_for_api.append({"role": "user", "content": user_message})
 
             except Exception as e:
-                print(f"Error preparing conversation history: {e}")
+                debug_print(f"Error preparing conversation history: {e}")
                 return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
 
             # ---------------------------------------------------------------------
@@ -1527,7 +1888,20 @@ def register_route_backend_chats(app):
             user_settings = get_user_settings(user_id).get('settings', {})
             per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
             enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+            
+            # Check if agent_info is provided in request (e.g., from retry with agent selection)
+            request_agent_info = data.get('agent_info')
+            force_enable_agents = bool(request_agent_info)  # Force enable agents if agent_info provided
+            
             user_enable_agents = user_settings.get('enable_agents', True)  # Default to True for backward compatibility
+            # Override user setting if agent explicitly requested via agent_info
+            if force_enable_agents:
+                user_enable_agents = True
+                g.force_enable_agents = True  # Store in Flask g for SK loader to check
+                g.request_agent_name = request_agent_info.get('name') if isinstance(request_agent_info, dict) else request_agent_info
+                log_event(f"[SKChat] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
+            
+            enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
             redis_client = None
             # --- Semantic Kernel state management (per-user mode) ---
             if enable_semantic_kernel and per_user_semantic_kernel:
@@ -1560,9 +1934,19 @@ def register_route_backend_chats(app):
             if enable_semantic_kernel and user_enable_agents:
             # PATCH: Use new agent selection logic
                 agent_name_to_select = None
-                if per_user_semantic_kernel:
+                
+                # Priority 1: Use agent_info from request if provided (e.g., retry with specific agent)
+                if request_agent_info:
+                    # Extract agent name or create dict format expected by selection logic
+                    agent_name_to_select = request_agent_info if isinstance(request_agent_info, dict) else {'name': request_agent_info}
+                    if isinstance(agent_name_to_select, dict):
+                        agent_name_to_select = agent_name_to_select.get('name')
+                    log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
+                # Priority 2: Use user settings
+                elif per_user_semantic_kernel:
                     agent_name_to_select = user_settings.get('selected_agent')
                     log_event(f"[SKChat] Per-user mode: selected_agent from user_settings: {agent_name_to_select}")
+                # Priority 3: Use global settings
                 else:
                     global_selected_agent_info = settings.get('global_selected_agent')
                     if global_selected_agent_info:
@@ -1653,7 +2037,7 @@ def register_route_backend_chats(app):
                         notice = None
                         return (msg, "multi-agent-chat", "multi-agent-chat", notice)
                     def orchestrator_error(e):
-                        print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                        debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
                             extra=extra,
@@ -1674,6 +2058,7 @@ def register_route_backend_chats(app):
                             agent_message_history,
                         ))
                     def agent_success(result):
+                        nonlocal reload_messages_required
                         msg = str(result)
                         notice = None
                         agent_used = getattr(selected_agent, 'name', 'All Plugins')
@@ -1735,16 +2120,22 @@ def register_route_backend_chats(app):
                             }
                         )
 
-                        # print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
-                        # print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
+                        # debug_print(f"[Enhanced Agent Citations] Agent used: {agent_used}")
+                        # debug_print(f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations")
                         # for citation in detailed_citations:
-                        #     print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
-                        #     print(f"  Parameters: {citation['function_arguments']}")
-                        #     print(f"  Result: {citation['function_result']}")
-                        #     print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
+                        #     debug_print(f"[Enhanced Agent Citations] - Plugin: {citation['plugin_name']}, Function: {citation['function_name']}")
+                        #     debug_print(f"  Parameters: {citation['function_arguments']}")
+                        #     debug_print(f"  Result: {citation['function_result']}")
+                        #     debug_print(f"  Duration: {citation['duration_ms']}ms, Success: {citation['success']}")
 
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
+
+                        if not reload_messages_required:
+                            for citation in detailed_citations:
+                                if result_requires_message_reload(citation.get('function_result')):
+                                    reload_messages_required = True
+                                    break
                         
                         if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                             # If the agent response indicates fallback mode
@@ -1755,7 +2146,7 @@ def register_route_backend_chats(app):
                             )
                         return (msg, actual_model_deployment, "agent", notice)
                     def agent_error(e):
-                        print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
+                        debug_print(f"Error during Semantic Kernel Agent invocation: {str(e)}")
                         log_event(
                             f"Error during Semantic Kernel Agent invocation: {str(e)}",
                             extra=extra,
@@ -1808,7 +2199,7 @@ def register_route_backend_chats(app):
                         msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
                         return (str(result), "kernel", "kernel", msg)
                     def kernel_error(e):
-                        print(f"Error during kernel invocation: {str(e)}")
+                        debug_print(f"Error during kernel invocation: {str(e)}")
                         log_event(
                             f"Error during kernel invocation: {str(e)}",
                             extra=extra,
@@ -1827,12 +2218,37 @@ def register_route_backend_chats(app):
                     raise Exception('Cannot generate response: No conversation history available.')
                 if conversation_history_for_api[-1].get('role') != 'user':
                     raise Exception('Internal error: Conversation history improperly formed.')
-                print(f"--- Sending to GPT ({gpt_model}) ---")
-                print(f"Total messages in API call: {len(conversation_history_for_api)}")
-                response = gpt_client.chat.completions.create(
-                    model=gpt_model,
-                    messages=conversation_history_for_api,
-                )
+                debug_print(f"--- Sending to GPT ({gpt_model}) ---")
+                debug_print(f"Total messages in API call: {len(conversation_history_for_api)}")
+                
+                # Prepare API call parameters
+                api_params = {
+                    'model': gpt_model,
+                    'messages': conversation_history_for_api,
+                }
+                
+                # Add reasoning_effort if provided and not 'none'
+                if reasoning_effort and reasoning_effort != 'none':
+                    api_params['reasoning_effort'] = reasoning_effort
+                    debug_print(f"Using reasoning effort: {reasoning_effort}")
+                
+                try:
+                    response = gpt_client.chat.completions.create(**api_params)
+                except Exception as e:
+                    # Check if error is related to reasoning_effort parameter
+                    error_str = str(e).lower()
+                    if reasoning_effort and reasoning_effort != 'none' and (
+                        'reasoning_effort' in error_str or 
+                        'unrecognized request argument' in error_str or
+                        'invalid_request_error' in error_str
+                    ):
+                        debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                        # Retry without reasoning_effort
+                        api_params.pop('reasoning_effort', None)
+                        response = gpt_client.chat.completions.create(**api_params)
+                    else:
+                        raise
+                
                 msg = response.choices[0].message.content
                 notice = None
                 if enable_semantic_kernel and user_enable_agents:
@@ -1842,6 +2258,14 @@ def register_route_backend_chats(app):
                         "No advanced features are available. "
                         "Please contact your administrator to resolve Semantic Kernel integration."
                     )
+                # Capture token usage for storage in message metadata
+                token_usage_data = {
+                    'prompt_tokens': response.usage.prompt_tokens,
+                    'completion_tokens': response.usage.completion_tokens,
+                    'total_tokens': response.usage.total_tokens,
+                    'captured_at': datetime.utcnow().isoformat()
+                }
+                
                 log_event(
                     f"[Tokens] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
                     extra={
@@ -1855,15 +2279,15 @@ def register_route_backend_chats(app):
                     },
                     level=logging.INFO
                 )
-                return (msg, gpt_model, None, notice)
+                return (msg, gpt_model, None, notice, token_usage_data)
             def gpt_success(result):
                 return result
             def gpt_error(e):
-                print(f"Error during final GPT completion: {str(e)}")
+                debug_print(f"Error during final GPT completion: {str(e)}")
                 if "context length" in str(e).lower():
-                    return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None)
+                    return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
-                    return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None)
+                    return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None, None)
             fallback_steps.append({
                 'name': 'gpt',
                 'func': invoke_gpt_fallback,
@@ -1871,8 +2295,16 @@ def register_route_backend_chats(app):
                 'on_error': gpt_error
             })
 
-            ai_message, final_model_used, chat_mode, kernel_fallback_notice = try_fallback_chain(fallback_steps)
-            if kernel:
+            fallback_result = try_fallback_chain(fallback_steps)
+            # Unpack result - handle both 4-tuple (SK) and 5-tuple (GPT with tokens)
+            if len(fallback_result) == 5:
+                ai_message, final_model_used, chat_mode, kernel_fallback_notice, token_usage_data = fallback_result
+            else:
+                ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
+                token_usage_data = None
+            
+            # Collect token usage from Semantic Kernel services if available
+            if kernel and not token_usage_data:
                 try:
                     for service in getattr(kernel, "services", {}).values():
                         # Each service is likely an AzureChatCompletion or similar
@@ -1893,6 +2325,16 @@ def register_route_backend_chats(app):
                             },
                             level=logging.INFO
                         )
+                        
+                        # Capture token usage from first service with token data
+                        if (prompt_tokens or completion_tokens or total_tokens) and not token_usage_data:
+                            token_usage_data = {
+                                'prompt_tokens': prompt_tokens,
+                                'completion_tokens': completion_tokens,
+                                'total_tokens': total_tokens,
+                                'captured_at': datetime.utcnow().isoformat(),
+                                'service_id': getattr(service, 'service_id', None)
+                            }
                 except Exception as e:
                     log_event(
                         f"[Tokens] Error logging service token usage for user '{get_current_user_id()}': {e}",
@@ -1922,6 +2364,24 @@ def register_route_backend_chats(app):
                     agent_name = selected_agent.name
             
             assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+            
+            # Get user_info and thread_id from the user message for ownership tracking and threading
+            user_info_for_assistant = None
+            user_thread_id = None
+            user_previous_thread_id = None
+            try:
+                user_msg = cosmos_messages_container.read_item(
+                    item=user_message_id,
+                    partition_key=conversation_id
+                )
+                user_info_for_assistant = user_msg.get('metadata', {}).get('user_info')
+                user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+            except Exception as e:
+                debug_print(f"Warning: Could not retrieve user_info from user message: {e}")
+            
+            # Assistant message should be part of the same thread as the user message
+            # Only system/augmentation messages create new threads within a conversation
             assistant_doc = {
                 'id': assistant_message_id,
                 'conversation_id': conversation_id,
@@ -1936,9 +2396,60 @@ def register_route_backend_chats(app):
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
-                'metadata': {} # Used by SK
+                'metadata': {
+                    'user_info': user_info_for_assistant,  # Track which user created this assistant message
+                    'reasoning_effort': reasoning_effort,
+                    'thread_info': {
+                        'thread_id': user_thread_id,  # Same thread as user message
+                        'previous_thread_id': user_previous_thread_id,  # Same previous_thread_id as user message
+                        'active_thread': True,
+                        'thread_attempt': retry_thread_attempt if is_retry else 1
+                    },
+                    'token_usage': token_usage_data  # Store token usage information
+                } # Used by SK and reasoning effort
             }
+            
+            debug_print(f"🔍 Chat API - Creating assistant message with thread_info:")
+            debug_print(f"    thread_id: {user_thread_id}")
+            debug_print(f"    previous_thread_id: {user_previous_thread_id}")
+            debug_print(f"    attempt: {retry_thread_attempt if is_retry else 1}")
+            debug_print(f"    is_retry: {is_retry}")
+            
             cosmos_messages_container.upsert_item(assistant_doc)
+            
+            # Log chat token usage to activity_logs for easy reporting
+            if token_usage_data and token_usage_data.get('total_tokens'):
+                try:
+                    from functions_activity_logging import log_token_usage
+                    
+                    # Determine workspace type based on active group/public workspace
+                    workspace_type = 'personal'
+                    if active_public_workspace_id:
+                        workspace_type = 'public'
+                    elif active_group_id:
+                        workspace_type = 'group'
+                    
+                    log_token_usage(
+                        user_id=get_current_user_id(),
+                        token_type='chat',
+                        total_tokens=token_usage_data.get('total_tokens'),
+                        model=actual_model_used,
+                        workspace_type=workspace_type,
+                        prompt_tokens=token_usage_data.get('prompt_tokens'),
+                        completion_tokens=token_usage_data.get('completion_tokens'),
+                        conversation_id=conversation_id,
+                        message_id=assistant_message_id,
+                        group_id=active_group_id,
+                        public_workspace_id=active_public_workspace_id,
+                        additional_context={
+                            'agent_name': agent_name,
+                            'augmented': bool(system_messages_for_augmentation),
+                            'reasoning_effort': reasoning_effort
+                        }
+                    )
+                except Exception as log_error:
+                    debug_print(f"⚠️  Warning: Failed to log chat token usage: {log_error}")
+                    # Don't fail the chat flow if logging fails
 
             # Update the user message metadata with the actual model used
             # This ensures the UI shows the correct model in the metadata panel
@@ -1954,7 +2465,7 @@ def register_route_backend_chats(app):
                     cosmos_messages_container.upsert_item(user_message_doc)
                     
             except Exception as e:
-                print(f"Warning: Could not update user message metadata: {e}")
+                debug_print(f"Warning: Could not update user message metadata: {e}")
 
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
@@ -1979,11 +2490,12 @@ def register_route_backend_chats(app):
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
+                    selected_agent_details=user_metadata.get('agent_selection'),
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item
                 )
             except Exception as e:
-                print(f"Error collecting conversation metadata: {e}")
+                debug_print(f"Error collecting conversation metadata: {e}")
                 # Continue even if metadata collection fails
             
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
@@ -2010,14 +2522,15 @@ def register_route_backend_chats(app):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'agent_citations': agent_citations_list,
+                'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice
             }), 200
         
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
-            print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
-            print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
+            debug_print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
+            debug_print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
             log_event(
                 f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}",
                 extra={
@@ -2032,3 +2545,1348 @@ def register_route_backend_chats(app):
                 'error': f'Internal server error: {str(e)}',
                 'details': error_traceback if app.debug else None
             }), 500
+
+    @app.route('/api/chat/stream', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def chat_stream_api():
+        """
+        Streaming version of chat endpoint using Server-Sent Events (SSE).
+        Streams tokens as they are generated from Azure OpenAI.
+        """
+        from flask import Response, stream_with_context
+        import json
+        
+        # IMPORTANT: Parse JSON and get user_id BEFORE entering the generator
+        # because request context may not be available inside the generator
+        try:
+            data = request.get_json()
+            user_id = get_current_user_id()
+            settings = get_settings()
+        except Exception as e:
+            return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
+        
+        def generate():
+            try:
+                # Import debug_print for use in generator
+                from functions_debug import debug_print
+                
+                if not user_id:
+                    yield f"data: {json.dumps({'error': 'User not authenticated'})}\n\n"
+                    return
+                
+                # Extract request parameters (same as non-streaming endpoint)
+                user_message = data.get('message', '')
+                conversation_id = data.get('conversation_id')
+                hybrid_search_enabled = data.get('hybrid_search')
+                selected_document_id = data.get('selected_document_id')
+                image_gen_enabled = data.get('image_generation')
+                document_scope = data.get('doc_scope')
+                active_group_id = data.get('active_group_id')
+                active_public_workspace_id = data.get('active_public_workspace_id')  # Extract active public workspace ID
+                frontend_gpt_model = data.get('model_deployment')
+                classifications_to_send = data.get('classifications')
+                chat_type = data.get('chat_type', 'user')
+                reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+                
+                # Check if agents are enabled
+                enable_semantic_kernel = settings.get('enable_semantic_kernel', False)
+                per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
+                user_settings = {}
+                user_enable_agents = False
+                
+                debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, per_user_semantic_kernel={per_user_semantic_kernel}")
+                
+                # Initialize Semantic Kernel if needed
+                redis_client = None
+                if enable_semantic_kernel and per_user_semantic_kernel:
+                    redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
+                    initialize_semantic_kernel(user_id=user_id, redis_client=redis_client)
+                    debug_print(f"[DEBUG] Initialized Semantic Kernel for user {user_id}")
+                elif enable_semantic_kernel:
+                    # Global mode: set g.kernel/g.kernel_agents from builtins
+                    g.kernel = getattr(builtins, 'kernel', None)
+                    g.kernel_agents = getattr(builtins, 'kernel_agents', None)
+                    debug_print(f"[DEBUG] Using global Semantic Kernel")
+                
+                if enable_semantic_kernel and per_user_semantic_kernel:
+                    try:
+                        user_settings_obj = get_user_settings(user_id)
+                        debug_print(f"[DEBUG] user_settings_obj type: {type(user_settings_obj)}")
+                        # Sanitize user_settings_obj to remove sensitive data (keys, base64, images) from debug logs
+                        sanitized_settings = sanitize_settings_for_logging(user_settings_obj) if isinstance(user_settings_obj, dict) else user_settings_obj
+                        debug_print(f"[DEBUG] user_settings_obj (sanitized): {sanitized_settings}")
+                        
+                        # user_settings_obj might be nested with 'settings' key
+                        if isinstance(user_settings_obj, dict):
+                            if 'settings' in user_settings_obj:
+                                user_settings = user_settings_obj['settings']
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Extracted user_settings from 'settings' key (sanitized): {sanitized_user_settings}")
+                            else:
+                                user_settings = user_settings_obj
+                                sanitized_user_settings = sanitize_settings_for_logging(user_settings) if isinstance(user_settings, dict) else user_settings
+                                debug_print(f"[DEBUG] Using user_settings_obj directly (sanitized): {sanitized_user_settings}")
+                        
+                        user_enable_agents = user_settings.get('enable_agents', False)
+                        debug_print(f"[DEBUG] user_enable_agents={user_enable_agents}")
+                    except Exception as e:
+                        debug_print(f"Error loading user settings: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Streaming does not support image generation
+                if image_gen_enabled:
+                    yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
+                    return
+                
+                # Initialize Flask context
+                g.conversation_id = conversation_id
+                
+                # Clear plugin invocations
+                from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+                plugin_logger = get_plugin_logger()
+                plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+                
+                # Validate chat_type
+                if chat_type not in ('user', 'group'):
+                    chat_type = 'user'
+                
+                # Initialize variables
+                search_query = user_message
+                hybrid_citations_list = []
+                agent_citations_list = []
+                system_messages_for_augmentation = []
+                search_results = []
+                selected_agent = None
+                
+                # Configuration
+                raw_conversation_history_limit = settings.get('conversation_history_limit', 6)
+                conversation_history_limit = math.ceil(raw_conversation_history_limit)
+                if conversation_history_limit % 2 != 0:
+                    conversation_history_limit += 1
+                
+                # Convert toggles
+                if isinstance(hybrid_search_enabled, str):
+                    hybrid_search_enabled = hybrid_search_enabled.lower() == 'true'
+                
+                # Initialize GPT client (simplified version)
+                gpt_model = ""
+                gpt_client = None
+                enable_gpt_apim = settings.get('enable_gpt_apim', False)
+                
+                try:
+                    if enable_gpt_apim:
+                        raw = settings.get('azure_apim_gpt_deployment', '')
+                        if not raw:
+                            yield f"data: {json.dumps({'error': 'APIM deployment not configured'})}\n\n"
+                            return
+                        
+                        apim_models = [m.strip() for m in raw.split(',') if m.strip()]
+                        if not apim_models:
+                            yield f"data: {json.dumps({'error': 'No valid APIM models configured'})}\n\n"
+                            return
+                        
+                        if frontend_gpt_model and frontend_gpt_model in apim_models:
+                            gpt_model = frontend_gpt_model
+                        else:
+                            gpt_model = apim_models[0]
+                        
+                        gpt_client = AzureOpenAI(
+                            api_version=settings.get('azure_apim_gpt_api_version'),
+                            azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
+                            api_key=settings.get('azure_apim_gpt_subscription_key')
+                        )
+                    else:
+                        auth_type = settings.get('azure_openai_gpt_authentication_type')
+                        endpoint = settings.get('azure_openai_gpt_endpoint')
+                        api_version = settings.get('azure_openai_gpt_api_version')
+                        gpt_model_obj = settings.get('gpt_model', {})
+                        
+                        if gpt_model_obj and gpt_model_obj.get('selected'):
+                            gpt_model = gpt_model_obj['selected'][0]['deploymentName']
+                        else:
+                            gpt_model = settings.get('azure_openai_gpt_deployment', 'gpt-4o')
+                        
+                        if frontend_gpt_model:
+                            gpt_model = frontend_gpt_model
+                        
+                        if auth_type == 'managed_identity':
+                            credential = DefaultAzureCredential()
+                            token_provider = get_bearer_token_provider(
+                                credential,
+                                "https://cognitiveservices.azure.com/.default"
+                            )
+                            gpt_client = AzureOpenAI(
+                                api_version=api_version,
+                                azure_endpoint=endpoint,
+                                azure_ad_token_provider=token_provider
+                            )
+                        else:
+                            gpt_client = AzureOpenAI(
+                                api_version=api_version,
+                                azure_endpoint=endpoint,
+                                api_key=settings.get('azure_openai_gpt_key')
+                            )
+                    
+                    if not gpt_client or not gpt_model:
+                        yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
+                        return
+                        
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
+                    return
+                
+                # Load or create conversation (simplified)
+                if not conversation_id:
+                    conversation_id = str(uuid.uuid4())
+                    conversation_item = {
+                        'id': conversation_id,
+                        'user_id': user_id,
+                        'last_updated': datetime.utcnow().isoformat(),
+                        'title': 'New Conversation',
+                        'context': [],
+                        'tags': [],
+                        'strict': False
+                    }
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                else:
+                    try:
+                        conversation_item = cosmos_conversations_container.read_item(
+                            item=conversation_id, partition_key=conversation_id
+                        )
+                    except CosmosResourceNotFoundError:
+                        conversation_item = {
+                            'id': conversation_id,
+                            'user_id': user_id,
+                            'last_updated': datetime.utcnow().isoformat(),
+                            'title': 'New Conversation',
+                            'context': [],
+                            'tags': [],
+                            'strict': False
+                        }
+                        cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Determine chat type
+                actual_chat_type = 'personal'
+                if conversation_item.get('chat_type'):
+                    actual_chat_type = conversation_item['chat_type']
+                
+                # Save user message
+                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                
+                user_metadata = {}
+                current_user = get_current_user_info()
+                if current_user:
+                    user_metadata['user_info'] = {
+                        'user_id': current_user.get('userId'),
+                        'username': current_user.get('userPrincipalName'),
+                        'display_name': current_user.get('displayName'),
+                        'email': current_user.get('email'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                
+                user_metadata['button_states'] = {
+                    'image_generation': False,
+                    'document_search': hybrid_search_enabled
+                }
+                
+                # Document search scope and selections
+                if hybrid_search_enabled:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': True,
+                        'document_scope': document_scope,
+                        'selected_document_id': selected_document_id,
+                        'classification': classifications_to_send
+                    }
+                    
+                    # Get document details if specific document selected
+                    if selected_document_id and selected_document_id != "all":
+                        try:
+                            # Use the appropriate documents container based on scope
+                            if document_scope == 'group':
+                                cosmos_container = cosmos_group_documents_container
+                            elif document_scope == 'public':
+                                cosmos_container = cosmos_public_documents_container
+                            elif document_scope == 'personal':
+                                cosmos_container = cosmos_user_documents_container
+                            
+                            doc_query = "SELECT c.file_name, c.title, c.document_id, c.group_id FROM c WHERE c.id = @doc_id"
+                            doc_params = [{"name": "@doc_id", "value": selected_document_id}]
+                            doc_results = list(cosmos_container.query_items(
+                                query=doc_query, parameters=doc_params, enable_cross_partition_query=True
+                            ))
+                            if doc_results:
+                                doc_info = doc_results[0]
+                                user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
+                                user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
+                        except Exception as e:
+                            debug_print(f"Error retrieving document details: {e}")
+                    
+                    # Add scope-specific details
+                    if document_scope == 'group' and active_group_id:
+                        try:
+                            from functions_debug import debug_print
+                            debug_print(f"Workspace search - looking up group for id: {active_group_id}")
+                            group_doc = find_group_by_id(active_group_id)
+                            debug_print(f"Workspace search group lookup result: {group_doc}")
+                            
+                            if group_doc and group_doc.get('name'):
+                                group_name = group_doc.get('name')
+                                user_metadata['workspace_search']['group_name'] = group_name
+                                debug_print(f"Workspace search - set group_name to: {group_name}")
+                            else:
+                                debug_print(f"Workspace search - no group found or no name for id: {active_group_id}")
+                                user_metadata['workspace_search']['group_name'] = None
+                                
+                        except Exception as e:
+                            debug_print(f"Error retrieving group details: {e}")
+                            user_metadata['workspace_search']['group_name'] = None
+                            import traceback
+                            traceback.print_exc()
+                    
+                    if document_scope == 'public' and active_public_workspace_id:
+                        # Check if public workspace status allows chat operations
+                        try:
+                            from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                            workspace_doc = find_public_workspace_by_id(active_public_workspace_id)
+                            if workspace_doc:
+                                allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                                if not allowed:
+                                    yield f"data: {json.dumps({'error': reason})}\n\n"
+                                    return
+                        except Exception as e:
+                            debug_print(f"Error checking public workspace status: {e}")
+                        
+                        user_metadata['workspace_search']['active_public_workspace_id'] = active_public_workspace_id
+                else:
+                    user_metadata['workspace_search'] = {
+                        'search_enabled': False
+                    }
+                
+                user_metadata['model_selection'] = {
+                    'selected_model': gpt_model,
+                    'frontend_requested_model': frontend_gpt_model,
+                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'streaming': 'Enabled'
+                }
+                
+                user_metadata['chat_context'] = {
+                    'conversation_id': conversation_id
+                }
+                
+                # --- Threading Logic for Streaming ---
+                previous_thread_id = None
+                try:
+                    last_msg_query = f"""
+                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                        FROM c 
+                        WHERE c.conversation_id = '{conversation_id}' 
+                        ORDER BY c.timestamp DESC
+                    """
+                    last_msgs = list(cosmos_messages_container.query_items(
+                        query=last_msg_query,
+                        partition_key=conversation_id
+                    ))
+                    if last_msgs:
+                        previous_thread_id = last_msgs[0].get('thread_id')
+                except Exception as e:
+                    debug_print(f"Error fetching last message for threading: {e}")
+
+                current_user_thread_id = str(uuid.uuid4())
+                latest_thread_id = current_user_thread_id
+                
+                # Add thread information to user metadata
+                user_metadata['thread_info'] = {
+                    'thread_id': current_user_thread_id,
+                    'previous_thread_id': previous_thread_id,
+                    'active_thread': True,
+                    'thread_attempt': 1
+                }
+                
+                user_message_doc = {
+                    'id': user_message_id,
+                    'conversation_id': conversation_id,
+                    'role': 'user',
+                    'content': user_message,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'model_deployment_name': None,
+                    'metadata': user_metadata
+                }
+                
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Log activity
+                try:
+                    log_chat_activity(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_type='user_message',
+                        message_length=len(user_message) if user_message else 0,
+                        has_document_search=hybrid_search_enabled,
+                        has_image_generation=False,
+                        document_scope=document_scope,
+                        chat_context=actual_chat_type
+                    )
+                except Exception as e:
+                    debug_print(f"Activity logging error: {e}")
+                
+                # Update conversation title
+                if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:
+                    new_title = (user_message[:30] + '...') if len(user_message) > 30 else user_message
+                    conversation_item['title'] = new_title
+                
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.upsert_item(conversation_item)
+                
+                # Hybrid search (if enabled)
+                combined_documents = []
+                if hybrid_search_enabled:
+                    try:
+                        search_args = {
+                            "query": search_query,
+                            "user_id": user_id,
+                            "top_n": 12,
+                            "doc_scope": document_scope,
+                        }
+                        
+                        if active_group_id and (document_scope == 'group' or document_scope == 'all' or chat_type == 'group'):
+                            search_args['active_group_id'] = active_group_id
+                        
+                        # Add active_public_workspace_id when:
+                        # 1. Document scope is 'public' or
+                        # 2. Document scope is 'all' and public workspaces are enabled
+                        if active_public_workspace_id and (document_scope == 'public' or document_scope == 'all'):
+                            search_args['active_public_workspace_id'] = active_public_workspace_id
+                        
+                        if selected_document_id:
+                            search_args['document_id'] = selected_document_id
+                        
+                        search_results = hybrid_search(**search_args)
+                    except Exception as e:
+                        debug_print(f"Error during hybrid search: {e}")
+                    
+                    if search_results:
+                        retrieved_texts = []
+                        
+                        for doc in search_results:
+                            chunk_text = doc.get('chunk_text', '')
+                            file_name = doc.get('file_name', 'Unknown')
+                            version = doc.get('version', 'N/A')
+                            chunk_sequence = doc.get('chunk_sequence', 0)
+                            page_number = doc.get('page_number') or chunk_sequence or 1
+                            citation_id = doc.get('id', str(uuid.uuid4()))
+                            classification = doc.get('document_classification')
+                            chunk_id = doc.get('chunk_id', str(uuid.uuid4()))
+                            score = doc.get('score', 0.0)
+                            group_id = doc.get('group_id', None)
+                            
+                            citation = f"(Source: {file_name}, Page: {page_number}) [#{citation_id}]"
+                            retrieved_texts.append(f"{chunk_text}\n{citation}")
+                            
+                            combined_documents.append({
+                                "file_name": file_name,
+                                "citation_id": citation_id,
+                                "page_number": page_number,
+                                "version": version,
+                                "classification": classification,
+                                "chunk_text": chunk_text,
+                                "chunk_sequence": chunk_sequence,
+                                "chunk_id": chunk_id,
+                                "score": score,
+                                "group_id": group_id,
+                            })
+                            
+                            # Build citation data to match non-streaming format
+                            citation_data = {
+                                "file_name": file_name,
+                                "citation_id": citation_id,
+                                "page_number": page_number,
+                                "chunk_id": chunk_id,
+                                "chunk_sequence": chunk_sequence,
+                                "score": score,
+                                "group_id": group_id,
+                                "version": version,
+                                "classification": classification
+                            }
+                            hybrid_citations_list.append(citation_data)
+                        
+                        # --- Extract metadata (keywords/abstract) for additional citations ---
+                        if settings.get('enable_extract_meta_data', False):
+                            from functions_documents import get_document_metadata_for_citations
+                            
+                            processed_doc_ids = set()
+                            
+                            for doc in search_results:
+                                doc_id = doc.get('document_id') or doc.get('id')
+                                if not doc_id or doc_id in processed_doc_ids:
+                                    continue
+                                
+                                processed_doc_ids.add(doc_id)
+                                
+                                file_name = doc.get('file_name', 'Unknown')
+                                doc_group_id = doc.get('group_id', None)
+                                
+                                # Map document_scope to correct parameter names for the function
+                                metadata_params = {'user_id': user_id}
+                                if document_scope == 'group':
+                                    metadata_params['group_id'] = active_group_id
+                                elif document_scope == 'public':
+                                    metadata_params['public_workspace_id'] = active_public_workspace_id
+                                
+                                metadata = get_document_metadata_for_citations(
+                                    doc_id, 
+                                    **metadata_params
+                                )
+                                
+                                if metadata:
+                                    keywords = metadata.get('keywords', [])
+                                    abstract = metadata.get('abstract', '')
+                                    
+                                    if keywords and len(keywords) > 0:
+                                        keywords_citation_id = f"{doc_id}_keywords"
+                                        keywords_text = ', '.join(keywords) if isinstance(keywords, list) else str(keywords)
+                                        
+                                        keywords_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": keywords_citation_id,
+                                            "page_number": "Metadata",
+                                            "chunk_id": keywords_citation_id,
+                                            "chunk_sequence": 9999,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "keywords",
+                                            "metadata_content": keywords_text
+                                        }
+                                        hybrid_citations_list.append(keywords_citation)
+                                        combined_documents.append(keywords_citation)
+                                        
+                                        keywords_context = f"Document Keywords ({file_name}): {keywords_text}"
+                                        retrieved_texts.append(keywords_context)
+                                    
+                                    if abstract and len(abstract.strip()) > 0:
+                                        abstract_citation_id = f"{doc_id}_abstract"
+                                        
+                                        abstract_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": abstract_citation_id,
+                                            "page_number": "Metadata",
+                                            "chunk_id": abstract_citation_id,
+                                            "chunk_sequence": 9998,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "abstract",
+                                            "metadata_content": abstract
+                                        }
+                                        hybrid_citations_list.append(abstract_citation)
+                                        combined_documents.append(abstract_citation)
+                                        
+                                        abstract_context = f"Document Abstract ({file_name}): {abstract}"
+                                        retrieved_texts.append(abstract_context)
+                                    
+                                    vision_analysis = metadata.get('vision_analysis')
+                                    if vision_analysis:
+                                        vision_citation_id = f"{doc_id}_vision"
+                                        
+                                        vision_description = vision_analysis.get('description', '')
+                                        vision_objects = vision_analysis.get('objects', [])
+                                        vision_text = vision_analysis.get('text', '')
+                                        
+                                        vision_content = f"AI Vision Analysis:\n"
+                                        if vision_description:
+                                            vision_content += f"Description: {vision_description}\n"
+                                        if vision_objects:
+                                            vision_content += f"Objects: {', '.join(vision_objects)}\n"
+                                        if vision_text:
+                                            vision_content += f"Text in Image: {vision_text}\n"
+                                        
+                                        vision_citation = {
+                                            "file_name": file_name,
+                                            "citation_id": vision_citation_id,
+                                            "page_number": "AI Vision",
+                                            "chunk_id": vision_citation_id,
+                                            "chunk_sequence": 9997,
+                                            "score": 0.0,
+                                            "group_id": doc_group_id,
+                                            "version": doc.get('version', 'N/A'),
+                                            "classification": doc.get('document_classification'),
+                                            "metadata_type": "vision",
+                                            "metadata_content": vision_content
+                                        }
+                                        hybrid_citations_list.append(vision_citation)
+                                        combined_documents.append(vision_citation)
+                                        
+                                        vision_context = f"AI Vision Analysis ({file_name}): {vision_content}"
+                                        retrieved_texts.append(vision_context)
+                        
+                        retrieved_content = "\n\n".join(retrieved_texts)
+                        system_prompt_search = f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+
+Retrieved Excerpts:
+{retrieved_content}
+
+Based *only* on the information provided above, answer the user's query. If the answer isn't in the excerpts, say so.
+
+Example
+User: What is the policy on double dipping?
+Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+"""
+                        
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': system_prompt_search,
+                            'documents': combined_documents
+                        })
+                        
+                        # Reorder hybrid citations list in descending order based on page_number
+                        hybrid_citations_list.sort(key=lambda x: x.get('page_number', 0), reverse=True)
+                
+                # Update message chat type
+                message_chat_type = None
+                if hybrid_search_enabled and search_results and len(search_results) > 0:
+                    if document_scope == 'group':
+                        message_chat_type = 'group'
+                    elif document_scope == 'public':
+                        message_chat_type = 'public'
+                    else:
+                        message_chat_type = 'personal'
+                else:
+                    message_chat_type = 'Model'
+                
+                user_metadata['chat_context']['chat_type'] = message_chat_type
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
+                
+                # Prepare conversation history
+                conversation_history_for_api = []
+                
+                try:
+                    all_messages_query = "SELECT * FROM c WHERE c.conversation_id = @conv_id ORDER BY c.timestamp ASC"
+                    params_all = [{"name": "@conv_id", "value": conversation_id}]
+                    all_messages = list(cosmos_messages_container.query_items(
+                        query=all_messages_query, parameters=params_all, 
+                        partition_key=conversation_id, enable_cross_partition_query=True
+                    ))
+                    
+                    # Sort messages using threading logic
+                    all_messages = sort_messages_by_thread(all_messages)
+                    
+                    total_messages = len(all_messages)
+                    num_recent_messages = min(total_messages, conversation_history_limit)
+                    recent_messages = all_messages[-num_recent_messages:]
+                    
+                    # Add augmentation messages
+                    for aug_msg in system_messages_for_augmentation:
+                        conversation_history_for_api.append({
+                            'role': aug_msg['role'],
+                            'content': aug_msg['content']
+                        })
+                    
+                    # Add recent messages
+                    allowed_roles_in_history = ['user', 'assistant']
+                    for message in recent_messages:
+                        if message.get('role') in allowed_roles_in_history:
+                            conversation_history_for_api.append({
+                                'role': message['role'],
+                                'content': message.get('content', '')
+                            })
+                    
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
+                    return
+                
+                # Add system prompt
+                default_system_prompt = settings.get('default_system_prompt', '').strip()
+                if default_system_prompt:
+                    has_general_system_prompt = any(
+                        msg.get('role') == 'system' and not (
+                            "retrieved document excerpts" in msg.get('content', '')
+                        )
+                        for msg in conversation_history_for_api
+                    )
+                    if not has_general_system_prompt:
+                        conversation_history_for_api.insert(0, {
+                            'role': 'system',
+                            'content': default_system_prompt
+                        })
+                
+                # Check if agents are enabled and should be used
+                selected_agent = None
+                agent_name_used = None
+                agent_display_name_used = None
+                use_agent_streaming = False
+                
+                if enable_semantic_kernel and user_enable_agents:
+                    # Agent selection logic (similar to non-streaming)
+                    kernel = get_kernel()
+                    all_agents = get_kernel_agents()
+                    
+                    if all_agents:
+                        agent_name_to_select = None
+                        if per_user_semantic_kernel:
+                            # user_settings.get('selected_agent') returns a dict with agent info
+                            selected_agent_info = user_settings.get('selected_agent')
+                            if isinstance(selected_agent_info, dict):
+                                agent_name_to_select = selected_agent_info.get('name')
+                            elif isinstance(selected_agent_info, str):
+                                agent_name_to_select = selected_agent_info
+                            debug_print(f"[Streaming] Per-user agent name to select: {agent_name_to_select}")
+                        else:
+                            global_selected_agent_info = settings.get('global_selected_agent')
+                            if global_selected_agent_info:
+                                agent_name_to_select = global_selected_agent_info.get('name')
+                            debug_print(f"[Streaming] Global agent name to select: {agent_name_to_select}")
+                        
+                        # Find the agent
+                        agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
+                        for agent in agent_iter:
+                            agent_obj_name = getattr(agent, 'name', None)
+                            debug_print(f"[Streaming] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
+                            if agent_name_to_select and agent_obj_name == agent_name_to_select:
+                                selected_agent = agent
+                                debug_print(f"[Streaming] ✅ Found matching agent: {agent_obj_name}")
+                                break
+                        
+                        # Fallback to default agent
+                        if not selected_agent:
+                            for agent in agent_iter:
+                                if getattr(agent, 'default_agent', False):
+                                    selected_agent = agent
+                                    debug_print(f"[Streaming] Using default agent: {getattr(agent, 'name', 'unknown')}")
+                                    break
+                        
+                        # Fallback to first agent
+                        if not selected_agent:
+                            selected_agent = next(iter(agent_iter), None)
+                            if selected_agent:
+                                debug_print(f"[Streaming] Using first agent: {getattr(selected_agent, 'name', 'unknown')}")
+                        
+                        if selected_agent:
+                            use_agent_streaming = True
+                            agent_name_used = getattr(selected_agent, 'name', 'agent')
+                            agent_display_name_used = getattr(selected_agent, 'display_name', agent_name_used)
+                            actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
+                            debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
+                        else:
+                            debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+                
+                # Stream the response
+                accumulated_content = ""
+                token_usage_data = None  # Will be populated from final stream chunk
+                assistant_message_id = f"{conversation_id}_assistant_{int(time.time())}_{random.randint(1000,9999)}"
+                final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
+                
+                # DEBUG: Check agent streaming decision
+                debug_print(f"[DEBUG] use_agent_streaming={use_agent_streaming}, selected_agent={selected_agent is not None}")
+                debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, user_enable_agents={user_enable_agents}")
+                
+                try:
+                    if use_agent_streaming and selected_agent:
+                        # Stream from agent using invoke_stream
+                        debug_print(f"--- Streaming from Agent: {agent_name_used} ---")
+                        
+                        # Import required classes
+                        from semantic_kernel.contents.chat_message_content import ChatMessageContent
+                        
+                        # Convert conversation history to ChatMessageContent (same as non-streaming)
+                        agent_message_history = [
+                            ChatMessageContent(
+                                role=msg["role"],
+                                content=msg["content"],
+                                metadata=msg.get("metadata", {})
+                            )
+                            for msg in conversation_history_for_api
+                        ]
+                        
+                        # Stream agent responses - collect chunks first then yield
+                        async def stream_agent_async():
+                            """Collect all streaming chunks from agent"""
+                            chunks = []
+                            usage_data = None
+                            
+                            # invoke_stream doesn't need a thread parameter - it works like invoke but streams
+                            async for response in selected_agent.invoke_stream(messages=agent_message_history):
+                                # Extract content from StreamingChatMessageContent
+                                if hasattr(response, 'content') and response.content:
+                                    chunks.append(str(response.content))
+                                elif isinstance(response, str):
+                                    chunks.append(response)
+                                else:
+                                    # Fallback: convert to string
+                                    chunks.append(str(response))
+                                
+                                # Check for usage metadata in the last response
+                                # Don't break early - keep collecting all chunks
+                                if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
+                                    usage = response.metadata.get('usage')
+                                    if usage:
+                                        usage_data = usage  # Keep updating, last one wins
+                            
+                            return chunks, usage_data
+                        
+                        # Execute async streaming
+                        import asyncio
+                        try:
+                            # Try to get existing event loop
+                            loop = asyncio.get_event_loop()
+                            if loop.is_closed():
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                        except RuntimeError:
+                            # No event loop in current thread
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        try:
+                            # Run streaming and collect chunks and usage
+                            chunks, stream_usage = loop.run_until_complete(stream_agent_async())
+                            
+                            # Yield chunks to frontend
+                            for chunk_content in chunks:
+                                accumulated_content += chunk_content
+                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                            
+                            # Try to capture token usage from stream metadata
+                            if stream_usage:
+                                # stream_usage is a CompletionUsage object, not a dict
+                                prompt_tokens = getattr(stream_usage, 'prompt_tokens', 0)
+                                completion_tokens = getattr(stream_usage, 'completion_tokens', 0)
+                                total_tokens = getattr(stream_usage, 'total_tokens', None)
+                                
+                                # Calculate total if not provided
+                                if total_tokens is None or total_tokens == 0:
+                                    total_tokens = prompt_tokens + completion_tokens
+                                
+                                token_usage_data = {
+                                    'prompt_tokens': prompt_tokens,
+                                    'completion_tokens': completion_tokens,
+                                    'total_tokens': total_tokens,
+                                    'captured_at': datetime.utcnow().isoformat()
+                                }
+                                debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                        except Exception as stream_error:
+                            debug_print(f"❌ Agent streaming error: {stream_error}")
+                            import traceback
+                            traceback.print_exc()
+                            yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
+                            return
+                        
+                        # Collect token usage from kernel services if not captured from stream
+                        if not token_usage_data:
+                            kernel = get_kernel()
+                            if kernel:
+                                try:
+                                    for service in getattr(kernel, "services", {}).values():
+                                        prompt_tokens = getattr(service, "prompt_tokens", None)
+                                        completion_tokens = getattr(service, "completion_tokens", None)
+                                        total_tokens = getattr(service, "total_tokens", None)
+                                        
+                                        if prompt_tokens is not None or completion_tokens is not None:
+                                            token_usage_data = {
+                                                'prompt_tokens': prompt_tokens or 0,
+                                                'completion_tokens': completion_tokens or 0,
+                                                'total_tokens': total_tokens or (prompt_tokens or 0) + (completion_tokens or 0),
+                                                'captured_at': datetime.utcnow().isoformat()
+                                            }
+                                            debug_print(f"[Agent Streaming Tokens] From kernel service - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                                            break
+                                except Exception as e:
+                                    debug_print(f"Warning: Could not collect token usage from kernel services: {e}")
+                        
+                        # Capture agent citations after streaming completes
+                        # Plugin invocations should have been logged during agent execution
+                        plugin_logger = get_plugin_logger()
+                        
+                        # Debug: Check all invocations first
+                        all_invocations = plugin_logger.get_recent_invocations()
+                        debug_print(f"[Agent Streaming] Total plugin invocations logged: {len(all_invocations)}")
+                        
+                        plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+                        debug_print(f"[Agent Streaming] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
+                        
+                        # If no invocations found, check if plugins were called at all
+                        if len(plugin_invocations) == 0 and len(all_invocations) > 0:
+                            debug_print(f"[Agent Streaming] ⚠️ Plugin invocations exist but not for this conversation - possible filtering issue")
+                            # Debug: show last few invocations
+                            for inv in all_invocations[-3:]:
+                                debug_print(f"[Agent Streaming] Recent invocation: user={inv.user_id}, conv={inv.conversation_id}, plugin={inv.plugin_name}.{inv.function_name}")
+                        
+                        # Convert to citation format
+                        for inv in plugin_invocations:
+                            timestamp_str = None
+                            if inv.timestamp:
+                                if hasattr(inv.timestamp, 'isoformat'):
+                                    timestamp_str = inv.timestamp.isoformat()
+                                else:
+                                    timestamp_str = str(inv.timestamp)
+                            
+                            def make_json_serializable(obj):
+                                if obj is None:
+                                    return None
+                                elif isinstance(obj, (str, int, float, bool)):
+                                    return obj
+                                elif isinstance(obj, dict):
+                                    return {str(k): make_json_serializable(v) for k, v in obj.items()}
+                                elif isinstance(obj, (list, tuple)):
+                                    return [make_json_serializable(item) for item in obj]
+                                else:
+                                    return str(obj)
+                            
+                            citation = {
+                                'tool_name': f"{inv.plugin_name}.{inv.function_name}",
+                                'function_name': inv.function_name,
+                                'plugin_name': inv.plugin_name,
+                                'function_arguments': make_json_serializable(inv.parameters),
+                                'function_result': make_json_serializable(inv.result),
+                                'duration_ms': inv.duration_ms,
+                                'timestamp': timestamp_str,
+                                'success': inv.success,
+                                'error_message': make_json_serializable(inv.error_message),
+                                'user_id': inv.user_id
+                            }
+                            agent_citations_list.append(citation)
+                        
+                        debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
+                        final_model_used = actual_model_used
+                    
+                    else:
+                        # Stream from regular GPT model (non-agent)
+                        debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
+                        
+                        # Prepare stream parameters
+                        stream_params = {
+                            'model': gpt_model,
+                            'messages': conversation_history_for_api,
+                            'stream': True,
+                            'stream_options': {'include_usage': True}  # Request token usage in final chunk
+                        }
+                        
+                        # Add reasoning_effort if provided and not 'none'
+                        if reasoning_effort and reasoning_effort != 'none':
+                            stream_params['reasoning_effort'] = reasoning_effort
+                            debug_print(f"Using reasoning effort: {reasoning_effort}")
+                        
+                        final_model_used = gpt_model
+                        
+                        try:
+                            stream = gpt_client.chat.completions.create(**stream_params)
+                        except Exception as e:
+                            # Check if error is related to reasoning_effort parameter
+                            error_str = str(e).lower()
+                            if reasoning_effort and reasoning_effort != 'none' and (
+                                'reasoning_effort' in error_str or 
+                                'unrecognized request argument' in error_str or
+                                'invalid_request_error' in error_str
+                            ):
+                                debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
+                                # Retry without reasoning_effort
+                                stream_params.pop('reasoning_effort', None)
+                                stream = gpt_client.chat.completions.create(**stream_params)
+                            else:
+                                raise
+                        
+                        for chunk in stream:
+                            if chunk.choices and len(chunk.choices) > 0:
+                                delta = chunk.choices[0].delta
+                                if delta.content:
+                                    accumulated_content += delta.content
+                                    yield f"data: {json.dumps({'content': delta.content})}\n\n"
+                            
+                            # Capture token usage from final chunk with stream_options
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                token_usage_data = {
+                                    'prompt_tokens': chunk.usage.prompt_tokens,
+                                    'completion_tokens': chunk.usage.completion_tokens,
+                                    'total_tokens': chunk.usage.total_tokens,
+                                    'captured_at': datetime.utcnow().isoformat()
+                                }
+                                debug_print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+                    
+                    # Stream complete - save message and send final metadata
+                    # Get user thread info to maintain thread consistency
+                    user_thread_id = None
+                    user_previous_thread_id = None
+                    try:
+                        user_msg = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id
+                        )
+                        user_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+                        user_previous_thread_id = user_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+                    except Exception as e:
+                        debug_print(f"Warning: Could not retrieve thread_id from user message: {e}")
+                    
+                    assistant_doc = {
+                        'id': assistant_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'assistant',
+                        'content': accumulated_content,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'augmented': bool(system_messages_for_augmentation),
+                        'hybrid_citations': hybrid_citations_list,
+                        'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                        'agent_citations': agent_citations_list,
+                        'user_message': user_message,
+                        'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                        'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                        'agent_name': agent_name_used if use_agent_streaming else None,
+                        'metadata': {
+                            'reasoning_effort': reasoning_effort,
+                            'thread_info': {
+                                'thread_id': user_thread_id,
+                                'previous_thread_id': user_previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': 1
+                            },
+                            'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
+                        }
+                    }
+                    cosmos_messages_container.upsert_item(assistant_doc)
+                    
+                    # Log chat token usage to activity_logs for easy reporting
+                    if token_usage_data and token_usage_data.get('total_tokens'):
+                        try:
+                            from functions_activity_logging import log_token_usage
+                            
+                            # Determine workspace type based on active group/public workspace
+                            workspace_type = 'personal'
+                            if active_public_workspace_id:
+                                workspace_type = 'public'
+                            elif active_group_id:
+                                workspace_type = 'group'
+                            
+                            log_token_usage(
+                                user_id=user_id,
+                                token_type='chat',
+                                total_tokens=token_usage_data.get('total_tokens'),
+                                model=final_model_used if use_agent_streaming else gpt_model,
+                                workspace_type=workspace_type,
+                                prompt_tokens=token_usage_data.get('prompt_tokens'),
+                                completion_tokens=token_usage_data.get('completion_tokens'),
+                                conversation_id=conversation_id,
+                                message_id=assistant_message_id,
+                                group_id=active_group_id,
+                                public_workspace_id=active_public_workspace_id,
+                                additional_context={
+                                    'agent_name': agent_name_used if use_agent_streaming else None,
+                                    'augmented': bool(system_messages_for_augmentation),
+                                    'reasoning_effort': reasoning_effort
+                                }
+                            )
+                            debug_print(f"✅ Logged streaming chat token usage: {token_usage_data.get('total_tokens')} tokens")
+                        except Exception as log_error:
+                            debug_print(f"⚠️  Warning: Failed to log streaming chat token usage: {log_error}")
+                            # Don't fail the chat flow if logging fails
+                    
+                    # Update conversation
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    
+                    try:
+                        conversation_item = collect_conversation_metadata(
+                            user_message=user_message,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            active_group_id=active_group_id,
+                            document_scope=document_scope,
+                            selected_document_id=selected_document_id,
+                            model_deployment=gpt_model,
+                            hybrid_search_enabled=hybrid_search_enabled,
+                            image_gen_enabled=False,
+                            selected_documents=combined_documents if combined_documents else None,
+                            selected_agent=None,
+                            selected_agent_details=None,
+                            search_results=search_results if search_results else None,
+                            conversation_item=conversation_item
+                        )
+                    except Exception as e:
+                        debug_print(f"Error collecting conversation metadata: {e}")
+                    
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    
+                    # Send final message with metadata
+                    final_data = {
+                        'done': True,
+                        'conversation_id': conversation_id,
+                        'conversation_title': conversation_item['title'],
+                        'classification': conversation_item.get('classification', []),
+                        'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                        'message_id': assistant_message_id,
+                        'user_message_id': user_message_id,
+                        'augmented': bool(system_messages_for_augmentation),
+                        'hybrid_citations': hybrid_citations_list,
+                        'agent_citations': agent_citations_list,
+                        'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                        'agent_name': agent_name_used if use_agent_streaming else None,
+                        'full_content': accumulated_content
+                    }
+                    yield f"data: {json.dumps(final_data)}\n\n"
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    debug_print(f"Error during streaming: {error_msg}")
+                    
+                    # Save partial response if we have content
+                    if accumulated_content:
+                        current_assistant_thread_id = str(uuid.uuid4())
+                        
+                        assistant_doc = {
+                            'id': assistant_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'assistant',
+                            'content': accumulated_content,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'augmented': bool(system_messages_for_augmentation),
+                            'hybrid_citations': hybrid_citations_list,
+                            'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
+                            'agent_citations': agent_citations_list,
+                            'user_message': user_message,
+                            'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'agent_display_name': agent_display_name_used if use_agent_streaming else None,
+                            'agent_name': agent_name_used if use_agent_streaming else None,
+                            'metadata': {
+                                'incomplete': True,
+                                'error': error_msg,
+                                'reasoning_effort': reasoning_effort,
+                                'thread_info': {
+                                    'thread_id': user_thread_id,
+                                    'previous_thread_id': user_previous_thread_id,
+                                    'active_thread': True,
+                                    'thread_attempt': 1
+                                }
+                            }
+                        }
+                        try:
+                            cosmos_messages_container.upsert_item(assistant_doc)
+                        except:
+                            pass
+                    
+                    yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
+            
+            except Exception as e:
+                import traceback
+                error_traceback = traceback.format_exc()
+                debug_print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
+                debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
+                yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+
+    @app.route('/api/message/<message_id>/mask', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def mask_message_api(message_id):
+        """
+        API endpoint to mask/unmask messages or parts of messages.
+        This prevents masked content from being sent to the AI model in conversation history.
+        """
+        try:
+            settings = get_settings()
+            data = request.get_json()
+            user_id = get_current_user_id()
+            
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+            
+            # Get action: "mask_all", "mask_selection", or "unmask_all"
+            action = data.get('action')
+            selection = data.get('selection', {})
+            user_display_name = data.get('display_name', 'Unknown User')
+            
+            # Validate action
+            if action not in ['mask_all', 'mask_selection', 'unmask_all']:
+                return jsonify({'error': 'Invalid action'}), 400
+            
+            # Fetch the message
+            try:
+                # Query for the message (need conversation_id for partition key)
+                query = "SELECT * FROM c WHERE c.id = @message_id"
+                params = [{"name": "@message_id", "value": message_id}]
+                
+                # We need to find the message across all partitions first
+                # This is inefficient but necessary without knowing the conversation_id
+                message_results = list(cosmos_messages_container.query_items(
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True
+                ))
+                
+                if not message_results:
+                    return jsonify({'error': 'Message not found'}), 404
+                
+                message_doc = message_results[0]
+                conversation_id = message_doc.get('conversation_id')
+                
+                # Verify ownership - only the message author can mask their message
+                message_user_id = message_doc.get('metadata', {}).get('user_info', {}).get('user_id')
+                if not message_user_id:
+                    # Fallback: check conversation ownership for backwards compatibility
+                    # All messages in a conversation (user, assistant, system) belong to the conversation owner
+                    try:
+                        conversation = cosmos_conversations_container.read_item(
+                            item=conversation_id,
+                            partition_key=conversation_id
+                        )
+                        if conversation.get('user_id') != user_id:
+                            return jsonify({'error': 'You can only mask messages from your own conversations'}), 403
+                    except:
+                        return jsonify({'error': 'Conversation not found'}), 404
+                elif message_user_id != user_id:
+                    return jsonify({'error': 'You can only mask your own messages'}), 403
+                
+            except Exception as e:
+                debug_print(f"Error fetching message {message_id}: {str(e)}")
+                return jsonify({'error': f'Error fetching message: {str(e)}'}), 500
+            
+            # Initialize metadata if it doesn't exist
+            if 'metadata' not in message_doc:
+                message_doc['metadata'] = {}
+            
+            # Process based on action
+            if action == 'mask_all':
+                # Mask the entire message
+                message_doc['metadata']['masked'] = True
+                message_doc['metadata']['masked_by_user_id'] = user_id
+                message_doc['metadata']['masked_timestamp'] = datetime.now(timezone.utc).isoformat()
+                message_doc['metadata']['masked_by_display_name'] = user_display_name
+                
+            elif action == 'unmask_all':
+                # Unmask the entire message and clear all masked ranges
+                message_doc['metadata']['masked'] = False
+                message_doc['metadata']['masked_ranges'] = []
+                message_doc['metadata']['masked_by_user_id'] = None
+                message_doc['metadata']['masked_timestamp'] = None
+                message_doc['metadata']['masked_by_display_name'] = None
+                
+            elif action == 'mask_selection':
+                # Mask a selection of text
+                start = selection.get('start')
+                end = selection.get('end')
+                text = selection.get('text', '')
+                
+                if start is None or end is None:
+                    return jsonify({'error': 'Selection start and end required'}), 400
+                
+                # Initialize masked_ranges if it doesn't exist
+                if 'masked_ranges' not in message_doc['metadata']:
+                    message_doc['metadata']['masked_ranges'] = []
+                
+                # Create new masked range
+                new_range = {
+                    'id': str(uuid.uuid4()),
+                    'user_id': user_id,
+                    'display_name': user_display_name,
+                    'start': start,
+                    'end': end,
+                    'text': text,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+                # Add the new range
+                message_doc['metadata']['masked_ranges'].append(new_range)
+                
+                # Sort and merge overlapping/adjacent ranges
+                message_doc['metadata']['masked_ranges'] = merge_masked_ranges(
+                    message_doc['metadata']['masked_ranges']
+                )
+            
+            # Update the message in Cosmos DB
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                debug_print(f"Error updating message {message_id}: {str(e)}")
+                return jsonify({'error': f'Error updating message: {str(e)}'}), 500
+            
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'masked': message_doc['metadata'].get('masked', False),
+                'masked_ranges': message_doc['metadata'].get('masked_ranges', [])
+            }), 200
+            
+        except Exception as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            debug_print(f"[MASK API ERROR] Unhandled exception: {str(e)}")
+            debug_print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
+            return jsonify({
+                'error': f'Internal server error: {str(e)}',
+                'details': error_traceback if app.debug else None
+            }), 500
+
+
+def merge_masked_ranges(ranges):
+    """
+    Merge overlapping and adjacent masked ranges.
+    Preserves the earliest timestamp and user info for merged ranges.
+    """
+    if not ranges:
+        return []
+    
+    # Sort by start position
+    sorted_ranges = sorted(ranges, key=lambda x: x['start'])
+    merged = [sorted_ranges[0]]
+    
+    for current in sorted_ranges[1:]:
+        last_merged = merged[-1]
+        
+        # Check if current range overlaps or is adjacent to the last merged range
+        if current['start'] <= last_merged['end']:
+            # Merge: extend the end if current goes further
+            if current['end'] > last_merged['end']:
+                last_merged['end'] = current['end']
+                # Update text to cover merged range
+                last_merged['text'] = last_merged['text'] + current['text'][last_merged['end'] - current['start']:]
+            # Keep the earliest timestamp
+            if current['timestamp'] < last_merged['timestamp']:
+                last_merged['timestamp'] = current['timestamp']
+        else:
+            # No overlap, add as separate range
+            merged.append(current)
+    
+    return merged
+
+
+def remove_masked_content(content, masked_ranges):
+    """
+    Remove masked portions from message content.
+    Works backwards through sorted ranges to maintain correct offsets.
+    """
+    if not masked_ranges or not content:
+        return content
+    
+    # Sort ranges by start position (descending) to work backwards
+    sorted_ranges = sorted(masked_ranges, key=lambda x: x['start'], reverse=True)
+    
+    # Create a list from content for easier manipulation
+    result = content
+    
+    # Remove masked ranges working backwards to maintain offsets
+    for range_item in sorted_ranges:
+        start = range_item['start']
+        end = range_item['end']
+        
+        # Ensure indices are within bounds
+        if start < 0:
+            start = 0
+        if end > len(result):
+            end = len(result)
+        
+        # Remove the masked portion
+        if start < end:
+            result = result[:start] + result[end:]
+    
+    return result

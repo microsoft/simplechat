@@ -145,6 +145,28 @@ app_settings.app_title }} {% endblock %} {% block head %}
   #group-dropdown-button {
     text-align: left;
   }
+  
+  /* Group status badges */
+  .group-status-badge {
+    display: inline-block;
+    padding: 0.2em 0.5em;
+    font-size: 0.75em;
+    font-weight: 600;
+    margin-left: 0.5rem;
+    border-radius: 0.25rem;
+  }
+  .group-status-locked {
+    background-color: #ffc107;
+    color: #000;
+  }
+  .group-status-upload-disabled {
+    background-color: #17a2b8;
+    color: #fff;
+  }
+  .group-status-inactive {
+    background-color: #dc3545;
+    color: #fff;
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="container">
@@ -189,6 +211,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
     <span id="user-role" class="fw-bold"></span>
   </div>
 
+  <!-- Group Status Alert (shown for locked, upload_disabled, inactive) -->
+  <div class="alert d-none" id="group-status-alert">
+    <!-- Content populated by JavaScript -->
+  </div>
+
   <!-- Nav Tabs - Hide when left nav is enabled -->
   <ul class="nav nav-tabs{% if nav_layout == 'left' %} d-none{% endif %}" id="groupWorkspaceTab" role="tablist">
     <li class="nav-item" role="presentation">
@@ -219,6 +246,38 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Group Prompts
       </button>
     </li>
+    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="group-agents-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-agents-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-agents-tab"
+        aria-selected="false"
+      >
+        Group Agents
+      </button>
+    </li>
+    {% endif %}
+    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="group-plugins-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#group-plugins-tab"
+        type="button"
+        role="tab"
+        aria-controls="group-plugins-tab"
+        aria-selected="false"
+      >
+        Group Actions
+      </button>
+    </li>
+    {% endif %}
   </ul>
 
   <!-- Tab Panes -->
@@ -377,6 +436,26 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
         <!-- End Metadata Filters -->
 
+        <!-- Bulk Actions Bar (shown when documents are selected) -->
+        <div id="groupBulkActionsBar" class="alert alert-info py-2 mb-2" style="display: none;">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <strong><span id="groupSelectedCount">0</span> document(s) selected</strong>
+            </div>
+            <div>
+              <button type="button" class="btn btn-sm btn-danger me-2" id="group-delete-selected-btn">
+                <i class="bi bi-trash me-1"></i>Delete Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-warning me-2" id="group-remove-selected-btn">
+                <i class="bi bi-x-circle me-1"></i>Remove Selected
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary" id="group-clear-selection-btn">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Documents List Table -->
         <table class="table table-striped" id="group-documents-table">
           <thead>
@@ -385,17 +464,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <!-- Expand -->
               <th>File Name</th>
               <th>Title</th>
-              <th>Actions
-                <span id="group-bulk-actions" style="display: none; margin-left: 20px;">
-                  <!-- Bulk action buttons will appear here when documents are selected -->
-                  <button id="group-delete-selected-btn" class="btn btn-danger btn-sm me-2" style="display: none;" title="Delete selected documents">
-                    <i class="bi bi-trash"></i> Delete
-                  </button>
-                  <button id="group-remove-selected-btn" class="btn btn-warning btn-sm" style="display: none;" title="Remove selected documents">
-                    <i class="bi bi-x-circle"></i> Remove
-                  </button>
-                </span>
-              </th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -560,6 +629,106 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </div>
     </div>
     <!-- End GROUP PROMPTS TAB -->
+
+    {% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+    <!-- ============= GROUP AGENTS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-agents-tab"
+      role="tabpanel"
+      aria-labelledby="group-agents-tab-btn"
+    >
+      <div class="card p-3 my-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0 d-flex align-items-center gap-2">Group Agents</h5>
+          <button class="btn btn-success btn-sm" id="create-group-agent-btn">New Agent</button>
+        </div>
+        <div id="group-agents-permission-warning" class="alert alert-warning d-none">
+          You do not have permission to manage group agents.
+        </div>
+        <div class="mb-3">
+          <input
+            type="search"
+            class="form-control"
+            id="group-agents-search"
+            placeholder="Search group agents by name or description..."
+          />
+        </div>
+        <table class="table table-striped" id="group-agents-table">
+          <thead>
+            <tr>
+              <th>Display Name</th>
+              <th>Description</th>
+              <th style="width: 160px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="group-agents-table-body">
+            <tr class="table-loading-row">
+              <td colspan="3">
+                <div class="spinner-border spinner-border-sm me-2" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                Select a group to load agents.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="group-agents-error"></div>
+    </div>
+    <!-- End GROUP AGENTS TAB -->
+    {% endif %}
+
+    {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+    <!-- ============= GROUP ACTIONS TAB ============= -->
+    <div
+      class="tab-pane fade"
+      id="group-plugins-tab"
+      role="tabpanel"
+      aria-labelledby="group-plugins-tab-btn"
+    >
+      <div id="group-plugins-permission-warning" class="alert alert-warning d-none mt-3">
+        You do not have permission to manage group actions.
+      </div>
+      <div id="group-plugins-root" class="mt-3"></div>
+      <template id="group-plugins-table-template">
+        <div class="card p-3 my-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0 d-flex align-items-center gap-2">Group Actions</h5>
+            <button class="btn btn-success btn-sm" id="create-group-plugin-btn">New Action</button>
+          </div>
+          <div class="mb-3">
+            <input
+              type="search"
+              class="form-control"
+              id="group-plugins-search"
+              placeholder="Search group actions by name or description..."
+            />
+          </div>
+          <table class="table table-striped" id="group-plugins-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th style="width: 140px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="group-plugins-table-body">
+              <tr class="table-loading-row">
+                <td colspan="3">
+                  <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  Select a group to load actions.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+    <!-- End GROUP ACTIONS TAB -->
+    {% endif %}
   </div>
   <!-- End Tab Content -->
 </div>
@@ -729,6 +898,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   </div>
 </div>
 
+{% if settings.enable_semantic_kernel and (settings.allow_group_agents or settings.allow_group_plugins) %}
+<div>
+  {% include "_agent_modal.html" %}
+  {% include "_plugin_modal.html" %}
+</div>
+{% endif %}
+
 <!-- Group Share Document Modal -->
 <div class="modal fade" id="groupShareDocumentModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -838,6 +1014,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </script>
 
 <script>
+  window.current_user_id = "{{ session.get('user', {}).get('oid', '') }}";
   // --- Filter toggle button logic ---
   document.addEventListener("DOMContentLoaded", function() {
     // Group Documents tab
@@ -908,6 +1085,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let activeGroupId = null; // Crucial for group context
   let activeGroupName = ""; // Store name for display
 
+  function notifyGroupWorkspaceContext() {
+    window.groupWorkspaceContext = {
+      activeGroupId,
+      activeGroupName,
+      userRole: userRoleInActiveGroup
+    };
+    window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
+      detail: window.groupWorkspaceContext
+    }));
+  }
+
+  notifyGroupWorkspaceContext();
+
   // Document specific state
   let groupDocsCurrentPage = 1;
   let groupDocsPageSize = 10;
@@ -938,7 +1128,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     try {
       groupSimplemde = new SimpleMDE({
         element: groupPromptContentEl,
-        spellChecker: false
+        spellChecker: false,
+        autoDownloadFontAwesome: false
       });
     } catch (e) {
       console.error("Failed to initialize SimpleMDE for group prompts:", e);
@@ -1221,55 +1412,37 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function updateGroupBulkActionButtons() {
+    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
+    const selectedCountSpan = document.getElementById("groupSelectedCount");
     const deleteBtn = document.getElementById("group-delete-selected-btn");
     const removeBtn = document.getElementById("group-remove-selected-btn");
-    const bulkActions = document.getElementById("group-bulk-actions");
     
     if (groupSelectedDocuments.size > 0) {
-      // Show bulk actions container
-      if (bulkActions) bulkActions.style.display = "inline-block";
+      // Show bulk actions bar with count
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = "block";
+      }
+      if (selectedCountSpan) {
+        selectedCountSpan.textContent = groupSelectedDocuments.size;
+      }
       
       // Check if user can manage documents (delete permission)
       const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
       
-      // For group documents, we need to determine if any selected documents
-      // require different actions based on user permissions
-      let hasOwnedDocuments = false;
-      let hasNonOwnedDocuments = false;
-      
-      // Check ownership of selected documents
-      Array.from(groupSelectedDocuments).forEach(docId => {
-        const docRow = document.getElementById(`group-doc-row-${docId}`);
-        if (docRow && docRow.__docData) {
-          const doc = docRow.__docData;
-          // In group context, we check if user has management permissions
-          // rather than individual document ownership
-          if (canManage) {
-            hasOwnedDocuments = true;
-          } else {
-            hasNonOwnedDocuments = true;
-          }
-        }
-      });
-      
-      // Delete button: Show only if user has management permissions for group documents
+      // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
-        deleteBtn.style.display = (canManage && hasOwnedDocuments) ? "inline-block" : "none";
+        deleteBtn.style.display = canManage ? "inline-block" : "none";
       }
       
-      // Remove button: Show for non-managers or when user wants to "remove from group"
-      // In group context, this could mean removing the document from the group
-      // but keeping it in the system (if supported by backend)
+      // Remove button is available for group documents
       if (removeBtn) {
-        // For now, hide remove button as group documents are typically deleted, not removed
-        // This can be adjusted based on backend implementation
-        removeBtn.style.display = "none";
+        removeBtn.style.display = "inline-block";
       }
     } else {
-      // No documents selected - hide everything
-      if (deleteBtn) deleteBtn.style.display = "none";
-      if (removeBtn) removeBtn.style.display = "none";
-      if (bulkActions) bulkActions.style.display = "none";
+      // Hide bulk actions bar
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = "none";
+      }
     }
   }
 
@@ -1277,6 +1450,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const table = document.getElementById("group-documents-table");
     const checkboxes = document.querySelectorAll('.document-checkbox');
     const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    const bulkActionsBar = document.getElementById("groupBulkActionsBar");
     
     groupSelectionMode = !groupSelectionMode;
     
@@ -1292,12 +1466,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
       expandContainers.forEach(container => {
         container.style.display = 'none';
       });
-      
-      // Show bulk actions
-      const bulkActions = document.getElementById("group-bulk-actions");
-      if (bulkActions) {
-        bulkActions.style.display = 'inline-block';
-      }
     } else {
       // Exit selection mode
       table.classList.remove("selection-mode");
@@ -1312,19 +1480,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
         container.style.display = 'inline-block';
       });
       
-      // Hide bulk actions and buttons
-      const bulkActions = document.getElementById("group-bulk-actions");
-      if (bulkActions) {
-        bulkActions.style.display = 'none';
+      // Hide bulk actions bar
+      if (bulkActionsBar) {
+        bulkActionsBar.style.display = 'none';
       }
-      const deleteBtn = document.getElementById("group-delete-selected-btn");
-      const removeBtn = document.getElementById("group-remove-selected-btn");
-      if (deleteBtn) deleteBtn.style.display = 'none';
-      if (removeBtn) removeBtn.style.display = 'none';
       
       // Clear selected documents
       groupSelectedDocuments.clear();
     }
+  }
+
+  // Clear group selection
+  function clearGroupSelection() {
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = false;
+    });
+    groupSelectedDocuments.clear();
+    updateGroupBulkActionButtons();
   }
 
   function deleteGroupSelectedDocuments() {
@@ -1482,12 +1655,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Add event listeners for bulk action buttons
     const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
+    const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
     
     if (groupDeleteSelectedBtn) {
       groupDeleteSelectedBtn.addEventListener("click", deleteGroupSelectedDocuments);
     }
     if (groupRemoveSelectedBtn) {
       groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
+    }
+    if (groupClearSelectionBtn) {
+      groupClearSelectionBtn.addEventListener("click", clearGroupSelection);
     }
 
     // Load initial data
@@ -1574,6 +1751,134 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }); // End DOMContentLoaded
 
   /* ===================== GROUPS / ROLE / CONTEXT ===================== */
+  
+  /**
+   * Update the group status alert box based on the active group's status
+   */
+  function updateGroupStatusAlert() {
+    const activeGroup = userGroups.find(g => g.id === activeGroupId);
+    const alertBox = document.getElementById("group-status-alert");
+    
+    if (!activeGroup || !alertBox) {
+      return;
+    }
+    
+    const status = activeGroup.status || 'active';
+    const statusMessages = {
+      'locked': {
+        type: 'warning',
+        icon: 'bi-lock-fill',
+        title: '🔒 Locked (Read-Only)',
+        message: 'Group is in read-only mode',
+        details: [
+          '❌ New document uploads',
+          '❌ Document deletions',
+          '❌ Creating, editing, or deleting prompts, agents, and actions',
+          '✅ Viewing existing documents',
+          '✅ Chat and search with existing documents',
+          '✅ Using existing prompts, agents, and actions'
+        ]
+      },
+      'upload_disabled': {
+        type: 'info',
+        icon: 'bi-cloud-slash-fill',
+        title: '📁 Upload Disabled',
+        message: 'Restrict new content but allow other operations',
+        details: [
+          '❌ New document uploads',
+          '✅ Document deletions (cleanup)',
+          '✅ Full chat and search functionality',
+          '✅ Creating, editing, and deleting prompts, agents, and actions'
+        ]
+      },
+      'inactive': {
+        type: 'danger',
+        icon: 'bi-exclamation-triangle-fill',
+        title: '⭕ Inactive',
+        message: 'Group is disabled',
+        details: [
+          '❌ ALL operations (uploads, chat, document access)',
+          '❌ Creating, editing, or deleting prompts, agents, and actions',
+          '✅ Only admin viewing of group information',
+          'Use case: Decommissioned projects, suspended groups, compliance holds'
+        ]
+      }
+    };
+    
+    if (status === 'active') {
+      alertBox.classList.add('d-none');
+    } else {
+      const config = statusMessages[status];
+      if (config) {
+        alertBox.classList.remove('d-none', 'alert-warning', 'alert-info', 'alert-danger');
+        alertBox.classList.add(`alert-${config.type}`);
+        
+        const detailsList = config.details.map(d => `<li class="mb-1">${d}</li>`).join('');
+        
+        alertBox.innerHTML = `
+          <div class="d-flex align-items-start">
+            <i class="bi ${config.icon} me-2 flex-shrink-0" style="font-size: 1.2rem;"></i>
+            <div>
+              <strong>${config.title}</strong> - ${config.message}
+              <ul class="mb-0 mt-2 small">
+                ${detailsList}
+              </ul>
+            </div>
+          </div>
+        `;
+      }
+    }
+  }
+  
+  /**
+   * Hide/show UI elements based on the active group's status
+   */
+  function updateGroupUIBasedOnStatus() {
+    const activeGroup = userGroups.find(g => g.id === activeGroupId);
+    
+    if (!activeGroup) {
+      return;
+    }
+    
+    const status = activeGroup.status || 'active';
+    
+    // Define elements to hide/show (note: upload-section is handled by updateRoleDisplay)
+    const createPromptBtn = document.getElementById('create-group-prompt-btn');
+    const createAgentBtn = document.getElementById('create-group-agent-btn');
+    const createPluginBtn = document.getElementById('create-group-plugin-btn');
+    const deleteSelectedBtn = document.getElementById('group-delete-selected-btn');
+    
+    // Determine what operations are allowed based on status
+    const canCreateItems = (status === 'active');
+    const canModifyItems = (status === 'active'); // locked and inactive cannot modify
+    const canDeleteDocs = (status === 'active' || status === 'upload_disabled'); // Can delete in upload_disabled
+    const canChat = (status !== 'inactive'); // Chat disabled only for inactive
+    
+    // Hide/show create buttons based on permissions
+    if (createPromptBtn) {
+      createPromptBtn.style.display = canCreateItems ? '' : 'none';
+    }
+    if (createAgentBtn) {
+      createAgentBtn.style.display = canCreateItems ? '' : 'none';
+    }
+    if (createPluginBtn) {
+      createPluginBtn.style.display = canCreateItems ? '' : 'none';
+    }
+    
+    // Hide/show delete button for documents (shown only if can delete)
+    // Note: This will be further refined by role permissions in updateRoleDisplay
+    if (deleteSelectedBtn && !canDeleteDocs) {
+      deleteSelectedBtn.style.display = 'none';
+    }
+    
+    // Store status globally so other functions can check it
+    window.currentGroupStatus = status;
+    window.currentGroupCanModify = canModifyItems;
+    window.currentGroupCanChat = canChat;
+    
+    console.log(`UI updated for group ${activeGroupId} with status: ${status}`);
+  }
+  
   function fetchUserGroups() {
     console.log("Fetching user groups...");
     // Add loading state to group selector?
@@ -1708,6 +2013,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           // Only update role element since heading element was removed
           activeGroupNameRoleEl.textContent = activeGroupName;
           updateRoleDisplay(); // Update role display and UI elements
+          updateGroupStatusAlert(); // Update status alert box
+          updateGroupUIBasedOnStatus(); // Hide/show UI elements based on status
         } else {
           // Reset state if no active group found among the user's groups
           activeGroupId = null;
@@ -1729,6 +2036,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           if (uploadSection) uploadSection.style.display = "none";
           if (uploadHr) uploadHr.style.display = "none";
         }
+
+        notifyGroupWorkspaceContext();
       })
       .catch((err) => {
         console.error("Error fetching groups", err);
@@ -1739,6 +2048,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         sel.innerHTML = "<option>Error loading groups</option>"; // Show error in dropdown
         dropdownButton.querySelector(".selected-group-text").textContent = "Error loading groups";
         dropdownItems.innerHTML = '<div class="dropdown-item disabled">Error loading groups</div>';
+        notifyGroupWorkspaceContext();
       })
       .finally(() => {
         // Re-enable controls after fetch completes
@@ -1816,6 +2126,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
       fetchGroupDocuments();
     } else if (targetId === "#prompts-tab") {
       fetchGroupPrompts();
+    } else if (targetId === "#group-agents-tab") {
+      if (window.fetchGroupAgents) {
+        window.fetchGroupAgents();
+      }
+    } else if (targetId === "#group-plugins-tab") {
+      if (window.fetchGroupPlugins) {
+        window.fetchGroupPlugins();
+      }
     }
     // Update UI elements dependent on role (applies to both tabs potentially)
     updateRoleDisplay();
@@ -1841,10 +2159,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
 
     // Control visibility of upload section and its divider
-    const showUpload = canManageDocs;
+    // Check BOTH role AND group status - must have permission AND group must be active
+    const activeGroup = userGroups.find(g => g.id === activeGroupId);
+    const groupStatus = activeGroup ? (activeGroup.status || 'active') : 'active';
+    const groupAllowsUpload = (groupStatus === 'active');
+    const showUpload = canManageDocs && groupAllowsUpload;
+    
     if (uploadSection)
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
+
+    notifyGroupWorkspaceContext();
   }
 
   /* ===================== GROUP DOCUMENTS ===================== */
@@ -2027,8 +2352,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     let actionsDropdown = '';
     let chatButton = '';
     
-    // Chat button for everyone with access (outside dropdown) - matching workspace.html
-    if (isComplete && !hasError) {
+    // Get current group status
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canChat = (groupStatus !== 'inactive');
+    
+    // Chat button for everyone with access (outside dropdown) - but only if group allows chat
+    if (isComplete && !hasError && canChat) {
         chatButton = `
             <button class="btn btn-sm btn-primary me-1 action-btn-wide text-start"
                 onclick="searchGroupDocumentInChat('${docId}')"
@@ -2051,42 +2380,65 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <li><a class="dropdown-item select-btn" href="#" onclick="toggleGroupSelectionMode(); return false;">
                     <i class="bi bi-check-square me-2"></i>Select
                 </a></li>
+        `;
+        
+        // Get current group status
+        const groupStatus = window.currentGroupStatus || 'active';
+        const canModify = (groupStatus === 'active');
+        const canChat = (groupStatus !== 'inactive');
+        
+        // Edit/Extract Metadata - only for active groups
+        if (canModify) {
+            actionsDropdown += `
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item" href="#" onclick="onEditGroupDocument('${docId}'); return false;">
                     <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
                 </a></li>
-        `;
+            `;
+            
+            // Add Extract Metadata option if enabled
+            if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+                actionsDropdown += `
+                    <li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;">
+                        <i class="bi bi-magic me-2"></i>Extract Metadata
+                    </a></li>
+                `;
+            }
+        }
         
-        // Add Extract Metadata option if enabled
-        if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
+        // Search in Chat - only if chat is allowed (not inactive)
+        if (canChat) {
             actionsDropdown += `
-                <li><a class="dropdown-item" href="#" onclick="onExtractGroupMetadata('${docId}', event); return false;">
-                    <i class="bi bi-magic me-2"></i>Extract Metadata
+                <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
+                    <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
                 </a></li>
             `;
         }
         
-        // Add Search in Chat option
-        actionsDropdown += `
-            <li><a class="dropdown-item" href="#" onclick="searchGroupDocumentInChat('${docId}'); return false;">
-                <i class="bi bi-chat-dots-fill me-2"></i>Search in Chat
-            </a></li>
-        `;
-        
-        // Add sharing and delete/remove actions based on user role
+        // Add sharing and delete/remove actions based on user role AND group status
         if (canManage) {
-            // Manager actions - can share and delete
-            actionsDropdown += `
-                <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
-                    <i class="bi bi-share-fill me-2"></i>Share
-                    <span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
-                </a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
-                    <i class="bi bi-trash-fill me-2"></i>Delete
-                </a></li>
-            `;
+            // Share only available for active and upload_disabled groups (not locked or inactive)
+            const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+            if (canShare) {
+                actionsDropdown += `
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                        <i class="bi bi-share-fill me-2"></i>Share
+                        <span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
+                    </a></li>
+                `;
+            }
+            
+            // Delete only available for active and upload_disabled groups (not locked or inactive)
+            const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
+            if (canDelete) {
+                actionsDropdown += `
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="#" onclick="deleteGroupDocument('${docId}', event); return false;">
+                        <i class="bi bi-trash-fill me-2"></i>Delete
+                    </a></li>
+                `;
+            }
         } else {
             // Non-manager actions - in group context, regular members typically can't remove documents
             // This could be extended to support "request removal" or similar functionality
@@ -2195,8 +2547,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <hr class="my-2">
                 <div class="d-flex flex-wrap gap-2">`;
 
-      // Edit/Extract buttons only shown if user has management role
-      if (canManage) {
+      // Edit/Extract buttons only shown if user has management role AND group allows modification
+      const groupStatus = window.currentGroupStatus || 'active';
+      const canModify = (groupStatus === 'active');
+      
+      if (canManage && canModify) {
         detailsHtml += `
                   <button class="btn btn-sm btn-info" onclick="onEditGroupDocument('${docId}')" title="Edit Metadata"> <i class="bi bi-pencil-fill"></i> Edit Metadata </button>`;
         if (
@@ -2962,16 +3317,28 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function renderGroupPromptRow(p) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td title="${p.name}">${p.name}</td>
-      <td>
+    
+    // Check if group allows modifications
+    const groupStatus = window.currentGroupStatus || 'active';
+    const canModify = (groupStatus === 'active');
+    
+    let actionsHtml = '';
+    if (canModify) {
+      actionsHtml = `
         <button class="btn btn-sm btn-primary" onclick="onEditGroupPrompt('${p.id}')" title="Edit">
           <i class="bi bi-pencil-fill"></i>
         </button>
         <button class="btn btn-sm btn-danger ms-1" onclick="onDeleteGroupPrompt('${p.id}', event)" title="Delete">
           <i class="bi bi-trash-fill"></i>
         </button>
-      </td>`;
+      `;
+    } else {
+      actionsHtml = '<span class="text-muted small">—</span>';
+    }
+    
+    tr.innerHTML = `
+      <td title="${p.name}">${p.name}</td>
+      <td>${actionsHtml}</td>`;
     groupPromptsTableBody.appendChild(tr);
   }
 
@@ -3195,5 +3562,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.fetchGroupPrompts = fetchGroupPrompts;
   window.onCreateGroupPrompt = createGroupPromptBtn?.onclick;
 </script>
+{% if settings.enable_semantic_kernel and settings.allow_group_agents %}
+<script type="module" src="/static/js/agents_common.js"></script>
+<script type="module" src="/static/js/workspace/group_agents.js"></script>
+{% endif %}
+{% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+<script type="module" src="/static/js/plugin_modal_stepper.js"></script>
+<script type="module" src="/static/js/workspace/group_plugins.js"></script>
+{% endif %}
 {% endblock %}
 

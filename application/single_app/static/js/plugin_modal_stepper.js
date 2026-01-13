@@ -3,6 +3,8 @@
 import { showToast } from "./chat/chat-toast.js";
 
 export class PluginModalStepper {
+  
+
   constructor() {
     this.currentStep = 1;
     this.maxSteps = 5;
@@ -13,8 +15,60 @@ export class PluginModalStepper {
     this.itemsPerPage = 12;
     this.filteredTypes = [];
     this.originalPlugin = null; // Store original state for change tracking
-    
+    this.pluginSchemaCache = null; // Will hold plugin.schema.json
+    this.additionalSettingsSchemaCache = {}; // Cache for additional settings schemas
+    this.lastAdditionalFieldsType = null; // Track last type to avoid unnecessary redraws
+    this.defaultAuthTypes = ["key", "identity", "user", "servicePrincipal", "connection_string", "basic", "username_password"];
+
+    this._loadPluginSchema().then(() => { // Load schema on initialization
+      this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
+    });
     this.bindEvents();
+  }
+
+  async _loadPluginSchema() {
+    try {
+      const res = await fetch('/static/json/schemas/plugin.schema.json');
+      if (!res.ok) throw new Error('Failed to load plugin.schema.json');
+      this.pluginSchemaCache = await res.json();
+    } catch (err) {
+      console.error('Error loading plugin.schema.json:', err);
+      this.pluginSchemaCache = null;
+    }
+  }
+
+  _populateGenericAuthTypeDropdown() {
+    // Only run if dropdown exists
+    const dropdown = document.getElementById('plugin-auth-type-generic');
+    if (!dropdown) return;
+    // If schema not loaded, fallback to static options
+    if (!this.pluginSchemaCache) {
+      dropdown.innerHTML = '';
+      this.defaultAuthTypes.forEach(type => {
+        const option = document.createElement('option');
+        option.value = type;
+        option.textContent = this.formatAuthType(type);
+        dropdown.appendChild(option);
+      });
+      return;
+    }
+    // Find the enum for generic auth type in the schema
+    let authTypeEnum = [];
+    if (this.pluginSchemaCache.properties && this.pluginSchemaCache.properties.authTypeGeneric) {
+      authTypeEnum = this.pluginSchemaCache.properties.authTypeGeneric.enum || [];
+    }
+    // Fallback: if not found, use a default
+    if (!authTypeEnum.length) {
+      authTypeEnum = this.defaultAuthTypes;
+    }
+    // Clear existing options
+    dropdown.innerHTML = '';
+    authTypeEnum.forEach(type => {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = this.formatAuthType(type);
+      dropdown.appendChild(option);
+    });
   }
 
   bindEvents() {
@@ -368,12 +422,12 @@ export class PluginModalStepper {
 
   goToStep(stepNumber) {
     if (stepNumber < 1 || stepNumber > this.maxSteps) return;
-    
+
     this.currentStep = stepNumber;
     this.showStep(stepNumber);
     this.updateStepIndicator();
     this.updateNavigationButtons();
-    
+
     // Handle step-specific logic
     if (stepNumber === 3) {
       this.showConfigSectionForType();
@@ -426,6 +480,10 @@ export class PluginModalStepper {
     if (currentStepEl) {
       currentStepEl.classList.remove('d-none');
     }
+
+    if (stepNumber === 2) {
+
+    }
     
     // Update step 3 title based on plugin type
     if (stepNumber === 3) {
@@ -449,7 +507,45 @@ export class PluginModalStepper {
     }
 
     if (stepNumber === 4) {
-      // Only run for new plugins (not editing)
+      // Load additional settings schema for selected type
+      let options = {forceReload: true};
+      this.getAdditionalSettingsSchema(this.selectedType, options);
+      const additionalFieldsDiv = document.getElementById('plugin-additional-fields-div');
+      if (additionalFieldsDiv) {
+        // Only clear and rebuild if type changes
+        if (this.selectedType !== this.lastAdditionalFieldsType) {
+          additionalFieldsDiv.innerHTML = '';
+          additionalFieldsDiv.classList.remove('d-none');
+          if (this.selectedType) {
+            this.getAdditionalSettingsSchema(this.selectedType)
+              .then(schema => {
+                if (schema) {
+                  this.buildAdditionalFieldsUI(schema, additionalFieldsDiv);
+                  try {
+                    if (this.isEditMode && this.originalPlugin && this.originalPlugin.additionalFields) {
+                      this.populateDynamicAdditionalFields(this.originalPlugin.additionalFields);
+                    }
+                  } catch (error) {
+                    console.error('Error populating dynamic additional fields:', error);
+                  }
+                } else {
+                  console.log('No additional settings schema found');
+                  additionalFieldsDiv.classList.add('d-none');
+                }
+              })
+              .catch(error => {
+                console.error(`Error fetching additional settings schema for type: ${this.selectedType} -- ${error}`);
+                additionalFieldsDiv.classList.add('d-none');
+              });
+          } else {
+            console.warn('No plugin type selected');
+            additionalFieldsDiv.classList.add('d-none');
+          }
+          this.lastAdditionalFieldsType = this.selectedType;
+        }
+        // Otherwise, preserve user data and do not redraw
+      }
+
       if (!this.isEditMode) {
         const typeField = document.getElementById('plugin-type');
         const selectedType = typeField && typeField.value ? typeField.value : null;
@@ -458,13 +554,13 @@ export class PluginModalStepper {
           import('./plugin_common.js').then(module => {
             module.fetchAndMergePluginSettings(selectedType, {}).then(merged => {
               document.getElementById('plugin-metadata').value = merged.metadata ? JSON.stringify(merged.metadata, null, 2) : '{}';
-              document.getElementById('plugin-additional-fields').value = merged.additionalFields ? JSON.stringify(merged.additionalFields, null, 2) : '{}';
+              //document.getElementById('plugin-additional-fields').value = merged.additionalFields ? JSON.stringify(merged.additionalFields, null, 2) : '{}';
             });
           });
         } else {
           // Fallback to empty objects if no type selected
           document.getElementById('plugin-metadata').value = '{}';
-          document.getElementById('plugin-additional-fields').value = '{}';
+          //document.getElementById('plugin-additional-fields').value = '{}';
         }
       }
     }
@@ -695,7 +791,7 @@ export class PluginModalStepper {
       case 4:
         // Validate JSON fields
         if (!this.validateJSONField('plugin-metadata', 'Metadata')) return false;
-        if (!this.validateJSONField('plugin-additional-fields', 'Additional Fields')) return false;
+        //if (!this.validateJSONField('plugin-additional-fields', 'Additional Fields')) return false;
         break;
     }
     
@@ -885,33 +981,63 @@ export class PluginModalStepper {
   }
 
   toggleGenericAuthFields() {
-    const authType = document.getElementById('plugin-auth-type-generic').value;
-    const identityGroup = document.getElementById('auth-identity-group');
-    const keyGroup = document.getElementById('auth-key-group');
-    const tenantIdGroup = document.getElementById('auth-tenantid-group');
-    
-    // Hide all groups first
-    [identityGroup, keyGroup, tenantIdGroup].forEach(group => {
-      if (group) group.style.display = 'none';
-    });
-    
-    // Show relevant groups based on auth type
-    switch (authType) {
-      case 'key':
-        if (keyGroup) keyGroup.style.display = 'flex';
-        break;
-      case 'identity':
-        if (identityGroup) identityGroup.style.display = 'flex';
-        break;
-      case 'servicePrincipal':
-        if (identityGroup) identityGroup.style.display = 'flex';
-        if (keyGroup) keyGroup.style.display = 'flex';
-        if (tenantIdGroup) tenantIdGroup.style.display = 'flex';
-        break;
-      case 'user':
-        // No additional fields needed
-        break;
+    const dropdown = document.getElementById('plugin-auth-type-generic');
+    if (!dropdown) return;
+    const authType = dropdown.value;
+
+    // Get required fields for selected auth type from schema
+    let requiredFields = [];
+    // Defensive: find the correct schema location
+    const pluginDef = this.pluginSchemaCache?.definitions?.Plugin;
+    const authSchema = pluginDef?.properties?.auth;
+    if (authSchema && Array.isArray(authSchema.allOf)) {
+      for (const cond of authSchema.allOf) {
+        // Check if this allOf block matches the selected type
+        if (cond.if && cond.if.properties && cond.if.properties.type && cond.if.properties.type.const === authType) {
+          // Use the required array from then
+          if (cond.then && Array.isArray(cond.then.required)) {
+            requiredFields = cond.then.required.filter(f => f !== 'type');
+          }
+          break;
+        }
+      }
     }
+
+    // Map field keys to DOM groups
+    const fieldMap = {
+      identity: document.getElementById('auth-identity-group'),
+      key: document.getElementById('auth-key-group'),
+      tenantId: document.getElementById('auth-tenantid-group')
+    };
+
+    // Hide all groups first using d-none
+    Object.values(fieldMap).forEach(group => { if (group) group.classList.add('d-none'); });
+
+    // Show only required fields for selected auth type using d-none
+    requiredFields.forEach(field => {
+      if (fieldMap[field]) {
+        fieldMap[field].classList.remove('d-none');
+        // Update label using mapping or schema description
+        const label = fieldMap[field].querySelector('span.input-group-text');
+        console.log('Updating label for field:', field, 'Auth type:', authType, 'label:', label);
+        if (label) {
+          if (authType === 'username_password') {
+            if (field === 'key') label.textContent = 'Password';
+            else if (field === 'identity') label.textContent = 'Username';
+          } else if (authType === 'connection_string') {
+            if (field === 'key') label.textContent = 'Connection String';
+          } else if (authType === 'servicePrincipal') {
+            if (field === 'key') label.textContent = 'Client Secret';
+            else if (field === 'identity') label.textContent = 'Client ID';
+            else if (field === 'tenantId') label.textContent = 'Tenant ID';
+          } else {
+            if (field === 'key') label.textContent = 'Key';
+            else if (field === 'identity') label.textContent = 'Identity';
+            else if (field === 'tenantId') label.textContent = 'Tenant ID';
+          }
+        }
+      }
+    });
   }
 
   // SQL Plugin Configuration Methods
@@ -1354,7 +1480,11 @@ export class PluginModalStepper {
       JSON.stringify(plugin.additionalFields, null, 2) : '{}';
     
     document.getElementById('plugin-metadata').value = metadata;
-    document.getElementById('plugin-additional-fields').value = additionalFields;
+    try {
+      document.getElementById('plugin-additional-fields').value = additionalFields;
+    } catch (e) {
+      console.warn('Legacy additional fields accessed:', e);
+    }
   }
 
   getFormData() {
@@ -1383,6 +1513,7 @@ export class PluginModalStepper {
       }
       
       // Store the OpenAPI spec content directly in the plugin config
+      // IMPORTANT: Set these BEFORE collecting additional fields so they don't get overwritten
       additionalFields.openapi_spec_content = JSON.parse(specContent);
       additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
@@ -1556,13 +1687,14 @@ export class PluginModalStepper {
       }
     }
     
-    // Parse existing additional fields and merge
+    // Collect additional fields from the dynamic UI and MERGE with existing additionalFields
+    // This preserves OpenAPI spec content and other auto-populated fields
     try {
-      const additionalFieldsValue = document.getElementById('plugin-additional-fields').value.trim();
-      const existingAdditionalFields = additionalFieldsValue ? JSON.parse(additionalFieldsValue) : {};
-      additionalFields = { ...existingAdditionalFields, ...additionalFields };
+      const dynamicFields = this.collectAdditionalFields();
+      // Merge dynamicFields into additionalFields (preserving existing values)
+      additionalFields = { ...additionalFields, ...dynamicFields };
     } catch (e) {
-      throw new Error('Invalid additional fields JSON');
+      throw new Error('Invalid additional fields input');
     }
     
     let metadata = {};
@@ -1700,10 +1832,16 @@ export class PluginModalStepper {
       'none': 'No Authentication',
       'api_key': 'API Key',
       'bearer': 'Bearer Token',
-      'basic': 'Basic Authentication',
       'oauth2': 'OAuth2',
       'windows': 'Windows Authentication',
-      'sql': 'SQL Authentication'
+      'sql': 'SQL Authentication',
+      'username_password': 'Username/Password',
+      'key': 'Key',
+      'identity': 'Identity',
+      'user': 'User',
+      'servicePrincipal': 'Service Principal',
+      'connection_string': 'Connection String',
+      'basic': 'Basic'
     };
     return authTypeMap[authType] || authType;
   }
@@ -1939,7 +2077,7 @@ export class PluginModalStepper {
     
     // Check if there's any metadata or additional fields
     const metadata = document.getElementById('plugin-metadata').value.trim();
-    const additionalFields = document.getElementById('plugin-additional-fields').value.trim();
+    //const additionalFields = document.getElementById('plugin-additional-fields').value.trim();
     
     // Check if metadata/additional fields actually contain meaningful data (not just empty objects)
     let hasMetadata = false;
@@ -1953,13 +2091,9 @@ export class PluginModalStepper {
       hasMetadata = metadata.length > 0 && metadata !== '{}';
     }
     
-    try {
-      const additionalFieldsObj = JSON.parse(additionalFields || '{}');
-      hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
-    } catch (e) {
-      // If it's not valid JSON, consider it as having content if it's not empty
-      hasAdditionalFields = additionalFields.length > 0 && additionalFields !== '{}';
-    }
+    // DRY: Use private helper to collect additional fields
+    let additionalFieldsObj = this.collectAdditionalFields();
+    hasAdditionalFields = Object.keys(additionalFieldsObj).length > 0;
     
     // Update has metadata/additional fields indicators
     document.getElementById('summary-has-metadata').textContent = hasMetadata ? 'Yes' : 'No';
@@ -1977,7 +2111,13 @@ export class PluginModalStepper {
     // Show/hide additional fields preview
     const additionalFieldsPreview = document.getElementById('summary-additional-fields-preview');
     if (hasAdditionalFields) {
-      document.getElementById('summary-additional-fields-content').textContent = additionalFields;
+      let previewContent = '';
+      if (typeof additionalFieldsObj === 'object' && additionalFieldsObj !== null) {
+        previewContent = JSON.stringify(additionalFieldsObj, null, 2);
+      } else {
+        previewContent = '';
+      }
+      document.getElementById('summary-additional-fields-content').textContent = previewContent;
       additionalFieldsPreview.style.display = '';
     } else {
       additionalFieldsPreview.style.display = 'none';
@@ -2147,6 +2287,434 @@ export class PluginModalStepper {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  formatLabel(str) {
+    // Convert snake_case, camelCase, PascalCase to spaced words
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase, PascalCase
+      .replace(/_/g, ' ') // snake_case
+      .replace(/\b([A-Z]+)\b/g, match => match.charAt(0) + match.slice(1).toLowerCase()) // ALLCAPS to Capitalized
+      .replace(/^\w/, c => c.toUpperCase());
+  }
+
+  // Build the additional fields UI from a JSON schema
+  buildAdditionalFieldsUI(schema, parentDiv) {
+    // Utility to create a labeled field
+    const self = this;
+    // Render title and description
+    const title = document.createElement('h6');
+    title.textContent = schema.title || 'Additional Settings';
+    parentDiv.appendChild(title);
+    if (schema.description) {
+      const desc = document.createElement('p');
+      desc.className = 'text-muted';
+      desc.textContent = schema.description;
+      parentDiv.appendChild(desc);
+    }
+    // Render all top-level properties
+    if (schema.properties) {
+      Object.entries(schema.properties).forEach(([key, prop]) => {
+        if (prop.type === 'array') {
+          this.addArrayFieldUI(prop, key, parentDiv, prop.default || []);
+        } else if (prop.type === 'object') {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'additional-field-object';
+          // Create a fieldset for the object
+          const fieldset = document.createElement('fieldset');
+          fieldset.dataset.schemaKey = key;
+          // Optionally add a legend for the object
+          const legend = document.createElement('legend');
+          legend.textContent = this.formatLabel(key);
+          fieldset.appendChild(legend);
+          // Render all sub-properties inside the fieldset
+          if (prop.properties) {
+            Object.entries(prop.properties).forEach(([subKey, subProp]) => {
+              this.createField(subKey, subProp, fieldset);
+            });
+          }
+          wrapper.appendChild(fieldset);
+          parentDiv.appendChild(wrapper);
+        } else {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'additional-field-primitive';
+          this.createField(key, prop, wrapper);
+          parentDiv.appendChild(wrapper);
+        }
+      });
+    }
+  }
+
+  // Recursively populate dynamic additional fields UI
+  populateDynamicAdditionalFields(fields, parentKey = '') {
+    if (!fields || typeof fields !== 'object') return;
+    if (this.additionalSettingsSchemaCache && this.selectedType && !this.additionalSettingsSchemaCache[this.getSafeType(this.selectedType)]) {
+      this.getAdditionalSettingsSchema(this.selectedType);
+    }
+    const schema = this.additionalSettingsSchemaCache && this.selectedType ? this.additionalSettingsSchemaCache[this.getSafeType(this.selectedType)] : null;
+    Object.entries(fields).forEach(([key, value]) => {
+      console.log('Processing field:', key, 'with value:', value, 'under parentKey:', parentKey);
+      let fieldName = key;
+      if (Array.isArray(value)) {
+        // Find array wrapper, add items if needed
+        let arrayWrapper = document.querySelector(`#plugin-additional-fields-div [data-schema-key="${fieldName}"]`);
+        if (!arrayWrapper) {
+          // Try to find schema for this array (assume you have access to schema)
+          if (this.additionalSettingsSchemaCache && this.selectedType) {
+            if (schema && schema.properties && schema.properties[fieldName] && schema.properties[fieldName].type === 'array') {
+              this.addArrayFieldUI(schema.properties[fieldName], fieldName, document.getElementById('plugin-additional-fields-div'), value);
+              arrayWrapper = document.querySelector(`#plugin-additional-fields-div [data-schema-key="${fieldName}"]`);
+            }
+          }
+        }
+        // Now populate each item
+        if (arrayWrapper) {
+          const itemsContainer = arrayWrapper.querySelector('.array-group');
+          // Remove existing items
+          while (itemsContainer && itemsContainer.firstChild) itemsContainer.removeChild(itemsContainer.firstChild);
+          value.forEach(item => {
+            this.addArrayItemUI(
+              (schema && schema.properties && schema.properties[fieldName] && schema.properties[fieldName].items) || {},
+              fieldName,
+              itemsContainer,
+              item
+            );
+          });
+        }
+      } else if (value && typeof value === 'object') {
+        this.populateDynamicAdditionalFields(value, fieldName);
+      } else {
+        let query = parentKey ? `#plugin-additional-fields-div [data-schema-key="${parentKey}"] [name="${fieldName}"]` : `#plugin-additional-fields-div [name="${fieldName}"]`;
+        console.log('Querying elements with:', query);
+        const elements = document.querySelectorAll(query);
+        console.log('Found elements for field', fieldName, ':', elements);
+        elements.forEach(el => {
+          console.log('Setting field:', fieldName, 'with value:', value, 'on element:', el);
+          if (el.type === 'checkbox') {
+            el.checked = !!value;
+          } else if (el.type === 'radio') {
+            el.checked = el.value == value;
+          } else if (el.tagName === 'SELECT') {
+            el.value = value;
+          } else if (el.tagName === 'TEXTAREA') {
+            el.value = value;
+          } else if (el.type === 'number') {
+            el.value = value !== undefined && value !== null ? Number(value) : '';
+          } else {
+            el.value = value;
+          }
+        });
+      }
+    });
+  }
+
+  // Private deep merge utility
+  deepMerge(target, source) {
+    for (const key in source) {
+      if (source[key] && typeof source[key] === 'object' && 
+        !Array.isArray(source[key]) && target[key] && typeof target[key] === 'object' && 
+        !Array.isArray(target[key])
+      ) {
+        target[key] = this.deepMerge(target[key], source[key]);
+      } else {
+        target[key] = source[key];
+      }
+    }
+    return target;
+  }
+
+  // Private method to collect additional fields from both legacy textarea and dynamic UI
+  collectAdditionalFields() {
+    // 1. Get from textarea (legacy)
+    const additionalFieldsValue = document.getElementById('plugin-additional-fields')?.value?.trim() || '';
+    let legacyFields = {};
+    if (additionalFieldsValue && additionalFieldsValue !== '{}') {
+      try {
+        legacyFields = JSON.parse(additionalFieldsValue);
+      } catch {
+        // If not valid JSON, skip
+      }
+    }
+
+    // 2. Get from dynamic UI
+    let uiFields = {};
+    const additionalFieldsDiv = document.getElementById('plugin-additional-fields-div');
+    if (additionalFieldsDiv) {
+      // Arrays
+      const arrayWrappers = additionalFieldsDiv.querySelectorAll('.additional-field-array');
+      arrayWrappers.forEach(wrapper => {
+        const arrayGroup = wrapper.querySelector('.array-group');
+        if (arrayGroup) {
+          const arrayKey = arrayGroup.dataset.schemaKey;
+          const items = [];
+          // Loop over each .array-item inside .array-group
+          const arrayItems = arrayGroup.querySelectorAll('.array-item');
+          arrayItems.forEach(itemDiv => {
+            // Check for array of objects (fieldset present)
+            const fieldset = itemDiv.querySelector('fieldset');
+            if (fieldset) {
+              let obj = {};
+              const subInputs = fieldset.querySelectorAll('input, select, textarea');
+              subInputs.forEach(subEl => {
+                let subKey = subEl.name || subEl.id;
+                if (!subKey) return;
+                let subValue = subEl.type === 'checkbox' ? subEl.checked : (subEl.type === 'number' ? (subEl.value !== '' ? Number(subEl.value) : '') : subEl.value);
+                obj[subKey] = subValue;
+              });
+              items.push(obj);
+            } else {
+              // Primitive array: find first input/select/textarea directly inside .array-item (not in fieldset or button)
+              const possibleInputs = Array.from(itemDiv.querySelectorAll('input, select, textarea'));
+              // Exclude those inside a fieldset or button
+              const input = possibleInputs.find(el => {
+                // Not inside a fieldset or button
+                return !el.closest('fieldset') && !el.closest('button');
+              });
+              if (input) {
+                let subValue = input.type === 'checkbox' ? input.checked : (input.type === 'number' ? (input.value !== '' ? Number(input.value) : '') : input.value);
+                items.push(subValue);
+              }
+            }
+          });
+          if (arrayKey) {
+            uiFields[arrayKey] = items;
+          }
+        }
+      });
+      // Objects
+      const objectWrappers = additionalFieldsDiv.querySelectorAll('.additional-field-object');
+      objectWrappers.forEach(wrapper => {
+        const objFieldset = wrapper.querySelector('fieldset');
+        const objKey = objFieldset.dataset.schemaKey;
+        let obj = {};
+        const subInputs = objFieldset.querySelectorAll('input, select, textarea');
+        subInputs.forEach(subEl => {
+          let subKey = subEl.name || subEl.id;
+          if (!subKey) return;
+          let subValue = subEl.type === 'checkbox' ? subEl.checked : (subEl.type === 'number' ? (subEl.value !== '' ? Number(subEl.value) : '') : subEl.value);
+          obj[subKey] = subValue;
+        });
+        if (objKey) {
+          uiFields[objKey] = obj;
+        }
+      });
+      // Primitives
+      const primitiveWrappers = additionalFieldsDiv.querySelectorAll('.additional-field-primitive');
+      primitiveWrappers.forEach(wrapper => {
+        const inputs = wrapper.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+          let key = input.name || input.id;
+          let value = input.type === 'checkbox' ? input.checked : (input.type === 'number' ? (input.value !== '' ? Number(input.value) : '') : input.value);
+          uiFields[key] = value;
+        });
+      });
+    }
+
+    // 3. Deep merge (UI fields take precedence)
+    return this.deepMerge(legacyFields, uiFields);
+  }
+
+  getSafeType(type) {
+    return type ? type.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase() : null;
+  }
+
+  async getAdditionalSettingsSchema(type, options = {}) {
+    if (!type) return null;
+    const { useLegacyPattern = false, forceReload = false } = options;
+    // Normalize type for filename
+    const safeType = this.getSafeType(type);
+    // Choose filename pattern
+    const schemaFile = `${safeType}_plugin.additional_settings.schema.json`;
+      
+    const schemaPath = `/static/json/schemas/${schemaFile}`;
+
+    // Use cache unless forceReload
+    if (!forceReload && this.additionalSettingsSchemaCache[safeType]) {
+      return this.additionalSettingsSchemaCache[safeType];
+    }
+    try {
+      console.log(`Fetching additional settings schema for type: ${safeType} (pattern: ${safeType})`);
+      const res = await fetch(schemaPath);
+      if (res.status === 404) {
+        console.log(`No additional settings schema found for type: ${type} (404)`);
+        this.additionalSettingsSchemaCache[safeType] = null;
+        return null;
+      }
+      if (!res.ok) throw new Error(`Failed to load additional settings schema for type: ${type}`);
+      const schema = await res.json();
+      this.additionalSettingsSchemaCache[safeType] = schema;
+      return schema;
+    } catch (err) {
+      console.error(`Error loading additional settings schema for type ${type}:`, err);
+      this.additionalSettingsSchemaCache[safeType] = null;
+      return null;
+    }
+  }
+
+  // Utility to create a labeled field (refactored from buildAdditionalFieldsUI)
+  createField(key, prop, parent, prefix = '') {
+    // If prefix is a number, treat as array index for uniqueness
+    let fieldId;
+    if (typeof prefix === 'number') {
+      fieldId = `${key}_${prefix}`;
+    } else {
+      fieldId = `${prefix}${key}`;
+    }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mb-3';
+    // Label with tooltip if description exists
+    const label = document.createElement('label');
+    label.className = 'form-label';
+    label.htmlFor = fieldId;
+    label.textContent = this.formatLabel(key);
+    if (prop.description) {
+      label.title = prop.description;
+      // Add help icon
+      const helpIcon = document.createElement('span');
+      helpIcon.className = 'ms-1 bi bi-question-circle-fill text-info';
+      helpIcon.setAttribute('tabindex', '0');
+      helpIcon.setAttribute('data-bs-toggle', 'tooltip');
+      helpIcon.setAttribute('title', prop.description);
+      label.appendChild(helpIcon);
+    }
+    wrapper.appendChild(label);
+
+    let input;
+    if (prop.enum) {
+      input = document.createElement('select');
+      input.className = 'form-select';
+      input.id = fieldId;
+      input.name = key;
+      prop.enum.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt;
+        option.textContent = this.formatLabel(opt);
+        option.title = opt;
+        input.appendChild(option);
+      });
+      if (prop.default) input.value = prop.default;
+    } else if (prop.type === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'form-check-input';
+      input.id = fieldId;
+      input.name = key;
+      input.checked = !!prop.default;
+      wrapper.className += ' form-check';
+    } else if (prop.type === 'number' || prop.type === 'integer') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'form-control';
+      input.id = fieldId;
+      input.name = key;
+      if (prop.minimum !== undefined) input.min = prop.minimum;
+      if (prop.maximum !== undefined) input.max = prop.maximum;
+      if (prop.default !== undefined) input.value = prop.default;
+      if (prop.pattern) input.pattern = prop.pattern;
+    } else if (prop.type === 'string' && prop.format === 'email') {
+      input = document.createElement('input');
+      input.type = 'email';
+      input.className = 'form-control';
+      input.id = fieldId;
+      input.name = key;
+      if (prop.default) input.value = prop.default;
+    } else if (prop.type === 'string') {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'form-control';
+      input.id = fieldId;
+      input.name = key;
+      if (prop.minLength !== undefined) input.minLength = prop.minLength;
+      if (prop.maxLength !== undefined) input.maxLength = prop.maxLength;
+      if (prop.default) input.value = prop.default;
+      if (prop.pattern) input.pattern = prop.pattern;
+    }
+    if (input) wrapper.appendChild(input);
+    parent.appendChild(wrapper);
+  }
+
+  // New: Array field builder for both initial render and dynamic population
+  addArrayFieldUI(arraySchema, arrayKey, parentDiv, initialValues = []) {
+    // Create array wrapper
+    const wrapper = document.createElement('div');
+    wrapper.className = 'additional-field-array';
+    wrapper.dataset.schemaKey = arrayKey;
+
+    // Title
+    const label = document.createElement('label');
+    label.className = 'form-label';
+    label.textContent = this.formatLabel(arrayKey);
+    wrapper.appendChild(label);
+
+    // Items container
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'array-group';
+    itemsContainer.dataset.schemaKey = arrayKey;
+    wrapper.appendChild(itemsContainer);
+
+    // Add button
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-sm btn-outline-primary mb-2';
+    addBtn.textContent = 'Add Item';
+    addBtn.onclick = () => {
+      this.addArrayItemUI(arraySchema.items, arrayKey, itemsContainer);
+    };
+    wrapper.appendChild(addBtn);
+
+    // Initial values
+    if (Array.isArray(initialValues)) {
+      initialValues.forEach(val => {
+        this.addArrayItemUI(arraySchema.items, arrayKey, itemsContainer, val);
+      });
+    }
+
+    parentDiv.appendChild(wrapper);
+    return wrapper;
+  }
+
+  // Helper to add a single array item
+  addArrayItemUI(itemSchema, arrayKey, itemsContainer, initialValue = undefined) {
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'array-item mb-2 p-2 border rounded';
+    // Remove button
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-sm btn-outline-danger float-end';
+    removeBtn.textContent = 'Remove';
+    removeBtn.onclick = () => {
+      itemsContainer.removeChild(itemDiv);
+    };
+    itemDiv.appendChild(removeBtn);
+    // Determine index for uniqueness
+    let index = itemsContainer.childNodes.length;
+    // Render item fields
+    if (itemSchema.type === 'object' && itemSchema.properties) {
+      // Create a fieldset for the object item
+      const fieldset = document.createElement('fieldset');
+      fieldset.dataset.schemaKey = arrayKey;
+      // Optionally add a legend for the object item
+      const legend = document.createElement('legend');
+      legend.textContent = this.formatLabel(arrayKey);
+      fieldset.appendChild(legend);
+      Object.entries(itemSchema.properties).forEach(([subKey, subProp]) => {
+        this.createField(subKey, subProp, fieldset, index);
+        // Set initial value if provided
+        if (initialValue && initialValue[subKey] !== undefined) {
+          const input = fieldset.querySelector(`[name="${subKey}"]`);
+          if (input) input.value = initialValue[subKey];
+        }
+      });
+      itemDiv.appendChild(fieldset);
+    } else {
+      // Primitive array
+      this.createField(arrayKey, itemSchema, itemDiv, index);
+      if (initialValue !== undefined) {
+        const input = itemDiv.querySelector(`[name="${arrayKey}"]`);
+        if (input) input.value = initialValue;
+      }
+    }
+    itemsContainer.appendChild(itemDiv);
   }
 }
 

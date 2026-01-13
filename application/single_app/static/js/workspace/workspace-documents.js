@@ -23,8 +23,7 @@ const docMetadataModalEl = document.getElementById("docMetadataModal") ? new boo
 const docMetadataForm = document.getElementById("doc-metadata-form");
 const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
-const removeSelectedBtn = document.getElementById("remove-selected-btn");
-const bulkActionsColumn = document.getElementById("bulk-actions");
+const clearSelectionBtn = document.getElementById("clear-selection-btn");
 
 // Selection mode variables
 let selectionModeActive = false;
@@ -1257,6 +1256,7 @@ window.toggleSelectionMode = function() {
     const documentsTable = document.getElementById("documents-table");
     const checkboxes = document.querySelectorAll('.document-checkbox');
     const expandContainers = document.querySelectorAll('.expand-collapse-container');
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
     
     if (selectionModeActive) {
         // Enter selection mode
@@ -1264,40 +1264,34 @@ window.toggleSelectionMode = function() {
         
         // Show checkboxes and hide expand buttons
         checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'inline-block';
+            checkbox.classList.remove('d-none');
+            checkbox.classList.add('d-inline-block');
         });
         
         expandContainers.forEach(container => {
-            container.style.display = 'none';
+            container.classList.remove('d-inline-block');
+            container.classList.add('d-none');
         });
-        
-        // Show bulk actions
-        if (bulkActionsColumn) {
-            bulkActionsColumn.style.display = 'inline-block';
-        }
     } else {
         // Exit selection mode
         documentsTable.classList.remove('selection-mode');
         
         // Hide checkboxes and show expand buttons
         checkboxes.forEach(checkbox => {
-            checkbox.style.display = 'none';
+            checkbox.classList.remove('d-inline-block');
+            checkbox.classList.add('d-none');
             checkbox.checked = false;
         });
         
         expandContainers.forEach(container => {
-            container.style.display = 'inline-block';
+            container.classList.remove('d-none');
+            container.classList.add('d-inline-block');
         });
         
-        // Hide bulk actions and buttons
-        if (bulkActionsColumn) {
-            bulkActionsColumn.style.display = 'none';
-        }
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'none';
-        }
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = 'none';
+        // Hide bulk actions bar
+        if (bulkActionsBar) {
+            bulkActionsBar.classList.remove('d-block');
+            bulkActionsBar.classList.add('d-none');
         }
         
         // Clear selected documents
@@ -1319,13 +1313,20 @@ window.updateSelectedDocuments = function(documentId, isSelected) {
 
 // Update bulk action buttons visibility
 function updateBulkActionButtons() {
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+    const selectedCountSpan = document.getElementById('selectedCount');
+    
     if (selectedDocuments.size > 0) {
-        // At least one document is selected
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'inline-block';
+        // Show bulk actions bar with count
+        if (bulkActionsBar) {
+            bulkActionsBar.classList.remove('d-none');
+            bulkActionsBar.classList.add('d-block');
+        }
+        if (selectedCountSpan) {
+            selectedCountSpan.textContent = selectedDocuments.size;
         }
         
-        // Check if any selected documents are shared (for remove button)
+        // Check if any selected documents are shared (for remove button logic if needed in future)
         const hasSharedDocuments = Array.from(selectedDocuments).some(docId => {
             const docRow = document.getElementById(`doc-row-${docId}`);
             if (docRow && docRow.__docData) {
@@ -1334,17 +1335,11 @@ function updateBulkActionButtons() {
             }
             return false;
         });
-        
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = hasSharedDocuments ? 'inline-block' : 'none';
-        }
     } else {
-        // No documents selected
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.style.display = 'none';
-        }
-        if (removeSelectedBtn) {
-            removeSelectedBtn.style.display = 'none';
+        // Hide bulk actions bar
+        if (bulkActionsBar) {
+            bulkActionsBar.classList.remove('d-block');
+            bulkActionsBar.classList.add('d-none');
         }
     }
 }
@@ -1472,6 +1467,16 @@ window.removeSelectedDocuments = function() {
     }
 };
 
+// Clear selection handler
+window.clearDocumentSelection = function() {
+    const checkboxes = document.querySelectorAll('.document-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    selectedDocuments.clear();
+    updateBulkActionButtons();
+};
+
 // Add event listeners for selection functionality
 document.addEventListener('DOMContentLoaded', function() {
     // Delete selected button
@@ -1479,9 +1484,9 @@ document.addEventListener('DOMContentLoaded', function() {
         deleteSelectedBtn.addEventListener('click', window.deleteSelectedDocuments);
     }
     
-    // Remove selected button
-    if (removeSelectedBtn) {
-        removeSelectedBtn.addEventListener('click', window.removeSelectedDocuments);
+    // Clear selection button
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
     }
     
     // Delegate event listener for checkboxes (they're dynamically created)

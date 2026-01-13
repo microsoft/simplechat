@@ -3,6 +3,8 @@
 from config import *
 from functions_authentication import *
 from functions_group import *
+from functions_debug import debug_print
+from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):
@@ -112,7 +114,8 @@ def register_route_backend_groups(app):
                     "name": g.get("name", "Untitled Group"), # Provide default name
                     "description": g.get("description", ""),
                     "userRole": role,
-                    "isActive": (g["id"] == db_active_group_id)
+                    "isActive": (g["id"] == db_active_group_id),
+                    "status": g.get("status", "active")  # Include group status
                 })
 
             return jsonify({
@@ -132,6 +135,7 @@ def register_route_backend_groups(app):
     @login_required
     @user_required
     @create_group_role_required
+    @enabled_required("enable_group_creation")
     @enabled_required("enable_group_workspaces")
     def api_create_group():
         """
@@ -383,6 +387,7 @@ def register_route_backend_groups(app):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
+        user_email = user_info.get("email", "unknown")
 
         group_doc = find_group_by_id(group_id)
         
@@ -401,16 +406,80 @@ def register_route_backend_groups(app):
         if get_user_role_in_group(group_doc, new_user_id):
             return jsonify({"error": "User is already a member"}), 400
 
+        # Get role from request, default to 'user'
+        member_role = data.get("role", "user").lower()
+        
+        # Validate role
+        valid_roles = ['admin', 'document_manager', 'user']
+        if member_role not in valid_roles:
+            return jsonify({"error": f"Invalid role. Must be: {', '.join(valid_roles)}"}), 400
+
         new_member_doc = {
             "userId": new_user_id,
             "email": data.get("email", ""),
             "displayName": data.get("displayName", "New User")
         }
         group_doc["users"].append(new_member_doc)
+        
+        # Add to appropriate role array
+        if member_role == 'admin':
+            if new_user_id not in group_doc.get('admins', []):
+                group_doc.setdefault('admins', []).append(new_user_id)
+        elif member_role == 'document_manager':
+            if new_user_id not in group_doc.get('documentManagers', []):
+                group_doc.setdefault('documentManagers', []).append(new_user_id)
+        
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
 
         cosmos_groups_container.upsert_item(group_doc)
-        return jsonify({"message": "Member added"}), 200
+        
+        # Log activity for member addition
+        try:
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'activity_type': 'add_member_directly',
+                'timestamp': datetime.utcnow().isoformat(),
+                'added_by_user_id': user_id,
+                'added_by_email': user_email,
+                'added_by_role': role,
+                'group_id': group_id,
+                'group_name': group_doc.get('name', 'Unknown'),
+                'member_user_id': new_user_id,
+                'member_email': new_member_doc.get('email', ''),
+                'member_name': new_member_doc.get('displayName', ''),
+                'member_role': member_role,
+                'description': f"{role} {user_email} added member {new_member_doc.get('displayName', '')} ({new_member_doc.get('email', '')}) to group {group_doc.get('name', group_id)} as {member_role}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+        except Exception as log_error:
+            debug_print(f"Failed to log member addition activity: {log_error}")
+        
+        # Create notification for the new member
+        try:
+            from functions_notifications import create_notification
+            role_display = {
+                'admin': 'Admin',
+                'document_manager': 'Document Manager',
+                'user': 'Member'
+            }.get(member_role, 'Member')
+            
+            create_notification(
+                user_id=new_user_id,
+                notification_type='system_announcement',
+                title='Added to Group',
+                message=f"You have been added to the group '{group_doc.get('name', 'Unknown')}' as {role_display} by {user_email}.",
+                link_url=f"/manage_group/{group_id}",
+                metadata={
+                    'group_id': group_id,
+                    'group_name': group_doc.get('name', 'Unknown'),
+                    'added_by': user_email,
+                    'role': member_role
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create member addition notification: {notif_error}")
+        
+        return jsonify({"message": "Member added", "success": True}), 200
 
     @app.route("/api/groups/<group_id>/members/<member_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
@@ -438,10 +507,12 @@ def register_route_backend_groups(app):
                                         "Transfer ownership or delete the group."}), 403
 
             removed = False
+            removed_member_info = None
             updated_users = []
             for u in group_doc["users"]:
                 if u["userId"] == member_id:
                     removed = True
+                    removed_member_info = u
                     continue
                 updated_users.append(u)
 
@@ -456,6 +527,26 @@ def register_route_backend_groups(app):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                # Log activity for self-removal
+                from functions_activity_logging import log_group_member_deleted
+                user_email = user_info.get("email", "unknown")
+                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
+                member_email = removed_member_info.get('email', '') if removed_member_info else ''
+                description = f"Member {user_email} left group {group_doc.get('name', group_id)}"
+                
+                log_group_member_deleted(
+                    removed_by_user_id=user_id,
+                    removed_by_email=user_email,
+                    removed_by_role='Member',
+                    member_user_id=member_id,
+                    member_email=member_email,
+                    member_name=member_name,
+                    group_id=group_id,
+                    group_name=group_doc.get('name', 'Unknown'),
+                    action='member_left_group',
+                    description=description
+                )
+                
                 return jsonify({"message": "You have left the group"}), 200
             else:
                 return jsonify({"error": "You are not in this group"}), 404
@@ -469,10 +560,12 @@ def register_route_backend_groups(app):
                 return jsonify({"error": "Cannot remove the group owner"}), 403
 
             removed = False
+            removed_member_info = None
             updated_users = []
             for u in group_doc["users"]:
                 if u["userId"] == member_id:
                     removed = True
+                    removed_member_info = u
                     continue
                 updated_users.append(u)
             group_doc["users"] = updated_users
@@ -486,6 +579,26 @@ def register_route_backend_groups(app):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                # Log activity for admin/owner removal
+                from functions_activity_logging import log_group_member_deleted
+                user_email = user_info.get("email", "unknown")
+                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
+                member_email = removed_member_info.get('email', '') if removed_member_info else ''
+                description = f"{role} {user_email} removed member {member_name} ({member_email}) from group {group_doc.get('name', group_id)}"
+                
+                log_group_member_deleted(
+                    removed_by_user_id=user_id,
+                    removed_by_email=user_email,
+                    removed_by_role=role,
+                    member_user_id=member_id,
+                    member_email=member_email,
+                    member_name=member_name,
+                    group_id=group_id,
+                    group_name=group_doc.get('name', 'Unknown'),
+                    action='admin_removed_member',
+                    description=description
+                )
+                
                 return jsonify({"message": "User removed"}), 200
             else:
                 return jsonify({"error": "User not found in group"}), 404
@@ -504,6 +617,7 @@ def register_route_backend_groups(app):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
+        user_email = user_info.get("email", "unknown")
         
         group_doc = find_group_by_id(group_id)
         
@@ -523,6 +637,15 @@ def register_route_backend_groups(app):
         if not target_role:
             return jsonify({"error": "Member is not in the group"}), 404
 
+        # Get member details for logging
+        member_name = "Unknown"
+        member_email = "unknown"
+        for u in group_doc.get("users", []):
+            if u.get("userId") == member_id:
+                member_name = u.get("displayName", "Unknown")
+                member_email = u.get("email", "unknown")
+                break
+
         if member_id in group_doc.get("admins", []):
             group_doc["admins"].remove(member_id)
         if member_id in group_doc.get("documentManagers", []):
@@ -537,6 +660,49 @@ def register_route_backend_groups(app):
 
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_groups_container.upsert_item(group_doc)
+
+        # Log activity for role change
+        try:
+            activity_record = {
+                'id': str(uuid.uuid4()),
+                'type': 'group_member_role_changed',
+                'activity_type': 'update_member_role',
+                'timestamp': datetime.utcnow().isoformat(),
+                'changed_by_user_id': user_id,
+                'changed_by_email': user_email,
+                'changed_by_role': current_role,
+                'group_id': group_id,
+                'group_name': group_doc.get('name', 'Unknown'),
+                'member_user_id': member_id,
+                'member_email': member_email,
+                'member_name': member_name,
+                'old_role': target_role,
+                'new_role': new_role,
+                'description': f"{current_role} {user_email} changed {member_name} ({member_email}) role from {target_role} to {new_role} in group {group_doc.get('name', group_id)}"
+            }
+            cosmos_activity_logs_container.create_item(body=activity_record)
+        except Exception as log_error:
+            debug_print(f"Failed to log role change activity: {log_error}")
+        
+        # Create notification for the member whose role was changed
+        try:
+            from functions_notifications import create_notification
+            create_notification(
+                user_id=member_id,
+                notification_type='system_announcement',
+                title='Role Changed',
+                message=f"Your role in group '{group_doc.get('name', 'Unknown')}' has been changed from {target_role} to {new_role} by {user_email}.",
+                link_url=f"/manage_group/{group_id}",
+                metadata={
+                    'group_id': group_id,
+                    'group_name': group_doc.get('name', 'Unknown'),
+                    'changed_by': user_email,
+                    'old_role': target_role,
+                    'new_role': new_role
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create role change notification: {notif_error}")
 
         return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
 
@@ -704,3 +870,260 @@ def register_route_backend_groups(app):
             file_count = item
 
         return jsonify({ "fileCount": file_count }), 200
+
+    @app.route("/api/groups/<group_id>/activity", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_group_activity(group_id):
+        """
+        GET /api/groups/<group_id>/activity
+        Returns recent activity timeline for the group.
+        Only accessible by owner and admins.
+        """
+        from functions_debug import debug_print
+        
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        group = find_group_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user is owner or admin (NOT document managers or regular members)
+        is_owner = group["owner"]["id"] == user_id
+        is_admin = user_id in (group.get("admins", []))
+        
+        if not (is_owner or is_admin):
+            return jsonify({"error": "Forbidden - Only group owners and admins can view activity timeline"}), 403
+
+        # Get pagination parameters
+        limit = request.args.get('limit', 50, type=int)
+        if limit not in [10, 20, 50]:
+            limit = 50
+
+        # Get recent activity
+        query = f"""
+            SELECT TOP {limit} *
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            ORDER BY a.timestamp DESC
+        """
+        params = [{"name": "@groupId", "value": group_id}]
+        
+        debug_print(f"[GROUP_ACTIVITY] Group ID: {group_id}")
+        debug_print(f"[GROUP_ACTIVITY] Query: {query}")
+        debug_print(f"[GROUP_ACTIVITY] Params: {params}")
+        
+        activities = []
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            )
+            activities = list(activity_iter)
+            debug_print(f"[GROUP_ACTIVITY] Found {len(activities)} activity records")
+        except Exception as e:
+            debug_print(f"[GROUP_ACTIVITY] Error querying activity: {e}")
+            return jsonify({"error": "Failed to retrieve activity"}), 500
+        
+        return jsonify(activities), 200
+
+    @app.route("/api/groups/<group_id>/stats", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_group_stats(group_id):
+        """
+        GET /api/groups/<group_id>/stats
+        Returns statistics for the group including documents, storage, tokens, and members.
+        Only accessible by owner and admins.
+        """
+        from functions_debug import debug_print
+        from datetime import datetime, timedelta
+        
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        group = find_group_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user is owner or admin
+        is_owner = group["owner"]["id"] == user_id
+        is_admin = user_id in (group.get("admins", []))
+        
+        if not (is_owner or is_admin):
+            return jsonify({"error": "Forbidden"}), 403
+
+        # Get metrics from group record
+        metrics = group.get("metrics", {})
+        document_metrics = metrics.get("document_metrics", {})
+        
+        total_documents = document_metrics.get("total_documents", 0)
+        storage_used = document_metrics.get("storage_account_size", 0)
+        ai_search_size = document_metrics.get("ai_search_size", 0)
+        storage_account_size = document_metrics.get("storage_account_size", 0)
+
+        # Get member count
+        total_members = len(group.get("users", []))
+
+        # Get token usage from activity logs (last 30 days)
+        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        
+        debug_print(f"[GROUP_STATS] Group ID: {group_id}")
+        debug_print(f"[GROUP_STATS] Start date: {thirty_days_ago}")
+        
+        token_query = """
+            SELECT a.usage
+            FROM a 
+            WHERE a.workspace_context.group_id = @groupId 
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        token_params = [
+            {"name": "@groupId", "value": group_id},
+            {"name": "@startDate", "value": thirty_days_ago}
+        ]
+        
+        total_tokens = 0
+        try:
+            token_iter = cosmos_activity_logs_container.query_items(
+                query=token_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in token_iter:
+                usage = item.get("usage", {})
+                total_tokens += usage.get("total_tokens", 0)
+            debug_print(f"[GROUP_STATS] Total tokens accumulated: {total_tokens}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying total tokens: {e}")
+
+        # Get activity data for charts (last 30 days)
+        doc_activity_labels = []
+        doc_upload_data = []
+        doc_delete_data = []
+        token_usage_labels = []
+        token_usage_data = []
+        
+        # Generate labels for last 30 days
+        for i in range(29, -1, -1):
+            date = datetime.utcnow() - timedelta(days=i)
+            doc_activity_labels.append(date.strftime("%m/%d"))
+            token_usage_labels.append(date.strftime("%m/%d"))
+            doc_upload_data.append(0)
+            doc_delete_data.append(0)
+            token_usage_data.append(0)
+
+        # Get document upload activity by day
+        doc_upload_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_creation'
+        """
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=doc_upload_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in activity_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_upload_data[idx] += 1
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying document uploads: {e}")
+
+        # Get document delete activity by day
+        doc_delete_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_deletion'
+        """
+        try:
+            delete_iter = cosmos_activity_logs_container.query_items(
+                query=doc_delete_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in delete_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_delete_data[idx] += 1
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying document deletes: {e}")
+
+        # Get token usage by day
+        token_activity_query = """
+            SELECT a.timestamp, a.created_at, a.usage
+            FROM a
+            WHERE a.workspace_context.group_id = @groupId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        try:
+            token_activity_iter = cosmos_activity_logs_container.query_items(
+                query=token_activity_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in token_activity_iter:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in token_usage_labels:
+                            idx = token_usage_labels.index(day_date)
+                            usage = item.get("usage", {})
+                            tokens = usage.get("total_tokens", 0)
+                            token_usage_data[idx] += tokens
+                    except Exception as e:
+                        debug_print(f"[GROUP_STATS] Error parsing timestamp: {e}")
+        except Exception as e:
+            debug_print(f"[GROUP_STATS] Error querying token usage: {e}")
+
+        stats = {
+            "totalDocuments": total_documents,
+            "storageUsed": storage_used,
+            "storageLimit": 10737418240,  # 10GB default
+            "totalTokens": total_tokens,
+            "totalMembers": total_members,
+            "storage": {
+                "ai_search_size": ai_search_size,
+                "storage_account_size": storage_account_size
+            },
+            "documentActivity": {
+                "labels": doc_activity_labels,
+                "uploads": doc_upload_data,
+                "deletes": doc_delete_data
+            },
+            "tokenUsage": {
+                "labels": token_usage_labels,
+                "data": token_usage_data
+            }
+        }
+
+        return jsonify(stats), 200

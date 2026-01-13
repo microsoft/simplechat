@@ -112,6 +112,19 @@
                 <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="This property is inheritable from the selected model.">Inheritable</span>
                 <input type="text" class="form-control" id="agent-gpt-api-version" />
               </div>
+              <div class="mb-3">
+                <label for="agent-reasoning-effort" class="form-label">Reasoning Effort</label>
+                <span class="badge bg-secondary ms-1" data-bs-toggle="tooltip" title="Controls how much reasoning the model applies. Higher effort = deeper analysis but slower.">Optional</span>
+                <select class="form-select" id="agent-reasoning-effort">
+                  <option value="">Inherit from model default</option>
+                  <option value="none">None - Fastest responses</option>
+                  <option value="minimal">Minimal - Light reasoning</option>
+                  <option value="low">Low - Balanced (recommended)</option>
+                  <option value="medium">Medium - Enhanced thinking</option>
+                  <option value="high">High - Maximum analysis</option>
+                </select>
+                <div class="form-text">Only applies to models that support reasoning (e.g., gpt-5, o1, o3)</div>
+              </div>
             </div>
             
             <div id="agent-apim-fields" class="d-none">
@@ -259,6 +272,24 @@
             <label for="agent-additional-settings" class="form-label">Additional Settings (JSON)</label>
             <textarea class="form-control" id="agent-additional-settings" rows="6" placeholder='{"example": "value"}'></textarea>
             <div class="form-text">Optional additional configuration settings for this agent in JSON format.</div>
+          </div>
+          <div class="mb-3">
+            <div class="d-flex align-items-center mb-3">
+              <label for="agent-power-user-toggle" class="form-label mb-0 me-2">Show Agent Power User Settings</label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="agent-power-user-toggle" />
+                <label class="form-check-label" for="agent-power-user-toggle"></label>
+              </div>
+            </div>
+            <div class="d-none" id="agent-power-user-settings">
+              <label for="max-completion-tokens" class="form-label">Max Completion Tokens</label>
+              <input type="number" value="-1" class="form-control" id="agent-max-completion-tokens" placeholder="e.g., 4096, Use -1 for default" min="-1" />
+              <div class="form-text">
+                Specify the maximum number of tokens the model can generate in a single response. 
+                Set to -1 to use the model's default limit.
+                Note: Setting this value too high may lead to increased latency or higher costs.
+              </div>
+            </div>
           </div>
         </div>
 

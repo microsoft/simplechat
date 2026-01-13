@@ -1,0 +1,76 @@
+name: SimpleChat
+metadata:
+  template: custom
+infra:
+  provider: bicep
+  path: bicep
+hooks:
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        # Set up variables
+
+        export var_configureApplication=${var_configureApplication}
+        export var_cosmosDb_uri=${var_cosmosDb_uri}
+        export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
+        export var_rgName=${var_rgName}
+        export var_keyVaultUri=${var_keyVaultUri}
+
+        export var_authenticationType=${var_authenticationType}
+
+        export var_openAIEndpoint=${var_openAIEndpoint}
+        export var_openAIResourceGroup=${var_openAIResourceGroup}
+        export var_openAIGPTModel=${var_openAIGPTModel}
+        export var_openAITextEmbeddingModel=${var_openAITextEmbeddingModel}
+        export var_blobStorageEndpoint=${var_blobStorageEndpoint}
+        export var_contentSafetyEndpoint=${var_contentSafetyEndpoint}
+        export var_searchServiceEndpoint=${var_searchServiceEndpoint}
+        export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
+        export var_videoIndexerName=${var_videoIndexerName}
+        export var_deploymentLocation=${var_deploymentLocation}
+        export var_videoIndexerAccountId=${var_videoIndexerAccountId}
+        export var_speechServiceEndpoint=${var_speechServiceEndpoint}
+
+        # Execute post-configuration script if enabled
+        if [ "${var_configureApplication}" = "true" ]; then
+            echo "Grant permissions to CosmosDB for post deployment steps..."
+            bash ./bicep/cosmosDb-postDeployPerms.sh
+            echo "Running post-deployment configuration..."
+            python3 -m pip install --user -r ./bicep/requirements.txt
+            python3 ./bicep/postconfig.py
+            echo "Post-deployment configuration completed."
+            echo "Restarting web service to apply new settings..."
+            az webapp restart --name ${var_webService} --resource-group ${var_rgName}
+            echo "Web service restarted."
+        else
+            echo "Skipping post-deployment configuration (var_configureApplication is not true)"
+        fi
+
+  predeploy:
+    posix:
+      shell: sh
+      run: |
+        # Build and push Docker image to ACR
+        cd ..
+        timestamp="$(date +"%Y%m%d-%H%M%S")"
+        echo "Stopping web service prior to deployment..."
+        az webapp stop --name ${var_webService} --resource-group ${var_rgName}
+        echo "Building Docker image..."
+        docker build -f application/single_app/Dockerfile -t ${var_containerRegistry}/${var_imageName}:${timestamp} .
+        docker tag ${var_containerRegistry}/${var_imageName}:${timestamp} ${var_containerRegistry}/${var_imageName}:latest
+        echo "Logging in to ACR..."
+        az acr login --name ${var_acrName}
+        echo "Pushing image to ACR..."
+        docker push ${var_containerRegistry}/${var_imageName}:latest
+        docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
+        echo "Restarting web service..."
+        az webapp start --name ${var_webService} --resource-group ${var_rgName}
+services:
+  web:
+    project: ../application/single_app
+    language: python
+    host: appservice
+    docker:
+      context: ../../
+      dockerfile: application/single_app/Dockerfile

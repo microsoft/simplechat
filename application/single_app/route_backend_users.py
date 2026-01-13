@@ -91,7 +91,7 @@ def register_route_backend_users(app):
                 item=user_id,
                 partition_key=user_id
             )
-            print(f"[DEBUG] /api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            print(f"/api/user/info/{user_id} → doc: {user_doc}", flush=True)
             return jsonify({
                 "user_id": user_id,
                 "email": user_doc.get("email", ""),
@@ -147,7 +147,21 @@ def register_route_backend_users(app):
 
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
-                allowed_keys = {'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 'navLayout', 'profileImage', 'enable_agents'} # Add others as needed
+                allowed_keys = {
+                    'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
+                    'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
+                    'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
+                    # Public directory and workspace settings
+                    'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
+                    # Chat UI settings
+                    'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
+                    # Microphone permission settings
+                    'microphonePermissionState',
+                    # Text-to-speech settings
+                    'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
+                    # Metrics and other settings
+                    'metrics', 'lastUpdated'
+                } # Add others as needed
                 invalid_keys = set(settings_to_update.keys()) - allowed_keys
                 if invalid_keys:
                     print(f"Warning: Received invalid settings keys: {invalid_keys}")

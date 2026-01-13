@@ -1,156 +1,227 @@
-# Simple Chat - Deployment using BICEP
+# Deploying SimpleChat with AZD
 
-[Return to Main](../README.md)
+>Strongly encourage administrators to use Visual Studio Code and Dev Containers for this deployment type.
 
-## Manual Pre-Requisites (Critically Important)
+## Table of Contents</br>
+- [Deployment Variables](##Deployment_Variables)
+- [Deployment Process](##Deployment_Process)
+    - [Pre-Configuration](###Pre-Configuration)
+        - [Create the application registration](####Create_the_application_registration)
+    - [Deployment Process](###Deployment_Process)
+        - [Configure AZD Environment](####Configure_AZD_Environment)
+        - [Deployment Prompts](####Deployment_Prompts)
+    - [Post Deployment Tasks](###Post_Deployment_Tasks)
+- [Cleanup / Deprovision](##Cleanup_/_Deprovisioning)
+- [Workarounds](##Workarounds)
 
-Create Entra ID App Registration:
+---
 
-Go to Azure portal > Microsoft Entra ID > App registrations > New registration.
+## Deployment Variables
+The folloiwng variables will be used within this document:
 
-- Provide a name (e.g., $appRegistrationName from the script's logic).
-- Supported account types: Usually "Accounts in this organizational directory only."
-- Do not configure Redirect URI yet. You will get these from the Bicep output.
-- Once created, note down the Application (client) ID (this is appRegistrationClientId parameter).
-- Go to "Certificates & secrets" > "New client secret" > Create a secret and copy its Value immediately (this is appRegistrationClientSecret parameter).
-- **** NO **** Go to "Token configuration" and enable "ID tokens" and "Access tokens" for implicit grant and hybrid flows if needed by your app (the script attempts az ad app update --enable-id-token-issuance true --enable-access-token-issuance true).
-- The script also adds API permissions for Microsoft Graph and attempts to add owners. These should be configured manually on the App Registration.
-  - User.Read, Delegated
-  - profile, Delegated
-  - email, Delegated
-  - Group.Read.All, Delegated
-  - offline_access, Delegated
-  - openid, Delegated
-  - People.Read.All, Delegated
-  - User.ReadBasic.All, Delegated
-- The script also references appRegistrationRoles.json. If your application defines app roles, configure these in the App Registration manifest.
-- Obtain the Object ID of the Service Principal associated with this App Registration: az ad sp show --id <Your-App-Registration-Client-ID> --query id -o tsv. This will be the appRegistrationSpObjectId parameter.
+- *\<appName\>* - This will become the beginning of each of the objects created.  Minimum of 3 characters, maximum of 12 characters.  No Spaces or special characters.
+- *\<environment\>* - This will be used as part of the object names as well as with the AZD environments.  **Example:** *dev/qa/prod*.
+- *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment*
+- *\<imageName\>* - Should be presented in the form *imageName:label* **Example:** *simple-chat:latest*
 
-Create Entra ID Security Groups: If your application relies on the security groups ($global_EntraSecurityGroupNames), create them manually in Entra ID.
 
-Azure Container Registry (ACR): Ensure the ACR specified by acrName exists and the image imageName is pushed to it.
+## Deployment Process
 
-Azure OpenAI Access: If useExistingOpenAiInstance is true, ensure the specified existing OpenAI resource exists and you have its name and resource group. If false, ensure your subscription is approved for Azure OpenAI and the chosen SKU and region support it.
+The below steps cover the process to deploy the Simple Chat application to an Azure Subscription.  It is assumed the user has administrative rights to the subscription for deployment.  If the user does not also have permissions to create an Application Registration in Entra, a stand-alone script can be provided to an administrator with the correct permissions.
 
-## Deploy
+### Pre-Configuration:
 
-(Optional) Create a resource group if you don't have one: az group create --name MySimpleChatRG --location usgovvirginia
+The following procedure must be completed with a user that has permissions to create an application registration in the users Entra tenanat.  If this procedure is to be completed by a different user, the following files should be provided:
 
-Deploy the Bicep file.
+`./deployers/Initialize-EntraApplication.ps1`</br>
+`./deployers/azurecli/appRegistrationRoles.json`
 
-### azure cli
+#### Create the application registration:
 
-#### validate before deploy
+`cd ./deployers`</br>
+`.\Initialize-EntraApplication.ps1 -AppName "<appName>" -Environment "<environment>"  -AppRolesJsonPath "./azurecli/appRegistrationRoles.json"`
 
-az bicep build --file main.bicep
+This script will create an Entra Enterprise Application, with an App Registration named *\<appName\>*-*\<environment\>*-ar for the web service called *\<appName\>*-*\<environment\>*-app.  The web service name may be overriden with the `-AppServceName` parameter. A user can also specify a different expiration date for the secret which defaults to 180 days with the `-SecretExpirationDays` parameter.
 
-az deployment group validate `
---resource-group MySimpleChatRG `
---template-file main.bicep `
---parameters main.json
+>**Note**: If the script was provided to a different administrator, the -AppRolesJsonPath will need to be edited to the location of the appRegistrationRoles.json file.
 
-az deployment group create `
---resource-group MySimpleChatRG `
---template-file main.bicep `
---parameters main.bicepparam `
---parameters appRegistrationClientSecret="YOUR_APP_REG_SECRET_VALUE"
+The powershell script will report the following information on successful completion.  
 
-## Post-Deployment Manual Steps (from Bicep outputs and script)
+>**Be sure to save this information as it will not be available after the window is closed.**
 
-### App Registration
+```========================================
+App Registration Created Successfully!
+========================================
+Application Name:       <registered application name>
+Client ID:              <clientID>
+Tenant ID:              <tenantID>
+Service Principal ID:   <servicePrincipalId>
+Client Secret:          <clientSecret>
+Secret Expiration:      <yyyy-mm-dd>
+```
 
-- Manage > Authentication
+In addition, the script will note additional steps that must be taken for the app registration step to be completed.
 
-    Web Redirect Url example:
+1.  Grant Admin Consent for API Permissions:
 
-      <https://web-8000.azurewebsites.us/.auth/login/aad/callback>
+    - Navigate to Azure Portal > Entra ID > App registrations
+    - Find app: *\<registered application name\>*
+    - Go to API permissions
+    - Click 'Grant admin consent for [Tenant]'
 
-      <https://web-8000.azurewebsites.us/getAToken>
+1.  Assign Users/Groups to Enterprise Application:
+    - Navigate to Azure Portal > Entra ID > Enterprise applications
+    - Find app: *\<registered application name\>*
+    - Go to Users and groups
+    - Add user/group assignments with appropriate app roles
 
-    Front-channel logout URL: <https://web-8000.azurewebsites.us/logout>
+1.  Store the Client Secret Securely:
+    - Save the client secret in Azure Key Vault or secure credential store
+    - The secret value is shown above and will not be displayed again
 
-    Implicit grant and hyrbid flows:
+### Deployment Process
 
-    Access tokens: Check this
+After the application registration has been successfully completed the following deployment may begin:
 
-    ID tokens: Check this
+#### Configure AZD Environment
 
-    Supported account types: Accounts in this organization directly only
+Using the bash terminal in Visual Studio Code
 
-    Advanced Settings > Allow public client flows > Enable the following mobile and desktop flows: No
+`cd ./deployers`
 
-- Manage > Certificates & secrets
-  
-  You will see 2 secrets here in the end. One created by you pre-deployment and one created when you add Authentication to the App Service.
+`azd auth login` - this will open a browser window that the user with Owner level permissions to the target subscription will need to authenticate with.
 
-- Manage > Token configuration: Nothing to do here. Leave empty.
+`azd env new <environment>` - Use the same value for the \<environment\> that was used in the application registration.
 
-- Manage > API Permissions: Click "Grant Admin Consent for tenant" to all deletgated permissions
+`azd env select <environment>` - select the new environment
 
-- Manage > Expose an API: Nothing to do here. Leave empty.
+`azd up` - This step will begin the deployment process.  
 
-- Manage > App Roles: You should see the following app roles: [FeedbackAdmin, Safety Violation Admin, Create Group, Users, Admins]
+#### Deployment Prompts
+> For each of the following parameters ensure the value noted in *\<parameter\>* matches settings as noted above.
+
+
+- Select an Azure Subscription to use: *\<select from available list\>*
+- Enter a value for the 'appName' infrastructure parameter: *\<appName\>*
+- Enter a value for the 'authenticationType' infrastructure parameter: *\<authType\>*
+- Enter a vaule for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
+- Enter a value for the 'configureApplicationPermissions' infrastructure parameter: \<true | false\>*
+- Enter a value for the 'deployContentSafety' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'deployRedisCache' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'deploySpeechService' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'deployVideoIndexerService' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'enableDiagLogging' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'enterpriseAppClientId' infrastructure parameter: *\<clientID\>*
+- Enter a value for the 'enterpriseAppClientSecret' infrastructure secured parameter: *\<clientSecret\>*
+- Enter a value for the 'environment' infrastructure parameter: *\<environment\>*
+- Enter a value for the 'imageName' infrastructure parameter: *\<imageName\>*
+- Enter a value for the 'location' infrastructure parameter: *\<select from the list provided\>*
+
+Provisioning may take between 10-40 minutes depending on the options selected.
+
+On the completion of the deployment, a URL will be presented, the user may use to access the site.
+
+---
+
+### Post Deployment Tasks:
+
+Once logged in to the newly deployed application with admin credentials, the application will need to be set up with several configurations:
+
+1. AI Models > GPT Configuration & Embeddings Configuration.  Application is pre-configured with the chosen security model (key / managed identity).  Select "Test GPT Connection" and "Test Embedding Connection" to verify connection.
+
+    > Known Bug:  User will be unable to Fetch GPT or Embedding models. </br>
+Workaround:  Set configurations in CosmosDB.  For details see [Workarounds](##Workarounds) below.
+
+1. Logging > Application Insights Logging  > "Enable Application Insights Global Logging - Set to "ON"
+1. Citations > Ehnahced Citations > "Enable Enhanced Citations" - Set to "ON"
+    -  Configure "All Filetypes"
+        - "Storage Account Authentication Type" = Managed Identity
+        - "Storage Account Blob Endpoint" = "https://\<appName\>\<environment\>sa.blob.core.windows.net" (or appropiate domain if in Azure Gov.)
+1. Safety > Conversation Archiving > "Enable Conversation Archiving" - Set to "ON"
+1. Search & Extract > Azure AI Search 
+    - "Search Endpoint" = "https://\<appName\>-\<environment\>-search.search.windows.net" (or appropiate domain if in Azure Gov.)
+    > Known Bug:  Unable to configure "Managed Identity" authentication type.  Must use "Key"
+    - "Authentication Type" - Key
+    - "Search Key" - *Pre-populated from key vault value*.
+    - At the top of the Admin Page you'll see warning boxes indicating Index Schema Mismatch.
+        - Click "Create user Index"
+        - Click "Create group Index"
+        - Click "Create public Index"    
+1. Search & Extract > Document Intelligence
+    - "Document Intelligence Endpoint" = "https://\<appName\>-\<environment\>-docintel.cognitiveservices.azure.com/" (or appropiate domain if in Azure Gov.)
+    - "Authentication Type" - Managed Identity
+
+User shoud now be able to fully use Simple Chat application.
+
+---
+## Cleanup / Deprovisioning
+
+> This is a destructive process.  Use with caution.
+
+`cd ./deployers`</br>
+`azd down --purge` - This will delete all deployed resource for this solution and purge key vault, document intelligence, OpenAI services.
+
+
+---
+## Workarounds
+
+- Fetching GPT and Embedding Models.
+    - Grant the current user data access to Cosmos DB from a BASH command shell
+    - `PRINCIPAL_ID=$(az ad signed-in-user show --query id --output tsv)`
+    - `az cosmosdb sql role assignment create --account-name <appName>-<environment>-cosmos --resource-group <appName>-<environment>-rg --principal-id $PRINCIPAL_ID --scope "/" --role-definition-id 00000000-0000-0000-0000-000000000002`
+    - Open CosmosDB in Azure Portal and connect to the `<appName>-<environment>-cosmos` service.
+    - Data Explorer > SimpleChat > settings > items
+        - Replace the following values:
+        ```
+        "gpt_model": {
+            "selected": [],
+            "all": []
+        },
+        ``` 
+
+        with 
+
+        ```
+        "gpt_model": {
+            "selected": [
+                {
+                    "deploymentName": "gpt-4o",
+                    "modelName": "gpt-4o"
+                }         
+            ],
+            "all": [
+                {
+                    "deploymentName": "gpt-4o",
+                    "modelName": "gpt-4o"
+                }         
+            ]
+        },
+        ```
+
+        and
+
+        ```
+        "embedding_model": {
+            "selected": [],
+            "all": []
+        },
+        ``` 
+
+        with 
+
+        ```
+        "embedding_model": {
+            "selected": [
+                "deploymentName": "text-embedding-3-small",
+                "modelName": "text-embedding-3-small"
+            ],
+            "all": [
+                "deploymentName": "text-embedding-3-small",
+                "modelName": "text-embedding-3-small"
+            ]
+        },
+        ``` 
+
+    - Update settings in the Cosmos UI and click Save.
+    - Refresh web page and you shound now be able to Test the GPT and Embedding models.
 
-### Entra Security Groups
-
-- Assignments: If you created security groups, assign them to the corresponding Enterprise Application application roles and add members to the security groups.
-
-### App Service
-
-- Authentication
-  
-  Identity Provider: Microsoft
-
-  Choose a tenant for your application and its users: Workforce configuration (current tenant)
-
-  Pick an existing app registration in this directory: Select the app registration you created pre-deployment
-
-  Client secret expiration: Recommended 180 days
-
-  *** Leave all other values default
-
-  Note: Check App Setting "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" for a secret value created by configuring the Authentication. This secret will be added to your App Registration as well.
-
-- Deployment Center > Registry Settings (These sometimes get screwed up during a deploy. Make sure these values are correct.)
-
-  The deployer can get messed up here. Make sure the correct values are being displayed for your registry settings.
-
-  Container Type: Single Container
-
-  Registry source: Azure Container Registry
-
-  Subscription Id: [Your subscription]
-
-  Authentication: Managed Identity
-
-  Identity: Managed identity deployer deployed
-
-  Registry: [Name of the ACR: e.g. SomeRegistry]
-
-  Image: simplechat
-
-  Tag: 2025-05-29_1
-
-  Startup file or command: [Blank]
-
-- Restart & Test: Restart the App Service and test the Web UI.
-
-- Open Monitoring > Log stream and make sure the container has loaded and is ready.
-
-### Azure AI Search
-
-- Manually create 2 Indexes: Deploy your search index schemas (ai_search-index-group.json, ai_search-index-user.json) using Index as Json in the Azure portal.
-
-  Note: These files can be found in GitHub repository folder /deployers/bicep/artifacts
-
-### Existing Open AI (Option)
-
-- Make sure the Managed Idenity and the Entra App Registration have been added to the Open AI Instance IAM with RBAC Roles [Cognitive Services Contributor, Cognitive Services OpenAI User, Cognitive Services User]
-
-### Admin center in Web UI application
-
-- Open a browser and navigate to the url of the Azure App Service default domain.
-
-- Once you have logged into the application, navigate to "Admin" and configure the settings.
-
-  Note: If you cannot login or see the Admin link, make sure you have added yourself to the Enterprise Application (Assigned users and groups) users for the App Registration you created. Make sure you have assigned your user account to the "Admin" app role.

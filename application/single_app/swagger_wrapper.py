@@ -94,10 +94,12 @@ import json
 import re
 import inspect
 import ast
+import logging
 from datetime import datetime, timedelta
 import hashlib
 import time
 import threading
+import yaml
 from functions_authentication import *
 
 # Global registry to store route documentation
@@ -156,15 +158,24 @@ class SwaggerCache:
             self._request_counts[client_ip][0] += 1
             return False
     
-    def get_spec(self, app, force_refresh=False):
-        """Get cached swagger spec or generate new one."""
+    def get_spec(self, app, force_refresh=False, format='json'):
+        """Get cached swagger spec or generate new one in specified format.
+        
+        Args:
+            app: Flask application instance
+            force_refresh: Whether to force cache refresh
+            format: Output format ('json' or 'yaml')
+            
+        Returns:
+            Tuple of (spec_content, status_code, content_type)
+        """
         client_ip = request.remote_addr or 'unknown'
         
         # Rate limiting check
         if self._is_rate_limited(client_ip):
-            return None, 429  # Too Many Requests
+            return None, 429, 'application/json'  # Too Many Requests
         
-        cache_key = self._get_cache_key(app)
+        cache_key = f"{self._get_cache_key(app)}_{format}"
         current_time = time.time()
         
         with self._cache_lock:
@@ -172,16 +183,33 @@ class SwaggerCache:
             if not force_refresh and cache_key in self._cache:
                 cached_spec, cached_time = self._cache[cache_key]
                 if current_time - cached_time < self.cache_ttl:
-                    return cached_spec, 200
+                    content_type = 'application/x-yaml' if format == 'yaml' else 'application/json'
+                    return cached_spec, 200, content_type
             
             # Generate fresh spec
             try:
-                fresh_spec = extract_route_info(app)
-                self._cache = {cache_key: (fresh_spec, current_time)}  # Keep only latest
-                return fresh_spec, 200
+                openapi_dict = extract_route_info(app)
+                
+                if format == 'yaml':
+                    # Convert to YAML format
+                    yaml_content = yaml.dump(openapi_dict, 
+                                           default_flow_style=False, 
+                                           sort_keys=False,
+                                           allow_unicode=True,
+                                           indent=2)
+                    self._cache[cache_key] = (yaml_content, current_time)
+                    return yaml_content, 200, 'application/x-yaml'
+                else:
+                    # Default JSON format
+                    json_content = openapi_dict
+                    self._cache[cache_key] = (json_content, current_time)
+                    return json_content, 200, 'application/json'
+                    
             except Exception as e:
-                print(f"Error generating swagger spec: {e}")
-                return {"error": "Failed to generate specification"}, 500
+                debug_print(f"Error generating swagger spec: {e}")
+                log_event(f"Swagger spec generation failed: {str(e)}", level=logging.ERROR)
+                error_response = {"error": "Failed to generate specification"}
+                return error_response, 500, 'application/json'
     
     def clear_cache(self):
         """Clear the cache (useful for development)."""
@@ -191,10 +219,23 @@ class SwaggerCache:
     def get_cache_stats(self):
         """Get cache statistics for monitoring."""
         with self._cache_lock:
+            # Analyze cache entries by format
+            format_counts = {'json': 0, 'yaml': 0}
+            for cache_key in self._cache.keys():
+                if cache_key.endswith('_json'):
+                    format_counts['json'] += 1
+                elif cache_key.endswith('_yaml'):
+                    format_counts['yaml'] += 1
+            
             return {
                 'cached_specs': len(self._cache),
                 'cache_ttl_seconds': self.cache_ttl,
-                'rate_limit_per_minute': self.rate_limit_requests
+                'rate_limit_per_minute': self.rate_limit_requests,
+                'formats': {
+                    'json_cached': format_counts['json'],
+                    'yaml_cached': format_counts['yaml'],
+                    'supported_formats': ['json', 'yaml']
+                }
             }
 
 # Global cache instance
@@ -218,7 +259,46 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         import textwrap
         source = textwrap.dedent(source)
         
-        tree = ast.parse(source)
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+        lines = source.split('\n')
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
+        
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
         
         responses = {}
         
@@ -295,6 +375,8 @@ def _analyze_function_returns(func) -> Dict[str, Any]:
         
     except Exception as e:
         # Fallback to default responses if analysis fails
+        debug_print(f"Warning: Could not analyze return statements for {func.__name__}: {e}")
+        log_event(f"Return statement analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return {
             "200": {
                 "description": "Success",
@@ -393,6 +475,9 @@ def _get_error_description(status_code: int) -> str:
 def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
     """
     Analyze function parameters to generate parameter documentation.
+    Automatically detects:
+    - Path parameters from function signature
+    - Query parameters from request.args.get() calls in source code
     
     Args:
         func: Function to analyze
@@ -401,9 +486,10 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
         List of parameter definitions
     """
     try:
-        sig = inspect.signature(func)
         parameters = []
         
+        # First, check for path parameters from function signature
+        sig = inspect.signature(func)
         for param_name, param in sig.parameters.items():
             # Skip common Flask route parameters
             if param_name in ['args', 'kwargs']:
@@ -411,9 +497,9 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
                 
             param_def = {
                 "name": param_name,
-                "in": "path",  # Assume path parameters for now
+                "in": "path",
                 "required": param.default == inspect.Parameter.empty,
-                "description": f"Parameter: {param_name}",
+                "description": f"Path parameter: {param_name}",
                 "schema": {"type": "string"}
             }
             
@@ -430,10 +516,603 @@ def _analyze_function_parameters(func) -> List[Dict[str, Any]]:
             
             parameters.append(param_def)
         
+        # Second, analyze source code for query parameters (request.args.get calls)
+        try:
+            source = inspect.getsource(func)
+            import textwrap
+            source = textwrap.dedent(source)
+            
+            # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+            lines = source.split('\n')
+            if lines and lines[0]:  # If first line exists and is not empty
+                # Find how much leading whitespace the first non-empty line has
+                first_indent = len(lines[0]) - len(lines[0].lstrip())
+                if first_indent > 0:
+                    # Only remove whitespace from lines that have enough indentation
+                    # This preserves multi-line strings that may have less indentation
+                    dedented_lines = []
+                    for line in lines:
+                        if line.strip():  # Non-empty line
+                            # Calculate this line's leading whitespace
+                            line_leading = len(line) - len(line.lstrip())
+                            if line_leading >= first_indent:
+                                # Line has enough indentation - remove first_indent amount
+                                dedented_lines.append(line[first_indent:])
+                            else:
+                                # Line has less indentation - preserve it as-is
+                                dedented_lines.append(line)
+                        else:
+                            # Empty line - preserve
+                            dedented_lines.append(line)
+                    source = '\n'.join(dedented_lines)
+            
+            try:
+                tree = ast.parse(source)
+            except SyntaxError as se:
+                # Log the problematic source for debugging
+                debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+                debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+                if se.lineno:
+                    # Show the problematic line and surrounding context
+                    source_lines = source.split('\n')
+                    start_line = max(0, se.lineno - 3)
+                    end_line = min(len(source_lines), se.lineno + 2)
+                    debug_print(f"Context around line {se.lineno}:")
+                    for i in range(start_line, end_line):
+                        marker = ">>>" if i == se.lineno - 1 else "   "
+                        debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+                raise
+            
+            query_params = {}  # {param_name: {type, default, description}}
+            
+            class QueryParameterVisitor(ast.NodeVisitor):
+                def visit_Assign(self, node):
+                    """Look for patterns like: page = int(request.args.get('page', 1))"""
+                    # Check if this is an assignment
+                    if isinstance(node.value, ast.Call):
+                        # Check for type conversion wrapper (int, str, float, bool)
+                        type_wrapper = None
+                        inner_call = node.value
+                        
+                        if (isinstance(node.value.func, ast.Name) and 
+                            node.value.func.id in ['int', 'str', 'float', 'bool'] and
+                            len(node.value.args) > 0 and
+                            isinstance(node.value.args[0], ast.Call)):
+                            type_wrapper = node.value.func.id
+                            inner_call = node.value.args[0]
+                        
+                        # Check if inner call is request.args.get()
+                        if (isinstance(inner_call.func, ast.Attribute) and
+                            isinstance(inner_call.func.value, ast.Attribute) and
+                            isinstance(inner_call.func.value.value, ast.Name) and
+                            inner_call.func.value.value.id == 'request' and
+                            inner_call.func.value.attr == 'args' and
+                            inner_call.func.attr == 'get'):
+                            
+                            # Extract parameter name
+                            if inner_call.args and isinstance(inner_call.args[0], ast.Constant):
+                                param_name = inner_call.args[0].value
+                                
+                                # Extract default value
+                                default_value = None
+                                if len(inner_call.args) > 1:
+                                    default_node = inner_call.args[1]
+                                    if isinstance(default_node, ast.Constant):
+                                        default_value = default_node.value
+                                
+                                # Determine type
+                                param_type = "string"  # default
+                                if type_wrapper == 'int':
+                                    param_type = "integer"
+                                elif type_wrapper == 'float':
+                                    param_type = "number"
+                                elif type_wrapper == 'bool':
+                                    param_type = "boolean"
+                                elif type_wrapper == 'str':
+                                    param_type = "string"
+                                
+                                # Extract variable name for description
+                                var_name = None
+                                if isinstance(node.targets[0], ast.Name):
+                                    var_name = node.targets[0].id
+                                
+                                query_params[param_name] = {
+                                    'type': param_type,
+                                    'default': default_value,
+                                    'var_name': var_name
+                                }
+                    
+                    self.generic_visit(node)
+            
+            visitor = QueryParameterVisitor()
+            visitor.visit(tree)
+            
+            # Also try to extract descriptions from docstring
+            docstring_descriptions = {}
+            if func.__doc__:
+                doc_lines = func.__doc__.strip().split('\n')
+                in_query_params_section = False
+                for line in doc_lines:
+                    stripped = line.strip()
+                    if 'Query Parameters:' in stripped or 'Parameters:' in stripped:
+                        in_query_params_section = True
+                        continue
+                    if in_query_params_section:
+                        # Look for patterns like: page (int): Description
+                        match = re.match(r'(\w+)\s*\([^)]+\):\s*(.+)', stripped)
+                        if match:
+                            param_name = match.group(1)
+                            description = match.group(2)
+                            docstring_descriptions[param_name] = description
+                        elif stripped and not stripped.startswith('-'):
+                            # End of parameters section if we hit non-parameter text
+                            if not any(c in stripped for c in ['(', ')']):
+                                in_query_params_section = False
+            
+            # Add query parameters to the parameters list
+            for param_name, param_info in query_params.items():
+                schema = {"type": param_info['type']}
+                if param_info['default'] is not None:
+                    schema['default'] = param_info['default']
+                
+                description = docstring_descriptions.get(param_name, f"Query parameter: {param_name}")
+                
+                param_def = {
+                    "name": param_name,
+                    "in": "query",
+                    "required": False,  # Query params with defaults are not required
+                    "description": description,
+                    "schema": schema
+                }
+                parameters.append(param_def)
+        
+        except Exception as e:
+            # If source code analysis fails, just return path parameters
+            debug_print(f"Note: Could not analyze source code for query parameters in {func.__name__}: {e}")
+            log_event(f"Query parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
+            pass
+        
         return parameters
         
-    except Exception:
+    except Exception as e:
+        debug_print(f"Warning: Could not analyze parameters for {func.__name__}: {e}")
+        log_event(f"Parameter analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
         return []
+
+def _analyze_function_request_body(func) -> Optional[Dict[str, Any]]:
+    """
+    Analyze a function's source code to detect request body usage and generate schema.
+    
+    Args:
+        func: Function to analyze
+        
+    Returns:
+        Request body schema dictionary or None if no request body detected
+    """
+    try:
+        # Get the source code
+        source = inspect.getsource(func)
+        
+        # Remove leading indentation to avoid parse errors
+        import textwrap
+        source = textwrap.dedent(source)
+        
+        # If textwrap.dedent didn't fully dedent, manually remove common leading whitespace
+        lines = source.split('\n')
+        if lines and lines[0]:  # If first line exists and is not empty
+            # Find how much leading whitespace the first non-empty line has
+            first_indent = len(lines[0]) - len(lines[0].lstrip())
+            if first_indent > 0:
+                # Only remove whitespace from lines that have enough indentation
+                # This preserves multi-line strings that may have less indentation
+                dedented_lines = []
+                for line in lines:
+                    if line.strip():  # Non-empty line
+                        # Calculate this line's leading whitespace
+                        line_leading = len(line) - len(line.lstrip())
+                        if line_leading >= first_indent:
+                            # Line has enough indentation - remove first_indent amount
+                            dedented_lines.append(line[first_indent:])
+                        else:
+                            # Line has less indentation - preserve it as-is
+                            dedented_lines.append(line)
+                    else:
+                        # Empty line - preserve
+                        dedented_lines.append(line)
+                source = '\n'.join(dedented_lines)
+        
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as se:
+            # Log the problematic source for debugging
+            debug_print(f"AST parse error in {func.__name__} at line {se.lineno}: {se.msg}")
+            debug_print(f"Problematic source (first 500 chars): {source[:500]}")
+            if se.lineno:
+                # Show the problematic line and surrounding context
+                source_lines = source.split('\n')
+                start_line = max(0, se.lineno - 3)
+                end_line = min(len(source_lines), se.lineno + 2)
+                debug_print(f"Context around line {se.lineno}:")
+                for i in range(start_line, end_line):
+                    marker = ">>>" if i == se.lineno - 1 else "   "
+                    debug_print(f"{marker} {i+1}: {source_lines[i][:100]}")
+            raise
+        
+        request_body_detected = False
+        json_fields = set()
+        form_data_detected = False
+        form_fields = set()
+        file_upload_detected = False
+        
+        class RequestBodyVisitor(ast.NodeVisitor):
+            def visit_Call(self, node):
+                nonlocal request_body_detected, form_data_detected, form_fields, json_fields
+                
+                # Look for request.get_json() calls
+                if (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and
+                    node.func.value.id == 'request' and
+                    node.func.attr == 'get_json'):
+                    request_body_detected = True
+                
+                # Look for data.get('field') patterns  
+                elif (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and
+                    node.func.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                    node.func.attr == 'get' and
+                    node.args and
+                    isinstance(node.args[0], ast.Constant) and
+                    isinstance(node.args[0].value, str)):
+                    json_fields.add(node.args[0].value)
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Name) and
+                      node.func.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                      node.func.attr == 'get' and
+                      node.args and
+                      hasattr(node.args[0], 's')):  # Python < 3.9 compatibility
+                    json_fields.add(node.args[0].s)
+                
+                # Look for form_data.get('field') or request.form.get('field') patterns
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Name) and
+                      node.func.value.id in ['form_data', 'form'] and
+                      node.func.attr == 'get' and
+                      node.args and
+                      isinstance(node.args[0], ast.Constant) and
+                      isinstance(node.args[0].value, str)):
+                    form_data_detected = True
+                    form_fields.add(node.args[0].value)
+                elif (isinstance(node.func, ast.Attribute) and
+                      isinstance(node.func.value, ast.Attribute) and
+                      isinstance(node.func.value.value, ast.Name) and
+                      node.func.value.value.id == 'request' and
+                      node.func.value.attr == 'form' and
+                      node.func.attr == 'get' and
+                      node.args and
+                      isinstance(node.args[0], ast.Constant) and
+                      isinstance(node.args[0].value, str)):
+                    form_data_detected = True
+                    form_fields.add(node.args[0].value)
+                
+                self.generic_visit(node)
+            
+            def visit_Subscript(self, node):
+                nonlocal json_fields
+                
+                # Look for data['field'] patterns after data = request.get_json()
+                if (isinstance(node.value, ast.Name) and
+                    node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                    isinstance(node.slice, ast.Constant) and
+                    isinstance(node.slice.value, str)):
+                    json_fields.add(node.slice.value)
+                elif (isinstance(node.value, ast.Name) and
+                      node.value.id in ['data', 'json_data', 'payload', 'request_data'] and
+                      hasattr(node.slice, 's')):  # Python < 3.9 compatibility
+                    json_fields.add(node.slice.s)
+                
+                self.generic_visit(node)
+        
+        # Also detect file uploads by looking for request.files usage
+        class FileUploadVisitor(ast.NodeVisitor):
+            def __init__(self):
+                super().__init__()
+                
+            def visit_Subscript(self, node):
+                # Look for request.files['field'] patterns
+                if (isinstance(node.value, ast.Attribute) and
+                    isinstance(node.value.value, ast.Name) and
+                    node.value.value.id == 'request' and
+                    node.value.attr == 'files'):
+                    nonlocal file_upload_detected
+                    file_upload_detected = True
+                
+                self.generic_visit(node)
+            
+            def visit_Call(self, node):
+                # Look for request.files.get() or request.files.getlist() patterns
+                if (isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Attribute) and
+                    isinstance(node.func.value.value, ast.Name) and
+                    node.func.value.value.id == 'request' and
+                    node.func.value.attr == 'files' and
+                    node.func.attr in ['get', 'getlist']):
+                    nonlocal file_upload_detected
+                    file_upload_detected = True
+                
+                self.generic_visit(node)
+        
+        visitor = RequestBodyVisitor()
+        visitor.visit(tree)
+        
+        file_visitor = FileUploadVisitor()
+        file_visitor.visit(tree)
+        
+        # If no request body patterns detected, return None
+        if not request_body_detected and not form_data_detected and not file_upload_detected:
+            return None
+        
+        # Generate schema based on detected patterns
+        content_schemas = {}
+        
+        # Handle JSON data
+        if json_fields or request_body_detected:
+            json_properties = {}
+            json_required_fields = []
+            
+            for field in json_fields:
+                field_def = _infer_field_definition(field, source)
+                json_properties[field] = field_def
+                
+                # Check if field appears to be required based on usage patterns
+                if _is_field_required(field, source):
+                    json_required_fields.append(field)
+            
+            json_schema = {
+                "type": "object",
+                "properties": json_properties,
+                "description": f"JSON request body for {func.__name__} endpoint"
+            }
+            
+            if json_required_fields:
+                json_schema["required"] = json_required_fields
+            
+            # If no specific fields found but JSON detected, use generic schema
+            if not json_properties and request_body_detected:
+                json_schema = {
+                    "type": "object",
+                    "description": "Request body with JSON data",
+                    "additionalProperties": True
+                }
+            
+            content_schemas["application/json"] = {"schema": json_schema}
+        
+        # Handle form data
+        if form_fields or form_data_detected:
+            form_properties = {}
+            form_required_fields = []
+            
+            for field in form_fields:
+                field_def = _infer_form_field_definition(field, source)
+                form_properties[field] = field_def
+                
+                # Check if field appears to be required based on usage patterns
+                if _is_field_required(field, source):
+                    form_required_fields.append(field)
+            
+            form_schema = {
+                "type": "object",
+                "properties": form_properties,
+                "description": f"Form data for {func.__name__} endpoint"
+            }
+            
+            if form_required_fields:
+                form_schema["required"] = form_required_fields
+            
+            # If no specific fields found but form data detected, use generic schema
+            if not form_properties and form_data_detected:
+                form_schema = {
+                    "type": "object",
+                    "description": "Form data with key-value pairs",
+                    "additionalProperties": {"type": "string"}
+                }
+            
+            content_schemas["application/x-www-form-urlencoded"] = {"schema": form_schema}
+        
+        # Handle file uploads (multipart/form-data)
+        if file_upload_detected:
+            # For file uploads, we typically have both form fields and files
+            multipart_properties = {}
+            
+            # Include any form fields detected
+            for field in form_fields:
+                field_def = _infer_form_field_definition(field, source)
+                multipart_properties[field] = field_def
+            
+            # Add common file field
+            multipart_properties["file"] = {
+                "type": "string",
+                "format": "binary",
+                "description": "File to upload"
+            }
+            
+            multipart_schema = {
+                "type": "object",
+                "properties": multipart_properties,
+                "description": f"Multipart form data for {func.__name__} endpoint"
+            }
+            
+            content_schemas["multipart/form-data"] = {"schema": multipart_schema}
+        
+        # Return the appropriate content schema
+        if content_schemas:
+            # If multiple content types detected, prefer multipart > form > json
+            if "multipart/form-data" in content_schemas:
+                return {"content": {"multipart/form-data": content_schemas["multipart/form-data"]}}
+            elif "application/x-www-form-urlencoded" in content_schemas:
+                return {"content": {"application/x-www-form-urlencoded": content_schemas["application/x-www-form-urlencoded"]}}
+            else:
+                return {"content": {"application/json": content_schemas["application/json"]}}
+        
+        return None
+        
+    except Exception as e:
+        # If analysis fails, return None (no auto-generated request body)
+        debug_print(f"Warning: Could not analyze request body for {func.__name__}: {e}")
+        log_event(f"Request body analysis failed for {func.__name__}: {str(e)}", level=logging.WARNING)
+        return None
+
+def _infer_form_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
+    """
+    Infer form field definition from field name and source code context.
+    
+    Args:
+        field_name: Name of the form field
+        source_code: Source code to analyze for context
+        
+    Returns:
+        Form field definition dictionary
+    """
+    field_lower = field_name.lower()
+    
+    # Form-specific field inference
+    if field_lower in ['app_title', 'external_links_menu_name']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "minLength": 1}
+    elif field_lower.endswith('_mb') or field_lower in ['max_file_size_mb']:
+        return {"type": "integer", "minimum": 1, "description": f"{field_name.replace('_', ' ').title()} in megabytes"}
+    elif field_lower.endswith('_limit') or field_lower in ['conversation_history_limit']:
+        return {"type": "integer", "minimum": 1, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.startswith('enable_') or field_lower.startswith('require_'):
+        return {"type": "string", "enum": ["on"], "description": f"Checkbox: {field_name.replace('_', ' ').title()}", "nullable": True}
+    elif field_lower.endswith('_json') and 'classification' in field_lower:
+        return {"type": "string", "description": "JSON array of classification categories", "example": '[{"label": "Public", "color": "#28a745"}]'}
+    elif field_lower.endswith('_json') and 'external_links' in field_lower:
+        return {"type": "string", "description": "JSON array of external links", "example": '[{"label": "Example", "url": "https://example.com"}]'}
+    elif field_lower in ['user_id', 'active_workspace_id', 'workspace_id']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "nullable": True}
+    elif field_lower in ['classification']:
+        return {"type": "string", "description": "Document classification", "nullable": True}
+    else:
+        # Default form field type
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}", "nullable": True}
+
+def _infer_field_definition(field_name: str, source_code: str) -> Dict[str, Any]:
+    """
+    Infer detailed field definition from field name and source code context.
+    
+    Args:
+        field_name: Name of the field
+        source_code: Source code to analyze for context
+        
+    Returns:
+        Field definition dictionary
+    """
+    field_lower = field_name.lower()
+    
+    # Enhanced type inference based on field names and patterns
+    if field_lower in ['message', 'content', 'text']:
+        return {"type": "string", "description": "The message content", "minLength": 1}
+    elif field_lower in ['conversation_id', 'active_group_id', 'selected_document_id']:
+        return {"type": "string", "format": "uuid", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower == 'model_deployment':
+        return {"type": "string", "nullable": True, "description": "Optional override for the model deployment"}
+    elif field_lower in ['hybrid_search', 'image_generation']:
+        return {"type": "boolean", "default": False, "description": f"Whether to enable {field_name.replace('_', ' ')}"}
+    elif field_lower == 'doc_scope':
+        # Analyze source to find actual enum values used
+        doc_scope_values = _extract_doc_scope_enum_from_source(source_code)
+        return {"type": "string", "enum": doc_scope_values, "description": "The scope for document search"}
+    elif field_lower == 'chat_type':
+        return {"type": "string", "enum": ["user", "group"], "default": "user", "description": "Type of chat conversation"}
+    elif field_lower in ['top_n', 'top_n_results']:
+        return {"type": "integer", "minimum": 1, "nullable": True, "description": "Number of top results to return"}
+    elif field_lower == 'classifications':
+        return {"type": "array", "items": {"type": "string"}, "nullable": True, "description": "Document classifications to filter by"}
+    elif field_lower.endswith('_id') or field_lower in ['id']:
+        return {"type": "string", "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.endswith('_enabled') or field_lower in ['enabled', 'active', 'deleted', 'public', 'private']:
+        return {"type": "boolean", "description": f"Whether {field_name.replace('_', ' ')} is enabled"}
+    elif field_lower.endswith('_count') or field_lower in ['count', 'limit', 'page', 'size']:
+        return {"type": "integer", "minimum": 0, "description": f"{field_name.replace('_', ' ').title()}"}
+    elif field_lower.endswith('_date') or field_lower.endswith('_time'):
+        return {"type": "string", "format": "date-time", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+    else:
+        # Default fallback with nullable for optional fields
+        return {"type": "string", "nullable": True, "description": f"{field_name.replace('_', ' ').title()}"}
+
+def _extract_doc_scope_enum_from_source(source_code: str) -> List[str]:
+    """
+    Extract actual doc_scope enum values from source code analysis.
+    
+    Args:
+        source_code: Source code to analyze
+        
+    Returns:
+        List of enum values
+    """
+    # Look for doc_scope comparisons and assignments in the source
+    import re
+    
+    # Default values
+    default_values = ["user", "group", "all", "personal"]
+    
+    # Try to find actual enum values used in the code
+    patterns = [
+        r"doc_scope\s*[=!]=\s*['\"]([^'\"]+)['\"]",
+        r"document_scope\s*[=!]=\s*['\"]([^'\"]+)['\"]",
+        r"scope\s*in\s*\[([^\]]+)\]",
+    ]
+    
+    found_values = set()
+    for pattern in patterns:
+        matches = re.findall(pattern, source_code, re.IGNORECASE)
+        for match in matches:
+            if isinstance(match, tuple):
+                found_values.update([v.strip().strip("'\"") for v in match])
+            else:
+                found_values.add(match.strip().strip("'\""))
+    
+    # If we found specific values, use them; otherwise use defaults
+    if found_values:
+        return sorted(list(found_values))
+    else:
+        return default_values
+
+def _is_field_required(field_name: str, source_code: str) -> bool:
+    """
+    Determine if a field is required based on source code analysis.
+    
+    Args:
+        field_name: Name of the field
+        source_code: Source code to analyze
+        
+    Returns:
+        True if field appears to be required
+    """
+    field_lower = field_name.lower()
+    
+    # Core message fields are typically required
+    if field_lower in ['message', 'content', 'text']:
+        return True
+    
+    # Check if field is validated or has error handling that suggests it's required
+    import re
+    
+    required_patterns = [
+        rf"if\s+not\s+{re.escape(field_name)}",
+        rf"if\s+{re.escape(field_name)}\s+is\s+None",
+        rf"{re.escape(field_name)}\s*=\s*data\s*\[\s*['\"][^'\"]*['\"]\s*\]"  # No .get() indicates required
+    ]
+    
+    for pattern in required_patterns:
+        if re.search(pattern, source_code, re.IGNORECASE):
+            return True
+    
+    return False
+
+# Removed: _get_schema_ref_for_route() function - schemas are now generated inline, not as references
+
+# Removed: _analyze_route_patterns() and _route_matches_pattern() functions
+# These were generating unused schema mappings since schemas are now inline
 
 def _generate_summary_from_function_name(func_name: str) -> str:
     """
@@ -528,7 +1207,8 @@ def swagger_route(
     auto_schema: bool = True,
     auto_summary: bool = True,
     auto_description: bool = True,
-    auto_tags: bool = True
+    auto_tags: bool = True,
+    auto_request_body: bool = True
 ):
     """
     Decorator to add Swagger/OpenAPI documentation to Flask routes.
@@ -546,6 +1226,7 @@ def swagger_route(
         auto_summary: Whether to automatically generate summary from function name
         auto_description: Whether to automatically use function docstring as description
         auto_tags: Whether to automatically generate tags from route path
+        auto_request_body: Whether to automatically detect and generate request body schema from function code
     
     Returns:
         Decorated function with swagger documentation attached
@@ -575,12 +1256,17 @@ def swagger_route(
         if auto_schema and not parameters:
             final_parameters = _analyze_function_parameters(func)
         
+        # Auto-generate request body if not provided
+        final_request_body = request_body
+        if auto_request_body and auto_schema and not request_body:
+            final_request_body = _analyze_function_request_body(func)
+        
         # Store the documentation metadata (tags will be resolved later in extract_route_info)
         setattr(wrapper, '_swagger_doc', {
             'summary': final_summary,
             'description': final_description,
             'tags': tags,  # Keep original tags, will be processed in extract_route_info
-            'request_body': request_body,
+            'request_body': final_request_body,
             'responses': final_responses or {},
             'parameters': final_parameters or [],
             'deprecated': deprecated,
@@ -590,6 +1276,37 @@ def swagger_route(
         
         return wrapper
     return decorator
+
+def _generate_dynamic_schemas(app: Flask) -> Dict[str, Any]:
+    """
+    Generate minimal essential schema components.
+    Most schemas are now generated inline in request bodies for better accuracy.
+    
+    Args:
+        app: Flask application instance
+        
+    Returns:
+        Dictionary of essential schema definitions
+    """
+    # Only include schemas that are actually referenced somewhere
+    # Most request body schemas are now generated inline from actual route analysis
+    schemas = {
+        "ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "description": "Error message"
+                }
+            },
+            "required": ["error"]
+        }
+    }
+    
+    print(f"📊 Generated {len(schemas)} essential schemas: {list(schemas.keys())}")
+    return schemas
+
+# Removed: _generate_minimal_required_schemas() function - now handled directly in _generate_dynamic_schemas()
 
 def extract_route_info(app: Flask) -> Dict[str, Any]:
     """
@@ -634,18 +1351,7 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
         ],
         "paths": {},
         "components": {
-            "schemas": {
-                "ErrorResponse": {
-                    "type": "object",
-                    "properties": {
-                        "error": {
-                            "type": "string",
-                            "description": "Error message"
-                        }
-                    },
-                    "required": ["error"]
-                }
-            },
+            "schemas": _generate_dynamic_schemas(app),
             "securitySchemes": {
                 "bearerAuth": {
                     "type": "http",
@@ -716,16 +1422,86 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
                     })
                 }
                 
-                # Add request body if provided
-                if swagger_doc.get('request_body'):
-                    operation["requestBody"] = {
-                        "required": True,
-                        "content": {
-                            "application/json": {
-                                "schema": swagger_doc['request_body']
+                # Add request body if provided or if method typically requires one
+                should_have_request_body = swagger_doc.get('request_body') or (method in ['POST', 'PUT', 'PATCH'] and not any(keyword in path.lower() for keyword in ['get', 'export', 'download']))
+                
+                if should_have_request_body:
+                    # Generate dynamic inline schema from actual route analysis
+                    request_body_schema = None
+                    
+                    # 1. Try to analyze the actual view function for request body
+                    if swagger_doc.get('request_body'):
+                        request_body_schema = swagger_doc['request_body']
+                    else:
+                        # Analyze the actual route implementation
+                        request_body_schema = _analyze_function_request_body(view_func)
+                    
+                    # 2. If no schema detected but method suggests request body, create minimal schema
+                    if not request_body_schema and method in ['POST', 'PUT', 'PATCH']:
+                        # Pattern-based fallback schemas (inline, not references)
+                        if any(keyword in path.lower() for keyword in ['id', 'delete']):
+                            if 'multiple' in path.lower() or 'bulk' in path.lower():
+                                request_body_schema = {
+                                    "type": "object",
+                                    "required": ["ids"],
+                                    "properties": {
+                                        "ids": {"type": "array", "items": {"type": "string"}, "description": "Array of resource identifiers"}
+                                    }
+                                }
+                            else:
+                                request_body_schema = {
+                                    "type": "object",
+                                    "required": ["id"],
+                                    "properties": {
+                                        "id": {"type": "string", "description": "Resource identifier"}
+                                    }
+                                }
+                        elif any(keyword in path.lower() for keyword in ['status', 'enable', 'disable']):
+                            request_body_schema = {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string", "description": "New status value"},
+                                    "enabled": {"type": "boolean", "nullable": True, "description": "Whether item is enabled"}
+                                }
                             }
-                        }
-                    }
+                        else:
+                            # Generic object schema with additionalProperties for unknown endpoints
+                            request_body_schema = {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": True,
+                                "description": f"Request body for {method} {path}"
+                            }
+                    
+                    # 3. Create the request body specification
+                    if request_body_schema:
+                        # Check if the schema already has content types specified
+                        if isinstance(request_body_schema, dict) and 'content' in request_body_schema:
+                            # Use the detected content types and schemas
+                            content_types = list(request_body_schema['content'].keys())
+                            is_required = any(
+                                schema_info.get('schema', {}).get('required') 
+                                for schema_info in request_body_schema['content'].values()
+                            )
+                            operation["requestBody"] = {
+                                "required": is_required,
+                                "content": request_body_schema['content']
+                            }
+                            print(f"  🔧 Generated inline schema for {method} {path} with content types: {content_types} (required: {is_required})")
+                        else:
+                            # Legacy fallback - assume JSON
+                            is_required = request_body_schema.get('required') and len(request_body_schema.get('required', [])) > 0
+                            operation["requestBody"] = {
+                                "required": is_required,
+                                "content": {
+                                    "application/json": {
+                                        "schema": request_body_schema
+                                    }
+                                }
+                            }
+                            print(f"  🔧 Generated inline JSON schema for {method} {path} (required: {is_required})")
+                    else:
+                        print(f"  ❌ No request body schema generated for {method} {path}")
                 
                 # Add parameters if provided
                 if swagger_doc.get('parameters'):
@@ -775,7 +1551,7 @@ def register_swagger_routes(app: Flask):
     from functions_settings import get_settings
     
     # Check if swagger is enabled in settings
-    settings = get_settings()
+    settings = get_settings(use_cosmos=True)
     if not settings.get('enable_swagger', True):  # Default to True if setting not found
         print("Swagger documentation is disabled in admin settings.")
         return
@@ -934,9 +1710,92 @@ def register_swagger_routes(app: Flask):
         .search-shortcut:hover {
             background: #d0d0d0;
         }
+        
+        /* Format selection buttons */
+        .format-selection {
+            margin: 20px 0 !important;
+            display: flex !important;
+            gap: 10px !important;
+            align-items: center !important;
+            padding: 15px 20px !important;
+            background: #f8f9fa !important;
+            border: 1px solid #e9ecef !important;
+            border-radius: 6px !important;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+        }
+        
+        .format-label {
+            font-weight: bold !important;
+            margin-right: 15px !important;
+            color: #333 !important;
+            font-size: 14px !important;
+            vertical-align: middle !important;
+        }
+        
+        .format-button {
+            background: #1976d2 !important;
+            color: white !important;
+            border: 1px solid #1976d2 !important;
+            padding: 10px 20px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 14px !important;
+            text-decoration: none !important;
+            display: inline-block !important;
+            font-weight: 500 !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
+            margin-right: 10px !important;
+        }
+        
+        .format-button:hover {
+            background: #1565c0 !important;
+            color: white !important;
+            text-decoration: none !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+        }
+        
+        .format-button:visited {
+            color: white !important;
+        }
+        
+        .format-button:active {
+            background: #0d47a1 !important;
+            color: white !important;
+        }
+        
+        /* Hide default Swagger UI download URL */
+        .swagger-ui .info .download-url-wrapper {
+            display: none !important;
+        }
+        
+        .swagger-ui .download-url {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .link {
+            display: none !important;
+        }
+        
+        .swagger-ui .info a[href*="swagger.json"] {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .url {
+            display: none !important;
+        }
+        
+        .swagger-ui .info .link {
+            display: none !important;
+        }
+        
+        .swagger-ui .info a[href*="swagger.json"] {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
+
     <!-- Custom Search Interface -->
     <div class="api-search-container">
         <div class="api-search-box">
@@ -967,6 +1826,27 @@ def register_swagger_routes(app: Flask):
     <script>
         let currentSpec = null;
         let allOperations = [];
+        
+        function insertFormatButtons() {
+            // Wait a bit for DOM to be fully ready
+            setTimeout(function() {
+                // Find the info section (after title and description)
+                const infoSection = document.querySelector('.swagger-ui .info');
+                if (infoSection && !document.querySelector('.format-selection')) {
+                    // Create format buttons container
+                    const formatDiv = document.createElement('div');
+                    formatDiv.className = 'format-selection';
+                    formatDiv.innerHTML = `
+                        <span class="format-label">Download API Specification:</span>
+                        <a href="/swagger.json" class="format-button" target="_blank" title="Download JSON format">📄 JSON Format</a>
+                        <a href="/swagger.yaml" class="format-button" target="_blank" title="Download YAML format">📝 YAML Format</a>
+                    `;
+                    
+                    // Insert after the info section
+                    infoSection.parentNode.insertBefore(formatDiv, infoSection.nextSibling);
+                }
+            }, 100);
+        }
         
         // Search functionality
         function setupSearch() {
@@ -1134,6 +2014,8 @@ def register_swagger_routes(app: Flask):
             performSearch(term);
         }
         
+
+        
         // Initialize Swagger UI
         window.onload = function() {
             const ui = SwaggerUIBundle({
@@ -1145,7 +2027,7 @@ def register_swagger_routes(app: Flask):
                     SwaggerUIStandalonePreset
                 ],
                 plugins: [
-                    SwaggerUIBundle.plugins.DownloadUrl
+                    // DownloadUrl plugin removed to avoid duplicate links
                 ],
                 layout: "StandaloneLayout",
                 validatorUrl: null,
@@ -1157,6 +2039,7 @@ def register_swagger_routes(app: Flask):
                 supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
                 onComplete: function() {
                     setupSearch();
+                    insertFormatButtons();
                 }
             });
         };
@@ -1198,7 +2081,7 @@ def register_swagger_routes(app: Flask):
         force_refresh = request.args.get('refresh') == 'true'
         
         # Get spec from cache
-        spec, status_code = _swagger_cache.get_spec(app, force_refresh=force_refresh)
+        spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='json')
         
         if status_code == 429:
             return jsonify({
@@ -1219,6 +2102,62 @@ def register_swagger_routes(app: Flask):
         # Add generation timestamp for monitoring
         response.headers['X-Generated-At'] = datetime.utcnow().isoformat() + 'Z'
         response.headers['X-Spec-Paths'] = str(len(spec.get('paths', {})))
+        
+        return response
+    
+    @app.route('/swagger.yaml')
+    @swagger_route(
+        summary="OpenAPI Specification (YAML)",
+        description="Serve the OpenAPI 3.0 specification as YAML with caching and rate limiting.",
+        tags=["Documentation"],
+        responses={
+            200: {
+                "description": "OpenAPI specification in YAML format",
+                "content": {
+                    "application/x-yaml": {
+                        "schema": {"type": "string"}
+                    }
+                }
+            },
+            429: {
+                "description": "Rate limit exceeded",
+                "content": {
+                    "application/json": {
+                        "schema": COMMON_SCHEMAS["error_response"]
+                    }
+                }
+            }
+        },
+        security=get_auth_security()
+    )
+    @login_required
+    def swagger_yaml():
+        """Serve OpenAPI specification as YAML with caching and rate limiting."""
+        # Check for cache refresh parameter (admin use)
+        force_refresh = request.args.get('refresh') == 'true'
+        
+        # Get spec from cache in YAML format
+        spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='yaml')
+        
+        if status_code == 429:
+            return jsonify({
+                "error": "Rate limit exceeded",
+                "message": "Too many requests for swagger.yaml. Please wait before trying again.",
+                "retry_after": 60
+            }), 429
+        elif status_code == 500:
+            return jsonify(spec), 500
+        
+        # Create response with cache headers
+        response = make_response(spec)  # spec is already YAML string
+        response.headers['Content-Type'] = content_type
+        
+        # Add cache control headers (5 minutes client cache)
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        response.headers['ETag'] = hashlib.md5(spec.encode()).hexdigest()[:16]
+        
+        # Add generation timestamp for monitoring
+        response.headers['X-Generated-At'] = datetime.utcnow().isoformat() + 'Z'
         
         return response
     

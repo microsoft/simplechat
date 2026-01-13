@@ -88,7 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.229.098"
+VERSION = "0.235.001"
 
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -101,10 +101,13 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        #"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://code.jquery.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        #"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "img-src 'self' data: https: blob:; "
-        "font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
+        "font-src 'self'; "
+        #"font-src 'self' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com; "
         "connect-src 'self' https: wss: ws:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
@@ -121,7 +124,7 @@ CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
 
 ALLOWED_EXTENSIONS = {
-    'txt', 'pdf', 'doc', 'docm', 'docx', 'xlsx', 'xls', 'xlsm','csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
+    'txt', 'pdf', 'doc', 'docm', 'docx', 'xlsx', 'xlsm', 'xls', 'csv', 'pptx', 'html', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'md', 'json', 
     'mp4', 'mov', 'avi', 'mkv', 'flv', 'mxf', 'gxf', 'ts', 'ps', '3gp', '3gpp', 'mpg', 'wmv', 'asf', 'm4a', 'm4v', 'isma', 'ismv', 
     'dvr-ms', 'wav', 'xml', 'yaml', 'yml', 'log'
 }
@@ -135,6 +138,7 @@ CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE
 CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
 CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
 CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE = os.getenv("CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE", "")
 
 
 # Azure AD Configuration
@@ -152,11 +156,10 @@ AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernm
 
 if AZURE_ENVIRONMENT == "custom":
     AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
-else:
+elif AZURE_ENVIRONMENT == "usgovernment":
     AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
-
-# Commercial Azure Video Indexer Endpoint
-video_indexer_endpoint = "https://api.videoindexer.ai"
+else:
+    AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
@@ -168,6 +171,7 @@ if AZURE_ENVIRONMENT == "usgovernment":
     cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai.azure.us"
     search_resource_manager = "https://search.azure.us"
+    KEY_VAULT_DOMAIN = ".vault.usgovcloudapi.net"
 
 elif AZURE_ENVIRONMENT == "custom":
     resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
@@ -175,12 +179,36 @@ elif AZURE_ENVIRONMENT == "custom":
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
     search_resource_manager = CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE
+    KEY_VAULT_DOMAIN = os.getenv("KEY_VAULT_DOMAIN", ".vault.azure.net")
 else:
     OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    video_indexer_endpoint = "https://api.videoindexer.ai"
+    KEY_VAULT_DOMAIN = ".vault.azure.net"
+
+def get_redis_cache_infrastructure_endpoint(redis_hostname: str) -> str:
+    """
+    Get the appropriate Redis cache infrastructure endpoint based on Azure environment.
+    
+    Args:
+        redis_hostname (str): The hostname of the Redis cache instance
+        
+    Returns:
+        str: The complete endpoint URL for Redis cache infrastructure token acquisition
+    """
+    if AZURE_ENVIRONMENT == "usgovernment":
+        return f"https://{redis_hostname}.cacheinfra.azure.us:10225/appid"
+    elif AZURE_ENVIRONMENT == "custom" and CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE:
+        # For custom environments, allow override via environment variable
+        # Format: https://{hostname}.custom-cache-domain.com:10225/appid
+        return CUSTOM_REDIS_CACHE_INFRASTRUCTURE_URL_VALUE.format(hostname=redis_hostname)
+    else:
+        # Default to Azure Public Cloud
+        return f"https://{redis_hostname}.cacheinfra.windows.net:10225/appid"
+    
 
 storage_account_user_documents_container_name = "user-documents"
 storage_account_group_documents_container_name = "group-documents"
@@ -211,6 +239,17 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_group_conversations_container_name = "group_conversations"
+cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_conversations_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_group_messages_container_name = "group_messages"
+cosmos_group_messages_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_group_messages_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
 
 cosmos_settings_container_name = "settings"
 cosmos_settings_container = cosmos_database.create_container_if_not_exists(
@@ -314,18 +353,6 @@ cosmos_personal_actions_container = cosmos_database.create_container_if_not_exis
     partition_key=PartitionKey(path="/user_id")
 )
 
-cosmos_file_processing_container_name = "group_messages"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/conversation_id")
-)
-
-cosmos_file_processing_container_name = "group_conversations"
-cosmos_file_processing_container = cosmos_database.create_container_if_not_exists(
-    id=cosmos_file_processing_container_name,
-    partition_key=PartitionKey(path="/id")
-)
-
 cosmos_group_agents_container_name = "group_agents"
 cosmos_group_agents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_agents_container_name,
@@ -354,6 +381,32 @@ cosmos_agent_facts_container_name = "agent_facts"
 cosmos_agent_facts_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_agent_facts_container_name,
     partition_key=PartitionKey(path="/scope_id")
+)
+
+cosmos_search_cache_container_name = "search_cache"
+cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_search_cache_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_activity_logs_container_name = "activity_logs"
+cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_activity_logs_container_name,
+    partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_notifications_container_name = "notifications"
+cosmos_notifications_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_notifications_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document
+)
+
+cosmos_approvals_container_name = "approvals"
+cosmos_approvals_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_approvals_container_name,
+    partition_key=PartitionKey(path="/group_id"),
+    default_ttl=-1  # TTL disabled by default, enabled per-document for auto-cleanup
 )
 
 def ensure_custom_logo_file_exists(app, settings):
@@ -649,11 +702,11 @@ def initialize_clients(settings):
                         try:
                             container_client = blob_service_client.get_container_client(container_name)
                             if not container_client.exists():
-                                print(f"DEBUG: Container '{container_name}' does not exist. Creating...")
+                                print(f"Container '{container_name}' does not exist. Creating...")
                                 container_client.create_container()
-                                print(f"DEBUG: Container '{container_name}' created successfully.")
+                                print(f"Container '{container_name}' created successfully.")
                             else:
-                                print(f"DEBUG: Container '{container_name}' already exists.")
+                                print(f"Container '{container_name}' already exists.")
                         except Exception as container_error:
                             print(f"Error creating container {container_name}: {str(container_error)}")
         except Exception as e:

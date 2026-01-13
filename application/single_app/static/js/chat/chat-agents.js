@@ -1,9 +1,26 @@
 // chat-agents.js
-import { fetchUserAgents, fetchSelectedAgent, populateAgentSelect, setSelectedAgent, getUserSetting, setUserSetting } from '../agents_common.js';
+import {
+    fetchUserAgents,
+    fetchGroupAgentsForActiveGroup,
+    fetchSelectedAgent,
+    populateAgentSelect,
+    setSelectedAgent,
+    getUserSetting,
+    setUserSetting
+} from '../agents_common.js';
 
 const enableAgentsBtn = document.getElementById("enable-agents-btn");
 const agentSelectContainer = document.getElementById("agent-select-container");
 const modelSelectContainer = document.getElementById("model-select-container");
+
+/**
+ * Check if agents are currently enabled
+ * @returns {boolean} True if agents are active
+ */
+export function areAgentsEnabled() {
+    const enableAgentsBtn = document.getElementById("enable-agents-btn");
+    return enableAgentsBtn && enableAgentsBtn.classList.contains('active');
+}
 
 export async function initializeAgentInteractions() {
     if (enableAgentsBtn && agentSelectContainer) {
@@ -43,40 +60,38 @@ export async function initializeAgentInteractions() {
 export async function populateAgentDropdown() {
     const agentSelect = agentSelectContainer.querySelector('select');
     try {
-        const agents = await fetchUserAgents();
-        const selectedAgent = await fetchSelectedAgent();
-        populateAgentSelect(agentSelect, agents, selectedAgent);
-        agentSelect.onchange = async function() {
-            const selectedValue = agentSelect.value;
-            console.log('DEBUG: Agent dropdown changed to:', selectedValue);
-            console.log('DEBUG: Available agents:', agents);
-            
-            // Parse the selected value to extract name and global status
-            let selectedAgentObj = null;
-            if (selectedValue.startsWith('global_')) {
-                const agentName = selectedValue.substring(7); // Remove 'global_' prefix
-                selectedAgentObj = agents.find(a => a.name === agentName && a.is_global === true);
-            } else if (selectedValue.startsWith('personal_')) {
-                const agentName = selectedValue.substring(9); // Remove 'personal_' prefix
-                selectedAgentObj = agents.find(a => a.name === agentName && a.is_global === false);
-            } else {
-                // Fallback for agents without prefix (backwards compatibility)
-                selectedAgentObj = agents.find(a => a.name === selectedValue);
+        const [userAgents, selectedAgent] = await Promise.all([
+            fetchUserAgents(),
+            fetchSelectedAgent()
+        ]);
+        const groupAgents = await fetchGroupAgentsForActiveGroup();
+        const combinedAgents = [...userAgents, ...groupAgents];
+        const personalAgents = combinedAgents.filter(agent => !agent.is_global && !agent.is_group);
+        const activeGroupAgents = combinedAgents.filter(agent => agent.is_group);
+        const globalAgents = combinedAgents.filter(agent => agent.is_global);
+        const orderedAgents = [...personalAgents, ...activeGroupAgents, ...globalAgents];
+        populateAgentSelect(agentSelect, orderedAgents, selectedAgent);
+        agentSelect.onchange = async function () {
+            const selectedOption = agentSelect.options[agentSelect.selectedIndex];
+            if (!selectedOption) {
+                return;
             }
-            
-            console.log('DEBUG: Found agent object:', selectedAgentObj);
-            
-            if (selectedAgentObj) {
-                const payload = { name: selectedAgentObj.name, is_global: !!selectedAgentObj.is_global };
-                console.log('DEBUG: Setting selected agent payload:', payload);
-                console.log('DEBUG: Agent is_global flag:', selectedAgentObj.is_global);
-                console.log('DEBUG: !!selectedAgentObj.is_global:', !!selectedAgentObj.is_global);
-                
-                await setSelectedAgent(payload);
-                console.log('DEBUG: Agent selection saved successfully');
-            } else {
-                console.log('DEBUG: No agent found with value:', selectedValue);
+            const payload = {
+                name: selectedOption.dataset.name || '',
+                display_name: selectedOption.dataset.displayName || selectedOption.textContent || '',
+                id: selectedOption.dataset.agentId || null,
+                is_global: selectedOption.dataset.isGlobal === 'true',
+                is_group: selectedOption.dataset.isGroup === 'true',
+                group_id: selectedOption.dataset.groupId || null,
+                group_name: selectedOption.dataset.groupName || (window.activeGroupName || null)
+            };
+            console.log('DEBUG: Agent dropdown changed with payload:', payload);
+            if (!payload.name) {
+                console.warn('Selected agent is missing a name, skipping settings update.');
+                return;
             }
+            await setSelectedAgent(payload);
+            console.log('DEBUG: Agent selection saved successfully');
         };
     } catch (e) {
         console.error('Error loading agents:', e);

@@ -30,9 +30,7 @@ def build_front_door_urls(front_door_url):
 
 def register_route_frontend_authentication(app):
     @app.route('/login')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def login():
         # Clear potentially stale cache/user info before starting new login
         session.pop("user", None)
@@ -71,9 +69,7 @@ def register_route_frontend_authentication(app):
         return redirect(auth_url)
 
     @app.route('/getAToken') # This is your redirect URI path
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def authorized():
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
@@ -123,7 +119,6 @@ def register_route_frontend_authentication(app):
         # Store user identity info (claims from ID token)
         debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
         debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
-        debug_print(f" [claims] User token: {result.get('access_token', 'Unknown')}")
 
         session["user"] = result.get("id_token_claims")
 
@@ -131,6 +126,16 @@ def register_route_frontend_authentication(app):
         _save_cache(msal_app.token_cache)
 
         print(f"User {session['user'].get('name')} logged in successfully.")
+        
+        # Log the login activity
+        try:
+            from functions_activity_logging import log_user_login
+            user_id = session['user'].get('oid') or session['user'].get('sub')
+            if user_id:
+                log_user_login(user_id, 'azure_ad')
+        except Exception as e:
+            debug_print(f"Could not log login activity: {e}")
+        
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
         # Get settings from database, with environment variable fallback
@@ -158,9 +163,7 @@ def register_route_frontend_authentication(app):
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
     @app.route('/getATokenApi') # This is your redirect URI path
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def authorized_api():
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
@@ -205,9 +208,7 @@ def register_route_frontend_authentication(app):
         return jsonify(result, 200)
 
     @app.route('/logout')
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     def logout():
         user_name = session.get("user", {}).get("name", "User")
         # Get the user's email before clearing the session

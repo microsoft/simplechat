@@ -394,9 +394,17 @@ if (fetchGptBtn) {
             const resp = await fetch('/api/models/gpt');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 gptAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                gptSelected = gptSelected.filter(selected => 
+                    gptAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderGPTModels();
                 updateGptHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No GPT models found'}</p>`;
             }
@@ -441,9 +449,17 @@ if (fetchEmbeddingBtn) {
             const resp = await fetch('/api/models/embedding');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 embeddingAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                embeddingSelected = embeddingSelected.filter(selected => 
+                    embeddingAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderEmbeddingModels();
                 updateEmbeddingHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No embedding models found'}</p>`;
             }
@@ -480,9 +496,17 @@ if (fetchImageBtn) {
             const resp = await fetch('/api/models/image');
             const data = await resp.json();
             if (resp.ok && data.models && data.models.length > 0) {
+                // Clear old models and replace with new ones
                 imageAll = data.models;
+                
+                // Filter out selected models that no longer exist in the newly fetched list
+                imageSelected = imageSelected.filter(selected => 
+                    imageAll.some(model => model.deploymentName === selected.deploymentName)
+                );
+                
                 renderImageModels();
                 updateImageHiddenInput();
+                markFormAsModified();
             } else {
                 listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No image models found'}</p>`;
             }
@@ -1541,6 +1565,15 @@ function setupToggles() {
         });
     }
 
+    const enableKeyVaultCheckbox = document.getElementById('enable_key_vault_secret_storage');
+    if (enableKeyVaultCheckbox) {
+        enableKeyVaultCheckbox.addEventListener('change', function() {
+            const keyVaultSettings = document.getElementById('key_vault_settings');
+            keyVaultSettings.style.display = this.checked ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
     const enableWebSearch = document.getElementById('enable_web_search');
     if (enableWebSearch) {
         enableWebSearch.addEventListener('change', function () {
@@ -1630,6 +1663,15 @@ function setupToggles() {
         });
     }
 
+    const speechAuthType = document.getElementById('speech_service_authentication_type');
+    if (speechAuthType) {
+        speechAuthType.addEventListener('change', function () {
+            document.getElementById('speech_service_key_container').style.display =
+                (this.value === 'key') ? 'block' : 'none';
+            markFormAsModified();
+        });
+    }
+
     const officeAuthType = document.getElementById('office_docs_authentication_type');
     const connStrGroup = document.getElementById('office_docs_storage_conn_str_group');
     const urlGroup = document.getElementById('office_docs_storage_url_group');
@@ -1701,11 +1743,20 @@ function setupToggles() {
     }
 
     if (enableGroupWorkspacesToggle && createGroupPermissionSettingDiv) {
+        const enableGroupCreationSetting = document.getElementById('enable_group_creation_setting');
+        
         // Initial state
         createGroupPermissionSettingDiv.style.display = enableGroupWorkspacesToggle.checked ? 'block' : 'none';
+        if (enableGroupCreationSetting) {
+            enableGroupCreationSetting.style.display = enableGroupWorkspacesToggle.checked ? 'block' : 'none';
+        }
+        
         // Listener for changes
         enableGroupWorkspacesToggle.addEventListener('change', function() {
             createGroupPermissionSettingDiv.style.display = this.checked ? 'block' : 'none';
+            if (enableGroupCreationSetting) {
+                enableGroupCreationSetting.style.display = this.checked ? 'block' : 'none';
+            }
             markFormAsModified();
         });
     }
@@ -2249,6 +2300,34 @@ function setupTestButtons() {
             } catch (err) {
                 resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
             }
+        });
+    }
+
+    const testKeyVaultBtn = document.getElementById('test_key_vault_button');
+    if (testKeyVaultBtn) {
+        testKeyVaultBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_key_vault_result');
+            resultDiv.innerHTML = 'Testing Key Vault...';
+
+            const payload = {
+                test_type: 'key_vault',
+                vault_name: document.getElementById('key_vault_name').value,
+                client_id: document.getElementById('key_vault_identity').value
+            };
+
+             try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                } else {
+                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;            }
         });
     }
 
@@ -3052,28 +3131,41 @@ function handleTabNavigation(stepNumber) {
         5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
         6: 'search-extract-tab', // AI Search settings
         7: 'search-extract-tab', // Document Intelligence settings
-        8: 'workspaces-tab',  // Video support
-        9: 'workspaces-tab',  // Audio support
+        8: 'search-extract-tab',  // Video support
+        9: 'search-extract-tab',  // Audio support
         10: 'safety-tab',     // Content safety
-        11: 'system-tab',     // User feedback and archiving (renamed from other-tab)
+        11: 'safety-tab',     // User feedback and archiving (changed from system-tab)
         12: 'citation-tab'    // Enhanced Citations and Image Generation
     };
     
     // Activate the appropriate tab
     const tabId = stepToTab[stepNumber];
     if (tabId) {
-        const tab = document.getElementById(tabId);
-        if (tab) {
-            // Use bootstrap Tab to show the tab
-            const bootstrapTab = new bootstrap.Tab(tab);
-            bootstrapTab.show();
-            
-            // Scroll to the relevant section after a small delay to allow tab to switch
-            setTimeout(() => {
-                // For tabs that need to jump to specific sections
-                scrollToRelevantSection(stepNumber, tabId);
-            }, 300);
+        // Check if we're using sidebar navigation or tab navigation
+        const sidebarToggle = document.getElementById('admin-settings-toggle');
+        
+        if (sidebarToggle) {
+            // Using sidebar navigation - call showAdminTab function
+            const tabName = tabId.replace('-tab', ''); // Remove '-tab' suffix
+            if (typeof showAdminTab === 'function') {
+                showAdminTab(tabName);
+            } else if (typeof window.showAdminTab === 'function') {
+                window.showAdminTab(tabName);
+            }
+        } else {
+            // Using Bootstrap tabs
+            const tab = document.getElementById(tabId);
+            if (tab) {
+                // Use bootstrap Tab to show the tab
+                const bootstrapTab = new bootstrap.Tab(tab);
+                bootstrapTab.show();
+            }
         }
+        
+        // Scroll to the relevant section after a small delay to allow tab to switch
+        setTimeout(() => {
+            scrollToRelevantSection(stepNumber, tabId);
+        }, 300);
     }
 }
 
@@ -3087,14 +3179,41 @@ function scrollToRelevantSection(stepNumber, tabId) {
     let targetElement = null;
     
     switch (stepNumber) {
+        case 1: // App title and logo
+            targetElement = document.getElementById('branding-section');
+            break;
+        case 2: // GPT settings
+            targetElement = document.getElementById('gpt-configuration');
+            break;
+        case 3: // GPT model selection
+            targetElement = document.getElementById('gpt_models_list')?.closest('.mb-3');
+            break;
         case 4: // Workspaces toggle section
-            targetElement = document.getElementById('enable_user_workspace')?.closest('.card');
+            targetElement = document.getElementById('personal-workspaces-section');
+            break;
+        case 5: // Embedding settings
+            targetElement = document.getElementById('embeddings-configuration');
+            break;
+        case 6: // AI Search settings
+            targetElement = document.getElementById('azure-ai-search-section');
+            break;
+        case 7: // Document Intelligence settings
+            targetElement = document.getElementById('document-intelligence-section');
             break;
         case 8: // Video file support
             targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
             break;
         case 9: // Audio file support
             targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
+            break;
+        case 10: // Content safety
+            targetElement = document.getElementById('content-safety-section');
+            break;
+        case 11: // User feedback and archiving
+            targetElement = document.getElementById('user-feedback-section');
+            break;
+        case 12: // Enhanced citations and image generation
+            targetElement = document.getElementById('enhanced-citations-section');
             break;
         default:
             // For other steps, no specific scrolling
@@ -3103,7 +3222,7 @@ function scrollToRelevantSection(stepNumber, tabId) {
     
     // If we found a target element, scroll to it
     if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 
@@ -3241,9 +3360,14 @@ function isStepComplete(stepNumber) {
             
             // Otherwise check settings
             const speechEndpoint = document.getElementById('speech_service_endpoint')?.value;
-            const speechKey = document.getElementById('speech_service_key')?.value;
+            const authType = document.getElementById('speech_service_authentication_type').value;
+            const key = document.getElementById('speech_service_key').value;
             
-            return speechEndpoint && speechKey;
+            if (!speechEndpoint || (authType === 'key' && !key)) {
+                 return false;
+            } else {
+                return true;
+            }
             
         case 10: // Content safety - always complete (optional)
         case 11: // User feedback and archiving - always complete (optional)

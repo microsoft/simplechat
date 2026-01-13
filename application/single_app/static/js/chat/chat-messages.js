@@ -15,7 +15,23 @@ import {
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
+import { isStreamingEnabled, sendMessageWithStreaming } from "./chat-streaming.js";
+import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
+import { areAgentsEnabled } from './chat-agents.js';
+
+// Conditionally import TTS if enabled
+let ttsModule = null;
+if (typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) {
+    import('./chat-tts.js').then(module => {
+        ttsModule = module;
+        console.log('TTS module loaded');
+        module.initializeTTS();
+    }).catch(error => {
+        console.error('Failed to load TTS module:', error);
+    });
+}
 
 /**
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
@@ -359,12 +375,12 @@ function createCitationsHtml(
       const displayText = `${escapeHtml(cite.file_name)}, Page ${
         cite.page_number || "N/A"
       }`;
-      
+
       // Check if this is a metadata citation
       const isMetadata = cite.metadata_type ? true : false;
       const metadataType = cite.metadata_type || '';
       const metadataContent = cite.metadata_content || '';
-      
+
       citationsHtml += `
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
@@ -444,6 +460,9 @@ function createCitationsHtml(
 }
 
 export function loadMessages(conversationId) {
+  // Clear search highlights when loading a different conversation
+  clearSearchHighlight();
+  
   fetch(`/conversation/${conversationId}/messages`)
     .then((response) => response.json())
     .then((data) => {
@@ -453,10 +472,15 @@ export function loadMessages(conversationId) {
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       data.messages.forEach((msg) => {
+        // Skip deleted messages (when conversation archiving is enabled)
+        if (msg.metadata && msg.metadata.is_deleted === true) {
+          console.log(`Skipping deleted message: ${msg.id}`);
+          return;
+        }
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
         console.log(`[loadMessages Loop] Role: ${msg.role}`);
         if (msg.role === "user") {
-          appendMessage("You", msg.content, null, msg.id);
+          appendMessage("You", msg.content, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "assistant") {
           console.log(`  [loadMessages Loop] Full Assistant msg object:`, JSON.stringify(msg)); // Stringify to see exact keys
           console.log(`  [loadMessages Loop] Checking keys: msg.id=${msg.id}, msg.augmented=${msg.augmented}, msg.hybrid_citations exists=${'hybrid_citations' in msg}, msg.web_search_citations exists=${'web_search_citations' in msg}, msg.agent_citations exists=${'agent_citations' in msg}`);
@@ -476,14 +500,23 @@ export function loadMessages(conversationId) {
           const arg9 = msg.agent_display_name; // Get agent display name
           const arg10 = msg.agent_name; // Get agent name
           console.log(`  [loadMessages Loop] Calling appendMessage with -> sender: ${senderType}, id: ${arg4}, augmented: ${arg5} (type: ${typeof arg5}), hybrid_len: ${arg6?.length}, web_len: ${arg7?.length}, agent_len: ${arg8?.length}, agent_display: ${arg9}`);
+          console.log(`  [loadMessages Loop] Message metadata:`, msg.metadata);
 
-          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); 
+          appendMessage(senderType, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, msg); 
           console.log(`[loadMessages Loop] -------- END Message ID: ${msg.id} --------`);
         } else if (msg.role === "file") {
-          appendMessage("File", msg);
+          // Pass file message with proper parameters including message ID
+          appendMessage("File", msg, null, msg.id, false, [], [], [], null, null, msg);
         } else if (msg.role === "image") {
           // Validate image URL before calling appendMessage
           if (msg.content && msg.content !== 'null' && msg.content.trim() !== '') {
+            // Debug logging for image message metadata
+            console.log(`[loadMessages] Image message ${msg.id}:`, {
+              hasExtractedText: !!msg.extracted_text,
+              hasVisionAnalysis: !!msg.vision_analysis,
+              isUserUpload: msg.metadata?.is_user_upload,
+              filename: msg.filename
+            });
             // Pass the full message object for images that may have metadata (uploaded images)
             appendMessage("image", msg.content, msg.model_deployment_name, msg.id, false, [], [], [], msg.agent_display_name, msg.agent_name, msg);
           } else {
@@ -499,6 +532,18 @@ export function loadMessages(conversationId) {
     .catch((error) => {
       console.error("Error loading messages:", error);
       if (chatbox) chatbox.innerHTML = `<div class="text-center p-3 text-danger">Error loading messages.</div>`;
+    })
+    .finally(() => {
+      // Check if there's a search highlight to apply
+      if (window.searchHighlight && window.searchHighlight.term) {
+        const elapsed = Date.now() - window.searchHighlight.timestamp;
+        if (elapsed < 30000) { // Within 30 seconds
+          setTimeout(() => applySearchHighlight(window.searchHighlight.term), 100);
+        } else {
+          // Clear expired highlight
+          window.searchHighlight = null;
+        }
+      }
     });
 }
 
@@ -513,7 +558,8 @@ export function appendMessage(
   agentCitations = [],
   agentDisplayName = null,
   agentName = null,
-  fullMessageObject = null
+  fullMessageObject = null,
+  isNewMessage = false
 ) {
   if (!chatbox || sender === "System") return;
 
@@ -578,15 +624,57 @@ export function appendMessage(
     // --- Footer Content (Copy, Feedback, Citations) ---
     const feedbackHtml = renderFeedbackIcons(messageId, currentConversationId);
     const hiddenTextId = `copy-md-${messageId || Date.now()}`;
+    
+    // Check if message is masked
+    const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+    const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+    const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+    
+    // TTS button (only for AI messages)
+    const ttsButtonHtml = (sender === 'AI' && typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) ? `
+            <button class="btn btn-sm btn-link text-muted tts-play-btn" 
+                    title="Read this to me"
+                    data-message-id="${messageId}"
+                    onclick="if(window.chatTTS) window.chatTTS.handleButtonClick('${messageId}')">
+                <i class="bi bi-volume-up"></i>
+            </button>
+        ` : '';
+    
     const copyButtonHtml = `
-            <button class="copy-btn me-2" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
+            <button class="copy-btn btn btn-sm btn-link text-muted" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
                 <i class="bi bi-copy"></i>
             </button>
             <textarea id="${hiddenTextId}" style="display:none;">${escapeHtml(
       withInlineCitations
     )}</textarea>
         `;
-    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center">${copyButtonHtml}${feedbackHtml}</div>`;
+    
+    const maskButtonHtml = `
+            <button class="mask-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="${maskTitle}">
+                <i class="bi ${maskIcon}"></i>
+            </button>
+        `;
+    const actionsDropdownHtml = `
+            <div class="dropdown">
+                <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                    <i class="bi bi-three-dots"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-start">
+                    <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                    <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${feedbackHtml}
+                </ul>
+            </div>
+        `;
+    const carouselButtonsHtml = `
+            <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
+                <i class="bi bi-box-arrow-in-left"></i>
+            </button>
+            <button class="carousel-next-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Next attempt" style="display: none;">
+                <i class="bi bi-box-arrow-in-right"></i>
+            </button>
+        `;
+    const copyAndFeedbackHtml = `<div class="message-actions d-flex align-items-center gap-2">${actionsDropdownHtml}${ttsButtonHtml}${copyButtonHtml}${maskButtonHtml}${carouselButtonsHtml}</div>`;
 
     const citationsButtonsHtml = createCitationsHtml(
       hybridCitations,
@@ -645,13 +733,24 @@ export function appendMessage(
     if (shouldShowCitations) {
       console.log(">>> Will generate and include citation elements.");
       const citationsContainerId = `citations-${messageId || Date.now()}`;
-      citationToggleHtml = `<div class="citation-toggle-container"><button class="btn btn-sm btn-outline-secondary citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button></div>`;
-      citationContentContainerHtml = `<div class="citations-container mt-2 pt-2 border-top" id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
+      citationToggleHtml = `<button class="btn btn-sm btn-link text-muted citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button>`;
+      // citationsButtonsHtml already contains a <div class="citations-container"> wrapper
+      // Just add ID and display style by wrapping minimally
+      citationContentContainerHtml = `<div id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
     } else {
       console.log(">>> Will NOT generate citation elements.");
     }
 
-    const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center">${copyAndFeedbackHtml}${citationToggleHtml}</div>`;
+    const metadataContainerId = `metadata-${messageId || Date.now()}`;
+    const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    
+    const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
+      <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
+      <div class="d-flex align-items-center"></div>
+      <div class="d-flex align-items-center gap-2">${citationToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+        <i class="bi bi-info-circle"></i>
+      </button></div>
+    </div>`;
 
     // Build AI message inner HTML
     messageDiv.innerHTML = `
@@ -661,12 +760,18 @@ export function appendMessage(
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
                     ${citationContentContainerHtml}
+                    ${metadataContainerHtml}
                     ${footerContentHtml}
                 </div>
             </div>`;
 
     messageDiv.classList.add(messageClass); // Add AI message class
     chatbox.appendChild(messageDiv); // Append AI message
+    
+    // Auto-play TTS if enabled (only for new messages, not when loading history)
+    if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
+        autoplayTTSIfEnabled(messageId, messageContent);
+    }
     
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
@@ -677,8 +782,121 @@ export function appendMessage(
       if (window.Prism) Prism.highlightElement(block);
     });
 
+    // Apply masked state if message has masking
+    if (fullMessageObject?.metadata) {
+      console.log('Applying masked state for AI message:', messageId, fullMessageObject.metadata);
+      applyMaskedState(messageDiv, fullMessageObject.metadata);
+    } else {
+      console.log('No metadata found for AI message:', messageId, 'fullMessageObject:', fullMessageObject);
+    }
+
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));
+    
+    const metadataBtn = messageDiv.querySelector(".metadata-info-btn");
+    if (metadataBtn) {
+      metadataBtn.addEventListener("click", () => {
+        const metadataContainer = messageDiv.querySelector('.metadata-container');
+        if (metadataContainer) {
+          const isVisible = metadataContainer.style.display !== 'none';
+          metadataContainer.style.display = isVisible ? 'none' : 'block';
+          metadataBtn.setAttribute('aria-expanded', !isVisible);
+          metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
+          
+          // Toggle icon
+          const icon = metadataBtn.querySelector('i');
+          if (icon) {
+            icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
+          }
+          
+          // Load metadata if container is empty (first open)
+          if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
+            loadMessageMetadataForDisplay(messageId, metadataContainer);
+          }
+        }
+      });
+    }
+    
+    const maskBtn = messageDiv.querySelector(".mask-btn");
+    if (maskBtn) {
+      // Update tooltip dynamically on hover
+      maskBtn.addEventListener("mouseenter", () => {
+        updateMaskButtonTooltip(maskBtn, messageDiv);
+      });
+      
+      // Handle mask button click
+      maskBtn.addEventListener("click", () => {
+        handleMaskButtonClick(messageDiv, messageId, messageContent);
+      });
+    }
+    
+    const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
+    if (dropdownDeleteBtn) {
+      dropdownDeleteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        // Always read the message ID from the DOM attribute dynamically
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        console.log(`🗑️ AI Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+        handleDeleteButtonClick(messageDiv, currentMessageId, 'assistant');
+      });
+    }
+    
+    const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
+    if (dropdownRetryBtn) {
+      dropdownRetryBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        // Always read the message ID from the DOM attribute dynamically
+        const currentMessageId = messageDiv.getAttribute('data-message-id');
+        console.log(`🔄 AI Retry button clicked - using message ID from DOM: ${currentMessageId}`);
+        handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
+      });
+    }
+    
+    // Handle dropdown positioning manually - move to chatbox container
+    const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
+    const dropdownMenu = messageDiv.querySelector(".message-actions .dropdown-menu");
+    if (dropdownToggle && dropdownMenu) {
+      dropdownToggle.addEventListener("show.bs.dropdown", () => {
+        // Move dropdown menu to chatbox to escape message bubble
+        const chatbox = document.getElementById('chatbox');
+        if (chatbox) {
+          dropdownMenu.remove();
+          chatbox.appendChild(dropdownMenu);
+          
+          // Position relative to button
+          const rect = dropdownToggle.getBoundingClientRect();
+          const chatboxRect = chatbox.getBoundingClientRect();
+          dropdownMenu.style.position = 'absolute';
+          dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+          dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+          dropdownMenu.style.zIndex = '9999';
+        }
+      });
+      
+      // Return menu to original position when closed
+      dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+        const dropdown = messageDiv.querySelector(".message-actions .dropdown");
+        if (dropdown && dropdownMenu.parentElement !== dropdown) {
+          dropdownMenu.remove();
+          dropdown.appendChild(dropdownMenu);
+        }
+      });
+    }
+    
+    const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
+    if (carouselPrevBtn) {
+      carouselPrevBtn.addEventListener("click", () => {
+        handleCarouselClick(messageId, 'prev');
+      });
+    }
+    
+    const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
+    if (carouselNextBtn) {
+      carouselNextBtn.addEventListener("click", () => {
+        handleCarouselClick(messageId, 'next');
+      });
+    }
+    
     const copyBtn = messageDiv.querySelector(".copy-btn");
     copyBtn?.addEventListener("click", () => {
       /* ... copy logic ... */
@@ -737,6 +955,11 @@ export function appendMessage(
 
     // --- Handle ALL OTHER message types ---
   } else {
+    // Declare variables for image metadata checks (needed for footer logic)
+    let isUserUpload = false;
+    let hasExtractedText = false;
+    let hasVisionAnalysis = false;
+    
     // Determine variables based on sender type
     if (sender === "You") {
       messageClass = "user-message";
@@ -767,11 +990,20 @@ export function appendMessage(
       // Make sure this matches the case used in loadMessages/actuallySendMessage
       messageClass = "image-message"; // Use a distinct class if needed, or reuse ai-message
       
+      // Use agent display name if available, otherwise show AI with model
+      if (agentDisplayName) {
+        senderLabel = agentDisplayName;
+      } else if (modelName) {
+        senderLabel = `AI <span style="color: #6c757d; font-size: 0.8em;">(${modelName})</span>`;
+      } else {
+        senderLabel = "Image";
+      }
+
       // Check if this is a user-uploaded image with metadata
-      const isUserUpload = fullMessageObject?.metadata?.is_user_upload || false;
-      const hasExtractedText = fullMessageObject?.extracted_text || false;
-      const hasVisionAnalysis = fullMessageObject?.vision_analysis || false;
-      
+      isUserUpload = fullMessageObject?.metadata?.is_user_upload || false;
+      hasExtractedText = fullMessageObject?.extracted_text || false;
+      hasVisionAnalysis = fullMessageObject?.vision_analysis || false;
+
       // Use agent display name if available, otherwise show AI with model
       if (isUserUpload) {
         senderLabel = "Uploaded Image";
@@ -782,27 +1014,13 @@ export function appendMessage(
       } else {
         senderLabel = "Image";
       }
-      
+
       avatarImg = isUserUpload ? "/static/images/user-avatar.png" : "/static/images/ai-avatar.png";
       avatarAltText = isUserUpload ? "Uploaded Image" : "Generated Image";
       
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
         messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
-        
-        // Add info button for uploaded images with extracted text or vision analysis
-        if (isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
-          const infoContainerId = `image-info-${messageId || Date.now()}`;
-          messageContentHtml += `
-            <div class="mt-2">
-              <button class="btn btn-sm btn-outline-secondary image-info-btn" data-message-id="${messageId}" title="View extracted text & analysis" aria-expanded="false" aria-controls="${infoContainerId}">
-                <i class="bi bi-info-circle"></i> View Text
-              </button>
-            </div>
-            <div class="image-info-container mt-2 pt-2 border-top" id="${infoContainerId}" style="display: none;">
-              <div class="text-muted">Loading image information...</div>
-            </div>`;
-        }
       } else {
         messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
       }
@@ -838,21 +1056,88 @@ export function appendMessage(
     // This runs for "You", "File", "image", "safety", "Error", and the fallback "unknown"
     messageDiv.classList.add(messageClass); // Add the determined class
 
-    // Create user message footer if this is a user message
+    // Create message footer for user, image, and file messages
     let messageFooterHtml = "";
     let metadataContainerHtml = "";
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+      
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
-          <button class="btn btn-sm btn-outline-secondary copy-user-btn" data-message-id="${messageId}" title="Copy message">
-            <i class="bi bi-copy"></i>
-          </button>
-          <button class="btn btn-sm btn-outline-secondary metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
-            <i class="bi bi-info-circle"></i>
-          </button>
+          <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-edit-btn" href="#" data-message-id="${messageId}"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+              </ul>
+            </div>
+            <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
+              <i class="bi bi-copy"></i>
+            </button>
+            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
+              <i class="bi ${maskIcon}"></i>
+            </button>
+            <button class="carousel-prev-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Previous attempt" style="display: none;">
+              <i class="bi bi-box-arrow-in-left"></i>
+            </button>
+            <button class="carousel-next-btn btn btn-sm btn-link text-muted" data-message-id="${messageId}" title="Next attempt" style="display: none;">
+              <i class="bi bi-box-arrow-in-right"></i>
+            </button>
+          </div>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center">
+            <button class="btn btn-sm btn-link text-muted metadata-toggle-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+              <i class="bi bi-info-circle"></i>
+            </button>
+          </div>
         </div>`;
       metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
+    } else if (sender === "image" || sender === "File") {
+      // Image and file messages get mask button on left, metadata button on right side
+      const metadataContainerId = `metadata-${messageId || Date.now()}`;
+      
+      // Check if message is masked
+      const isMasked = fullMessageObject?.metadata?.masked || (fullMessageObject?.metadata?.masked_ranges && fullMessageObject.metadata.masked_ranges.length > 0);
+      const maskIcon = isMasked ? 'bi-front' : 'bi-back';
+      const maskTitle = isMasked ? 'Unmask all masked content' : 'Mask entire message';
+      
+      // For images with extracted text or vision analysis, add View Text button like citation button
+      let imageInfoToggleHtml = '';
+      let imageInfoContainerHtml = '';
+      if (sender === "image" && isUserUpload && (hasExtractedText || hasVisionAnalysis)) {
+        const infoContainerId = `image-info-${messageId || Date.now()}`;
+        imageInfoToggleHtml = `<button class="btn btn-sm btn-link text-muted image-info-btn" data-message-id="${messageId}" title="View extracted text" aria-expanded="false" aria-controls="${infoContainerId}"><i class="bi bi-file-text"></i></button>`;
+        imageInfoContainerHtml = `<div id="${infoContainerId}" class="image-info-container mt-2 pt-2 border-top" style="display: none;"><div class="image-info-content">Loading image information...</div></div>`;
+      }
+      
+      messageFooterHtml = `
+        <div class="message-footer d-flex justify-content-between align-items-center mt-2">
+          <div class="d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-start">
+                <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+              </ul>
+            </div>
+            <button class="btn btn-sm btn-link text-muted mask-btn" data-message-id="${messageId}" title="${maskTitle}">
+              <i class="bi ${maskIcon}"></i>
+            </button>
+          </div>
+          <div class="d-flex align-items-center"></div>
+          <div class="d-flex align-items-center gap-2">${imageInfoToggleHtml}<button class="btn btn-sm btn-link text-muted metadata-info-btn" data-message-id="${messageId}" title="Show metadata" aria-expanded="false" aria-controls="${metadataContainerId}">
+            <i class="bi bi-info-circle"></i>
+          </button></div>
+        </div>`;
+      metadataContainerHtml = imageInfoContainerHtml + `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
     }
 
     // Set innerHTML using the variables determined above
@@ -866,7 +1151,11 @@ export function appendMessage(
                     : ""
                 }
                 <div class="message-bubble">
-                    <div class="message-sender">${senderLabel}</div>
+                    <div class="message-sender">
+                        ${senderLabel}
+                        ${fullMessageObject?.metadata?.edited ? '<span class="badge bg-secondary ms-2">Edited</span>' : ''}
+                        ${fullMessageObject?.metadata?.retried ? '<span class="badge bg-info ms-2">Retried</span>' : ''}
+                    </div>
                     <div class="message-text">${messageContentHtml}</div>
                     ${metadataContainerHtml}
                     ${messageFooterHtml}
@@ -889,8 +1178,16 @@ export function appendMessage(
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
+      
+      // Apply masked state if message has masking
+      if (fullMessageObject?.metadata) {
+        console.log('Applying masked state for user message:', messageId, fullMessageObject.metadata);
+        applyMaskedState(messageDiv, fullMessageObject.metadata);
+      } else {
+        console.log('No metadata found for user message:', messageId, 'fullMessageObject:', fullMessageObject);
+      }
     }
-    
+
     // Add event listener for image info button (uploaded images)
     if (sender === "image" && fullMessageObject?.metadata?.is_user_upload) {
       const imageInfoBtn = messageDiv.querySelector('.image-info-btn');
@@ -901,6 +1198,95 @@ export function appendMessage(
       }
     }
     
+    // Add event listener for mask button (image and file messages)
+    if (sender === "image" || sender === "File") {
+      const maskBtn = messageDiv.querySelector('.mask-btn');
+      if (maskBtn) {
+        // Update tooltip dynamically on hover
+        maskBtn.addEventListener("mouseenter", () => {
+          updateMaskButtonTooltip(maskBtn, messageDiv);
+        });
+        
+        // Handle mask button click
+        maskBtn.addEventListener("click", () => {
+          handleMaskButtonClick(messageDiv, messageId, messageContent);
+        });
+      }
+      
+      // Apply masked state if message has masking
+      if (fullMessageObject?.metadata) {
+        console.log('Applying masked state for image/file message:', messageId, fullMessageObject.metadata);
+        applyMaskedState(messageDiv, fullMessageObject.metadata);
+      }
+    }
+    
+    // Add event listener for metadata button (image and file messages)
+    if (sender === "image" || sender === "File") {
+      const metadataBtn = messageDiv.querySelector('.metadata-info-btn');
+      if (metadataBtn) {
+        metadataBtn.addEventListener('click', () => {
+          const metadataContainer = messageDiv.querySelector('.metadata-container');
+          if (metadataContainer) {
+            const isVisible = metadataContainer.style.display !== 'none';
+            metadataContainer.style.display = isVisible ? 'none' : 'block';
+            metadataBtn.setAttribute('aria-expanded', !isVisible);
+            metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
+            
+            // Toggle icon
+            const icon = metadataBtn.querySelector('i');
+            if (icon) {
+              icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
+            }
+            
+            // Load metadata if container is empty (first open)
+            if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
+              loadMessageMetadataForDisplay(messageId, metadataContainer);
+            }
+          }
+        });
+      }
+      
+      // Add delete button event listener from dropdown
+      const dropdownDeleteBtn = messageDiv.querySelector('.dropdown-delete-btn');
+      if (dropdownDeleteBtn) {
+        dropdownDeleteBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          // Always read the message ID from the DOM attribute dynamically
+          const currentMessageId = messageDiv.getAttribute('data-message-id');
+          console.log(`🗑️ Image/File Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+          handleDeleteButtonClick(messageDiv, currentMessageId, sender === "image" ? 'image' : 'file');
+        });
+      }
+      
+      // Handle dropdown positioning manually for image/file messages - move to chatbox
+      const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+      const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+      if (dropdownToggle && dropdownMenu) {
+        dropdownToggle.addEventListener("show.bs.dropdown", () => {
+          const chatbox = document.getElementById('chatbox');
+          if (chatbox) {
+            dropdownMenu.remove();
+            chatbox.appendChild(dropdownMenu);
+            
+            const rect = dropdownToggle.getBoundingClientRect();
+            const chatboxRect = chatbox.getBoundingClientRect();
+            dropdownMenu.style.position = 'absolute';
+            dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+            dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+            dropdownMenu.style.zIndex = '9999';
+          }
+        });
+        
+        dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+          const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+          if (dropdown && dropdownMenu.parentElement !== dropdown) {
+            dropdownMenu.remove();
+            dropdown.appendChild(dropdownMenu);
+          }
+        });
+      }
+    }
+
     scrollChatToBottom();
   } // End of the large 'else' block for non-AI messages
 }
@@ -964,7 +1350,11 @@ export function actuallySendMessage(finalMessageToSend) {
   userInput.style.height = "";
   // Update send button visibility after clearing input
   updateSendButtonVisibility();
-  showLoadingIndicatorInChatbox();
+  
+  // Only show loading indicator if NOT using streaming (streaming creates its own placeholder)
+  if (!isStreamingEnabled()) {
+    showLoadingIndicatorInChatbox();
+  }
 
   const modelDeployment = modelSelect?.value;
 
@@ -1036,11 +1426,15 @@ export function actuallySendMessage(finalMessageToSend) {
   const agentSelect = document.getElementById("agent-select");
   if (agentSelectContainer && agentSelectContainer.style.display !== "none" && agentSelect) {
     const selectedAgentOption = agentSelect.options[agentSelect.selectedIndex];
-    if (selectedAgentOption && selectedAgentOption.value) {
+    if (selectedAgentOption) {
       agentInfo = {
-        name: selectedAgentOption.value,
-        display_name: selectedAgentOption.textContent,
-        is_global: selectedAgentOption.textContent.includes("(Global)")
+        id: selectedAgentOption.dataset.agentId || null,
+        name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
+        display_name: selectedAgentOption.dataset.displayName || selectedAgentOption.textContent,
+        is_global: selectedAgentOption.dataset.isGlobal === 'true',
+        is_group: selectedAgentOption.dataset.isGroup === 'true',
+        group_id: selectedAgentOption.dataset.groupId || null,
+        group_name: selectedAgentOption.dataset.groupName || null
       };
     }
   }
@@ -1066,26 +1460,50 @@ export function actuallySendMessage(finalMessageToSend) {
 
   // Fallback: if group_id is null/empty, use window.activeGroupId
   const finalGroupId = group_id || window.activeGroupId || null;
+  
+  // Prepare message data object
+  // Get active public workspace ID from user settings (similar to active_group_id)
+  const finalPublicWorkspaceId = window.activePublicWorkspaceId || null;
+  
+  const messageData = {
+    message: finalMessageToSend,
+    conversation_id: currentConversationId,
+    hybrid_search: hybridSearchEnabled,
+    selected_document_id: selectedDocumentId,
+    classifications: classificationsToSend,
+    image_generation: imageGenEnabled,
+    doc_scope: effectiveDocScope,
+    chat_type: chat_type,
+    active_group_id: finalGroupId,
+    active_public_workspace_id: finalPublicWorkspaceId,
+    model_deployment: modelDeployment,
+    prompt_info: promptInfo,
+    agent_info: agentInfo,
+    reasoning_effort: getCurrentReasoningEffort()
+  };
+  
+  // Check if streaming is enabled (but not for image generation)
+  const agentsEnabled = typeof areAgentsEnabled === 'function' && areAgentsEnabled();
+  if (isStreamingEnabled() && !imageGenEnabled) {
+    const streamInitiated = sendMessageWithStreaming(
+      messageData, 
+      tempUserMessageId, 
+      currentConversationId
+    );
+    if (streamInitiated) {
+      return; // Streaming handles the rest
+    }
+    // If streaming failed to initiate, fall through to regular fetch
+  }
+  
+  // Regular non-streaming fetch
   fetch("/api/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     credentials: "same-origin",
-    body: JSON.stringify({
-      message: finalMessageToSend,
-      conversation_id: currentConversationId,
-      hybrid_search: hybridSearchEnabled,
-      selected_document_id: selectedDocumentId,
-      classifications: classificationsToSend,
-      image_generation: imageGenEnabled,
-      doc_scope: effectiveDocScope,
-      chat_type: chat_type,
-      active_group_id: finalGroupId, // for backward compatibility
-      model_deployment: modelDeployment,
-      prompt_info: promptInfo,
-      agent_info: agentInfo
-    }),
+    body: JSON.stringify(messageData),
   })
     .then((response) => {
       if (!response.ok) {
@@ -1121,10 +1539,15 @@ export function actuallySendMessage(finalMessageToSend) {
       console.log("data.web_search_citations:", data.web_search_citations);
       console.log("data.agent_citations:", data.agent_citations);
       console.log(`data.message_id: ${data.message_id}`);
+      console.log(`data.user_message_id: ${data.user_message_id}`);
+      console.log(`tempUserMessageId: ${tempUserMessageId}`);
 
       // Update the user message with the real message ID
       if (data.user_message_id) {
+        console.log(`🔄 Calling updateUserMessageId(${tempUserMessageId}, ${data.user_message_id})`);
         updateUserMessageId(tempUserMessageId, data.user_message_id);
+      } else {
+        console.warn(`⚠️ No user_message_id in response! User message will keep temporary ID: ${tempUserMessageId}`);
       }
 
       if (data.reply) {
@@ -1139,7 +1562,9 @@ export function actuallySendMessage(finalMessageToSend) {
           data.web_search_citations, // Pass web citations
           data.agent_citations, // Pass agent citations
           data.agent_display_name, // Pass agent display name
-          data.agent_name // Pass agent name
+          data.agent_name, // Pass agent name
+          null, // fullMessageObject
+          true // isNewMessage - trigger autoplay for new responses
         );
       }
       // Show kernel fallback notice if present
@@ -1160,6 +1585,11 @@ export function actuallySendMessage(finalMessageToSend) {
           data.agent_display_name, // Pass agent display name
           data.agent_name // Pass agent name
         );
+      }
+
+      if (data.reload_messages && currentConversationId) {
+        console.log("Reload flag received from backend - refreshing messages.");
+        loadMessages(currentConversationId);
       }
 
       // Update conversation list item and header if needed
@@ -1212,12 +1642,17 @@ export function actuallySendMessage(finalMessageToSend) {
           }
         } else {
           // New conversation case
+          console.log('[sendMessage] New conversation created, adding to list without reload');
           addConversationToList(
             currentConversationId,
             data.conversation_title,
             data.classification || []
           );
-          selectConversation(currentConversationId); // Select the newly added one
+          // Don't call selectConversation here - messages are already displayed
+          // Just update the current conversation ID and title
+          window.currentConversationId = currentConversationId;
+          document.getElementById("current-conversation-title").textContent = data.conversation_title || "New Conversation";
+          console.log('[sendMessage] New conversation setup complete, conversation ID:', currentConversationId);
         }
       }
     })
@@ -1378,7 +1813,7 @@ if (promptSelect) {
 }
 
 // Helper function to update user message ID after backend response
-function updateUserMessageId(tempId, realId) {
+export function updateUserMessageId(tempId, realId) {
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
   
   // Find the message with the temporary ID
@@ -1445,6 +1880,7 @@ function updateUserMessageId(tempId, realId) {
 function attachUserMessageEventListeners(messageDiv, messageId, messageContent) {
   const copyBtn = messageDiv.querySelector(".copy-user-btn");
   const metadataToggleBtn = messageDiv.querySelector(".metadata-toggle-btn");
+  const maskBtn = messageDiv.querySelector(".mask-btn");
   
   if (copyBtn) {
     copyBtn.addEventListener("click", () => {
@@ -1467,6 +1903,99 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
       toggleUserMessageMetadata(messageDiv, messageId);
+    });
+  }
+  
+  if (maskBtn) {
+    // Update tooltip dynamically on hover
+    maskBtn.addEventListener("mouseenter", () => {
+      updateMaskButtonTooltip(maskBtn, messageDiv);
+    });
+    
+    // Handle mask button click
+    maskBtn.addEventListener("click", () => {
+      handleMaskButtonClick(messageDiv, messageId, messageContent);
+    });
+  }
+  
+  const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
+  if (dropdownDeleteBtn) {
+    dropdownDeleteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Always read the message ID from the DOM attribute dynamically
+      // This ensures we use the updated ID after updateUserMessageId is called
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`🗑️ Delete button clicked - using message ID from DOM: ${currentMessageId}`);
+      handleDeleteButtonClick(messageDiv, currentMessageId, 'user');
+    });
+  }
+  
+  const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
+  if (dropdownRetryBtn) {
+    dropdownRetryBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Always read the message ID from the DOM attribute dynamically
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`🔄 Retry button clicked - using message ID from DOM: ${currentMessageId}`);
+      handleRetryButtonClick(messageDiv, currentMessageId, 'user');
+    });
+  }
+  
+  const dropdownEditBtn = messageDiv.querySelector(".dropdown-edit-btn");
+  if (dropdownEditBtn) {
+    dropdownEditBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Always read the message ID from the DOM attribute dynamically
+      const currentMessageId = messageDiv.getAttribute('data-message-id');
+      console.log(`✏️ Edit button clicked - using message ID from DOM: ${currentMessageId}`);
+      // Import chat-edit module dynamically
+      import('./chat-edit.js').then(module => {
+        module.handleEditButtonClick(messageDiv, currentMessageId, 'user');
+      }).catch(err => {
+        console.error('❌ Error loading chat-edit module:', err);
+      });
+    });
+  }
+  
+  // Handle dropdown positioning manually for user messages - move to chatbox
+  const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
+  const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
+  if (dropdownToggle && dropdownMenu) {
+    dropdownToggle.addEventListener("show.bs.dropdown", () => {
+      const chatbox = document.getElementById('chatbox');
+      if (chatbox) {
+        dropdownMenu.remove();
+        chatbox.appendChild(dropdownMenu);
+        
+        const rect = dropdownToggle.getBoundingClientRect();
+        const chatboxRect = chatbox.getBoundingClientRect();
+        dropdownMenu.style.position = 'absolute';
+        dropdownMenu.style.top = `${rect.bottom - chatboxRect.top + chatbox.scrollTop + 2}px`;
+        dropdownMenu.style.left = `${rect.left - chatboxRect.left}px`;
+        dropdownMenu.style.zIndex = '9999';
+      }
+    });
+    
+    dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
+      const dropdown = messageDiv.querySelector(".message-footer .dropdown");
+      if (dropdown && dropdownMenu.parentElement !== dropdown) {
+        dropdownMenu.remove();
+        dropdown.appendChild(dropdownMenu);
+      }
+    });
+  }
+  
+  const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
+  if (carouselPrevBtn) {
+    carouselPrevBtn.addEventListener("click", () => {
+      handleCarouselClick(messageId, 'prev');
+    });
+  }
+  
+  const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
+  if (carouselNextBtn) {
+    carouselNextBtn.addEventListener("click", () => {
+      handleCarouselClick(messageId, 'next');
     });
   }
 }
@@ -1590,6 +2119,28 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
         container.innerHTML = formatMetadataForDrawer(data);
+        
+        // Attach event listeners to View Text buttons
+        const viewTextButtons = container.querySelectorAll('.view-text-btn');
+        viewTextButtons.forEach(btn => {
+          btn.addEventListener('click', function() {
+            const imageId = this.getAttribute('data-image-id');
+            const collapseElement = document.getElementById(`${imageId}-info`);
+            
+            if (collapseElement) {
+              const bsCollapse = new bootstrap.Collapse(collapseElement, {
+                toggle: true
+              });
+              
+              // Update button text
+              if (collapseElement.classList.contains('show')) {
+                this.innerHTML = '<i class="bi bi-eye me-1"></i>View Text';
+              } else {
+                this.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Text';
+              }
+            }
+          });
+        });
       }
     })
     .catch(error => {
@@ -1643,217 +2194,255 @@ function formatMetadataForDrawer(metadata) {
   
   // User Information Section
   if (metadata.user_info) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">User Information</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-person me-2"></i>User Information</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.user_info.display_name) {
-      content += `<div class="metadata-item">
-        <strong>User:</strong> ${escapeHtml(metadata.user_info.display_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">User:</span> <span class="ms-2">${escapeHtml(metadata.user_info.display_name)}</span></div>`;
     }
     
     if (metadata.user_info.email) {
-      content += `<div class="metadata-item">
-        <strong>Email:</strong> ${escapeHtml(metadata.user_info.email)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Email:</span> <span class="ms-2">${escapeHtml(metadata.user_info.email)}</span></div>`;
     }
     
     if (metadata.user_info.username) {
-      content += `<div class="metadata-item">
-        <strong>Username:</strong> ${escapeHtml(metadata.user_info.username)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Username:</span> <span class="ms-2">${escapeHtml(metadata.user_info.username)}</span></div>`;
     }
     
     if (metadata.user_info.timestamp) {
       const date = new Date(metadata.user_info.timestamp);
-      content += `<div class="metadata-item">
-        <strong>Timestamp:</strong> ${escapeHtml(date.toLocaleString())}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${escapeHtml(date.toLocaleString())}</code></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
+  }
+  
+  // Thread Information Section (priority display)
+  if (metadata.thread_info) {
+    const ti = metadata.thread_info;
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
+    content += '<div class="ms-3 small">';
+    
+    content += `<div class="mb-1"><span class="text-muted">Thread ID:</span> <code class="ms-2">${escapeHtml(ti.thread_id || 'N/A')}</code></div>`;
+    
+    content += `<div class="mb-1"><span class="text-muted">Previous Thread:</span> <code class="ms-2">${escapeHtml(ti.previous_thread_id || 'None')}</code></div>`;
+    
+    const activeThreadBadge = ti.active_thread ? 
+      '<span class="badge bg-success">Yes</span>' : 
+      '<span class="badge bg-secondary">No</span>';
+    content += `<div class="mb-1"><span class="text-muted">Active:</span> <span class="ms-2">${activeThreadBadge}</span></div>`;
+    
+    content += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${ti.thread_attempt || 1}</span></div>`;
+    
+    content += '</div></div>';
   }
   
   // Button States Section
   if (metadata.button_states) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Button States</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-toggles me-2"></i>Button States</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.button_states.image_generation !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Image Generation:</strong> ${createStatusBadge(metadata.button_states.image_generation)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Image Generation:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.image_generation)}</span></div>`;
     }
     
     if (metadata.button_states.web_search !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Web Search:</strong> ${createStatusBadge(metadata.button_states.web_search)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Web Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.web_search)}</span></div>`;
     }
     
     if (metadata.button_states.document_search !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Document Search:</strong> ${createStatusBadge(metadata.button_states.document_search)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Document Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.document_search)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Workspace Search Section
   if (metadata.workspace_search) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Workspace & Document Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-folder me-2"></i>Workspace & Document Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.workspace_search.search_enabled !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Search Enabled:</strong> ${createStatusBadge(metadata.workspace_search.search_enabled)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Search Enabled:</span> <span class="ms-2">${createStatusBadge(metadata.workspace_search.search_enabled)}</span></div>`;
     }
     
     if (metadata.workspace_search.document_name) {
-      content += `<div class="metadata-item">
-        <strong>Selected Document:</strong> ${escapeHtml(metadata.workspace_search.document_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Document:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.document_name)}</span></div>`;
     } else if (metadata.workspace_search.selected_document_id && metadata.workspace_search.selected_document_id !== 'None' && metadata.workspace_search.selected_document_id !== 'all') {
-      content += `<div class="metadata-item">
-        <strong>Document ID:</strong> ${escapeHtml(metadata.workspace_search.selected_document_id)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Document ID:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.selected_document_id)}</span></div>`;
     }
     
     if (metadata.workspace_search.document_scope) {
-      content += `<div class="metadata-item">
-        <strong>Search Scope:</strong> ${createInfoBadge(metadata.workspace_search.document_scope, 'primary')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Search Scope:</span> <span class="ms-2">${createInfoBadge(metadata.workspace_search.document_scope, 'primary')}</span></div>`;
     }
     
     if (metadata.workspace_search.classification && metadata.workspace_search.classification !== 'None') {
-      content += `<div class="metadata-item">
-        <strong>Classification:</strong> ${createClassificationBadge(metadata.workspace_search.classification)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Classification:</span> <span class="ms-2">${createClassificationBadge(metadata.workspace_search.classification)}</span></div>`;
     }
     
     if (metadata.workspace_search.group_name) {
-      content += `<div class="metadata-item">
-        <strong>Group:</strong> ${escapeHtml(metadata.workspace_search.group_name)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Group:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.group_name)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Prompt Selection Section
   if (metadata.prompt_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Prompt Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-chat-quote me-2"></i>Prompt Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.prompt_selection.prompt_name) {
-      content += `<div class="metadata-item">
-        <strong>Prompt Name:</strong> ${createInfoBadge(metadata.prompt_selection.prompt_name, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Prompt Name:</span> <span class="ms-2">${createInfoBadge(metadata.prompt_selection.prompt_name, 'success')}</span></div>`;
     }
     
     if (metadata.prompt_selection.selected_prompt_index !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Prompt Index:</strong> ${escapeHtml(metadata.prompt_selection.selected_prompt_index)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Prompt Index:</span> <span class="ms-2">${escapeHtml(metadata.prompt_selection.selected_prompt_index)}</span></div>`;
     }
     
     if (metadata.prompt_selection.selected_prompt_text) {
-      content += `<div class="metadata-item">
-        <strong>Content:</strong>
-        <div class="mt-1 p-2 bg-light rounded small">
-          ${escapeHtml(metadata.prompt_selection.selected_prompt_text)}
-        </div>
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Content:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.prompt_selection.selected_prompt_text)}</div></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Agent Selection Section
   if (metadata.agent_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Agent Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-robot me-2"></i>Agent Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.agent_selection.agent_display_name) {
-      content += `<div class="metadata-item">
-        <strong>Agent:</strong> ${createInfoBadge(metadata.agent_selection.agent_display_name, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.agent_display_name, 'success')}</span></div>`;
     } else if (metadata.agent_selection.selected_agent) {
-      content += `<div class="metadata-item">
-        <strong>Selected Agent:</strong> ${createInfoBadge(metadata.agent_selection.selected_agent, 'success')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.selected_agent, 'success')}</span></div>`;
     }
     
     if (metadata.agent_selection.is_global !== undefined) {
-      content += `<div class="metadata-item">
-        <strong>Global Agent:</strong> ${createStatusBadge(metadata.agent_selection.is_global)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Global Agent:</span> <span class="ms-2">${createStatusBadge(metadata.agent_selection.is_global)}</span></div>`;
     }
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   // Model Selection Section
   if (metadata.model_selection) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Model Selection</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Model Selection</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.model_selection.selected_model) {
-      content += `<div class="metadata-item">
-        <strong>Selected Model:</strong> ${escapeHtml(metadata.model_selection.selected_model)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Selected Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.selected_model)}</code></div>`;
     }
     
     if (metadata.model_selection.frontend_requested_model && 
         metadata.model_selection.frontend_requested_model !== metadata.model_selection.selected_model) {
-      content += `<div class="metadata-item">
-        <strong>Frontend Model:</strong> ${escapeHtml(metadata.model_selection.frontend_requested_model)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Frontend Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.frontend_requested_model)}</code></div>`;
     }
     
-    content += '</div>';
+    if (metadata.model_selection.reasoning_effort) {
+      content += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.reasoning_effort)}</code></div>`;
+    }
+    
+    if (metadata.model_selection.streaming !== undefined) {
+      content += `<div class="mb-1"><span class="text-muted">Streaming:</span> <span class="ms-2">${createStatusBadge(metadata.model_selection.streaming)}</span></div>`;
+    }
+    
+    content += '</div></div>';
+  }
+  
+  // Uploaded Images Section
+  if (metadata.uploaded_images && metadata.uploaded_images.length > 0) {
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Uploaded Image</div>';
+    content += '<div class="ms-3 small">';
+    
+    metadata.uploaded_images.forEach((image, index) => {
+      const imageId = `image-${messageId || Date.now()}-${index}`;
+      content += `<div class="metadata-item">`;
+      content += `<div class="card">`;
+      content += `<img src="${escapeHtml(image.url)}" alt="Uploaded Image" class="card-img-top" style="max-width: 100%; height: auto;" />`;
+      content += `<div class="card-body">`;
+      content += `<div class="d-flex justify-content-between align-items-center">`;
+      content += `<small class="text-muted">Filename: ${escapeHtml(image.filename || 'Unknown')}</small>`;
+      
+      // Add View Text button if OCR or vision data exists
+      if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
+        content += `<button class="btn btn-sm btn-outline-primary view-text-btn" 
+                      data-image-id="${imageId}" 
+                      title="View extracted text">
+                      <i class="bi bi-eye me-1"></i>View Text
+                    </button>`;
+      }
+      
+      content += `</div>`; // End d-flex
+      
+      // Add collapsible drawer for OCR and vision analysis
+      if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
+        content += `<div class="collapse mt-2" id="${imageId}-info">`;
+        
+        if (image.ocr_text && image.ocr_text.trim()) {
+          content += `<div class="border-top pt-2 mt-2">`;
+          content += `<strong class="text-muted"><i class="bi bi-file-text me-1"></i>Extracted Text (OCR):</strong>`;
+          content += `<div class="mt-1 p-2 bg-light rounded small" style="max-height: 200px; overflow-y: auto;">`;
+          content += `<pre class="mb-0" style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(image.ocr_text)}</pre>`;
+          content += `</div></div>`;
+        }
+        
+        if (image.vision_analysis && image.vision_analysis.trim()) {
+          content += `<div class="border-top pt-2 mt-2">`;
+          content += `<strong class="text-muted"><i class="bi bi-info-circle me-1"></i>AI Vision Analysis:</strong>`;
+          content += `<div class="mt-1 p-2 bg-light rounded small">`;
+          content += `<div>${escapeHtml(image.vision_analysis)}</div>`;
+          content += `</div></div>`;
+        }
+        
+        content += `</div>`; // End collapse
+      }
+      
+      content += `</div>`; // End card-body
+      content += `</div>`; // End card
+      content += `</div>`; // End item wrapper
+    });
+    
+    content += '</div></div>'; // End ms-3 small and mb-3
   }
   
   // Chat Context Section
   if (metadata.chat_context) {
-    content += '<div class="metadata-section mb-3">';
-    content += '<h6 class="metadata-title mb-2">Chat Context</h6>';
+    content += '<div class="mb-3">';
+    content += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Chat Context</div>';
+    content += '<div class="ms-3 small">';
     
     if (metadata.chat_context.conversation_id) {
-      content += `<div class="metadata-item">
-        <strong>Conversation ID:</strong> ${escapeHtml(metadata.chat_context.conversation_id)}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${escapeHtml(metadata.chat_context.conversation_id)}</code></div>`;
     }
     
     if (metadata.chat_context.chat_type) {
-      content += `<div class="metadata-item">
-        <strong>Chat Type:</strong> ${createInfoBadge(metadata.chat_context.chat_type, 'primary')}
-      </div>`;
+      content += `<div class="mb-1"><span class="text-muted">Chat Type:</span> <span class="ms-2">${createInfoBadge(metadata.chat_context.chat_type, 'primary')}</span></div>`;
     }
     
     // Show context-specific information based on chat type
     if (metadata.chat_context.chat_type === 'group') {
       if (metadata.chat_context.group_name) {
-        content += `<div class="metadata-item">
-          <strong>Group:</strong> ${escapeHtml(metadata.chat_context.group_name)}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Group:</span> <span class="ms-2">${escapeHtml(metadata.chat_context.group_name)}</span></div>`;
       } else if (metadata.chat_context.group_id && metadata.chat_context.group_id !== 'None') {
-        content += `<div class="metadata-item">
-          <strong>Group ID:</strong> ${escapeHtml(metadata.chat_context.group_id)}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Group ID:</span> <span class="ms-2">${escapeHtml(metadata.chat_context.group_id)}</span></div>`;
       }
     } else if (metadata.chat_context.chat_type === 'public') {
       if (metadata.chat_context.workspace_context) {
-        content += `<div class="metadata-item">
-          <strong>Workspace:</strong> ${createInfoBadge(metadata.chat_context.workspace_context, 'info')}
-        </div>`;
+        content += `<div class="mb-1"><span class="text-muted">Workspace:</span> <span class="ms-2">${createInfoBadge(metadata.chat_context.workspace_context, 'info')}</span></div>`;
       }
     }
     // For 'personal' chat type, no additional context needed
     
-    content += '</div>';
+    content += '</div></div>';
   }
   
   if (!content) {
@@ -1894,36 +2483,37 @@ function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
   const toggleBtn = messageDiv.querySelector('.image-info-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
   const infoContainer = messageDiv.querySelector(`#${targetId}`);
-  
+
   if (!infoContainer) {
     console.error(`Image info container not found for targetId: ${targetId}`);
     return;
   }
-  
+
   const isExpanded = infoContainer.style.display !== "none";
-  
+
   // Store current scroll position to maintain user's view
   const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
-  
+
   if (isExpanded) {
     // Hide the info
     infoContainer.style.display = "none";
     toggleBtn.setAttribute("aria-expanded", false);
-    toggleBtn.title = "View extracted text & analysis";
-    toggleBtn.innerHTML = '<i class="bi bi-info-circle"></i> View Text';
+    toggleBtn.title = "View extracted text";
+    toggleBtn.innerHTML = '<i class="bi bi-file-text"></i>';
   } else {
     // Show the info
     infoContainer.style.display = "block";
     toggleBtn.setAttribute("aria-expanded", true);
-    toggleBtn.title = "Hide extracted text & analysis";
-    toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i> Hide Text';
-    
+    toggleBtn.title = "Hide extracted text";
+    toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
+
     // Load image info if not already loaded
-    if (infoContainer.innerHTML.includes('Loading image information...')) {
-      loadImageInfo(fullMessageObject, infoContainer);
+    const contentDiv = infoContainer.querySelector('.image-info-content');
+    if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.innerHTML.includes('Loading image information...'))) {
+      loadImageInfo(fullMessageObject, contentDiv);
     }
   }
-  
+
   // Restore scroll position after DOM changes
   setTimeout(() => {
     if (document.getElementById('chat-messages-container')) {
@@ -1935,18 +2525,140 @@ function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
 }
 
 /**
+ * Toggle the metadata drawer for AI, image, and file messages
+ */
+function toggleMessageMetadata(messageDiv, messageId) {
+  const existingDrawer = messageDiv.querySelector('.message-metadata-drawer');
+  
+  if (existingDrawer) {
+    // Drawer exists, remove it
+    existingDrawer.remove();
+    return;
+  }
+  
+  // Create new drawer
+  const drawerDiv = document.createElement('div');
+  drawerDiv.className = 'message-metadata-drawer mt-2 p-3 border rounded bg-light';
+  drawerDiv.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
+  
+  messageDiv.appendChild(drawerDiv);
+  
+  // Load metadata
+  loadMessageMetadataForDisplay(messageId, drawerDiv);
+}
+
+/**
+ * Load message metadata into the drawer for AI/image/file messages
+ */
+function loadMessageMetadataForDisplay(messageId, container) {
+  fetch(`/api/message/${messageId}/metadata`)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Failed to load metadata');
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (!data) {
+        container.innerHTML = '<p class="text-muted mb-0">No metadata available</p>';
+        return;
+      }
+      
+      const metadata = data;
+      let html = '<div class="metadata-content">';
+      
+      // Thread Information (check both locations for backward compatibility)
+      const threadInfo = metadata.metadata?.thread_info || {
+        thread_id: metadata.thread_id,
+        previous_thread_id: metadata.previous_thread_id,
+        active_thread: metadata.active_thread,
+        thread_attempt: metadata.thread_attempt
+      };
+      
+      if (threadInfo.thread_id) {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
+        html += '<div class="ms-3 small">';
+        html += `<div class="mb-1"><span class="text-muted">Thread ID:</span> <code class="ms-2">${threadInfo.thread_id}</code></div>`;
+        html += `<div class="mb-1"><span class="text-muted">Previous Thread:</span> <code class="ms-2">${threadInfo.previous_thread_id || 'None (first message)'}</code></div>`;
+        html += `<div class="mb-1"><span class="text-muted">Active:</span> <span class="ms-2 badge ${threadInfo.active_thread ? 'bg-success' : 'bg-secondary'}">${threadInfo.active_thread ? 'Yes' : 'No'}</span></div>`;
+        html += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${threadInfo.thread_attempt || 1}</span></div>`;
+        html += '</div></div>';
+      }
+      
+      // Message Details
+      html += '<div class="mb-3">';
+      html += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Message Details</div>';
+      html += '<div class="ms-3 small">';
+      if (metadata.id) html += `<div class="mb-1"><span class="text-muted">Message ID:</span> <code class="ms-2">${metadata.id}</code></div>`;
+      if (metadata.conversation_id) html += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${metadata.conversation_id}</code></div>`;
+      if (metadata.role) html += `<div class="mb-1"><span class="text-muted">Role:</span> <span class="ms-2 badge bg-primary">${metadata.role}</span></div>`;
+      if (metadata.timestamp) html += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${new Date(metadata.timestamp).toLocaleString()}</code></div>`;
+      html += '</div></div>';
+      
+      // Image/File specific info
+      if (metadata.role === 'image') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Image Details</div>';
+        html += '<div class="ms-3 small">';
+        if (metadata.filename) html += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${metadata.filename}</code></div>`;
+        if (metadata.prompt) html += `<div class="mb-1"><span class="text-muted">Prompt:</span> <span class="ms-2">${metadata.prompt}</span></div>`;
+        if (metadata.metadata?.is_chunked !== undefined) html += `<div class="mb-1"><span class="text-muted">Chunked:</span> <span class="ms-2 badge ${metadata.metadata.is_chunked ? 'bg-warning' : 'bg-success'}">${metadata.metadata.is_chunked ? 'Yes' : 'No'}</span></div>`;
+        if (metadata.metadata?.is_user_upload !== undefined) html += `<div class="mb-1"><span class="text-muted">User Upload:</span> <span class="ms-2 badge ${metadata.metadata.is_user_upload ? 'bg-info' : 'bg-secondary'}">${metadata.metadata.is_user_upload ? 'Yes' : 'No'}</span></div>`;
+        html += '</div></div>';
+      } else if (metadata.role === 'file') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-file-earmark me-2"></i>File Details</div>';
+        html += '<div class="ms-3 small">';
+        if (metadata.filename) html += `<div class="mb-1"><span class="text-muted">Filename:</span> <code class="ms-2">${metadata.filename}</code></div>`;
+        if (metadata.is_table !== undefined) html += `<div class="mb-1"><span class="text-muted">Table Data:</span> <span class="ms-2 badge ${metadata.is_table ? 'bg-success' : 'bg-secondary'}">${metadata.is_table ? 'Yes' : 'No'}</span></div>`;
+        html += '</div></div>';
+      }
+      
+      // Generation Details (for assistant, image, and file messages)
+      if (metadata.role === 'assistant' || metadata.role === 'image' || metadata.role === 'file') {
+        html += '<div class="mb-3">';
+        html += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Generation Details</div>';
+        html += '<div class="ms-3 small">';
+        
+        // Model and Agent info (for all types)
+        if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
+        if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
+        if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${metadata.agent_display_name}</span></div>`;
+        
+        // Assistant-specific info
+        if (metadata.role === 'assistant') {
+          if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
+          if (metadata.metadata?.reasoning_effort) html += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${metadata.metadata.reasoning_effort}</code></div>`;
+          if (metadata.hybrid_citations && metadata.hybrid_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Document Citations:</span> <span class="ms-2 badge bg-info">${metadata.hybrid_citations.length}</span></div>`;
+          if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
+        }
+        
+        html += '</div></div>';
+      }
+      
+      html += '</div>';
+      container.innerHTML = html;
+    })
+    .catch(error => {
+      console.error('Error loading message metadata:', error);
+      container.innerHTML = '<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Failed to load metadata</div>';
+    });
+}
+
+/**
  * Load image extracted text and vision analysis into the info drawer
  */
 function loadImageInfo(fullMessageObject, container) {
   const extractedText = fullMessageObject?.extracted_text || '';
   const visionAnalysis = fullMessageObject?.vision_analysis || null;
   const filename = fullMessageObject?.filename || 'Image';
-  
+
   let content = '<div class="image-info-content">';
-  
+
   // Filename
   content += `<div class="mb-3"><strong><i class="bi bi-file-earmark-image me-1"></i>Filename:</strong> ${escapeHtml(filename)}</div>`;
-  
+
   // Extracted Text (OCR from Document Intelligence)
   if (extractedText && extractedText.trim()) {
     content += '<div class="mb-3">';
@@ -1955,48 +2667,650 @@ function loadImageInfo(fullMessageObject, container) {
     content += escapeHtml(extractedText);
     content += '</div></div>';
   }
-  
+
   // Vision Analysis (AI-generated description, objects, text)
   if (visionAnalysis) {
     content += '<div class="mb-3">';
     content += '<strong><i class="bi bi-eye me-1"></i>AI Vision Analysis:</strong>';
-    
-    if (visionAnalysis.model_name) {
-      content += `<div class="mt-1 text-muted" style="font-size: 0.85em;">Model: ${escapeHtml(visionAnalysis.model_name)}</div>`;
+
+    // Model name can be either 'model' or 'model_name'
+    const modelName = visionAnalysis.model || visionAnalysis.model_name;
+    if (modelName) {
+      content += `<div class="mt-1 text-muted" style="font-size: 0.85em;">Model: ${escapeHtml(modelName)}</div>`;
     }
-    
+
     if (visionAnalysis.description) {
-      content += '<div class="mt-2"><strong>Description:</strong><div class="p-2 bg-light border rounded">';
+      content += '<div class="mt-2"><strong>Description:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
       content += escapeHtml(visionAnalysis.description);
       content += '</div></div>';
     }
-    
+
     if (visionAnalysis.objects && Array.isArray(visionAnalysis.objects) && visionAnalysis.objects.length > 0) {
       content += '<div class="mt-2"><strong>Objects Detected:</strong><div class="p-2 bg-light border rounded">';
       content += visionAnalysis.objects.map(obj => `<span class="badge bg-secondary me-1">${escapeHtml(obj)}</span>`).join('');
       content += '</div></div>';
     }
-    
+
     if (visionAnalysis.text && visionAnalysis.text.trim()) {
-      content += '<div class="mt-2"><strong>Text Visible in Image:</strong><div class="p-2 bg-light border rounded">';
+      content += '<div class="mt-2"><strong>Text Visible in Image:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
       content += escapeHtml(visionAnalysis.text);
       content += '</div></div>';
     }
-    
-    if (visionAnalysis.contextual_analysis && visionAnalysis.contextual_analysis.trim()) {
-      content += '<div class="mt-2"><strong>Contextual Analysis:</strong><div class="p-2 bg-light border rounded">';
-      content += escapeHtml(visionAnalysis.contextual_analysis);
+
+    // Contextual analysis can be either 'analysis' or 'contextual_analysis'
+    const analysis = visionAnalysis.analysis || visionAnalysis.contextual_analysis;
+    if (analysis && analysis.trim()) {
+      content += '<div class="mt-2"><strong>Contextual Analysis:</strong><div class="p-2 bg-light border rounded" style="white-space: pre-wrap;">';
+      content += escapeHtml(analysis);
       content += '</div></div>';
     }
-    
+
     content += '</div>';
   }
-  
+
   content += '</div>';
-  
+
   if (!extractedText && !visionAnalysis) {
     content = '<div class="text-muted">No extracted text or analysis available for this image.</div>';
   }
-  
+
   container.innerHTML = content;
 }
+
+// Search highlight functions
+export function applySearchHighlight(searchTerm) {
+  if (!searchTerm || searchTerm.trim() === '') return;
+  
+  // Clear any existing highlights first
+  clearSearchHighlight();
+  
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find all message content elements
+  const messageContents = chatbox.querySelectorAll('.message-content, .ai-response');
+  
+  // Escape special regex characters in search term
+  const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escapedTerm})`, 'gi');
+  
+  messageContents.forEach(element => {
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    );
+    
+    const textNodes = [];
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.nodeValue.trim() !== '') {
+        textNodes.push(node);
+      }
+    }
+    
+    textNodes.forEach(textNode => {
+      const text = textNode.nodeValue;
+      if (regex.test(text)) {
+        const span = document.createElement('span');
+        span.innerHTML = text.replace(regex, '<mark class="search-highlight">$1</mark>');
+        textNode.parentNode.replaceChild(span, textNode);
+      }
+    });
+  });
+  
+  // Set timeout to clear highlights after 30 seconds
+  if (window.searchHighlight) {
+    if (window.searchHighlight.timeoutId) {
+      clearTimeout(window.searchHighlight.timeoutId);
+    }
+    window.searchHighlight.timeoutId = setTimeout(() => {
+      clearSearchHighlight();
+      window.searchHighlight = null;
+    }, 30000);
+  }
+}
+
+export function clearSearchHighlight() {
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find all highlight marks
+  const highlights = chatbox.querySelectorAll('mark.search-highlight');
+  highlights.forEach(mark => {
+    const text = document.createTextNode(mark.textContent);
+    mark.parentNode.replaceChild(text, mark);
+  });
+  
+  // Clear timeout if exists
+  if (window.searchHighlight && window.searchHighlight.timeoutId) {
+    clearTimeout(window.searchHighlight.timeoutId);
+    window.searchHighlight.timeoutId = null;
+  }
+}
+
+export function scrollToMessageSmooth(messageId) {
+  if (!messageId) return;
+  
+  const chatbox = document.getElementById('chatbox');
+  if (!chatbox) return;
+  
+  // Find message by data-message-id attribute
+  const messageElement = chatbox.querySelector(`[data-message-id="${messageId}"]`);
+  if (!messageElement) {
+    console.warn(`Message with ID ${messageId} not found`);
+    return;
+  }
+  
+  // Scroll smoothly to message
+  messageElement.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center'
+  });
+  
+  // Add pulse animation
+  messageElement.classList.add('message-pulse');
+  
+  // Remove pulse after 2 seconds
+  setTimeout(() => {
+    messageElement.classList.remove('message-pulse');
+  }, 2000);
+}
+
+// ============= Message Masking Functions =============
+
+/**
+ * Apply masked state to a message when loading from database
+ */
+function applyMaskedState(messageDiv, metadata) {
+  if (!metadata) return;
+  
+  const messageText = messageDiv.querySelector('.message-text');
+  const messageFooter = messageDiv.querySelector('.message-footer');
+  
+  if (!messageText) return;
+  
+  // Check if entire message is masked
+  if (metadata.masked) {
+    messageDiv.classList.add('fully-masked');
+    
+    // Add exclusion badge to footer if not already present
+    if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
+      const badge = document.createElement('div');
+      badge.className = 'message-exclusion-badge text-warning small';
+      badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
+      messageFooter.appendChild(badge);
+    }
+    return;
+  }
+  
+  // Apply masked ranges if they exist
+  if (metadata.masked_ranges && metadata.masked_ranges.length > 0) {
+    const content = messageText.textContent;
+    let htmlContent = '';
+    let lastIndex = 0;
+    
+    // Sort masked ranges by start position
+    const sortedRanges = [...metadata.masked_ranges].sort((a, b) => a.start - b.start);
+    
+    // Build HTML with masked spans
+    sortedRanges.forEach(range => {
+      // Add text before masked range
+      if (range.start > lastIndex) {
+        htmlContent += escapeHtml(content.substring(lastIndex, range.start));
+      }
+      
+      // Add masked span
+      const maskedText = escapeHtml(content.substring(range.start, range.end));
+      const timestamp = new Date(range.timestamp).toLocaleDateString();
+      htmlContent += `<span class="masked-content" data-mask-id="${range.id}" data-user-id="${range.user_id}" data-display-name="${range.display_name}" title="Masked by ${range.display_name} on ${timestamp}">${maskedText}</span>`;
+      
+      lastIndex = range.end;
+    });
+    
+    // Add remaining text after last masked range
+    if (lastIndex < content.length) {
+      htmlContent += escapeHtml(content.substring(lastIndex));
+    }
+    
+    // Update message text with masked content
+    messageText.innerHTML = htmlContent;
+  }
+}
+
+/**
+ * Update mask button tooltip based on current selection and mask state
+ */
+function updateMaskButtonTooltip(maskBtn, messageDiv) {
+  const messageBubble = messageDiv.querySelector('.message-bubble');
+  if (!messageBubble) return;
+  
+  // Check if there's a text selection within this message
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.toString().trim().length > 0;
+  
+  // Verify selection is within this message bubble
+  let selectionInMessage = false;
+  if (hasSelection && selection.anchorNode) {
+    selectionInMessage = messageBubble.contains(selection.anchorNode);
+  }
+  
+  // Check current mask state
+  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
+  
+  // Update tooltip based on state
+  if (isMasked) {
+    maskBtn.title = 'Unmask all masked content';
+  } else if (selectionInMessage) {
+    maskBtn.title = 'Mask selected content';
+  } else {
+    maskBtn.title = 'Mask entire message';
+  }
+}
+
+/**
+ * Handle mask button click - masks entire message or selected content
+ */
+function handleMaskButtonClick(messageDiv, messageId, messageContent) {
+  const messageBubble = messageDiv.querySelector('.message-bubble');
+  const messageText = messageDiv.querySelector('.message-text');
+  const maskBtn = messageDiv.querySelector('.mask-btn');
+  
+  if (!messageBubble || !messageText || !maskBtn) {
+    console.error('Required elements not found for masking');
+    return;
+  }
+  
+  // Check if message is currently masked
+  const isMasked = messageDiv.querySelector('.masked-content') || messageDiv.classList.contains('fully-masked');
+  
+  if (isMasked) {
+    // Unmask all
+    unmaskMessage(messageDiv, messageId, maskBtn);
+    return;
+  }
+  
+  // Check for text selection within message
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.toString().trim().length > 0;
+  
+  let selectionInMessage = false;
+  if (hasSelection && selection.anchorNode) {
+    selectionInMessage = messageBubble.contains(selection.anchorNode);
+  }
+  
+  if (selectionInMessage) {
+    // Mask selection
+    maskSelection(messageDiv, messageId, selection, messageText, maskBtn);
+  } else {
+    // Mask entire message
+    maskEntireMessage(messageDiv, messageId, maskBtn);
+  }
+}
+
+/**
+ * Mask the entire message
+ */
+function maskEntireMessage(messageDiv, messageId, maskBtn) {
+  console.log(`Masking entire message: ${messageId}`);
+  
+  // Get user info
+  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
+  const userId = window.currentUser?.id || 'unknown';
+  
+  console.log('Mask entire message - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
+  
+  const payload = {
+    action: 'mask_all',
+    user_id: userId,
+    display_name: userDisplayName
+  };
+  
+  console.log('Mask entire message - Sending payload:', payload);
+  
+  // Call API to mask message
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload)
+  })
+  .then(response => {
+    console.log('Mask entire message - Response status:', response.status);
+    if (!response.ok) {
+      return response.json().then(err => {
+        console.error('Mask entire message - Error response:', err);
+        throw new Error(err.error || 'Failed to mask message');
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Mask entire message - Success response:', data);
+    if (data.success) {
+      // Add fully-masked class and exclusion badge
+      messageDiv.classList.add('fully-masked');
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-front';
+      maskBtn.title = 'Unmask all masked content';
+      
+      // Add exclusion badge to footer if not already present
+      const messageFooter = messageDiv.querySelector('.message-footer');
+      if (messageFooter && !messageFooter.querySelector('.message-exclusion-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'message-exclusion-badge text-warning small';
+        badge.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
+        messageFooter.appendChild(badge);
+      }
+      
+      showToast('Message masked successfully', 'success');
+    } else {
+      showToast('Failed to mask message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error masking message:', error);
+    showToast('Error masking message', 'error');
+  });
+}
+
+/**
+ * Mask selected text content
+ */
+function maskSelection(messageDiv, messageId, selection, messageText, maskBtn) {
+  const selectedText = selection.toString().trim();
+  console.log(`Masking selection in message: ${messageId}`);
+  
+  // Get the range and calculate character offsets
+  const range = selection.getRangeAt(0);
+  const preSelectionRange = range.cloneRange();
+  preSelectionRange.selectNodeContents(messageText);
+  preSelectionRange.setEnd(range.startContainer, range.startOffset);
+  const start = preSelectionRange.toString().length;
+  const end = start + selectedText.length;
+  
+  // Get user info
+  const userDisplayName = window.currentUser?.display_name || 'Unknown User';
+  const userId = window.currentUser?.id || 'unknown';
+  
+  console.log('Mask selection - User info:', { userId, userDisplayName, windowCurrentUser: window.currentUser });
+  console.log('Mask selection - Range:', { start, end, selectedText });
+  
+  const payload = {
+    action: 'mask_selection',
+    selection: {
+      start: start,
+      end: end,
+      text: selectedText
+    },
+    user_id: userId,
+    display_name: userDisplayName
+  };
+  
+  console.log('Mask selection - Sending payload:', payload);
+  
+  // Call API to mask selection
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload)
+  })
+  .then(response => {
+    console.log('Mask selection - Response status:', response.status);
+    if (!response.ok) {
+      return response.json().then(err => {
+        console.error('Mask selection - Error response:', err);
+        throw new Error(err.error || 'Failed to mask selection');
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Mask selection - Success response:', data);
+    if (data.success) {
+      // Wrap selected text with masked span
+      const maskId = data.masked_ranges[data.masked_ranges.length - 1].id;
+      const span = document.createElement('span');
+      span.className = 'masked-content';
+      span.setAttribute('data-mask-id', maskId);
+      span.setAttribute('data-user-id', userId);
+      span.setAttribute('data-display-name', userDisplayName);
+      span.title = `Masked by ${userDisplayName}`;
+      
+      // Use extractContents and insertNode to handle complex selections
+      try {
+        const contents = range.extractContents();
+        span.appendChild(contents);
+        range.insertNode(span);
+      } catch (e) {
+        console.error('Error wrapping selection:', e);
+        // Fallback: reload the message to show the masked content
+        location.reload();
+        return;
+      }
+      selection.removeAllRanges();
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-front';
+      maskBtn.title = 'Unmask all masked content';
+      
+      showToast('Selection masked successfully', 'success');
+    } else {
+      showToast('Failed to mask selection', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error masking selection:', error);
+    showToast('Error masking selection', 'error');
+  });
+}
+
+/**
+ * Unmask all masked content in a message
+ */
+function unmaskMessage(messageDiv, messageId, maskBtn) {
+  console.log(`Unmasking message: ${messageId}`);
+  
+  // Call API to unmask
+  fetch(`/api/message/${messageId}/mask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'unmask_all'
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      // Remove fully-masked class
+      messageDiv.classList.remove('fully-masked');
+      
+      // Remove all masked-content spans
+      const maskedSpans = messageDiv.querySelectorAll('.masked-content');
+      maskedSpans.forEach(span => {
+        const text = document.createTextNode(span.textContent);
+        span.parentNode.replaceChild(text, span);
+      });
+      
+      // Remove exclusion badge
+      const badge = messageDiv.querySelector('.message-exclusion-badge');
+      if (badge) {
+        badge.remove();
+      }
+      
+      // Update mask button
+      const icon = maskBtn.querySelector('i');
+      icon.className = 'bi bi-back';
+      maskBtn.title = 'Mask entire message';
+      
+      showToast('Message unmasked successfully', 'success');
+    } else {
+      showToast('Failed to unmask message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error unmasking message:', error);
+    showToast('Error unmasking message', 'error');
+  });
+}
+
+// ============= Message Deletion Functions =============
+
+/**
+ * Handle delete button click - shows confirmation modal
+ */
+function handleDeleteButtonClick(messageDiv, messageId, messageType) {
+  console.log(`Delete button clicked for ${messageType} message: ${messageId}`);
+  
+  // Store message info for deletion confirmation
+  window.pendingMessageDeletion = {
+    messageDiv,
+    messageId,
+    messageType
+  };
+  
+  // Show appropriate confirmation modal
+  if (messageType === 'user') {
+    // User message - offer thread deletion option
+    const modal = document.getElementById('delete-message-modal');
+    if (modal) {
+      const bsModal = new bootstrap.Modal(modal);
+      bsModal.show();
+    }
+  } else {
+    // AI, image, or file message - single confirmation
+    const modal = document.getElementById('delete-single-message-modal');
+    if (modal) {
+      // Update modal text based on message type
+      const modalBody = modal.querySelector('.modal-body p');
+      if (modalBody) {
+        if (messageType === 'assistant') {
+          modalBody.textContent = 'Are you sure you want to delete this AI response? This action cannot be undone.';
+        } else if (messageType === 'image') {
+          modalBody.textContent = 'Are you sure you want to delete this image? This action cannot be undone.';
+        } else if (messageType === 'file') {
+          modalBody.textContent = 'Are you sure you want to delete this file? This action cannot be undone.';
+        }
+      }
+      const bsModal = new bootstrap.Modal(modal);
+      bsModal.show();
+    }
+  }
+}
+
+/**
+ * Execute message deletion via API
+ */
+function executeMessageDeletion(deleteThread = false) {
+  const pendingDeletion = window.pendingMessageDeletion;
+  if (!pendingDeletion) {
+    console.error('No pending message deletion');
+    return;
+  }
+  
+  const { messageDiv, messageId, messageType } = pendingDeletion;
+  
+  console.log(`Executing deletion for message ${messageId}, deleteThread: ${deleteThread}`);
+  console.log(`Message div:`, messageDiv);
+  console.log(`Message ID from DOM:`, messageDiv ? messageDiv.getAttribute('data-message-id') : 'N/A');
+  
+  // Call delete API
+  fetch(`/api/message/${messageId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      delete_thread: deleteThread
+    })
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(data => {
+        const errorMsg = data.error || 'Failed to delete message';
+        console.error(`Delete API error (${response.status}):`, errorMsg);
+        console.error(`Failed message ID:`, messageId);
+        
+        // Add specific error message for 404
+        if (response.status === 404) {
+          throw new Error(`Message not found in database. This may happen if the message was just created and hasn't fully synced yet. Try refreshing the page and deleting again.`);
+        }
+        throw new Error(errorMsg);
+      }).catch(jsonError => {
+        // If response.json() fails, throw a generic error
+        if (response.status === 404) {
+          throw new Error(`Message not found in database. Message ID: ${messageId}. Try refreshing the page.`);
+        }
+        throw new Error(`Failed to delete message (status ${response.status})`);
+      });
+    }
+    return response.json();
+  })
+  .then(data => {
+    console.log('Delete API response:', data);
+    
+    if (data.success) {
+      // Remove message(s) from DOM
+      const deletedIds = data.deleted_message_ids || [messageId];
+      deletedIds.forEach(id => {
+        const msgDiv = document.querySelector(`[data-message-id="${id}"]`);
+        if (msgDiv) {
+          msgDiv.remove();
+          console.log(`Removed message ${id} from DOM`);
+        }
+      });
+      
+      // Show success message
+      const archiveMsg = data.archived ? ' (archived)' : '';
+      const countMsg = deletedIds.length > 1 ? `${deletedIds.length} messages` : 'Message';
+      showToast(`${countMsg} deleted successfully${archiveMsg}`, 'success');
+      
+      // Clean up pending deletion
+      delete window.pendingMessageDeletion;
+      
+      // Optionally reload conversation list to update preview
+      if (typeof loadConversations === 'function') {
+        loadConversations();
+      }
+    } else {
+      showToast('Failed to delete message', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error deleting message:', error);
+    
+    // If we got a 404, suggest reloading messages
+    if (error.message && error.message.includes('not found')) {
+      showToast(error.message + ' Click here to reload messages.', 'error', 8000, () => {
+        // Reload messages when toast is clicked
+        if (window.currentConversationId) {
+          loadMessages(window.currentConversationId);
+        }
+      });
+    } else {
+      showToast(error.message || 'Failed to delete message', 'error');
+    }
+    
+    // Clean up pending deletion
+    delete window.pendingMessageDeletion;
+  });
+}
+
+// Expose functions globally
+window.chatMessages = {
+  applySearchHighlight,
+  clearSearchHighlight,
+  scrollToMessageSmooth
+};
+
+// Expose deletion function globally for modal buttons
+window.executeMessageDeletion = executeMessageDeletion;

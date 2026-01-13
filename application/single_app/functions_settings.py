@@ -2,8 +2,10 @@
 
 from config import *
 from functions_appinsights import log_event
+import app_settings_cache
+import inspect
 
-def get_settings():
+def get_settings(use_cosmos=False):
     import secrets
     default_settings = {
         # External health check
@@ -40,6 +42,8 @@ def get_settings():
         'allow_group_custom_agent_endpoints': False,
         'allow_group_plugins': False,
         'id': 'app_settings',
+        # Control Center settings
+        'control_center_last_refresh': None,  # Timestamp of last data refresh
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
@@ -118,6 +122,7 @@ def get_settings():
         # Workspaces
         'enable_user_workspace': True,
         'enable_group_workspaces': True,
+        'enable_group_creation': True,
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
@@ -130,6 +135,11 @@ def get_settings():
         # Metadata Extraction
         'enable_extract_meta_data': False,
         'metadata_extraction_model': '',
+        
+        # Multimodal Vision
+        'enable_multimodal_vision': False,
+        'multimodal_vision_model': '',
+        
         'enable_summarize_content_history_for_search': False,
         'number_of_historical_messages_to_summarize': 10,
         'enable_summarize_content_history_beyond_conversation_history_limit': False,
@@ -173,6 +183,8 @@ def get_settings():
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
         'require_member_of_safety_violation_admin': False,
+        'require_member_of_control_center_admin': False,
+        'require_member_of_control_center_dashboard_reader': False,
         'content_safety_endpoint': '',
         'content_safety_key': '',
         'content_safety_authentication_type': 'key',
@@ -192,6 +204,10 @@ def get_settings():
         'enable_ai_search_apim': False,
         'azure_apim_ai_search_endpoint': '',
         'azure_apim_ai_search_subscription_key': '',
+        
+        # Search Result Caching
+        'enable_search_result_caching': True,
+        'search_cache_ttl_seconds': 300,
 
         'azure_document_intelligence_endpoint': '',
         'azure_document_intelligence_key': '',
@@ -214,6 +230,12 @@ def get_settings():
         'file_timer_unit': 'hours',
         'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
+        
+        # Streaming settings
+        'streamingEnabled': False,
+        
+        # Reasoning effort settings (per-model)
+        'reasoningEffortSettings': {},
 
         # Video file settings with Azure Video Indexer Settings
         'video_indexer_endpoint': video_indexer_endpoint,
@@ -229,15 +251,73 @@ def get_settings():
         "speech_service_endpoint": '',
         "speech_service_location": '',
         "speech_service_locale": "en-US",
-        "speech_service_key": ""
+        "speech_service_key": "",
+        "speech_service_authentication_type": "key",  # 'key' or 'managed_identity'
+        
+        # Speech-to-text chat input
+        "enable_speech_to_text_input": False,
+        
+        # Text-to-speech chat output
+        "enable_text_to_speech": False,
+        
+        #key vault settings
+        'enable_key_vault_secret_storage': False,
+        'key_vault_name': '',
+        'key_vault_identity': '',
+        
+        # Retention Policy Settings
+        'enable_retention_policy_personal': False,
+        'enable_retention_policy_group': False,
+        'enable_retention_policy_public': False,
+        'retention_policy_execution_hour': 2,  # Run at 2 AM by default (0-23)
+        'retention_policy_last_run': None,  # ISO timestamp of last execution
+        'retention_policy_next_run': None,  # ISO timestamp of next scheduled execution
+        'retention_conversation_min_days': 1,
+        'retention_conversation_max_days': 3650,  # ~10 years
+        'retention_document_min_days': 1,
+        'retention_document_max_days': 3650,  # ~10 years
     }
 
     try:
         # Attempt to read the existing doc
-        settings_item = cosmos_settings_container.read_item(
-            item="app_settings",
-            partition_key="app_settings"
-        )
+        if use_cosmos:
+            settings_item = cosmos_settings_container.read_item(
+                item="app_settings",
+                partition_key="app_settings"
+            )
+        else:
+            settings_item = None
+
+            cache_accessor = getattr(app_settings_cache, "get_settings_cache", None)
+            if callable(cache_accessor):
+                try:
+                    settings_item = cache_accessor()
+                except Exception:
+                    settings_item = None
+
+            if not settings_item:
+                settings_item = cosmos_settings_container.read_item(
+                    item="app_settings",
+                    partition_key="app_settings"
+                )
+
+                frame = inspect.currentframe()
+                caller = frame.f_back  # the function that called *this* code
+
+                if caller is not None:
+                    code = caller.f_code
+                    caller_file = code.co_filename
+                    caller_line = caller.f_lineno
+                    caller_func = code.co_name
+                    print(
+                        "Warning: Failed to get settings from cache, read from Cosmos DB instead. "
+                        f"Called from {caller_file}:{caller_line} in {caller_func}()."
+                    )
+                else:
+                    print(
+                        "Warning: Failed to get settings from cache, "
+                        "read from Cosmos DB instead. (no caller frame)"
+                    )
         #print("Successfully retrieved settings from Cosmos DB.")
 
         # Merge default_settings in, to fill in any missing or nested keys
@@ -267,6 +347,9 @@ def update_settings(new_settings):
         settings_item = get_settings()
         settings_item.update(new_settings)
         cosmos_settings_container.upsert_item(settings_item)
+        cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+        if callable(cache_updater):
+            cache_updater(settings_item)
         print("Settings updated successfully.")
         return True
     except Exception as e:
@@ -494,7 +577,8 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
-    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
+    sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": sanitized_settings_to_update})
 
 
     try:
@@ -550,8 +634,13 @@ def update_user_settings(user_id, settings_to_update):
             first_user_agent = doc['settings']['agents'][0]
             if first_user_agent:
                 doc['settings']['selected_agent'] = {
+                    'id': first_user_agent.get('id'),
                     'name': first_user_agent['name'],
+                    'display_name': first_user_agent.get('display_name', first_user_agent['name']),
                     'is_global': False,
+                    'is_group': False,
+                    'group_id': None,
+                    'group_name': None,
                 }
             else:
                 settings = get_settings()
@@ -563,24 +652,44 @@ def update_user_settings(user_id, settings_to_update):
                         if global_agents:
                             first_global_agent = global_agents[0]
                             doc['settings']['selected_agent'] = {
+                                'id': first_global_agent.get('id'),
                                 'name': first_global_agent['name'],
+                                'display_name': first_global_agent.get('display_name', first_global_agent['name']),
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                         else:
                             doc['settings']['selected_agent'] = {
+                                'id': None,
                                 'name': 'default_agent',
+                                'display_name': 'default_agent',
                                 'is_global': True,
+                                'is_group': False,
+                                'group_id': None,
+                                'group_name': None,
                             }
                     except Exception:
                         # Fallback if container access fails
                         doc['settings']['selected_agent'] = {
+                            'id': None,
                             'name': 'default_agent',
+                            'display_name': 'default_agent',
                             'is_global': True,
+                            'is_group': False,
+                            'group_id': None,
+                            'group_name': None,
                         }
                 else:
                     doc['settings']['selected_agent'] = {
+                        'id': None,
                         'name': 'researcher',
+                        'display_name': 'researcher',
                         'is_global': False,
+                        'is_group': False,
+                        'group_id': None,
+                        'group_name': None,
                     }
 
         if doc['settings']['agents'] is not None and len(doc['settings']['agents']) > 0:
@@ -623,5 +732,96 @@ def enabled_required(setting_key):
     return decorator
 
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    # Exclude any key containing the substring "key" or specific sensitive URLs
-    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}
+    # Exclude any key containing "key", "base64", "storage_account_url"
+    return {k: v for k, v in full_settings.items() 
+            if "key" not in k.lower() and "storage_account_url" not in k.lower()}
+
+def sanitize_settings_for_logging(full_settings: dict) -> dict:
+    """
+    Recursively sanitize settings to remove sensitive data from debug logs.
+    Filters out keys containing: key, base64, image, storage_account_url
+    Also filters out values containing base64 data
+    """
+    if not isinstance(full_settings, dict):
+        return full_settings
+    
+    sanitized = {}
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url"]
+    
+    for k, v in full_settings.items():
+        # Skip keys with sensitive terms
+        if any(term in k.lower() for term in sensitive_key_terms):
+            sanitized[k] = "[REDACTED]"
+            continue
+        
+        # Check if value is a string containing base64 data
+        if isinstance(v, str) and ("base64," in v or len(v) > 500):
+            sanitized[k] = "[BASE64_DATA_REDACTED]"
+        # Recursively sanitize nested dicts
+        elif isinstance(v, dict):
+            sanitized[k] = sanitize_settings_for_logging(v)
+        # Recursively sanitize lists
+        elif isinstance(v, list):
+            sanitized[k] = [sanitize_settings_for_logging(item) if isinstance(item, dict) else item for item in v]
+        else:
+            sanitized[k] = v
+    
+    return sanitized
+
+# Search history management functions
+def get_user_search_history(user_id):
+    """Get user's search history from their settings document"""
+    try:
+        doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        return doc.get('search_history', [])
+    except exceptions.CosmosResourceNotFoundError:
+        return []
+    except Exception as e:
+        print(f"Error getting search history: {e}")
+        return []
+
+def add_search_to_history(user_id, search_term):
+    """Add a search term to user's history, maintaining max 20 items"""
+    try:
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        except exceptions.CosmosResourceNotFoundError:
+            doc = {'id': user_id, 'settings': {}}
+        
+        search_history = doc.get('search_history', [])
+        
+        # Remove if already exists (deduplicate)
+        search_history = [item for item in search_history if item.get('term') != search_term]
+        
+        # Add new search at beginning
+        search_history.insert(0, {
+            'term': search_term,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Trim to 20 items
+        search_history = search_history[:20]
+        
+        doc['search_history'] = search_history
+        cosmos_user_settings_container.upsert_item(body=doc)
+        
+        return search_history
+    except Exception as e:
+        print(f"Error adding search to history: {e}")
+        return []
+
+def clear_user_search_history(user_id):
+    """Clear all search history for a user"""
+    try:
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+        except exceptions.CosmosResourceNotFoundError:
+            doc = {'id': user_id, 'settings': {}}
+        
+        doc['search_history'] = []
+        cosmos_user_settings_container.upsert_item(body=doc)
+        
+        return True
+    except Exception as e:
+        print(f"Error clearing search history: {e}")
+        return False

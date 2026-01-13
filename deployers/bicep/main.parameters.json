@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "cloudEnvironment": {
+      "value": "${env_AZURE_CLOUD_ENVIRONMENT}"
+    },
+    "appName": {
+      "value": "${env_DEPLOYMENT_APPNAME}"
+    },
+    "azdEnvironmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "specialTags": {
+      "value": {
+        "Project": "SimpleChat",
+        "SystemOwner": "Steve Carroll"
+      }
+    },
+    "enterpriseAppClientId": {
+      "value": "${ENTERPRISE_APP_CLIENT_ID}"
+    },
+    "enterpriseAppClientSecret": {
+      "value": "${ENTERPRISE_APP_CLIENT_SECRET}"
+    },
+    "imageName": {
+      "value": "${CONTAINER_IMAGE_NAME}"
+    },
+    "authenticationType": {
+      "value": "${AUTHENTICATION_TYPE}"
+    }
+  }
+}

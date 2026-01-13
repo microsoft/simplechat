@@ -1,3 +1,4 @@
+# route_openapi.py
 """
 OpenAPI Plugin Routes
 
@@ -13,14 +14,14 @@ from functions_authentication import login_required, user_required
 from openapi_security import openapi_validator
 from openapi_auth_analyzer import analyze_openapi_authentication, get_authentication_help_text
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_security import is_valid_storage_name
+from functions_debug import debug_print
 
 def register_openapi_routes(app):
     """Register OpenAPI-related routes."""
     
     @app.route('/api/openapi/upload', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def upload_openapi_spec():
@@ -129,16 +130,14 @@ def register_openapi_routes(app):
                     os.unlink(temp_path)
                     
         except Exception as e:
-            current_app.logger.error(f"Error uploading OpenAPI spec: {str(e)}")
+            debug_print(f"Error uploading OpenAPI spec: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during upload'
             }), 500
     
     @app.route('/api/openapi/validate-url', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def validate_openapi_url():
@@ -193,6 +192,11 @@ def register_openapi_routes(app):
             unique_id = str(uuid.uuid4())[:8]
             base_name, ext = os.path.splitext(safe_filename)
             stored_filename = f"{base_name}_{unique_id}{ext}"
+            if not is_valid_storage_name(stored_filename):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid storage filename'
+                }), 400
             storage_path = os.path.join(upload_dir, stored_filename)
             
             # Save spec to file
@@ -224,16 +228,14 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error validating OpenAPI URL: {str(e)}")
+            debug_print(f"Error validating OpenAPI URL: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during validation'
             }), 500
     
     @app.route('/api/openapi/download-from-url', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def download_openapi_from_url():
@@ -303,6 +305,11 @@ def register_openapi_routes(app):
             unique_id = str(uuid.uuid4())[:8]
             base_name, ext = os.path.splitext(safe_filename)
             stored_filename = f"{base_name}_{unique_id}{ext}"
+            if not is_valid_storage_name(stored_filename):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid storage filename'
+                }), 400
             storage_path = os.path.join(upload_dir, stored_filename)
             
             # Save spec to file
@@ -331,16 +338,14 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error downloading OpenAPI spec from URL: {str(e)}")
+            debug_print(f"Error downloading OpenAPI spec from URL: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during download'
             }), 500
     
     @app.route('/api/openapi/list-uploaded', methods=['GET'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def list_uploaded_specs():
@@ -381,7 +386,7 @@ def register_openapi_routes(app):
                                 'last_modified': os.path.getmtime(file_path)
                             })
                     except Exception as e:
-                        current_app.logger.warning(f"Could not read spec file {filename}: {str(e)}")
+                        debug_print(f"Could not read spec file {filename}: {str(e)}")
                         continue
             
             return jsonify({
@@ -390,16 +395,14 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error listing OpenAPI specs: {str(e)}")
+            debug_print(f"Error listing OpenAPI specs: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error while listing specifications'
             }), 500
     
     @app.route('/api/openapi/analyze-auth', methods=['POST'])
-    @swagger_route(
-        security=get_auth_security()
-    )
+    @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def analyze_openapi_auth():
@@ -440,7 +443,7 @@ def register_openapi_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error analyzing authentication: {str(e)}")
+            debug_print(f"Error analyzing authentication: {str(e)}")
             return jsonify({
                 'success': False,
                 'error': 'Internal server error during authentication analysis'

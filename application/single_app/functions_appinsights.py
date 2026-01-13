@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 from azure.monitor.opentelemetry import configure_azure_monitor
+import app_settings_cache
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -44,29 +45,41 @@ def log_event(
         exceptionTraceback (Any, optional): If set to True, includes exception traceback.
     """
     try:
+        try:
+            cache = app_settings_cache.get_settings_cache() or None
+        except Exception:
+            cache = None
+
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger
         logger = get_appinsights_logger()
         if not logger:
+            print(f"[Log] {message} -- {extra}")
             logger = logging.getLogger('standard')
             if not logger.handlers:
                 logger.addHandler(logging.StreamHandler())
                 logger.setLevel(logging.INFO)
-        
+
         # Enhanced exception handling for Application Insights
         # When exceptionTraceback=True, ensure we capture full exception context
         exc_info_to_use = exceptionTraceback
-        
+
         # For ERROR level logs with exceptionTraceback=True, always log as exception
         if level >= logging.ERROR and exceptionTraceback:
             if logger and hasattr(logger, 'exception'):
+                if cache and cache.get('enable_debug_logging', False):
+                    print(f"DEBUG: [ERROR][Log] {message} -- {extra if extra else 'No Extra Dimensions'}")
                 # Use logger.exception() for better exception capture in Application Insights
-                logger.exception(message, extra=extra, stacklevel=stacklevel)
+                logger.exception(message, extra=extra, stacklevel=stacklevel, stack_info=includeStack, exc_info=True)
                 return
             else:
                 # Fallback to standard logging with exc_info
                 exc_info_to_use = True
-        
+
         # Format message with extra properties for structured logging
+
+        #TODO: Find a way to cache get_settings() globally (and update it when changed) to enable debug printing. Cannot use debug_print due to circular import
+        if cache and cache.get('enable_debug_logging', False):
+            print(f"DEBUG: [Log] {message} -- {extra if extra else 'No Extra Dimensions'}")  # Debug print to console
         if extra:
             # For modern Azure Monitor, extra properties are automatically captured
             logger.log(
@@ -85,12 +98,12 @@ def log_event(
                 stack_info=includeStack,
                 exc_info=exc_info_to_use
             )
-            
+
         # For Azure Monitor, ensure exception-level logs are properly categorized
         if level >= logging.ERROR and _azure_monitor_configured:
             # Add a debug print to verify exception logging is working
             print(f"[Azure Monitor] Exception logged: {message[:100]}...")
-            
+
     except Exception as e:
         # Fallback to basic logging if anything fails
         try:
@@ -98,11 +111,11 @@ def log_event(
             if not fallback_logger.handlers:
                 fallback_logger.addHandler(logging.StreamHandler())
                 fallback_logger.setLevel(logging.INFO)
-            
+
             fallback_message = f"{message} | Original error: {str(e)}"
             if extra:
                 fallback_message += f" | Extra: {extra}"
-            
+
             fallback_logger.log(level, fallback_message)
         except:
             # If even basic logging fails, print to console

@@ -3,7 +3,36 @@
 from config import *
 from functions_authentication import *
 from functions_public_workspaces import *
+from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
+from functions_debug import debug_print
+
+
+def is_user_in_admins(user_id, admins_list):
+    """
+    Check if user is in admins list (supports both old format ["id1", "id2"] and new format [{userId, email, displayName}])
+    """
+    if not admins_list:
+        return False
+    for admin in admins_list:
+        if isinstance(admin, str):
+            if admin == user_id:
+                return True
+        elif isinstance(admin, dict):
+            if admin.get("userId") == user_id:
+                return True
+    return False
+
+def remove_user_from_admins(user_id, admins_list):
+    """
+    Remove user from admins list (supports both old and new format)
+    Returns updated admins list
+    """
+    if not admins_list:
+        return []
+    return [admin for admin in admins_list if 
+            (isinstance(admin, str) and admin != user_id) or
+            (isinstance(admin, dict) and admin.get("userId") != user_id)]
 
 def get_user_details_from_graph(user_id):
     """
@@ -146,6 +175,7 @@ def register_route_backend_public_workspaces(app):
                 "name": ws.get("name", ""),
                 "description": ws.get("description", ""),
                 "userRole": role,
+                "status": ws.get("status", "active"),
                 "isActive": (ws["id"] == active_id)
             })
 
@@ -200,7 +230,7 @@ def register_route_backend_public_workspaces(app):
     def api_update_public_workspace(ws_id):
         """
         PATCH /api/public_workspaces/<ws_id>
-        Body JSON: { "name": "", "description": "" }
+        Body JSON: { "name": "", "description": "", "heroColor": "" }
         """
         info = get_current_user_info()
         user_id = info["userId"]
@@ -214,6 +244,7 @@ def register_route_backend_public_workspaces(app):
         data = request.get_json() or {}
         ws["name"] = data.get("name", ws.get("name"))
         ws["description"] = data.get("description", ws.get("description"))
+        ws["heroColor"] = data.get("heroColor", ws.get("heroColor", "#0078d4"))
         ws["modifiedDate"] = datetime.utcnow().isoformat()
 
         try:
@@ -406,7 +437,7 @@ def register_route_backend_public_workspaces(app):
         # must be member
         is_member = (
             ws["owner"]["userId"] == user_id or
-            user_id in ws.get("admins", []) or
+            is_user_in_admins(user_id, ws.get("admins", [])) or
             any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
         )
         if not is_member:
@@ -423,15 +454,25 @@ def register_route_backend_public_workspaces(app):
             "email": ws["owner"].get("email", ""),
             "role": "Owner"
         })
-        # admins
-        for aid in ws.get("admins", []):
-            admin_details = get_user_details_from_graph(aid)
-            results.append({
-                "userId": aid, 
-                "displayName": admin_details["displayName"], 
-                "email": admin_details["email"], 
-                "role": "Admin"
-            })
+        # admins (support both old format ["id"] and new format [{userId, email, displayName}])
+        for admin in ws.get("admins", []):
+            if isinstance(admin, str):
+                # Old format - fetch from Graph
+                admin_details = get_user_details_from_graph(admin)
+                results.append({
+                    "userId": admin, 
+                    "displayName": admin_details["displayName"], 
+                    "email": admin_details["email"], 
+                    "role": "Admin"
+                })
+            elif isinstance(admin, dict):
+                # New format - use stored data
+                results.append({
+                    "userId": admin.get("userId", ""),
+                    "displayName": admin.get("displayName", ""),
+                    "email": admin.get("email", ""),
+                    "role": "Admin"
+                })
         # doc managers
         for dm in ws.get("documentManagers", []):
             results.append({
@@ -495,6 +536,25 @@ def register_route_backend_public_workspaces(app):
         })
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        
+        # Send notification to the added member
+        try:
+            create_notification(
+                user_id=new_id,
+                notification_type='public_workspace_membership_change',
+                title='Added to Public Workspace',
+                message=f"You have been added to the public workspace '{ws.get('name', 'Unknown')}' as Document Manager.",
+                link_url=f"/manage_public_workspace?workspace_id={ws_id}",
+                metadata={
+                    'workspace_id': ws_id,
+                    'workspace_name': ws.get('name', 'Unknown'),
+                    'role': 'DocumentManager',
+                    'added_by': info.get('email', 'Unknown')
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create notification for new member: {notif_error}")
+        
         return jsonify({"message": "Member added"}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["DELETE"])
@@ -522,15 +582,14 @@ def register_route_backend_public_workspaces(app):
         # only Owner/Admin can remove others
         role = (
             "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if user_id in ws.get("admins", []) else
+            "Admin" if is_user_in_admins(user_id, ws.get("admins", [])) else
             None
         )
         if role not in ["Owner", "Admin"]:
             return jsonify({"error": "Forbidden"}), 403
 
         # remove from admins if present
-        if member_id in ws.get("admins", []):
-            ws["admins"].remove(member_id)
+        ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
         # remove from doc managers
         ws["documentManagers"] = [
             dm for dm in ws.get("documentManagers", [])
@@ -538,7 +597,7 @@ def register_route_backend_public_workspaces(app):
         ]
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
-        return jsonify({"message": "Removed"}), 200
+        return jsonify({"success": True, "message": "Removed"}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
@@ -562,22 +621,50 @@ def register_route_backend_public_workspaces(app):
 
         role = (
             "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if user_id in ws.get("admins", []) else
+            "Admin" if is_user_in_admins(user_id, ws.get("admins", [])) else
             None
         )
         if role not in ["Owner", "Admin"]:
             return jsonify({"error": "Forbidden"}), 403
 
+        # Get member details (from documentManagers or Graph API)
+        member_name = ""
+        member_email = ""
+        for dm in ws.get("documentManagers", []):
+            if dm.get("userId") == member_id:
+                member_name = dm.get("displayName", "")
+                member_email = dm.get("email", "")
+                break
+        
+        # If not found in documentManagers, try to get from existing admins or Graph
+        if not member_name:
+            for admin in ws.get("admins", []):
+                if isinstance(admin, dict) and admin.get("userId") == member_id:
+                    member_name = admin.get("displayName", "")
+                    member_email = admin.get("email", "")
+                    break
+            if not member_name:
+                # Fetch from Graph API
+                try:
+                    details = get_user_details_from_graph(member_id)
+                    member_name = details.get("displayName", "")
+                    member_email = details.get("email", "")
+                except:
+                    pass
+
         # clear any existing
-        if member_id in ws.get("admins", []):
-            ws["admins"].remove(member_id)
+        ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
         ws["documentManagers"] = [
             dm for dm in ws.get("documentManagers", [])
             if dm["userId"] != member_id
         ]
 
         if new_role == "Admin":
-            ws.setdefault("admins", []).append(member_id)
+            ws.setdefault("admins", []).append({
+                "userId": member_id,
+                "displayName": member_name,
+                "email": member_email
+            })
         elif new_role == "DocumentManager":
             # need displayName/email from pending or empty
             ws.setdefault("documentManagers", []).append({
@@ -590,7 +677,37 @@ def register_route_backend_public_workspaces(app):
 
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
-        return jsonify({"message": "Role updated"}), 200
+        
+        # Send notification to the member whose role changed
+        try:
+            # Determine old role for notification
+            old_role = "DocumentManager"  # Default, will be corrected if needed
+            for admin in ws.get("admins", []):
+                if isinstance(admin, dict) and admin.get("userId") == member_id:
+                    old_role = "Admin"
+                    break
+                elif isinstance(admin, str) and admin == member_id:
+                    old_role = "Admin"
+                    break
+            
+            create_notification(
+                user_id=member_id,
+                notification_type='public_workspace_membership_change',
+                title='Workspace Role Changed',
+                message=f"Your role in the public workspace '{ws.get('name', 'Unknown')}' has been changed to {new_role}.",
+                link_url=f"/manage_public_workspace?workspace_id={ws_id}",
+                metadata={
+                    'workspace_id': ws_id,
+                    'workspace_name': ws.get('name', 'Unknown'),
+                    'old_role': old_role,
+                    'new_role': new_role,
+                    'changed_by': info.get('email', 'Unknown')
+                }
+            )
+        except Exception as notif_error:
+            debug_print(f"Failed to create notification for role change: {notif_error}")
+        
+        return jsonify({"success": True, "message": "Role updated"}), 200
 
     @app.route("/api/public_workspaces/<ws_id>/transferOwnership", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
@@ -709,3 +826,292 @@ def register_route_backend_public_workspaces(app):
         )
         prompt_count = next(count_iter, 0)
         return jsonify({"promptCount": prompt_count}), 200
+
+    @app.route("/api/public_workspaces/<ws_id>/stats", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_public_workspace_stats(ws_id):
+        """
+        GET /api/public_workspaces/<ws_id>/stats
+        Returns statistics for the workspace including documents, storage, tokens, and members.
+        """
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user has access - must be member
+        is_member = (
+            ws["owner"]["userId"] == user_id or
+            is_user_in_admins(user_id, ws.get("admins", [])) or
+            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
+        )
+        if not is_member:
+            return jsonify({"error": "Forbidden"}), 403
+
+        # Get metrics from workspace record (pre-calculated)
+        metrics = ws.get("metrics", {})
+        document_metrics = metrics.get("document_metrics", {})
+        
+        total_documents = document_metrics.get("total_documents", 0)
+        storage_used = document_metrics.get("storage_account_size", 0)
+
+        # Get member count
+        owner = ws.get("owner", {})
+        admins = ws.get("admins", [])
+        doc_managers = ws.get("documentManagers", [])
+        total_members = 1 + len(admins) + len(doc_managers)
+
+        # Get token usage from activity logs (last 30 days)
+        from datetime import datetime, timedelta
+        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Workspace ID: {ws_id}")
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Start date: {thirty_days_ago}")
+        
+        token_query = """
+            SELECT a.usage
+            FROM a 
+            WHERE a.workspace_context.public_workspace_id = @wsId 
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        token_params = [
+            {"name": "@wsId", "value": ws_id},
+            {"name": "@startDate", "value": thirty_days_ago}
+        ]
+        
+        total_tokens = 0
+        try:
+            token_iter = cosmos_activity_logs_container.query_items(
+                query=token_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            for item in token_iter:
+                usage = item.get("usage", {})
+                total_tokens += usage.get("total_tokens", 0)
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Total tokens accumulated: {total_tokens}")
+        except Exception as e:
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying total tokens: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Get activity data for charts (last 30 days)
+        doc_activity_labels = []
+        doc_upload_data = []
+        doc_delete_data = []
+        token_usage_labels = []
+        token_usage_data = []
+        
+        # Generate labels for last 30 days
+        for i in range(29, -1, -1):
+            date = datetime.utcnow() - timedelta(days=i)
+            doc_activity_labels.append(date.strftime("%m/%d"))
+            token_usage_labels.append(date.strftime("%m/%d"))
+            doc_upload_data.append(0)
+            doc_delete_data.append(0)
+            token_usage_data.append(0)
+
+        # Get document upload activity by day
+        doc_upload_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.public_workspace_id = @wsId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_creation'
+        """
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Document upload query: {doc_upload_query}")
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Query params: {token_params}")
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=doc_upload_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            upload_results = list(activity_iter)
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Document upload results count: {len(upload_results)}")
+            
+            for item in upload_results:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_upload_data[idx] += 1
+                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added upload for {day_date}")
+                    except Exception as e:
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+        except Exception as e:
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying document uploads: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Get document delete activity by day
+        doc_delete_query = """
+            SELECT a.timestamp, a.created_at
+            FROM a
+            WHERE a.workspace_context.public_workspace_id = @wsId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'document_deletion'
+        """
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Document delete query: {doc_delete_query}")
+        try:
+            delete_iter = cosmos_activity_logs_container.query_items(
+                query=doc_delete_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            delete_results = list(delete_iter)
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Document delete results count: {len(delete_results)}")
+            
+            for item in delete_results:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in doc_activity_labels:
+                            idx = doc_activity_labels.index(day_date)
+                            doc_delete_data[idx] += 1
+                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added delete for {day_date}")
+                    except Exception as e:
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+        except Exception as e:
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying document deletes: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Get token usage by day
+        token_activity_query = """
+            SELECT a.timestamp, a.created_at, a.usage
+            FROM a
+            WHERE a.workspace_context.public_workspace_id = @wsId
+            AND a.timestamp >= @startDate
+            AND a.activity_type = 'token_usage'
+        """
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Token usage query: {token_activity_query}")
+        try:
+            token_activity_iter = cosmos_activity_logs_container.query_items(
+                query=token_activity_query,
+                parameters=token_params,
+                enable_cross_partition_query=True
+            )
+            token_results = list(token_activity_iter)
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Token usage results count: {len(token_results)}")
+            
+            for item in token_results:
+                timestamp = item.get("timestamp") or item.get("created_at")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        day_date = dt.strftime("%m/%d")
+                        if day_date in token_usage_labels:
+                            idx = token_usage_labels.index(day_date)
+                            usage = item.get("usage", {})
+                            tokens = usage.get("total_tokens", 0)
+                            token_usage_data[idx] += tokens
+                            debug_print(f"[PUBLIC_WORKSPACE_STATS] Added {tokens} tokens for {day_date}")
+                    except Exception as e:
+                        debug_print(f"[PUBLIC_WORKSPACE_STATS] Error parsing timestamp {timestamp}: {e}")
+        except Exception as e:
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Error querying token usage: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Get separate storage metrics
+        ai_search_size = document_metrics.get("ai_search_size", 0)
+        storage_account_size = document_metrics.get("storage_account_size", 0)
+
+        stats = {
+            "totalDocuments": total_documents,
+            "storageUsed": storage_used,
+            "storageLimit": 10737418240,  # 10GB default
+            "totalTokens": total_tokens,
+            "totalMembers": total_members,
+            "storage": {
+                "ai_search_size": ai_search_size,
+                "storage_account_size": storage_account_size
+            },
+            "documentActivity": {
+                "labels": doc_activity_labels,
+                "uploads": doc_upload_data,
+                "deletes": doc_delete_data
+            },
+            "tokenUsage": {
+                "labels": token_usage_labels,
+                "data": token_usage_data
+            }
+        }
+        
+        debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")
+
+        return jsonify(stats), 200
+
+    @app.route("/api/public_workspaces/<ws_id>/activity", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def api_public_workspace_activity(ws_id):
+        """
+        GET /api/public_workspaces/<ws_id>/activity
+        Returns recent activity timeline for the workspace.
+        Only accessible by owner and admins.
+        """
+        info = get_current_user_info()
+        user_id = info["userId"]
+        
+        ws = find_public_workspace_by_id(ws_id)
+        if not ws:
+            return jsonify({"error": "Not found"}), 404
+
+        # Check user is owner or admin (NOT document managers or regular members)
+        is_owner = ws["owner"]["userId"] == user_id
+        is_admin = is_user_in_admins(user_id, ws.get("admins", []))
+        
+        if not (is_owner or is_admin):
+            return jsonify({"error": "Forbidden - Only workspace owners and admins can view activity timeline"}), 403
+
+        # Get pagination parameters
+        limit = request.args.get('limit', 50, type=int)
+        if limit not in [10, 20, 50]:
+            limit = 50
+
+        # Get recent activity
+        query = f"""
+            SELECT TOP {limit} *
+            FROM a
+            WHERE a.workspace_context.public_workspace_id = @wsId
+            ORDER BY a.timestamp DESC
+        """
+        params = [{"name": "@wsId", "value": ws_id}]
+        
+        debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Workspace ID: {ws_id}")
+        debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Query: {query}")
+        debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Params: {params}")
+        
+        activities = []
+        try:
+            activity_iter = cosmos_activity_logs_container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True
+            )
+            activities = list(activity_iter)
+            debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Found {len(activities)} activity records")
+            if activities:
+                debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Sample activity: {activities[0] if activities else 'None'}")
+        except Exception as e:
+            debug_print(f"[PUBLIC_WORKSPACE_ACTIVITY] Error querying activities: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return jsonify(activities), 200
+

@@ -47,6 +47,13 @@ export function setAgentModalFields(agent, opts = {}) {
 	root.getElementById('agent-enable-apim').checked = !!agent.enable_agent_gpt_apim;
 	root.getElementById('agent-instructions').value = agent.instructions || '';
 	root.getElementById('agent-additional-settings').value = agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}';
+	root.getElementById('agent-max-completion-tokens').value = agent.max_completion_tokens || '';
+	
+	// Set reasoning effort if available
+	const reasoningEffortSelect = root.getElementById('agent-reasoning-effort');
+	if (reasoningEffortSelect) {
+		reasoningEffortSelect.value = agent.reasoning_effort || '';
+	}
 	// Actions handled separately
 }
 
@@ -95,8 +102,10 @@ export function getAgentModalFields(opts = {}) {
 		azure_agent_apim_gpt_api_version: root.getElementById('agent-apim-api-version').value.trim(),
 		enable_agent_gpt_apim: root.getElementById('agent-enable-apim').checked,
 		instructions: root.getElementById('agent-instructions').value.trim(),
+		max_completion_tokens: parseInt(root.getElementById('agent-max-completion-tokens').value.trim()) || null,
 		actions_to_load: actions_to_load,
-		other_settings: additionalSettings
+		other_settings: additionalSettings,
+		agent_type: (opts.agent && opts.agent.agent_type) || 'local'
 	};
 }
 /**
@@ -202,19 +211,19 @@ export async function loadGlobalModelsForModal({
 export function setupApimToggle(apimToggle, apimFields, gptFields, onToggle) {
 	if (!apimToggle || !apimFields || !gptFields) return;
 	function updateApimFieldsVisibility() {
-		console.log('[DEBUG] updateApimFieldsVisibility fired. apimToggle.checked:', apimToggle.checked);
+		console.log('updateApimFieldsVisibility fired. apimToggle.checked:', apimToggle.checked);
 		if (apimToggle.checked) {
 			apimFields.style.display = 'block';
 			gptFields.style.display = 'none';
 			apimFields.classList.remove('d-none');
 			gptFields.classList.add('d-none');
-			console.log('[DEBUG] Showing APIM fields, hiding GPT fields.');
+			console.log('Showing APIM fields, hiding GPT fields.');
 		} else {
 			apimFields.style.display = 'none';
 			gptFields.style.display = 'block';
 			gptFields.classList.remove('d-none');
 			apimFields.classList.add('d-none');
-			console.log('[DEBUG] Hiding APIM fields, showing GPT fields.');
+			console.log('Hiding APIM fields, showing GPT fields.');
 		}
 		if (typeof onToggle === 'function') {
 			onToggle();
@@ -365,7 +374,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 	} else {
 		// Otherwise use gpt_model.selected (array)
 		let rawModels = (settings && settings.gpt_model && settings.gpt_model.selected) ? settings.gpt_model.selected : [];
-		console.log('[DEBUG] Raw models:', rawModels);
+		console.log('Raw models:', rawModels);
 		// Normalize: map deploymentName/modelName to deployment/name if present
 		models = rawModels.map(m => {
 			if (m.deploymentName || m.modelName) {
@@ -378,7 +387,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 			return m;
 		});
 		selectedModel = agent && agent.azure_openai_gpt_deployment ? agent.azure_openai_gpt_deployment : null;
-		console.log('[DEBUG] Available models:', selectedModel);
+		console.log('Available models:', selectedModel);
 	}
 	return { models, selectedModel };
 }
@@ -471,6 +480,31 @@ export async function fetchUserAgents() {
 	return await res.json();
 }
 
+export async function fetchGroupAgentsForActiveGroup() {
+	if (typeof window === 'undefined' || !window.activeGroupId) {
+		return [];
+	}
+	try {
+		const res = await fetch('/api/group/agents');
+		if (!res.ok) {
+			console.warn('Group agents request failed:', res.status, res.statusText);
+			return [];
+		}
+		const payload = await res.json().catch(() => ({ agents: [] }));
+		const agents = Array.isArray(payload.agents) ? payload.agents : [];
+		const activeGroupName = (typeof window !== 'undefined' && window.activeGroupName) ? window.activeGroupName : '';
+		return agents.map(agent => ({
+			...agent,
+			is_group: true,
+			group_id: agent.group_id || window.activeGroupId,
+			group_name: agent.group_name || activeGroupName || null
+		}));
+	} catch (error) {
+		console.error('Failed to fetch group agents:', error);
+		return [];
+	}
+}
+
 /**
  * Fetch selected agent from user settings
  * @returns {Promise<Object|null>} Selected agent object or null
@@ -503,23 +537,63 @@ export function populateAgentSelect(selectEl, agents, selectedAgentObj) {
 	console.log('DEBUG: populateAgentSelect called with agents:', agents);
 	console.log('DEBUG: Number of agents:', agents.length);
 	agents.forEach((agent, index) => {
-		console.log(`DEBUG: Agent ${index}: name="${agent.name}", is_global=${agent.is_global}, display_name="${agent.display_name}"`);
+		console.log(`DEBUG: Agent ${index}: name="${agent.name}", is_global=${agent.is_global}, is_group=${agent.is_group}, display_name="${agent.display_name}"`);
 	});
 	
+	const getDisplayLabel = (agent) => (agent.display_name || agent.displayName || agent.name || '').trim();
+	const displayLabelCounts = agents.reduce((acc, agent) => {
+		const label = getDisplayLabel(agent).toLowerCase();
+		if (!label) {
+			return acc;
+		}
+		acc[label] = (acc[label] || 0) + 1;
+		return acc;
+	}, {});
+
 	let selectedAgentName = typeof selectedAgentObj === 'object' ? selectedAgentObj.name : selectedAgentObj;
+	const selectedAgentId = typeof selectedAgentObj === 'object' ? (selectedAgentObj.id || selectedAgentObj.agent_id) : null;
+	const selectedAgentIsGlobal = typeof selectedAgentObj === 'object' ? !!selectedAgentObj.is_global : false;
+	const selectedAgentIsGroup = typeof selectedAgentObj === 'object' ? !!selectedAgentObj.is_group : false;
+	const selectedAgentGroupId = typeof selectedAgentObj === 'object' ? (selectedAgentObj.group_id || selectedAgentObj.groupId || null) : null;
 	console.log('DEBUG: Selected agent name:', selectedAgentName);
 	
 	agents.forEach(agent => {
 		let opt = document.createElement('option');
-		// Use unique value that combines name and global status to distinguish between personal and global agents with same name
-		opt.value = agent.is_global ? `global_${agent.name}` : `personal_${agent.name}`;
-		opt.textContent = (agent.display_name || agent.name) + (agent.is_global ? ' (Global)' : '');
-		// For selection matching, check if this agent matches the selected agent (by name and global status)
+		const agentId = agent.id || agent.agent_id || agent.name;
+		const contextPrefix = agent.is_group ? 'group' : (agent.is_global ? 'global' : 'personal');
+		opt.value = `${contextPrefix}_${agentId}`;
+		const groupName = agent.group_name || agent.groupName || '';
+		const displayLabel = getDisplayLabel(agent);
+		const labelKey = displayLabel.toLowerCase();
+		const hasDuplicateLabel = labelKey && displayLabelCounts[labelKey] > 1;
+		let labelSuffix = '';
+		if (agent.is_group) {
+			if (hasDuplicateLabel) {
+				labelSuffix = ` (Group${groupName ? `: ${groupName}` : ''})`;
+			}
+		} else if (agent.is_global) {
+			labelSuffix = ' (Global)';
+		}
+		opt.textContent = `${displayLabel}${labelSuffix}`;
+		opt.dataset.name = agent.name || '';
+		opt.dataset.displayName = displayLabel;
+		opt.dataset.agentId = agentId || '';
+		opt.dataset.isGlobal = agent.is_global ? 'true' : 'false';
+		opt.dataset.isGroup = agent.is_group ? 'true' : 'false';
+		opt.dataset.groupId = agent.group_id || agent.groupId || '';
+		opt.dataset.groupName = groupName || '';
+		// For selection matching, prefer ID if available, otherwise fallback to name/context
 		if (selectedAgentObj && typeof selectedAgentObj === 'object') {
-			if (agent.name === selectedAgentObj.name && agent.is_global === selectedAgentObj.is_global) {
+			const candidateIds = [agentId, agent.id, agent.agent_id].filter(Boolean).map(String);
+			const selectedIds = [selectedAgentId].filter(Boolean).map(String);
+			const idMatches = selectedIds.length > 0 && selectedIds.some(selId => candidateIds.includes(selId));
+			const nameMatches = agent.name === selectedAgentObj.name;
+			const contextMatches = (!!agent.is_global === selectedAgentIsGlobal) && (!!agent.is_group === selectedAgentIsGroup);
+			const groupMatches = !selectedAgentIsGroup || selectedAgentGroupId === null || String(agent.group_id || agent.groupId || '') === String(selectedAgentGroupId || '');
+			if ((idMatches || nameMatches) && contextMatches && groupMatches) {
 				opt.selected = true;
 			}
-		} else if (agent.name === selectedAgentName && !agent.is_global) {
+		} else if (agent.name === selectedAgentName && !agent.is_global && !agent.is_group) {
 			// Default to personal agent if just name is provided
 			opt.selected = true;
 		}

@@ -472,6 +472,58 @@ body.layout-split .gutter {
   align-items: center;
 }
 
+/* Dropdown menu in message actions */
+.message-actions .dropdown {
+  display: inline-block;
+  position: relative;
+}
+
+.message-actions .dropdown-menu {
+  z-index: 9999 !important;
+  position: absolute !important;
+}
+
+.message-actions .dropdown-toggle::after {
+  display: none; /* Hide default Bootstrap dropdown arrow */
+}
+
+.message-actions .dropdown-menu {
+  min-width: 150px;
+  font-size: 0.875rem;
+}
+
+.message-actions .dropdown-item {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.message-actions .dropdown-item i {
+  font-size: 0.875rem;
+}
+
+.message-actions .dropdown-item:hover {
+  background-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .message-actions .dropdown-item:hover {
+  background-color: #343a40;
+}
+
+/* Message exclusion badge - icon only */
+.message-exclusion-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.message-exclusion-badge i {
+  font-size: 1rem;
+}
+
 /* User message footer styling */
 .user-message .message-footer {
   padding-top: 5px;
@@ -625,6 +677,7 @@ body.layout-split .gutter {
 #chatbox {
   padding: 5px;
   overflow-y: auto;
+  overflow-x: clip; /* Prevent horizontal scroll but allow content to be visible */
   flex-grow: 1;
   background-color: #ffffff; /* Optional: light background color for the chat area */
 }
@@ -835,6 +888,7 @@ a.citation-link:hover {
   width: 100%;
   min-width: 0; /* <-- This is crucial for flex children to shrink! */
   margin-bottom: 10px;
+  overflow: visible; /* Allow dropdown menus to appear outside message */
 }
 
 /* User messages aligned to the right */
@@ -850,12 +904,13 @@ a.citation-link:hover {
 /* Message bubble */
 .message-bubble {
   max-width: 90%;
-  min-width: 0; /* <-- This is crucial for flex children to shrink! */
-  width: 100%;
+  min-width: 250px; /* Ensure enough width for footer buttons to display properly */
+  width: auto; /* Let content determine width, but respect min-width */
   padding: 10px;
   border-radius: 15px;
   position: relative;
   background-color: #f8f9fa; /* Default light grey */
+  overflow: visible; /* Allow dropdown menus to appear outside bubble */
   /* Remove fixed padding-bottom here, let content determine height */
 }
 
@@ -864,6 +919,7 @@ a.citation-link:hover {
   background-color: #c8e0fa; /* Blue */
   color: black;
   border-bottom-right-radius: 0;
+  min-width: 250px !important; /* Ensure enough width for footer buttons */
 }
 
 
@@ -947,6 +1003,11 @@ a.citation-link:hover {
   text-decoration: underline;
 }
 
+[data-bs-theme="dark"] .message-text a {
+  color: #ffeb3b;
+  text-decoration: underline;
+}
+
 .message-text a:hover {
   color: #0a58ca;
   text-decoration: none;
@@ -985,6 +1046,7 @@ a.citation-link:hover {
 .message-content {
   display: flex;
   align-items: flex-end;
+  overflow: visible; /* Allow dropdown menus to appear outside content */
 }
 
 .message-content.flex-row-reverse {
@@ -1443,4 +1505,175 @@ ol {
 
 [data-bs-theme="dark"] .message-text table caption {
   color: #adb5bd;
+}
+
+/* Search highlight styles */
+mark.search-highlight {
+  background-color: #ffff00;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+[data-bs-theme="dark"] mark.search-highlight {
+  background-color: #ffc107;
+  color: #000;
+}
+
+/* Message pulse animation for search results */
+@keyframes messagePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px 5px rgba(13, 110, 253, 0.6);
+  }
+}
+
+.message-pulse {
+  animation: messagePulse 1s ease-in-out 2;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-bs-theme="dark"] .message-pulse {
+  animation: messagePulseDark 1s ease-in-out 2;
+}
+
+@keyframes messagePulseDark {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(13, 202, 240, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px 5px rgba(13, 202, 240, 0.6);
+  }
+}
+
+/* Streaming cursor animation */
+.streaming-cursor .badge {
+  animation: streamingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes streamingPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* Reasoning effort slider styles */
+.reasoning-slider-container {
+    padding: 20px 0;
+}
+
+.reasoning-levels {
+    min-height: 250px;
+}
+
+.reasoning-level {
+    cursor: pointer;
+    padding: 12px 20px;
+    border: 2px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    min-width: 180px;
+    background: var(--bs-body-bg);
+}
+
+.reasoning-level:hover {
+    border-color: var(--bs-primary);
+    background: var(--bs-primary-bg-subtle);
+}
+
+.reasoning-level.active {
+    border-color: var(--bs-primary);
+    background: var(--bs-primary);
+    color: white;
+}
+
+.reasoning-level.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.reasoning-level.disabled:hover {
+    border-color: var(--bs-border-color);
+    background: var(--bs-body-bg);
+}
+
+.reasoning-level-icon {
+    font-size: 1.5rem;
+    margin-bottom: 5px;
+}
+
+.reasoning-level-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* Text-to-Speech Styles */
+.tts-play-btn {
+    padding: 0.25rem 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.tts-play-btn:hover {
+    color: var(--bs-primary) !important;
+    transform: scale(1.1);
+}
+
+.tts-play-btn.btn-success {
+    color: var(--bs-success) !important;
+}
+
+.tts-play-btn.btn-warning {
+    color: var(--bs-warning) !important;
+}
+
+.message.tts-playing .avatar {
+    animation: tts-avatar-pulse 0.3s ease-in-out infinite alternate;
+    border-radius: 50%;
+}
+
+.message.tts-playing .avatar.volume-low {
+    box-shadow: 0 0 8px rgba(13, 110, 253, 0.4);
+}
+
+.message.tts-playing .avatar.volume-medium {
+    box-shadow: 0 0 15px rgba(13, 110, 253, 0.6);
+}
+
+.message.tts-playing .avatar.volume-high {
+    box-shadow: 0 0 25px rgba(13, 110, 253, 0.8);
+}
+
+.message.tts-playing .avatar.volume-peak {
+    box-shadow: 0 0 35px rgba(13, 110, 253, 1);
+}
+
+/* Word-by-word highlighting for TTS */
+.tts-word {
+    display: inline;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.tts-word.tts-current-word {
+    background-color: rgba(var(--bs-primary-rgb), 0.3);
+    color: var(--bs-primary);
+    font-weight: 500;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+@keyframes tts-avatar-pulse {
+    0% {
+        transform: scale(1);
+    }
+    100% {
+        transform: scale(1.05);
+    }
 }

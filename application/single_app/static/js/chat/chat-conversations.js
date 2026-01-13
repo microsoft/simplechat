@@ -8,6 +8,8 @@ import { toggleConversationInfoButton } from "./chat-conversation-info-button.js
 
 const newConversationBtn = document.getElementById("new-conversation-btn");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
+const pinSelectedBtn = document.getElementById("pin-selected-btn");
+const hideSelectedBtn = document.getElementById("hide-selected-btn");
 const conversationsList = document.getElementById("conversations-list");
 const currentConversationTitleEl = document.getElementById("current-conversation-title");
 const currentConversationClassificationsEl = document.getElementById("current-conversation-classifications");
@@ -19,6 +21,11 @@ let selectedConversations = new Set();
 let currentlyEditingId = null; // Track which item is being edited
 let selectionModeActive = false; // Track if selection mode is active
 let selectionModeTimer = null; // Timer for auto-hiding checkboxes
+let showHiddenConversations = false; // Track if hidden conversations should be shown
+let allConversations = []; // Store all conversations for client-side filtering
+let isLoadingConversations = false; // Prevent concurrent loads
+let showQuickSearch = false; // Track if quick search input is visible
+let quickSearchTerm = ""; // Current search term
 
 // Clear selected conversations when loading the page
 document.addEventListener('DOMContentLoaded', () => {
@@ -26,18 +33,73 @@ document.addEventListener('DOMContentLoaded', () => {
   if (deleteSelectedBtn) {
     deleteSelectedBtn.style.display = "none";
   }
+  
+  // Set up quick search event listeners
+  const searchBtn = document.getElementById('sidebar-search-btn');
+  const searchInput = document.getElementById('sidebar-search-input');
+  const searchClearBtn = document.getElementById('sidebar-search-clear');
+  const searchExpandBtn = document.getElementById('sidebar-search-expand');
+  
+  if (searchBtn) {
+    searchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleQuickSearch();
+    });
+  }
+  
+  if (searchInput) {
+    searchInput.addEventListener('keyup', (e) => {
+      quickSearchTerm = e.target.value;
+      loadConversations();
+    });
+    
+    // Prevent conversation toggle when clicking in input
+    searchInput.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+  
+  if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearQuickSearch();
+    });
+  }
+  
+  if (searchExpandBtn) {
+    searchExpandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Open advanced search modal (will be implemented in chat-search-modal.js)
+      if (window.chatSearchModal && window.chatSearchModal.openAdvancedSearchModal) {
+        window.chatSearchModal.openAdvancedSearchModal();
+      }
+    });
+  }
 });
 
 // Function to enter selection mode
 function enterSelectionMode() {
+  const wasInactive = !selectionModeActive;
   selectionModeActive = true;
   if (conversationsList) {
     conversationsList.classList.add('selection-mode');
   }
   
-  // Show delete button
+  // Show action buttons
   if (deleteSelectedBtn) {
     deleteSelectedBtn.style.display = "block";
+  }
+  if (pinSelectedBtn) {
+    pinSelectedBtn.style.display = "block";
+  }
+  if (hideSelectedBtn) {
+    hideSelectedBtn.style.display = "block";
+  }
+  
+  // Only reload conversations if we're transitioning from inactive to active
+  // This shows hidden conversations in selection mode
+  if (wasInactive) {
+    loadConversations();
   }
   
   // Update sidebar to show selection mode hints
@@ -56,9 +118,15 @@ function exitSelectionMode() {
     conversationsList.classList.remove('selection-mode');
   }
   
-  // Hide delete button
+  // Hide action buttons
   if (deleteSelectedBtn) {
     deleteSelectedBtn.style.display = "none";
+  }
+  if (pinSelectedBtn) {
+    pinSelectedBtn.style.display = "none";
+  }
+  if (hideSelectedBtn) {
+    hideSelectedBtn.style.display = "none";
   }
   
   // Clear any selections
@@ -90,6 +158,9 @@ function exitSelectionMode() {
     clearTimeout(selectionModeTimer);
     selectionModeTimer = null;
   }
+  
+  // Reload conversations to hide hidden ones if toggle is off
+  loadConversations();
 }
 
 // Function to reset the selection mode timer
@@ -107,8 +178,68 @@ function resetSelectionModeTimer() {
   }, 5000);
 }
 
+// Quick search functions
+function toggleQuickSearch() {
+  const searchContainer = document.getElementById('sidebar-search-container');
+  const searchInput = document.getElementById('sidebar-search-input');
+  const conversationsSection = document.getElementById('conversations-section');
+  const conversationsCaret = document.getElementById('conversations-caret');
+  
+  if (!searchContainer) return;
+  
+  showQuickSearch = !showQuickSearch;
+  
+  if (showQuickSearch) {
+    searchContainer.style.display = 'block';
+    // Expand conversations section if collapsed
+    if (conversationsSection) {
+      const listContainer = document.getElementById('conversations-list-container');
+      if (listContainer && listContainer.style.display === 'none') {
+        listContainer.style.display = 'block';
+        if (conversationsCaret) {
+          conversationsCaret.classList.add('rotate-180');
+        }
+      }
+    }
+    // Focus on search input
+    setTimeout(() => searchInput && searchInput.focus(), 100);
+  } else {
+    searchContainer.style.display = 'none';
+    clearQuickSearch();
+  }
+}
+
+function applyQuickSearchFilter(conversations) {
+  if (!quickSearchTerm || quickSearchTerm.trim() === '') {
+    return conversations;
+  }
+  
+  const searchLower = quickSearchTerm.toLowerCase().trim();
+  return conversations.filter(convo => {
+    const titleLower = (convo.title || '').toLowerCase();
+    return titleLower.includes(searchLower);
+  });
+}
+
+function clearQuickSearch() {
+  quickSearchTerm = '';
+  const searchInput = document.getElementById('sidebar-search-input');
+  if (searchInput) {
+    searchInput.value = '';
+  }
+  loadConversations();
+}
+
 export function loadConversations() {
   if (!conversationsList) return;
+  
+  // Prevent concurrent loads
+  if (isLoadingConversations) {
+    console.log('Load already in progress, skipping...');
+    return;
+  }
+  
+  isLoadingConversations = true;
   conversationsList.innerHTML = '<div class="text-center p-3 text-muted">Loading conversations...</div>'; // Loading state
 
   fetch("/api/get_conversations")
@@ -117,22 +248,65 @@ export function loadConversations() {
       conversationsList.innerHTML = ""; // Clear loading state
       if (!data.conversations || data.conversations.length === 0) {
           conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No conversations yet.</div>';
+          allConversations = [];
+          updateHiddenToggleButton();
           return;
       }
-      data.conversations.forEach(convo => {
-        conversationsList.appendChild(createConversationItem(convo));
+      
+      // Store all conversations for client-side operations
+      allConversations = data.conversations;
+      
+      // Sort conversations: pinned first (by last_updated), then unpinned (by last_updated)
+      const sortedConversations = [...allConversations].sort((a, b) => {
+        const aPinned = a.is_pinned || false;
+        const bPinned = b.is_pinned || false;
+        
+        // If pin status differs, pinned comes first
+        if (aPinned !== bPinned) {
+          return bPinned ? 1 : -1;
+        }
+        
+        // If same pin status, sort by last_updated (most recent first)
+        const aDate = new Date(a.last_updated);
+        const bDate = new Date(b.last_updated);
+        return bDate - aDate;
       });
+      
+      // Filter conversations based on show/hide mode and selection mode
+      let filteredConversations = sortedConversations.filter(convo => {
+        const isHidden = convo.is_hidden || false;
+        // Show hidden conversations if toggle is on OR if we're in selection mode
+        return !isHidden || showHiddenConversations || selectionModeActive;
+      });
+      
+      // Apply quick search filter
+      filteredConversations = applyQuickSearchFilter(filteredConversations);
+      
+      if (filteredConversations.length === 0) {
+        conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations. Click the eye icon to show hidden conversations.</div>';
+      } else {
+        filteredConversations.forEach(convo => {
+          conversationsList.appendChild(createConversationItem(convo));
+        });
+      }
+      
+      // Update the show/hide toggle button
+      updateHiddenToggleButton();
       
       // Also load sidebar conversations if the sidebar exists
       if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
         window.chatSidebarConversations.loadSidebarConversations();
       }
       
+      // Reset loading flag
+      isLoadingConversations = false;
+      
       // Optionally, select the first conversation or highlight the active one if ID is known
     })
     .catch(error => {
       console.error("Error loading conversations:", error);
       conversationsList.innerHTML = `<div class="text-center p-3 text-danger">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
+      isLoadingConversations = false; // Reset flag on error too
     });
 }
 
@@ -215,7 +389,16 @@ export function createConversationItem(convo) {
 
   const titleSpan = document.createElement("span");
   titleSpan.classList.add("conversation-title", "text-truncate"); // Bold and truncate
-  titleSpan.textContent = convo.title;
+  
+  // Add pin icon if conversation is pinned
+  const isPinned = convo.is_pinned || false;
+  if (isPinned) {
+    const pinIcon = document.createElement("i");
+    pinIcon.classList.add("bi", "bi-pin-angle", "me-1");
+    titleSpan.appendChild(pinIcon);
+  }
+  
+  titleSpan.appendChild(document.createTextNode(convo.title));
   titleSpan.title = convo.title; // Tooltip for full title
 
   const dateSpan = document.createElement("small");
@@ -250,6 +433,26 @@ export function createConversationItem(convo) {
   detailsA.innerHTML = '<i class="bi bi-info-circle me-2"></i>Details';
   detailsLi.appendChild(detailsA);
 
+  // Add Pin option
+  const pinLi = document.createElement("li");
+  const pinA = document.createElement("a");
+  pinA.classList.add("dropdown-item", "pin-btn");
+  pinA.href = "#";
+  // isPinned already declared above for title icon
+  pinA.innerHTML = `<i class="bi bi-pin-angle me-2"></i>${isPinned ? 'Unpin' : 'Pin'}`;
+  pinA.setAttribute("data-is-pinned", isPinned);
+  pinLi.appendChild(pinA);
+
+  // Add Hide option
+  const hideLi = document.createElement("li");
+  const hideA = document.createElement("a");
+  hideA.classList.add("dropdown-item", "hide-btn");
+  hideA.href = "#";
+  const isHidden = convo.is_hidden || false;
+  hideA.innerHTML = `<i class="bi bi-${isHidden ? 'eye' : 'eye-slash'} me-2"></i>${isHidden ? 'Unhide' : 'Hide'}`;
+  hideA.setAttribute("data-is-hidden", isHidden);
+  hideLi.appendChild(hideA);
+
   // Add Select option
   const selectLi = document.createElement("li");
   const selectA = document.createElement("a");
@@ -273,6 +476,8 @@ export function createConversationItem(convo) {
   deleteLi.appendChild(deleteA);
 
   dropdownMenu.appendChild(detailsLi);
+  dropdownMenu.appendChild(pinLi);
+  dropdownMenu.appendChild(hideLi);
   dropdownMenu.appendChild(selectLi);
   dropdownMenu.appendChild(editLi);
   dropdownMenu.appendChild(deleteLi);
@@ -321,6 +526,30 @@ export function createConversationItem(convo) {
     event.stopPropagation();
     closeDropdownMenu(dropdownBtn);
     enterSelectionMode();
+  });
+
+  // Add event listener for the Pin button
+  pinA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    toggleConversationPin(convo.id);
+  });
+
+  // Add event listener for the Hide button
+  hideA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    toggleConversationHide(convo.id);
+  });
+
+  // Add event listener for the Details button
+  detailsA.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDropdownMenu(dropdownBtn);
+    showConversationDetails(convo.id);
   });
 
   return convoItem;
@@ -531,16 +760,35 @@ export async function selectConversation(conversationId) {
 
   const conversationTitle = convoItem.getAttribute("data-conversation-title") || "Conversation"; // Use stored title
 
-  // Update Header Title
-  if (currentConversationTitleEl) {
-    currentConversationTitleEl.textContent = conversationTitle;
-  }
-
-  // Fetch the latest conversation metadata to get accurate chat_type
+  // Fetch the latest conversation metadata to get accurate chat_type, pin, and hide status
   try {
     const response = await fetch(`/api/conversations/${conversationId}/metadata`);
     if (response.ok) {
       const metadata = await response.json();
+      
+      // Update Header Title with pin icon and hidden status
+      if (currentConversationTitleEl) {
+        currentConversationTitleEl.innerHTML = '';
+        
+        // Add pin icon if pinned
+        if (metadata.is_pinned) {
+          const pinIcon = document.createElement("i");
+          pinIcon.classList.add("bi", "bi-pin-angle", "me-2");
+          pinIcon.title = "Pinned";
+          currentConversationTitleEl.appendChild(pinIcon);
+        }
+        
+        // Add hidden icon if hidden
+        if (metadata.is_hidden) {
+          const hiddenIcon = document.createElement("i");
+          hiddenIcon.classList.add("bi", "bi-eye-slash", "me-2", "text-muted");
+          hiddenIcon.title = "Hidden";
+          currentConversationTitleEl.appendChild(hiddenIcon);
+        }
+        
+        // Add title text
+        currentConversationTitleEl.appendChild(document.createTextNode(conversationTitle));
+      }
       
       console.log(`selectConversation: Fetched metadata for ${conversationId}:`, metadata);
       
@@ -744,6 +992,14 @@ export function deleteConversation(conversationId) {
 export async function createNewConversation(callback) {
     // Disable new button? Show loading?
     if (newConversationBtn) newConversationBtn.disabled = true;
+    
+    // Clear the chatbox immediately when creating new conversation
+    const chatbox = document.getElementById("chatbox");
+    if (chatbox && !callback) {
+        // Only clear if there's no callback (i.e., not sending a message immediately)
+        chatbox.innerHTML = "";
+    }
+    
   try {
     const response = await fetch("/api/create_conversation", {
       method: "POST",
@@ -764,13 +1020,23 @@ export async function createNewConversation(callback) {
     currentConversationId = data.conversation_id;
     // Add to list (pass empty classifications for new convo)
     addConversationToList(data.conversation_id, data.title /* Use title from API if provided */, []);
-    // Select the new conversation to update header and chatbox
-    selectConversation(data.conversation_id);
+    
+    // Don't call selectConversation here if we're about to send a message
+    // because selectConversation clears the chatbox, which would remove
+    // the user message that's about to be appended by actuallySendMessage
+    // Instead, just update the UI elements directly
+    window.currentConversationId = data.conversation_id;
+    const titleEl = document.getElementById("current-conversation-title");
+    if (titleEl) {
+      titleEl.textContent = data.title || "New Conversation";
+    }
+    console.log('[createNewConversation] Created conversation without reload:', data.conversation_id);
 
     // Execute callback if provided (e.g., to send the first message)
     if (typeof callback === "function") {
       callback();
     }
+
 
   } catch (error) {
     console.error("Error creating conversation:", error);
@@ -808,11 +1074,109 @@ function updateSelectedConversations(conversationId, isSelected) {
     window.chatSidebarConversations.updateSidebarDeleteButton(selectedConversations.size);
   }
   
-  // Show/hide the delete button based on selection
+  // Show/hide the action buttons based on selection
   if (selectedConversations.size > 0) {
-    deleteSelectedBtn.style.display = "block";
+    if (deleteSelectedBtn) deleteSelectedBtn.style.display = "block";
+    if (pinSelectedBtn) pinSelectedBtn.style.display = "block";
+    if (hideSelectedBtn) hideSelectedBtn.style.display = "block";
   } else {
-    deleteSelectedBtn.style.display = "none";
+    if (deleteSelectedBtn) deleteSelectedBtn.style.display = "none";
+    if (pinSelectedBtn) pinSelectedBtn.style.display = "none";
+    if (hideSelectedBtn) hideSelectedBtn.style.display = "none";
+  }
+}
+
+// Function to bulk pin/unpin conversations
+async function bulkPinConversations() {
+  if (selectedConversations.size === 0) return;
+  
+  const action = confirm(`Pin ${selectedConversations.size} conversation(s)?`) ? 'pin' : null;
+  if (!action) return;
+  
+  const conversationIds = Array.from(selectedConversations);
+  
+  try {
+    const response = await fetch('/api/conversations/bulk-pin', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        conversation_ids: conversationIds,
+        action: action
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to pin conversations');
+    }
+    
+    const result = await response.json();
+    
+    // Clear selections and exit selection mode
+    selectedConversations.clear();
+    exitSelectionMode();
+    
+    // Reload conversations to reflect new sort order
+    loadConversations();
+    
+    // Also reload sidebar conversations if the sidebar exists
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
+    showToast(`${result.updated_count} conversation(s) ${action === 'pin' ? 'pinned' : 'unpinned'}.`, "success");
+  } catch (error) {
+    console.error("Error pinning conversations:", error);
+    showToast(`Error pinning conversations: ${error.message}`, "danger");
+  }
+}
+
+// Function to bulk hide/unhide conversations
+async function bulkHideConversations() {
+  if (selectedConversations.size === 0) return;
+  
+  const action = confirm(`Hide ${selectedConversations.size} conversation(s)?`) ? 'hide' : null;
+  if (!action) return;
+  
+  const conversationIds = Array.from(selectedConversations);
+  
+  try {
+    const response = await fetch('/api/conversations/bulk-hide', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        conversation_ids: conversationIds,
+        action: action
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to hide conversations');
+    }
+    
+    const result = await response.json();
+    
+    // Clear selections and exit selection mode
+    selectedConversations.clear();
+    exitSelectionMode();
+    
+    // Reload conversations to reflect filtering
+    loadConversations();
+    
+    // Also reload sidebar conversations if the sidebar exists
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
+    showToast(`${result.updated_count} conversation(s) ${action === 'hide' ? 'hidden' : 'unhidden'}.`, "success");
+  } catch (error) {
+    console.error("Error hiding conversations:", error);
+    showToast(`Error hiding conversations: ${error.message}`, "danger");
   }
 }
 
@@ -858,7 +1222,9 @@ async function deleteSelectedConversations() {
     
     // Clear the selected conversations set and exit selection mode
     selectedConversations.clear();
-    deleteSelectedBtn.style.display = "none";
+    if (deleteSelectedBtn) deleteSelectedBtn.style.display = "none";
+    if (pinSelectedBtn) pinSelectedBtn.style.display = "none";
+    if (hideSelectedBtn) hideSelectedBtn.style.display = "none";
     exitSelectionMode();
     
     // Also reload sidebar conversations if the sidebar exists
@@ -870,6 +1236,109 @@ async function deleteSelectedConversations() {
   } catch (error) {
     console.error("Error deleting conversations:", error);
     showToast(`Error deleting conversations: ${error.message}`, "danger");
+  }
+}
+
+// Toggle conversation pin status
+async function toggleConversationPin(conversationId) {
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/pin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to toggle pin status');
+    }
+    
+    const data = await response.json();
+    
+    // Reload conversations to reflect new sort order
+    loadConversations();
+    
+    // Also reload sidebar conversations if the sidebar exists
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
+    showToast(data.is_pinned ? "Conversation pinned." : "Conversation unpinned.", "success");
+  } catch (error) {
+    console.error("Error toggling pin status:", error);
+    showToast(`Error toggling pin: ${error.message}`, "danger");
+  }
+}
+
+// Toggle conversation hide status
+async function toggleConversationHide(conversationId) {
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/hide`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to toggle hide status');
+    }
+    
+    const data = await response.json();
+    
+    // Reload conversations to reflect filtering
+    loadConversations();
+    
+    // Also reload sidebar conversations if the sidebar exists
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+    
+    showToast(data.is_hidden ? "Conversation hidden." : "Conversation unhidden.", "success");
+  } catch (error) {
+    console.error("Error toggling hide status:", error);
+    showToast(`Error toggling hide: ${error.message}`, "danger");
+  }
+}
+
+// Update the show/hide toggle button visibility and badge
+function updateHiddenToggleButton() {
+  let toggleBtn = document.getElementById("toggle-hidden-btn");
+  
+  // Count hidden conversations
+  const hiddenCount = allConversations.filter(c => c.is_hidden || false).length;
+  
+  if (hiddenCount > 0) {
+    // Create button if it doesn't exist
+    if (!toggleBtn) {
+      toggleBtn = document.createElement("button");
+      toggleBtn.id = "toggle-hidden-btn";
+      toggleBtn.classList.add("btn", "btn-outline-secondary", "btn-sm", "ms-2");
+      toggleBtn.title = "Show/hide hidden conversations";
+      
+      // Insert after the new conversation button
+      if (newConversationBtn && newConversationBtn.parentElement) {
+        newConversationBtn.parentElement.insertBefore(toggleBtn, newConversationBtn.nextSibling);
+      }
+      
+      // Add click event
+      toggleBtn.addEventListener("click", () => {
+        showHiddenConversations = !showHiddenConversations;
+        loadConversations();
+      });
+    }
+    
+    // Update button content based on current state
+    const icon = showHiddenConversations ? "bi-eye-slash" : "bi-eye";
+    toggleBtn.innerHTML = `<i class="bi ${icon}"></i> <span class="badge bg-secondary">${hiddenCount}</span>`;
+    toggleBtn.style.display = "inline-block";
+  } else {
+    // Hide button if no hidden conversations
+    if (toggleBtn) {
+      toggleBtn.style.display = "none";
+    }
   }
 }
 
@@ -889,6 +1358,59 @@ if (deleteSelectedBtn) {
   deleteSelectedBtn.addEventListener("click", deleteSelectedConversations);
 }
 
+if (pinSelectedBtn) {
+  pinSelectedBtn.addEventListener("click", bulkPinConversations);
+}
+
+if (hideSelectedBtn) {
+  hideSelectedBtn.addEventListener("click", bulkHideConversations);
+}
+
+// Helper function to set show hidden conversations state and return a promise
+export function setShowHiddenConversations(value) {
+  showHiddenConversations = value;
+  
+  // If enabling hidden conversations and the list is already loaded, just re-render
+  if (value && allConversations.length > 0) {
+    // Re-filter and render without fetching
+    const sortedConversations = [...allConversations].sort((a, b) => {
+      const aPinned = a.is_pinned || false;
+      const bPinned = b.is_pinned || false;
+      if (aPinned !== bPinned) return bPinned ? 1 : -1;
+      const aDate = new Date(a.last_updated);
+      const bDate = new Date(b.last_updated);
+      return bDate - aDate;
+    });
+    
+    let filteredConversations = sortedConversations.filter(convo => {
+      const isHidden = convo.is_hidden || false;
+      return !isHidden || showHiddenConversations || selectionModeActive;
+    });
+    
+    filteredConversations = applyQuickSearchFilter(filteredConversations);
+    
+    if (conversationsList) {
+      conversationsList.innerHTML = "";
+      if (filteredConversations.length === 0) {
+        conversationsList.innerHTML = '<div class="text-center p-3 text-muted">No visible conversations.</div>';
+      } else {
+        filteredConversations.forEach(convo => {
+          conversationsList.appendChild(createConversationItem(convo));
+        });
+      }
+    }
+    
+    updateHiddenToggleButton();
+    
+    if (window.chatSidebarConversations && window.chatSidebarConversations.loadSidebarConversations) {
+      window.chatSidebarConversations.loadSidebarConversations();
+    }
+  } else {
+    // Otherwise do a full reload
+    loadConversations();
+  }
+}
+
 // Expose functions globally for sidebar integration
 window.chatConversations = {
   selectConversation,
@@ -898,10 +1420,14 @@ window.chatConversations = {
   deleteConversation,
   toggleConversationSelection,
   deleteSelectedConversations,
+  bulkPinConversations,
+  bulkHideConversations,
   exitSelectionMode,
   isSelectionModeActive: () => selectionModeActive,
   getSelectedConversations: () => Array.from(selectedConversations),
   getCurrentConversationId: () => currentConversationId,
+  getQuickSearchTerm: () => quickSearchTerm,
+  setShowHiddenConversations,
   updateConversationHeader: (conversationId, newTitle) => {
     // Update header if this is the currently active conversation
     if (currentConversationId === conversationId) {

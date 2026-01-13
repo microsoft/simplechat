@@ -174,15 +174,15 @@
                   <option value="servicePrincipal">Service Principal</option>
                 </select>
               </div>
-              <div class="input-group mb-2" id="auth-identity-group" style="display:none;">
+              <div class="input-group mb-2 d-none" id="auth-identity-group">
                 <span class="input-group-text" id="auth-identity-label">Identity</span>
                 <input type="text" class="form-control" id="plugin-auth-identity" />
               </div>
-              <div class="input-group mb-2" id="auth-key-group" style="display:none;">
+              <div class="input-group mb-2 d-none" id="auth-key-group">
                 <span class="input-group-text" id="auth-key-label">Key</span>
                 <input type="text" class="form-control" id="plugin-auth-key" />
               </div>
-              <div class="input-group mb-2" id="auth-tenantid-group" style="display:none;">
+              <div class="input-group mb-2 d-none" id="auth-tenantid-group">
                 <span class="input-group-text" id="auth-tenantid-label">Tenant Id</span>
                 <input type="text" class="form-control" id="plugin-auth-tenant-id" />
               </div>
@@ -263,7 +263,7 @@
               <div class="mb-3">
                 <label class="form-label">Connection Method</label>
                 <div class="btn-group w-100" role="group" aria-label="Connection method">
-                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-string" value="connection_string" checked>
+                  <input type="radio" class="btn-check" name="sql-connection-method" id="sql-conn-string" value="connection_string">
                   <label class="btn btn-outline-secondary" for="sql-conn-string">
                     <i class="bi bi-link-45deg me-1"></i>Connection String
                   </label>
@@ -436,7 +436,7 @@
             <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>
             <div class="form-text">Optional metadata for this action.</div>
           </div>
-          <div class="mb-3">
+          <div class="mb-3" id="plugin-additional-fields-div">
             <label for="plugin-additional-fields" class="form-label">Additional Fields (JSON)</label>
             <textarea class="form-control" id="plugin-additional-fields" rows="6" placeholder="{}"></textarea>
             <div class="form-text">Additional configuration fields specific to this action type.</div>

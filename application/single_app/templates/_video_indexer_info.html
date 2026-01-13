@@ -36,6 +36,7 @@
                                 <code id="modal-video-endpoint">Not configured</code>
                             </div>
                         </div>
+                        
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <strong>Account ID:</strong><br>
@@ -393,7 +394,7 @@ function updateVideoIndexerModalInfo() {
     // Update modal status
     document.getElementById('modal-video-enabled').textContent = videoEnabled ? 'Yes' : 'No';
     document.getElementById('modal-video-enabled').className = videoEnabled ? 'badge bg-success' : 'badge bg-secondary';
-    
+
     // Update configuration display
     document.getElementById('modal-video-endpoint').textContent = videoEndpoint || 'https://api.videoindexer.ai';
     document.getElementById('modal-resource-group').textContent = resourceGroup || 'Not configured';

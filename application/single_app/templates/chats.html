@@ -5,6 +5,9 @@
 
 {% block head %}
     <link rel="stylesheet" href="/static/css/chats.css">
+    {% if app_settings.enable_speech_to_text_input %}
+    <link rel="stylesheet" href="/static/css/chat-speech-input.css">
+    {% endif %}
     <style>
         /* Initial layout styles to prevent shifting when top nav is active */
         {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
@@ -82,17 +85,23 @@
             transition: opacity 0.2s ease, transform 0.2s ease;
             min-width: 0;
             padding: 8px; /* Padding for better touch target */
-            right: 6px; /* Some padding from right edge */
+            right: 15px; /* More padding from right edge to avoid scrollbar */
             bottom: 6px; /* Some padding from bottom edge */
             z-index: 10;
             height: 36px; /* Square button height */
             width: 36px; /* Square button width */
             border-radius: 0.375rem; /* Rounded corners for square button */
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1;
         }
         
         /* Show send button when there's content */
         #send-btn.show {
-            display: block !important;
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
         }
         
         /* Set minimum height for input field */
@@ -194,8 +203,14 @@
             <div class="d-flex justify-content-between align-items-center p-3 border-bottom flex-shrink-0">
                 <h5>Conversations</h5>
                 <div class="d-flex align-items-center">
+                    <button class="btn btn-primary btn-sm me-2" id="pin-selected-btn" style="display: none;" title="Pin selected conversations">
+                        <i class="bi bi-pin-angle"></i>
+                    </button>
+                    <button class="btn btn-secondary btn-sm me-2" id="hide-selected-btn" style="display: none;" title="Hide selected conversations">
+                        <i class="bi bi-eye-slash"></i>
+                    </button>
                     <button class="btn btn-danger btn-sm me-2" id="delete-selected-btn" style="display: none;" title="Delete selected conversations">
-                        <i class="bi bi-trash"></i> <span class="d-none d-md-inline"></span>
+                        <i class="bi bi-trash"></i>
                     </button>
                     <!-- Dock toggle button removed: sidebar is always docked -->
                     <button class="btn btn-primary btn-sm ms-2" id="new-conversation-btn" title="Start a new chat">
@@ -272,6 +287,45 @@
                     
                     <!-- Right side selectors -->
                     <div class="d-flex align-items-center gap-2">
+
+                        <!-- TTS Autoplay toggle button -->
+                        {% if app_settings.enable_text_to_speech %}
+                        <button 
+                            id="tts-autoplay-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            data-bs-title="Toggle AI voice response"
+                            title="Auto voice response disabled - click to enable"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-volume-mute"></i>
+                        </button>
+                        {% endif %}
+
+                        <!-- Streaming toggle button -->
+                        <button 
+                            id="streaming-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Toggle streaming responses."
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-lightning"></i>
+                        </button>
+
+                        <!-- Reasoning effort toggle button -->
+                        <button 
+                            id="reasoning-toggle-btn" 
+                            class="btn btn-outline-secondary btn-sm rounded-circle" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="Configure reasoning effort"
+                            style="width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;"
+                        >
+                            <i class="bi bi-reception-2"></i>
+                        </button>
 
                         <!-- Prompt Selector -->
                         {% if settings.enable_user_workspace or settings.enable_group_workspaces %}
@@ -380,13 +434,35 @@
                 
                 <div class="chat-input-container position-relative">
                     <!-- Textarea container with send button inside -->
-                    <div class="position-relative">
+                    <div class="position-relative" id="normal-input-container">
                          <textarea id="user-input" class="form-control" placeholder="Type your message..." rows="1" style="resize: none; padding-right: 15px;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; window.handleInputChange && window.handleInputChange();"></textarea>
+                         
+                         <!-- Microphone Button for Speech Input -->
+                         {% if app_settings.enable_speech_to_text_input %}
+                         <button class="btn btn-outline-secondary position-absolute" id="speech-input-btn" title="Voice Input" style="left: 10px; bottom: 6px; display: block;">
+                              <i class="bi bi-mic-fill"></i>
+                         </button>
+                         {% endif %}
                          
                          <!-- Send Button positioned inside textarea area - initially hidden -->
                          <button class="btn btn-primary position-absolute" id="send-btn" title="Send Message">
                               <i class="bi bi-send-fill"></i>
                          </button>
+                    </div>
+                    
+                    <!-- Recording UI Container (hidden by default) -->
+                    <div class="position-relative" id="recording-container" style="display: none;">
+                        <div class="recording-ui d-flex align-items-center gap-2">
+                            <canvas id="waveform-canvas" style="flex: 1;"></canvas>
+                            <div class="recording-buttons d-flex gap-2">
+                                <button class="btn btn-danger" id="cancel-recording-btn" title="Cancel Recording">
+                                    <i class="bi bi-x-circle-fill"></i>
+                                </button>
+                                <button class="btn btn-success" id="send-recording-btn" title="Send Recording">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -429,6 +505,156 @@
     </div>
 </div>
 
+<!-- Modal for deleting user messages (with thread option) -->
+<div class="modal fade" id="delete-message-modal" tabindex="-1" aria-labelledby="deleteMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteMessageModalLabel">
+                    <i class="bi bi-trash me-2"></i>Delete Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>What would you like to delete?</p>
+                <ul class="list-unstyled">
+                    <li><strong>Delete Message Only:</strong> Removes just this user message</li>
+                    <li><strong>Delete Entire Thread:</strong> Removes this message and all related AI responses</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" data-bs-dismiss="modal" onclick="window.executeMessageDeletion(false)">
+                    Delete Message Only
+                </button>
+                <button type="button" class="btn btn-danger" data-bs-dismiss="modal" onclick="window.executeMessageDeletion(true)">
+                    Delete Entire Thread
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for deleting AI/image/file messages -->
+<div class="modal fade" id="delete-single-message-modal" tabindex="-1" aria-labelledby="deleteSingleMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteSingleMessageModalLabel">
+                    <i class="bi bi-trash me-2"></i>Delete Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this message?</p>
+                <p class="text-muted small mb-0">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" data-bs-dismiss="modal" onclick="window.executeMessageDeletion(false)">
+                    Delete Message
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for retrying/regenerating assistant message -->
+<div class="modal fade" id="retry-message-modal" tabindex="-1" aria-labelledby="retryMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="retryMessageModalLabel">
+                    <i class="bi bi-arrow-clockwise me-2"></i>Retry Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Generate a new response for this message.</p>
+                
+                <!-- Mode selection toggle -->
+                <div class="mb-3">
+                    <div class="btn-group w-100" role="group" aria-label="Retry mode selection">
+                        <input type="radio" class="btn-check" name="retry-mode" id="retry-mode-model" value="model" checked>
+                        <label class="btn btn-outline-primary" for="retry-mode-model">
+                            <i class="bi bi-cpu me-1"></i>Model
+                        </label>
+                        
+                        {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                        <input type="radio" class="btn-check" name="retry-mode" id="retry-mode-agent" value="agent">
+                        <label class="btn btn-outline-primary" for="retry-mode-agent">
+                            <i class="bi bi-robot me-1"></i>Agent
+                        </label>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Model selection -->
+                <div id="retry-model-container" class="mb-3">
+                    <label for="retry-model-select" class="form-label">Model</label>
+                    <select id="retry-model-select" class="form-select">
+                        <!-- Options will be populated from #model-select -->
+                    </select>
+                </div>
+                
+                <!-- Agent selection -->
+                {% if settings.enable_semantic_kernel and settings.per_user_semantic_kernel %}
+                <div id="retry-agent-container" class="mb-3" style="display: none;">
+                    <label for="retry-agent-select" class="form-label">Agent</label>
+                    <select id="retry-agent-select" class="form-select">
+                        <!-- Options will be populated from #agent-select -->
+                    </select>
+                </div>
+                {% endif %}
+                
+                <!-- Reasoning effort -->
+                <div id="retry-reasoning-container" class="mb-3" style="display: none;">
+                    <label class="form-label">Reasoning Effort</label>
+                    <div id="retry-reasoning-levels" class="d-flex flex-column-reverse gap-2">
+                        <!-- Reasoning levels will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.executeMessageRetry()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Retry
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for editing user message -->
+<div class="modal fade" id="edit-message-modal" tabindex="-1" aria-labelledby="editMessageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editMessageModalLabel">
+                    <i class="bi bi-pencil me-2"></i>Edit Message
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Edit your message and regenerate the response. Your original model/agent and settings will be preserved.</p>
+                <div class="mb-3">
+                    <label for="edit-message-content" class="form-label">Message</label>
+                    <textarea id="edit-message-content" class="form-control" rows="6" placeholder="Edit your message..."></textarea>
+                </div>
+                <div id="edit-original-settings-info" class="mb-2">
+                    <!-- Settings info will be populated dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="window.executeMessageEdit()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Save & Regenerate
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal for conversation details -->
 <div class="modal fade" id="conversation-details-modal" tabindex="-1" aria-labelledby="conversationDetailsModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl">
@@ -456,6 +682,182 @@
     </div>
 </div>
 
+<!-- Modal for advanced search -->
+<div class="modal fade" id="advancedSearchModal" tabindex="-1" aria-labelledby="advancedSearchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="advancedSearchModalLabel">
+                    <i class="bi bi-search me-2"></i>Advanced Search
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Nav tabs -->
+                <ul class="nav nav-tabs mb-3" id="searchTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="search-tab" data-bs-toggle="tab" data-bs-target="#search-panel" type="button" role="tab" aria-controls="search-panel" aria-selected="true">
+                            <i class="bi bi-search me-1"></i> Search
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-panel" type="button" role="tab" aria-controls="history-panel" aria-selected="false">
+                            <i class="bi bi-clock-history me-1"></i> History
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- Tab content -->
+                <div class="tab-content" id="searchTabContent">
+                    <!-- Search Tab -->
+                    <div class="tab-pane fade show active" id="search-panel" role="tabpanel" aria-labelledby="search-tab">
+                        <form id="advancedSearchForm">
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <label for="searchMessageInput" class="form-label">Search Messages</label>
+                                    <input type="text" class="form-control" id="searchMessageInput" placeholder="Search messages (min 3 characters)..." autocomplete="off">
+                                    <small class="form-text text-muted">Search across all message content in your conversations</small>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="searchDateFrom" class="form-label">Date From</label>
+                                    <input type="date" class="form-control" id="searchDateFrom">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="searchDateTo" class="form-label">Date To</label>
+                                    <input type="date" class="form-control" id="searchDateTo">
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Chat Type</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="personal" id="chatTypePersonal" checked>
+                                        <label class="form-check-label" for="chatTypePersonal">Personal</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="group-single-user" id="chatTypeGroupSingle" checked>
+                                        <label class="form-check-label" for="chatTypeGroupSingle">Group (Single User)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="group-multi-user" id="chatTypeGroupMulti" checked>
+                                        <label class="form-check-label" for="chatTypeGroupMulti">Group (Multi User)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="public" id="chatTypePublic" checked>
+                                        <label class="form-check-label" for="chatTypePublic">Public</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="searchClassifications" class="form-label">Classifications</label>
+                                    <select class="form-select" id="searchClassifications" multiple size="4">
+                                        <option value="" disabled>Loading classifications...</option>
+                                    </select>
+                                    <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple</small>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="true" id="searchHasFiles">
+                                        <label class="form-check-label" for="searchHasFiles">
+                                            <i class="bi bi-file-earmark me-1"></i> Has Uploaded Files
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" value="true" id="searchHasImages">
+                                        <label class="form-check-label" for="searchHasImages">
+                                            <i class="bi bi-image me-1"></i> Has Generated Images
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+
+                        <!-- Search Results -->
+                        <hr>
+                        <div id="searchResultsContainer">
+                            <div id="searchResultsLoading" class="text-center p-4" style="display: none;">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Searching...</span>
+                                </div>
+                                <p class="mt-2 text-muted">Searching your conversations...</p>
+                            </div>
+                            <div id="searchResultsContent"></div>
+                            <div id="searchResultsEmpty" class="text-center p-4 text-muted" style="display: none;">
+                                <i class="bi bi-search" style="font-size: 3rem; opacity: 0.3;"></i>
+                                <p class="mt-2">No conversations match your search</p>
+                            </div>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div id="searchPagination" class="d-flex justify-content-between align-items-center mt-3" style="display: none !important;">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="searchPrevBtn" disabled>
+                                <i class="bi bi-arrow-left me-1"></i> Previous
+                            </button>
+                            <span id="searchPageInfo" class="text-muted">Page 1 of 1</span>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="searchNextBtn" disabled>
+                                Next <i class="bi bi-arrow-right ms-1"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- History Tab -->
+                    <div class="tab-pane fade" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0">Recent Searches</h6>
+                            <button type="button" class="btn btn-sm btn-outline-danger" id="clearHistoryBtn">
+                                <i class="bi bi-trash me-1"></i> Clear History
+                            </button>
+                        </div>
+                        <div id="searchHistoryList">
+                            <div class="text-center p-4 text-muted">
+                                <i class="bi bi-clock-history" style="font-size: 3rem; opacity: 0.3;"></i>
+                                <p class="mt-2">No search history yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="clearFiltersBtn">
+                    <i class="bi bi-x-circle me-1"></i> Clear Filters
+                </button>
+                <button type="button" class="btn btn-primary" id="performSearchBtn">
+                    <i class="bi bi-search me-1"></i> Search
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reasoning Effort Slider Modal -->
+<div class="modal fade" id="reasoning-slider-modal" tabindex="-1" aria-labelledby="reasoning-slider-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="reasoning-slider-modal-label">Reasoning Effort</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p class="small text-muted mb-3">Adjust reasoning effort for <strong id="reasoning-model-name"></strong></p>
+                <div class="reasoning-slider-container d-flex flex-column align-items-center">
+                    <div class="reasoning-levels d-flex flex-column-reverse gap-3">
+                        <!-- Levels populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container position-fixed top-0 end-0 p-3" id="toast-container"></div>
 
 {% endblock %}
@@ -465,12 +867,26 @@
     // Ensure global variables are still accessible if needed by older scripts
     window.enableUserFeedback = "{{ enable_user_feedback }}";
     window.activeGroupId = "{{ active_group_id }}";
+    window.activeGroupName = "{{ active_group_name }}";
+    window.activePublicWorkspaceId = "{{ active_public_workspace_id }}";
     window.enableEnhancedCitations = "{{ enable_enhanced_citations }}";
     window.enable_document_classification = "{{ enable_document_classification }}";
     window.classification_categories = JSON.parse('{{ settings.document_classification_categories|tojson(indent=None)|safe }}' || '[]');
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }
+
+    // Current user information for message masking
+    window.currentUser = {
+        id: "{{ user_id }}",
+        display_name: "{{ user_display_name }}"
+    };
+
+    // App settings for feature detection
+    window.appSettings = {
+        enable_text_to_speech: {{ 'true' if app_settings.enable_text_to_speech else 'false' }},
+        enable_speech_to_text_input: {{ 'true' if app_settings.enable_speech_to_text_input else 'false' }}
+    };
 
     // Layout related globals (can stay here or move entirely into chat-layout.js if preferred)
     let splitInstance = null;
@@ -482,6 +898,12 @@
 <script src="{{ url_for('static', filename='js/chat/chat-global.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-layout.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-utils.js') }}"></script>
+{% if app_settings.enable_speech_to_text_input %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-speech-input.js') }}"></script>
+{% endif %}
+{% if app_settings.enable_text_to_speech %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-tts.js') }}"></script>
+{% endif %}
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-messages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-sidebar-conversations.js') }}"></script>
@@ -494,6 +916,9 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-retry.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-onload.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
     <script type="module" src="{{ url_for('static', filename='js/chat/chat-agents.js') }}"></script>
