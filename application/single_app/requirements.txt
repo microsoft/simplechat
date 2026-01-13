@@ -49,7 +49,7 @@ azure-monitor-opentelemetry==1.6.13
 psycopg2-binary==2.9.10
 cython
 pyyaml==6.0.2
-aiohttp==3.12.15
+aiohttp==3.13.3
 html2text==2025.4.15
 matplotlib==3.10.7
 azure-cognitiveservices-speech==1.47.0
