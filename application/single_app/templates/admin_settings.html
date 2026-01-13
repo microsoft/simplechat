@@ -497,7 +497,6 @@
                 </button>
             </li>
             
-            <!-- Security -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
                     type="button" role="tab" aria-controls="safety" aria-selected="false">
@@ -505,28 +504,37 @@
                 </button>
             </li>
             
-            <!-- User Features -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" type="button" role="tab" aria-controls="agents" aria-selected="false">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security"
+                    type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security
+                </button>
+            </li>
+            
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" 
+                    type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
                 </button>
             </li>
             
-            <!-- System Administration -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
                     type="button" role="tab" aria-controls="scale" aria-selected="false">
                     Scale
                 </button>
             </li>
+
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="control-center-config-tab" data-bs-toggle="tab" data-bs-target="#control-center-config"
                     type="button" role="tab" aria-controls="control-center-config" aria-selected="false">
                     Control Center
                 </button>
             </li>
+
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" type="button" role="tab" aria-controls="logging" aria-selected="false">
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" 
+                    type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
             </li>
@@ -534,7 +542,65 @@
         {% endif %}
         
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            <!-- Agents Tab Content (Consolidated: Agents + Actions) -->
+            <div class="tab-pane fade show active" id="security" role="tabpanel" aria-labelledby="security-tab">
+                <p class="text-muted">
+                    Manage security settings for key vault and other security configurations.
+                <div class="card p-3 mb-3" id="keyvault-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5>
+                            <i class="bi bi-safe me-2"></i>Key Vault
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#keyVaultInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted">
+                        Configure Key Vault settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_key_vault_secret_storage"
+                            name="enable_key_vault_secret_storage"
+                            {% if settings.enable_key_vault_secret_storage %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_key_vault_secret_storage">
+                            Enable Key Vault for Agent and Action Secrets
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
+                    </div>
+                    
+                    <div id="key_vault_settings" {% if not settings.enable_key_vault_secret_storage %}style="display: none;"{% endif %}>
+                        <div id="key-vault-warning" class="alert alert-warning mt-2 mb-3">
+                            <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_name" class="form-label">Key Vault Name</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The name of the key vault resource. Endpoint is determined by your AZURE_ENVIRONMENT app service configuration."></i>
+                            <input type="text" class="form-control" id="key_vault_name" name="key_vault_name" value="{{ settings.key_vault_name or '' }}" {% if settings.enable_key_vault_secret_storage %}required{% endif %}>
+                        </div>
+                        <div class="mb-3">
+                            <label for="key_vault_identity" class="form-label">Key Vault Managed Identity Client ID</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="The Client ID of the User Assigned Managed Identity. Leave blank for system-assigned identity of the app service."></i>
+                            <input type="text" class="form-control" id="key_vault_identity" name="key_vault_identity" value="{{ settings.key_vault_identity or '' }}">
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-secondary mt-3"
+                            style="width: auto;"
+                            id="test_key_vault_button"
+                        >
+                            Test Key Vault Connection
+                        </button>
+                        <div id="test_key_vault_result" class="mt-2">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
             <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
                 
                 <p class="text-muted">
@@ -1332,6 +1398,7 @@
                     <div class="mb-3">
                         <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
                         <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
                         <input type="text" class="form-control" id="azure_apim_gpt_deployment"
                             name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
                     </div>
@@ -3243,6 +3310,7 @@
                     </p>
                 </div>
             </div>
+            
 
         </div> 
     </form>
@@ -3391,6 +3459,9 @@
 
         <!-- Video Indexer Info Modal -->
         {% include '_video_indexer_info.html' %}
+
+        <!-- Key Vault Info Modal -->
+        {% include '_key_vault_info.html' %}
     </div>
 </div>
 {% endblock %}
