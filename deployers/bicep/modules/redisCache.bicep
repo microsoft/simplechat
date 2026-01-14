@@ -62,3 +62,4 @@ module redisCacheSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'ke
 }
 
 output redisCacheName string = redisCache.name
+output redisCacheHostName string = redisCache.properties.hostName
