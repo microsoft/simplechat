@@ -4,8 +4,18 @@ metadata:
 infra:
   provider: bicep
   path: bicep
+services:
+  web:
+    project: ../application/single_app
+    language: python
+    host: appservice
+    docker:
+      context: ../../
+      dockerfile: application/single_app/Dockerfile
 hooks:
   postprovision:
+  # this is run after the infrastructure has been provisioned but before services are deployed.
+  # primary use is to configure application settings and permissions
     posix:
       shell: sh
       run: |
@@ -31,7 +41,7 @@ hooks:
         export var_deploymentLocation=${var_deploymentLocation}
         export var_videoIndexerAccountId=${var_videoIndexerAccountId}
         export var_speechServiceEndpoint=${var_speechServiceEndpoint}
-        export var_vNetId=${var_vNetId}
+        # export var_vNetId=${var_vNetId}
 
         # Execute post-configuration script if enabled
         if [ "${var_configureApplication}" = "true" ]; then
@@ -47,8 +57,9 @@ hooks:
         else
             echo "Skipping post-deployment configuration (var_configureApplication is not true)"
         fi
-
   predeploy:
+  # this is run after infrastructure and postprovisioning but before service deployment
+  # primary use is to build and push container images
     posix:
       shell: sh
       run: |
@@ -67,8 +78,10 @@ hooks:
         docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
         echo "Restarting web service..."
         az webapp start --name ${var_webService} --resource-group ${var_rgName}
-
+  
   postup:
+    # this is the final step to run after everything else is done
+    # primary use is disable public network access if private endpoints are used
     posix:
       shell: sh
       run: |
@@ -96,12 +109,3 @@ hooks:
         fi
 
         echo "Deployment completed successfully."
-
-services:
-  web:
-    project: ../application/single_app
-    language: python
-    host: appservice
-    docker:
-      context: ../../
-      dockerfile: application/single_app/Dockerfile

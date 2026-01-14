@@ -618,48 +618,45 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 //=========================================================
 // output values
 //=========================================================
-// output required for both predeploy and postprovision scripts in azure.yaml
-output var_rgName string = rgName
 
-// output values required for predeploy script in azure.yaml
-output var_webService string = appService.outputs.name
-output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
-output var_imageTag string = split(imageName, ':')[1]
-output var_containerRegistry string = containerRegistry
-output var_acrName string = toLower('${appName}${environment}acr')
 
 // output values required for postprovision script in azure.yaml
-output var_configureApplication bool = configureApplicationPermissions
-output var_keyVaultUri string = keyVault.outputs.keyVaultUri
-output var_keyVaultName string = keyVault.outputs.keyVaultName
-output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
-output var_cosmosDb_accountName string = cosmosDB.outputs.cosmosDbName
-output var_subscriptionId string = subscription().subscriptionId
+output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
-output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
-output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
-output var_openAIGPTModels array = gptModels
-output var_openAIEmbeddingModels array = embeddingModels
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
+output var_configureApplication bool = configureApplicationPermissions
 #disable-next-line BCP318 // expect one value to be null
 output var_contentSafetyEndpoint string = deployContentSafety ? contentSafety.outputs.contentSafetyEndpoint : ''
+output var_cosmosDb_accountName string = cosmosDB.outputs.cosmosDbName
+output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
 output var_deploymentLocation string = rg.location
-output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 output var_documentIntelligenceServiceEndpoint string = docIntel.outputs.documentIntelligenceServiceEndpoint
-output var_videoIndexerName string = deployVideoIndexerService
+output var_keyVaultName string = keyVault.outputs.keyVaultName
+output var_keyVaultUri string = keyVault.outputs.keyVaultUri
+output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
+output var_openAIGPTModels array = gptModels
+output var_openAIResourceGroup string = openAI.outputs.openAIResourceGroup //may be able to remove
+output var_openAIEmbeddingModels array = embeddingModels
 #disable-next-line BCP318 // expect one value to be null
-  ? videoIndexerService.outputs.videoIndexerServiceName
-  : ''
-output var_videoIndexerAccountId string = deployVideoIndexerService
-#disable-next-line BCP318 // expect one value to be null
-  ? videoIndexerService.outputs.videoIndexerAccountId
-  : ''
+output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
+output var_rgName string = rgName
+output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 #disable-next-line BCP318 // expect one value to be null
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
-
-//--------------------------------------------
-output var_enablePrivateNetworking bool = enablePrivateNetworking
-// #disable-next-line BCP318 // may not be configured if private networking is disabled
+output var_subscriptionId string = subscription().subscriptionId
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+// #disable-next-line BCP318 // expect one value to be null
 // output var_vNetId string = enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-// #disable-next-line BCP318 // may not be configured if private networking is disabled
-// output var_privateNetworkSubnetId string = enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+
+// output values required for predeploy script in azure.yaml
+output var_containerRegistry string = containerRegistry
+output var_imageName string = contains(imageName, ':') ? split(imageName, ':')[0] : imageName
+output var_imageTag string = split(imageName, ':')[1]
+output var_webService string = appService.outputs.name
+
+// output values required for postup script in azure.yaml
+output var_enablePrivateNetworking bool = enablePrivateNetworking
+
