@@ -133,7 +133,7 @@ if var_contentSafetyEndpoint and var_contentSafetyEndpoint.strip():
     item["enable_content_safety"] = True
 item["content_safety_endpoint"] = var_contentSafetyEndpoint
 item["content_safety_authentication_type"] = var_authenticationType
-if keyvault_client:
+if keyvault_client and var_authenticationType == "key":
     try:
         contentSafety_key_secret = keyvault_client.get_secret(
             "content-safety-key")
@@ -149,7 +149,7 @@ item["enable_conversation_archiving"] = True
 # Search and Extract > Azure AI Search
 item["azure_ai_search_endpoint"] = var_searchServiceEndpoint
 item["azure_ai_search_authentication_type"] = var_authenticationType
-if keyvault_client:
+if keyvault_client and var_authenticationType == "key":
     try:
         search_key_secret = keyvault_client.get_secret("search-service-key")
         item["azure_ai_search_key"] = search_key_secret.value
@@ -161,7 +161,7 @@ if keyvault_client:
 # Search and Extract > Azure Document Intelligence
 item["azure_document_intelligence_endpoint"] = var_documentIntelligenceServiceEndpoint
 item["azure_document_intelligence_authentication_type"] = var_authenticationType
-if keyvault_client:
+if keyvault_client and var_authenticationType == "key":
     try:
         documentIntelligence_key_secret = keyvault_client.get_secret(
             "document-intelligence-key")
@@ -186,7 +186,7 @@ if var_speechServiceEndpoint and var_speechServiceEndpoint.strip():
     item["enable_audio_file_support"] = True
 item["speech_service_endpoint"] = var_speechServiceEndpoint
 item["speech_service_location"] = var_speechServiceLocation
-if keyvault_client:
+if keyvault_client and var_authenticationType == "key":
     try:
         speech_key_secret = keyvault_client.get_secret("speech-service-key")
         item["speech_service_key"] = speech_key_secret.value

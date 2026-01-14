@@ -10,15 +10,15 @@ hooks:
       shell: sh
       run: |
         # Set up variables
-
+        export var_acrName=${var_acrname}
         export var_configureApplication=${var_configureApplication}
         export var_cosmosDb_uri=${var_cosmosDb_uri}
+        export var_cosmosDb_accountName=${var_cosmosDb_accountName}
         export var_subscriptionId=${AZURE_SUBSCRIPTION_ID}
         export var_rgName=${var_rgName}
         export var_keyVaultUri=${var_keyVaultUri}
-
+        export var_keyVaultName=${var_keyVaultName}
         export var_authenticationType=${var_authenticationType}
-
         export var_openAIEndpoint=${var_openAIEndpoint}
         export var_openAIResourceGroup=${var_openAIResourceGroup}
         export var_openAIGPTModel=${var_openAIGPTModel}
@@ -31,6 +31,7 @@ hooks:
         export var_deploymentLocation=${var_deploymentLocation}
         export var_videoIndexerAccountId=${var_videoIndexerAccountId}
         export var_speechServiceEndpoint=${var_speechServiceEndpoint}
+        export var_vNetId=${var_vNetId}
 
         # Execute post-configuration script if enabled
         if [ "${var_configureApplication}" = "true" ]; then
@@ -66,6 +67,36 @@ hooks:
         docker push ${var_containerRegistry}/${var_imageName}:${timestamp}
         echo "Restarting web service..."
         az webapp start --name ${var_webService} --resource-group ${var_rgName}
+
+  postup:
+    posix:
+      shell: sh
+      run: |
+        # If using private endpoints, disable cosmos and key vault public interface
+        if [ "${var_enablePrivateNetworking}" = "true" ]; then
+            echo "Disabling public network access for CosmosDB..."
+
+            echo "Disabling public network access for CosmosDB..."
+            az cosmosdb update --name ${var_cosmosDb_accountName} --resource-group ${var_rgName} --public-network-access Disabled
+            echo "Public network access for CosmosDB disabled."
+            
+            echo "Disabling public network access for Key Vault..."
+            az keyvault update --name ${var_keyVaultName} --resource-group ${var_rgName} --public-network-access Disabled
+            echo "Public network access for Key Vault disabled."
+
+            echo "Disabling public network access for Azure Container Registry..."
+            az acr update --name ${var_acrName} --resource-group ${var_rgName} --public-network-enabled false
+            echo "Public network access for Azure Container Registry disabled."
+
+            # echo "Disabling public network access for Web Application..."
+            # az webapp update --name ${var_webService} --resource-group ${var_rgName} --public-network-access Disabled
+            # echo "Public network access for Web Application disabled."
+        else
+            echo "Skipping disabling public network access for CosmosDB, Key Vault, and Azure Container Registry (var_enablePrivateNetworking is not true)"
+        fi
+
+        echo "Deployment completed successfully."
+
 services:
   web:
     project: ../application/single_app

@@ -33,13 +33,12 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' = {
   tags: tags
 }
 
-
-
 var subnetIds = [for subnet in subnetConfigs: resourceId('Microsoft.Network/virtualNetworks/subnets', vNetName, subnet.name)]
 var subnetNames = [for subnet in subnetConfigs: subnet.name]
 var appServiceIntegrationSubnetIndex = indexOf(subnetNames, 'AppServiceIntegration')
 var privateEndpointIndex = indexOf(subnetNames, 'PrivateEndpoints')
 
+// output results
 output vNetId string = virtualNetwork.id
 output privateNetworkSubnetId string = privateEndpointIndex == -1 ? '' : subnetIds[privateEndpointIndex]
 output appServiceSubnetId string = appServiceIntegrationSubnetIndex == -1 ? '' : subnetIds[appServiceIntegrationSubnetIndex]

@@ -12,34 +12,11 @@ param keyVault string
 param authenticationType string
 param configureApplicationPermissions bool
 
-param vNetId string = ''
-param privateEndpointSubnetId string = ''
+param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
-}
-
-// create private endpoint for azure search service if private endpoint subnet id is provided
-module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
-  name: toLower('${appName}-${environment}-search-pe')
-  dependsOn:[
-    searchService
-  ]
-  params: {
-    name: 'search'
-    location: location
-    appName: appName
-    environment: environment
-    privateDNSZoneName: 'privatelink.search.windows.net'
-    vNetId: vNetId
-    subnetId: privateEndpointSubnetId
-    serviceResourceID: searchService.id
-    groupIDs: [
-      'searchService'
-    ]
-    tags: tags
-  }
 }
 
 // search service resource
@@ -52,7 +29,7 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' = {
   properties: {
     #disable-next-line BCP036 // template is incorrect 
     hostingMode: 'default'
-    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     replicaCount: 1
     partitionCount: 1
     authOptions: {

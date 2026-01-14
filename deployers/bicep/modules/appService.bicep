@@ -24,6 +24,8 @@ param authenticationType string
 @secure()
 param enterpriseAppClientSecret string = ''
 param keyVaultUri string
+param enablePrivateNetworking bool
+param appServiceSubnetId string = ''
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -55,31 +57,6 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 
 var acrDomain = azurePlatform == 'AzureUSGovernment' ? '.azurecr.us' : '.azurecr.io'
 
-param vNetId string = ''
-param privateEndpointSubnetId string = ''
-param appServiceSubnetId string = ''
-
-
-// create private endpoint for azure website if private endpoint subnet id is provided
-module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
-  name: toLower('${appName}-${environment}-app-pe')
-  
-  params: {
-    name: 'app'
-    location: location
-    appName: appName
-    environment: environment
-    privateDNSZoneName: 'privatelink.azurewebsites.net'
-    vNetId: vNetId
-    subnetId: privateEndpointSubnetId
-    serviceResourceID: webApp.id
-    groupIDs: [      
-      'sites'
-    ]
-    tags: tags
-  }
-}
-
 // add web app
 resource webApp 'Microsoft.Web/sites@2022-03-01' = {
   name: toLower('${appName}-${environment}-app')
@@ -89,10 +66,9 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
     serverFarmId: appServicePlanId
 
     virtualNetworkSubnetId: appServiceSubnetId != '' ? appServiceSubnetId : null
-    publicNetworkAccess: appServiceSubnetId != '' ? 'Disabled' : 'Enabled'
-    vnetImagePullEnabled: appServiceSubnetId != '' ? true : false
+    publicNetworkAccess: 'Enabled' // configuration is set in post provision step in azure.yaml with post deployment script
+    vnetImagePullEnabled: enablePrivateNetworking ? true : false
      
-    
     siteConfig: {
       linuxFxVersion: 'DOCKER|${containerImageName}'
       acrUseManagedIdentityCreds: true

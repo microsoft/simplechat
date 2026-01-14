@@ -83,6 +83,24 @@ param enablePrivateNetworking bool
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
   {
+    modelName: 'gpt-5-chat'
+    modelVersion: '2025-10-03'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+  {
+    modelName: 'gpt-5-nano'
+    modelVersion: '2025-08-07'
+    skuName: 'GlobalStandard'
+    skuCapacity: 250
+  }
+  {
+    modelName: 'o4-mini'
+    modelVersion: '2025-04-16'
+    skuName: 'GlobalStandard'
+    skuCapacity: 150
+  }
+  {
     modelName: 'gpt-4.1'
     modelVersion: '2025-04-14'
     skuName: 'GlobalStandard'
@@ -110,6 +128,20 @@ param embeddingModels array = [
     skuName: 'GlobalStandard'
     skuCapacity: 150
   }
+]
+
+//----------------
+// cosmos db firewall
+// this is needed to allow access during deployment.  Should be the ipAddress of the machine running the deployment
+// may be a single ip address or a full range in cidr format.  EG. 123.45.67.125/32 or 123.45.67.125 or 10.10.1.0/24
+// strongly encourage makking sure 0.0.0.0 is included to allow Azure services to access cosmos db
+param allowedIpAddresses array = [
+      {
+        ipAddressOrRange: '0.0.0.0'  //--- required to allow Azure services to access cosmos db 
+      }
+      {
+        ipAddressOrRange: '173.66.57.199' //--- replace with your own IP address
+      }
 ]
 //----------------
 // optional services
@@ -155,15 +187,15 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
 // Create Virtual Network if private networking is enabled
 //=========================================================
 module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworking) {
-  name: 'virtualNetwork'
   scope: rg
+  name: 'virtualNetwork'
   params: {
     location: location
     vNetName: vNetName
     addressSpaces: ['10.0.0.0/21']
     subnetConfigs: [
       {
-        name: 'AppServiceIntegration'
+        name: 'AppServiceIntegration' // this subnet name must be present for app service vnet integration
         addressPrefix: '10.0.0.0/24'
         enablePrivateEndpointNetworkPolicies: true
         enablePrivateLinkServiceNetworkPolicies: true
@@ -171,12 +203,6 @@ module virtualNetwork 'modules/virtualNetwork.bicep' = if (enablePrivateNetworki
       {
         name: 'PrivateEndpoints' // this subnet name must be present if private endpoints are to be used
         addressPrefix: '10.0.2.0/24'
-        enablePrivateEndpointNetworkPolicies: true
-        enablePrivateLinkServiceNetworkPolicies: true
-      }
-      {
-        name: 'Management'
-        addressPrefix: '10.0.4.0/25'
         enablePrivateEndpointNetworkPolicies: true
         enablePrivateLinkServiceNetworkPolicies: true
       }
@@ -227,10 +253,6 @@ module keyVault 'modules/keyVault.bicep' = {
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
   }
 }
 
@@ -264,12 +286,8 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
-
-    // todo: do not enable cosmosdb until validation has been completed.
-    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    // vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    // privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
+    allowedIpAddresses: allowedIpAddresses
   }
 }
 
@@ -289,13 +307,7 @@ module acr 'modules/azureContainerRegistry.bicep' = {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
-
-    appName: appName
-    environment: environment
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -317,10 +329,7 @@ module searchService 'modules/search.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
 
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -342,10 +351,7 @@ module docIntel 'modules/documentIntelligence.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
 
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -367,10 +373,7 @@ module storageAccount 'modules/storageAccount.bicep' = {
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
 
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -395,10 +398,7 @@ module openAI 'modules/openAI.bicep' = {
     gptModels: gptModels
     embeddingModels: embeddingModels
 
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -446,12 +446,9 @@ module appService 'modules/appService.bicep' = {
     authenticationType: authenticationType
     keyVaultUri: keyVault.outputs.keyVaultUri
 
+    enablePrivateNetworking: enablePrivateNetworking
     #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''
-    #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    appServiceSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.appServiceSubnetId : ''
+    appServiceSubnetId: enablePrivateNetworking? virtualNetwork.outputs.appServiceSubnetId : ''
   }
 }
 
@@ -476,6 +473,8 @@ module contentSafety 'modules/contentSafety.bicep' = if (deployContentSafety) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -496,6 +495,9 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    //enablePrivateNetworking: enablePrivateNetworking
+
   }
 }
 
@@ -504,6 +506,7 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
 //=========================================================
 module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
   name: 'speechService'
+  dependsOn:[]
   scope: rg
   params: {
     location: location
@@ -516,6 +519,8 @@ module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
     keyVault: keyVault.outputs.keyVaultName
     authenticationType: authenticationType
     configureApplicationPermissions: configureApplicationPermissions
+
+    enablePrivateNetworking: enablePrivateNetworking
   }
 }
 
@@ -535,6 +540,13 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
 
     storageAccount: storageAccount.outputs.name
     openAiServiceName: openAI.outputs.openAIName
+
+    enablePrivateNetworking: enablePrivateNetworking
+
+    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    // vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
+    // privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''     
   }
 }
 
@@ -555,15 +567,53 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     openAIName: openAI.outputs.openAIName
     docIntelName: docIntel.outputs.documentIntelligenceServiceName
     storageAccountName: storageAccount.outputs.name
+    searchServiceName: searchService.outputs.searchServiceName
+
     #disable-next-line BCP318 // expect one value to be null
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
-    searchServiceName: searchService.outputs.searchServiceName
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
   }
 }
+
+//=========================================================
+// configure private networking
+//=========================================================
+module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking) {
+  name: 'privateNetworking'
+  scope: rg
+  params: {
+
+    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
+    virtualNetworkId: virtualNetwork.outputs.vNetId
+    #disable-next-line BCP318 // value can't be null based on enablePrivateNetworking condition
+    privateEndpointSubnetId: virtualNetwork.outputs.privateNetworkSubnetId
+
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    acrName: acr.outputs.acrName
+    searchServiceName: searchService.outputs.searchServiceName
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    openAIName: openAI.outputs.openAIName
+    webAppName: appService.outputs.name
+    
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+  }
+}
+
 
 //=========================================================
 // output values
@@ -581,7 +631,9 @@ output var_acrName string = toLower('${appName}${environment}acr')
 // output values required for postprovision script in azure.yaml
 output var_configureApplication bool = configureApplicationPermissions
 output var_keyVaultUri string = keyVault.outputs.keyVaultUri
+output var_keyVaultName string = keyVault.outputs.keyVaultName
 output var_cosmosDb_uri string = cosmosDB.outputs.cosmosDbUri
+output var_cosmosDb_accountName string = cosmosDB.outputs.cosmosDbName
 output var_subscriptionId string = subscription().subscriptionId
 output var_authenticationType string = toLower(authenticationType)
 output var_openAIEndpoint string = openAI.outputs.openAIEndpoint
@@ -606,7 +658,8 @@ output var_videoIndexerAccountId string = deployVideoIndexerService
 output var_speechServiceEndpoint string = deploySpeechService ? speechService.outputs.speechServiceEndpoint : ''
 
 //--------------------------------------------
-#disable-next-line BCP318 // may not be configured if private networking is disabled
-output var_vNetId string = virtualNetwork.outputs.vNetId
-#disable-next-line BCP318 // may not be configured if private networking is disabled
-output var_privateNetworkSubnetId string = virtualNetwork.outputs.privateNetworkSubnetId
+output var_enablePrivateNetworking bool = enablePrivateNetworking
+// #disable-next-line BCP318 // may not be configured if private networking is disabled
+// output var_vNetId string = enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
+// #disable-next-line BCP318 // may not be configured if private networking is disabled
+// output var_privateNetworkSubnetId string = enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''

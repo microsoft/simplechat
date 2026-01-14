@@ -15,34 +15,11 @@ param configureApplicationPermissions bool
 param gptModels array
 param embeddingModels array
 
-param vNetId string = ''
-param privateEndpointSubnetId string = ''
+param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
-}
-
-// create private endpoint for azure openAI if private endpoint subnet id is provided
-module privateEndpoint 'privateEndpoint.bicep' = if (privateEndpointSubnetId != '') {
-  name: toLower('${appName}-${environment}-openai-pe')
-  dependsOn:[
-    openAI
-  ]
-  params: {
-    name: 'openai'
-    location: location
-    appName: appName
-    environment: environment
-    privateDNSZoneName: 'privatelink.openai.azure.com'
-    vNetId: vNetId
-    subnetId: privateEndpointSubnetId
-    serviceResourceID: openAI.id
-    groupIDs: [
-      'account'
-    ]
-    tags: tags
-  }
 }
 
 // deploy new Azure OpenAI Resource
@@ -57,7 +34,7 @@ resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    publicNetworkAccess: privateEndpointSubnetId != '' ? 'Disabled' : 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     customSubDomainName: toLower('${appName}-${environment}-openai')
   }
   tags: tags
