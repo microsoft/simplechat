@@ -1,7 +1,35 @@
 {% extends "base.html" %}
 {% block title %}My Public Workspaces – {{ app_settings.app_title }}{% endblock %}
 {% block head %}
-  <!-- copy your my_groups.css but adjust IDs as needed -->
+<style>
+    /* Consistent table styling */
+    #my-public-workspaces-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    /* Column Widths */
+    #my-public-workspaces-table th:nth-child(1), /* Name */
+    #my-public-workspaces-table td:nth-child(1) {
+        width: 30%;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    #my-public-workspaces-table th:nth-child(2), /* Role */
+    #my-public-workspaces-table td:nth-child(2) { width: 15%; }
+    #my-public-workspaces-table th:nth-child(3), /* Status */
+    #my-public-workspaces-table td:nth-child(3) { width: 15%; text-align: center; }
+    #my-public-workspaces-table th:nth-child(4), /* Active */
+    #my-public-workspaces-table td:nth-child(4) { width: 18%; text-align: center; }
+    #my-public-workspaces-table th:nth-child(5), /* Actions */
+    #my-public-workspaces-table td:nth-child(5) { width: 22%; text-align: center; }
+
+    #my-public-workspaces-table td {
+        vertical-align: middle;
+    }
+    .table-loading-row td {
+        text-align: center; padding: 2rem; color: #6c757d;
+    }
+</style>
 {% endblock %}
 {% block content %}
 <div class="container">
@@ -47,13 +75,14 @@
         <tr>
           <th>Name</th>
           <th>Your Role</th>
+          <th>Status</th>
           <th>Active</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         <tr class="table-loading-row">
-          <td colspan="4" class="text-center p-4 text-muted">
+          <td colspan="5" class="text-center p-4 text-muted">
             <div class="spinner-border spinner-border-sm me-2" role="status"></div>
             Loading…
           </td>
@@ -62,7 +91,24 @@
     </table>
   </div>
 
-  <!-- pagination & page-size controls… -->
+  <!-- Pagination & Page Size Controls -->
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <!-- Page Size Section -->
+    <div>
+      <label for="page-size-select" class="visually-hidden">Items per page:</label>
+      <select id="page-size-select" class="form-select form-select-sm d-inline-block" style="width:auto;">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+      <span class="ms-1 small text-muted">items per page</span>
+    </div>
+    <!-- Pagination Controls -->
+    <div id="pagination-container" class="d-flex gap-1 ms-auto">
+        <!-- Populated by JS -->
+    </div>
+  </div>
   
 </div>
 
@@ -129,8 +175,10 @@
 {% block scripts %}
   {{ super() }}
   <script>
-    // Pass permission status from backend to JavaScript
+    // Pass permission status and active workspace ID from backend to JavaScript
     window.canCreatePublicWorkspaces = {{ can_create_public_workspaces|tojson }};
+    window.activeWorkspaceId = {{ active_public_workspace_id|tojson }};
   </script>
+  <script src="{{ url_for('static', filename='js/public/public_workspace_utility.js') }}"></script>
   <script src="{{ url_for('static', filename='js/public/my_public_workspaces.js') }}"></script>
 {% endblock %}

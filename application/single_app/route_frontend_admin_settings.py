@@ -155,6 +155,8 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        if 'classification_banner_text_color' not in settings:
+            settings['classification_banner_text_color'] = '#ffffff'  # White text by default
         
         # --- Add defaults for key vault
         if 'enable_key_vault_secret_storage' not in settings:
@@ -235,10 +237,16 @@ def register_route_frontend_admin_settings(app):
             # Get the persisted values for template rendering
             update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            
+            # Get user settings for profile and navigation
+            user_id = get_current_user_id()
+            user_settings = get_user_settings(user_id)
 
             return render_template(
                 'admin_settings.html',
+                app_settings=settings,  # Admin needs unsanitized settings to view/edit all configuration
                 settings=settings,
+                user_settings=user_settings,
                 update_available=update_available,
                 latest_version=latest_version,
                 download_url=download_url
@@ -268,6 +276,7 @@ def register_route_frontend_admin_settings(app):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
+            require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
             # --- Handle Document Classification Toggle ---
@@ -377,6 +386,7 @@ def register_route_frontend_admin_settings(app):
             classification_banner_enabled = form_data.get('classification_banner_enabled') == 'on'
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
+            classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -457,6 +467,29 @@ def register_route_frontend_admin_settings(app):
                 file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
             else:
                 file_processing_logs_turnoff_time_str = None
+
+            # --- Retention Policy Settings ---
+            enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
+            enable_retention_policy_group = form_data.get('enable_retention_policy_group') == 'on'
+            enable_retention_policy_public = form_data.get('enable_retention_policy_public') == 'on'
+            retention_policy_execution_hour = int(form_data.get('retention_policy_execution_hour', 2))
+            
+            # Validate execution hour (0-23)
+            if retention_policy_execution_hour < 0 or retention_policy_execution_hour > 23:
+                retention_policy_execution_hour = 2  # Default to 2 AM
+            
+            # Calculate next scheduled execution time if any retention policy is enabled
+            retention_policy_next_run = None
+            if enable_retention_policy_personal or enable_retention_policy_group or enable_retention_policy_public:
+                now = datetime.now(timezone.utc)
+                # Create next run datetime with the specified hour
+                next_run = now.replace(hour=retention_policy_execution_hour, minute=0, second=0, microsecond=0)
+                
+                # If the scheduled time has already passed today, schedule for tomorrow
+                if next_run <= now:
+                    next_run = next_run + timedelta(days=1)
+                
+                retention_policy_next_run = next_run.isoformat()
 
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
@@ -570,6 +603,13 @@ def register_route_frontend_admin_settings(app):
                 'file_processing_logs_turnoff_time': file_processing_logs_turnoff_time_str,
                 'require_member_of_create_group': require_member_of_create_group,
                 'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
+                
+                # Retention Policy
+                'enable_retention_policy_personal': enable_retention_policy_personal,
+                'enable_retention_policy_group': enable_retention_policy_group,
+                'enable_retention_policy_public': enable_retention_policy_public,
+                'retention_policy_execution_hour': retention_policy_execution_hour,
+                'retention_policy_next_run': retention_policy_next_run,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -670,6 +710,12 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
                 'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                
+                # Speech-to-text chat input
+                'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',
+                
+                # Text-to-speech chat output
+                'enable_text_to_speech': form_data.get('enable_text_to_speech') == 'on',
 
                 'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
 
@@ -681,8 +727,10 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_enabled': classification_banner_enabled,
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
+                'classification_banner_text_color': classification_banner_text_color,
 
-                'require_member_of_control_center_admin': require_member_of_control_center_admin
+                'require_member_of_control_center_admin': require_member_of_control_center_admin,
+                'require_member_of_control_center_dashboard_reader': require_member_of_control_center_dashboard_reader
             }
             
             # --- Prevent Legacy Fields from Being Created/Updated ---

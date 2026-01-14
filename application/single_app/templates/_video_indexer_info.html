@@ -390,7 +390,7 @@ function updateVideoIndexerModalInfo() {
     const resourceGroup = document.getElementById('video_indexer_resource_group')?.value?.trim() || '';
     const subscriptionId = document.getElementById('video_indexer_subscription_id')?.value?.trim() || '';
     const accountName = document.getElementById('video_indexer_account_name')?.value?.trim() || '';
-
+    
     // Update modal status
     document.getElementById('modal-video-enabled').textContent = videoEnabled ? 'Yes' : 'No';
     document.getElementById('modal-video-enabled').className = videoEnabled ? 'badge bg-success' : 'badge bg-secondary';

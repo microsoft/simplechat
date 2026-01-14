@@ -141,7 +141,7 @@ def register_route_backend_feedback(app):
     @app.route("/feedback/review", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @feedback_admin_required
     @enabled_required("enable_user_feedback")
     def feedback_review_get():
         """
@@ -247,7 +247,7 @@ def register_route_backend_feedback(app):
     @app.route("/feedback/review/<feedbackId>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @feedback_admin_required
     @enabled_required("enable_user_feedback")
     def feedback_review_get_single(feedbackId):
         """
@@ -283,7 +283,7 @@ def register_route_backend_feedback(app):
     @app.route("/feedback/review/<feedbackId>", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @feedback_admin_required
     @enabled_required("enable_user_feedback")
     def feedback_review_update(feedbackId):
         """
@@ -328,7 +328,7 @@ def register_route_backend_feedback(app):
     @app.route("/feedback/retest/<feedbackId>", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
-    @admin_required
+    @feedback_admin_required
     @enabled_required("enable_user_feedback")
     def feedback_retest(feedbackId):
         """

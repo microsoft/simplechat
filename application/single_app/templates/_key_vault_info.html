@@ -44,48 +44,6 @@
                     <strong>ℹ️ Note:</strong> Using Key Vault may introduce latency to chat experience when retrieving secrets.
                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Our testing indicates the average latency is 50-150ms per secret."></i>
                 </div>
-                <!-- Azure AD Configuration -->
-                <div class="card mb-4 d-none">
-                    <div class="card-header">
-                        <h6 class="mb-0"><i class="bi bi-microsoft me-2"></i>Azure AD App Registration</h6>
-                    </div>
-                    <div class="card-body">
-                        <p class="mb-3">You need to update your Azure AD App Registration with the Key Vault URLs:</p>
-                        
-                        <div class="mb-3">
-                            <label class="form-label"><strong>Redirect URIs to Add:</strong></label>
-                            <div class="input-group mb-2">
-                                <span class="input-group-text">OAuth2</span>
-                                <input type="text" class="form-control" id="copy-oauth-uri" readonly value="">
-                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-oauth-uri')">
-                                    <i class="bi bi-clipboard"></i>
-                                </button>
-                            </div>
-                            <div class="input-group mb-2">
-                                <span class="input-group-text">Auth Callback</span>
-                                <input type="text" class="form-control" id="copy-auth-callback" readonly value="">
-                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-auth-callback')">
-                                    <i class="bi bi-clipboard"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label"><strong>Logout URL to Add:</strong></label>
-                            <div class="input-group">
-                                <span class="input-group-text">Logout</span>
-                                <input type="text" class="form-control" id="copy-logout-uri" readonly value="">
-                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('copy-logout-uri')">
-                                    <i class="bi bi-clipboard"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="alert alert-warning">
-                            <strong>Important:</strong> Make sure to add these URLs to your Azure AD App Registration in the Azure Portal under "Authentication" → "Redirect URIs" and "Front-channel logout URL".
-                        </div>
-                    </div>
-                </div>
 
                 <!-- Key Vault Configuration -->
                 <div class="card mb-4">

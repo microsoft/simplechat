@@ -157,10 +157,10 @@ def test_content_reconstruction():
         # Check for proper error handling
         error_handling = [
             'except Exception as parse_error:',
-            'debug_debug_print(f"Error parsing document response: {parse_error}")',
+            'debug_print(f"Error parsing document response: {parse_error}")',
             'except Exception as e:',
             'import traceback',
-            'debug_debug_print(f"Traceback: {traceback.format_exc()}")'
+            'debug_print(f"Traceback: {traceback.format_exc()}")'
         ]
         
         missing_error_handling = []
@@ -196,14 +196,14 @@ def test_debug_output_improvements():
         
         # Check for improved debug statements
         debug_statements = [
-            'debug_debug_print(f"Processing clean document {i+1}:")',
-            'debug_debug_print(f"- ID: {doc_id}")',
-            'debug_debug_print(f"- Title: {doc_title}")',
-            'debug_debug_print(f"- Filename: {doc_filename}")',
-            'debug_debug_print(f"- Content length: {len(doc_content)} characters")',
-            'debug_debug_print(f"- Size: {doc_size} bytes")',
-            'debug_debug_print(f"Created {len(actual_documents)} clean documents with actual content")',
-            'debug_debug_print(f"Failed to get document content, status: {status_code}")'
+            'debug_print(f"Processing clean document {i+1}:")',
+            'debug_print(f"- ID: {doc_id}")',
+            'debug_print(f"- Title: {doc_title}")',
+            'debug_print(f"- Filename: {doc_filename}")',
+            'debug_print(f"- Content length: {len(doc_content)} characters")',
+            'debug_print(f"- Size: {doc_size} bytes")',
+            'debug_print(f"Created {len(actual_documents)} clean documents with actual content")',
+            'debug_print(f"Failed to get document content, status: {status_code}")'
         ]
         
         missing_debug = []

@@ -11,7 +11,7 @@ from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
-
+from functions_debug import debug_print
 import importlib.util
 from functions_plugins import get_merged_plugin_settings
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -342,7 +342,7 @@ def set_user_plugins():
             delete_personal_action(user_id, plugin_name)
             
     except Exception as e:
-        current_app.logger.error(f"Error saving personal actions for user {user_id}: {e}")
+        debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
@@ -460,7 +460,7 @@ def create_group_action_route():
     try:
         saved = save_group_action(active_group, payload)
     except Exception as exc:
-        current_app.logger.error('Failed to save group action: %s', exc)
+        debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
 
     return jsonify(saved), 201
@@ -513,7 +513,7 @@ def update_group_action_route(action_id):
     try:
         saved = save_group_action(active_group, merged)
     except Exception as exc:
-        current_app.logger.error('Failed to update group action %s: %s', action_id, exc)
+        debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
 
     return jsonify(saved), 200
@@ -539,7 +539,7 @@ def delete_group_action_route(action_id):
     try:
         removed = delete_group_action(active_group, action_id)
     except Exception as exc:
-        current_app.logger.error('Failed to delete group action %s: %s', action_id, exc)
+        debug_print('Failed to delete group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to delete action'}), 500
 
     if not removed:

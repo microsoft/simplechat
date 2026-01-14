@@ -10,6 +10,7 @@ import { showToast } from "./chat-toast.js";
 import { initConversationInfoButton } from "./chat-conversation-info-button.js";
 import { initializeStreamingToggle } from "./chat-streaming.js";
 import { initializeReasoningToggle } from "./chat-reasoning.js";
+import { initializeSpeechInput } from "./chat-speech-input.js";
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log("DOM Content Loaded. Starting initializations."); // Log start
@@ -24,6 +25,13 @@ window.addEventListener('DOMContentLoaded', () => {
   
   // Initialize reasoning toggle
   initializeReasoningToggle();
+  
+  // Initialize speech input
+  try {
+    initializeSpeechInput();
+  } catch (error) {
+    console.warn('Speech input initialization failed:', error);
+  }
 
   // Grab references to the relevant elements
   const userInput = document.getElementById("user-input");

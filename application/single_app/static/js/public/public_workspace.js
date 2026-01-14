@@ -28,7 +28,7 @@ const publicDocMetadataModal = new bootstrap.Modal(document.getElementById('publ
 let publicSimplemde = null;
 const publicPromptContentEl = document.getElementById('public-prompt-content');
 if (publicPromptContentEl && window.SimpleMDE) {
-  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false });
+  publicSimplemde = new SimpleMDE({ element: publicPromptContentEl, spellChecker:false, autoDownloadFontAwesome: false });
 }
 
 // DOM elements
@@ -60,12 +60,6 @@ const createPublicPromptBtn = document.getElementById('create-public-prompt-btn'
 const publicPromptForm = document.getElementById('public-prompt-form');
 const publicPromptIdEl = document.getElementById('public-prompt-id');
 const publicPromptNameEl = document.getElementById('public-prompt-name');
-
-// Helper
-function escapeHtml(unsafe) {
-  if (!unsafe) return '';
-  return unsafe.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -206,10 +200,56 @@ function updatePublicRoleDisplay(){
   }
 }
 
+// Update workspace status alert based on status - uses shared utility
+function updateWorkspaceStatusAlert() {
+  if (!activePublicId) return;
+  
+  fetchAndUpdateWorkspaceStatus(activePublicId, (workspace) => {
+    const status = workspace.status || 'active';
+    updateWorkspaceUIBasedOnStatus(status);
+  });
+}
+
+// Update UI elements based on workspace status
+function updateWorkspaceUIBasedOnStatus(status) {
+  const isLocked = status === 'locked';
+  const uploadDisabled = status === 'upload_disabled' || isLocked;
+  const isInactive = status === 'inactive';
+  
+  const uploadSection = document.getElementById('upload-public-section');
+  const fileInput = document.getElementById('file-input');
+  
+  // Hide/disable upload section based on status
+  if (uploadSection) {
+    if (uploadDisabled || isInactive) {
+      uploadSection.style.display = 'none';
+    }
+  }
+  
+  // Disable file input if needed
+  if (fileInput) {
+    fileInput.disabled = uploadDisabled || isInactive;
+  }
+  
+  // Disable document action buttons for locked/inactive workspaces
+  if (isLocked || isInactive) {
+    const actionButtons = document.querySelectorAll('#public-documents-table .btn-danger, #public-documents-table .btn-warning');
+    actionButtons.forEach(btn => {
+      if (isLocked) {
+        btn.disabled = true;
+        btn.title = 'Workspace is locked';
+      } else if (isInactive) {
+        btn.disabled = true;
+        btn.title = 'Workspace is inactive';
+      }
+    });
+  }
+}
+
 function loadActivePublicData(){
   const activeTab = document.querySelector('#publicWorkspaceTab .nav-link.active').dataset.bsTarget;
   if(activeTab==='#public-docs-tab') fetchPublicDocs(); else fetchPublicPrompts();
-  updatePublicRoleDisplay(); updatePublicPromptsRoleUI();
+  updatePublicRoleDisplay(); updatePublicPromptsRoleUI(); updateWorkspaceStatusAlert();
 }
 
 async function fetchPublicDocs(){

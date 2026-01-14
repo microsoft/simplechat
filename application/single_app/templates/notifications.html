@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications - {{ app_settings.app_title }}{% endblock %}
+
+{% block head %}
+<style>
+  .notification-item {
+    border-left: 4px solid transparent;
+    transition: background-color 0.2s, border-left-color 0.2s;
+  }
+  
+  .notification-item.unread {
+    background-color: var(--bs-light);
+    border-left-color: var(--bs-primary);
+    font-weight: 500;
+  }
+  
+  [data-bs-theme="dark"] .notification-item.unread {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+  
+  .notification-item:hover {
+    background-color: var(--bs-secondary-bg);
+    cursor: pointer;
+  }
+  
+  .notification-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+  }
+  
+  .notification-title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  
+  .notification-message {
+    font-size: 0.9rem;
+    color: var(--bs-secondary-color);
+    margin-bottom: 0.25rem;
+  }
+  
+  .notification-time {
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+  }
+  
+  .notification-actions {
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  
+  .notification-item:hover .notification-actions {
+    opacity: 1;
+  }
+  
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--bs-secondary-color);
+  }
+  
+  .empty-state i {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+  }
+  
+  .filter-btn.active {
+    background-color: var(--bs-primary);
+    color: white;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="row">
+    <div class="col-12">
+      <!-- Header -->
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-bell me-2"></i>Notifications</h2>
+        <div class="btn-group" role="group">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="mark-all-read-btn">
+            <i class="bi bi-check-all me-1"></i>Mark All Read
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-btn">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      
+      <!-- Filters and Controls -->
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="row g-3 align-items-center">
+            <!-- Filter buttons -->
+            <div class="col-md-6">
+              <div class="btn-group" role="group" aria-label="Notification filters">
+                <button type="button" class="btn btn-sm btn-outline-secondary filter-btn active" data-filter="all">
+                  All
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary filter-btn" data-filter="unread">
+                  Unread
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary filter-btn" data-filter="read">
+                  Read
+                </button>
+              </div>
+            </div>
+            
+            <!-- Per-page selector -->
+            <div class="col-md-3">
+              <select class="form-select form-select-sm" id="per-page-select">
+                <option value="10" {% if user_settings.get('settings', {}).get('notifications_per_page', 20) == 10 %}selected{% endif %}>10 per page</option>
+                <option value="20" {% if user_settings.get('settings', {}).get('notifications_per_page', 20) == 20 %}selected{% endif %}>20 per page</option>
+                <option value="50" {% if user_settings.get('settings', {}).get('notifications_per_page', 20) == 50 %}selected{% endif %}>50 per page</option>
+              </select>
+            </div>
+            
+            <!-- Search -->
+            <div class="col-md-3">
+              <input type="text" class="form-control form-control-sm" id="search-input" placeholder="Search notifications...">
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Loading indicator -->
+      <div id="loading-indicator" class="text-center py-4" style="display: none;">
+        <div class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Loading...</span>
+        </div>
+      </div>
+      
+      <!-- Notifications list -->
+      <div id="notifications-container">
+        <!-- Will be populated by JavaScript -->
+      </div>
+      
+      <!-- Pagination -->
+      <div id="pagination-container" class="d-flex justify-content-center mt-4">
+        <!-- Will be populated by JavaScript -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Notification modal for viewing details -->
+<div class="modal fade" id="notificationModal" tabindex="-1" aria-labelledby="notificationModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="notificationModalLabel">Notification</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="notificationModalBody">
+        <!-- Will be populated dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="modal-go-to-link">Go to Link</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
