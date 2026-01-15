@@ -1139,6 +1139,10 @@ function copyRawActivityToClipboard() {
   });
 }
 
+// Make functions globally available for onclick handlers
+window.showRawActivity = showRawActivity;
+window.copyRawActivityToClipboard = copyRawActivityToClipboard;
+
 function showCsvError(message) {
   $("#csvErrorList").html(`<pre class="mb-0">${escapeHtml(message)}</pre>`);
   $("#csvErrorDetails").show();

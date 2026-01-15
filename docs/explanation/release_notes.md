@@ -1,7 +1,24 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
-### **(v0.235.001)**
+### **(v0.235.012)**
+
+#### Bug Fixes
+
+*   **Control Center Access Control Logic Fix**
+    *   Fixed access control discrepancy where users with `ControlCenterAdmin` role were incorrectly granted access when the role requirement setting was disabled.
+    *   **Correct Behavior**: When `require_member_of_control_center_admin` is DISABLED (default), only the regular `Admin` role grants access. The `ControlCenterAdmin` role is only checked when the setting is ENABLED.
+    *   **Files Modified**: `functions_authentication.py` (decorator logic), `route_frontend_control_center.py` (frontend access computation), `_sidebar_nav.html` and `_top_nav.html` (menu visibility).
+    *   (Ref: `control_center_required` decorator, role-based access control)
+
+*   **Disable Group Creation Setting Fix**
+    *   Fixed issue where "Disable Group Creation" setting was not being saved from Admin Settings or Control Center pages.
+    *   **Root Cause 1**: Form field name mismatch - HTML used `disable_group_creation` but backend expected `enable_group_creation`.
+    *   **Root Cause 2**: Missing onclick handler on Control Center's "Save Settings" button.
+    *   **Files Modified**: `route_frontend_admin_settings.py` (form field reading), `control_center.html` (button handler).
+    *   (Ref: group creation permissions, admin settings form handling)
+
+### **(v0.235.003)**
 
 #### New Features
 
