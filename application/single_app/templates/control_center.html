@@ -874,7 +874,7 @@
                                                     </div>
                                                 </div>
                                                 <div class="col-md-4 text-end">
-                                                    <button type="button" class="btn btn-primary" id="saveGlobalGroupSettings" onclick="GroupManager.saveGlobalSettings()">
+                                                    <button type="button" class="btn btn-primary" id="saveGlobalGroupSettings">
                                                         <i class="bi bi-check-lg me-1"></i>Save Settings
                                                     </button>
                                                 </div>
@@ -4688,5 +4688,18 @@ window.GroupManager = {
         }
     }
 };
+
+// Initialize GroupManager when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Small delay to ensure control-center.js has initialized window.controlCenter first
+    setTimeout(function() {
+        if (typeof GroupManager !== 'undefined' && GroupManager.init) {
+            GroupManager.init();
+            console.log('GroupManager initialized successfully');
+        } else {
+            console.error('GroupManager not available for initialization');
+        }
+    }, 200);
+});
 </script>
 {% endblock %}
