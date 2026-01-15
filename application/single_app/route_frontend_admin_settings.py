@@ -593,7 +593,8 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
-                'enable_group_creation': form_data.get('enable_group_creation') == 'on',
+                # disable_group_creation is inverted: when checked (on), enable_group_creation = False
+                'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': enable_file_processing_logs,
