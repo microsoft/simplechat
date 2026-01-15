@@ -191,8 +191,11 @@
               <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
             </li>
             {% endif %}
-            {# Control Center - accessible to admins OR users with ControlCenter roles #}
-            {% if (session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or ('Admin' in session['user']['roles'] and not app_settings.require_member_of_control_center_admin and not app_settings.require_member_of_control_center_dashboard_reader) %}
+            {# Control Center - access based on role requirements #}
+            {# When require_member_of_control_center_admin ENABLED: only ControlCenterAdmin role grants access #}
+            {# When DISABLED (default): only regular Admin role grants access #}
+            {# DashboardReader role grants dashboard-only access when that setting is enabled #}
+            {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles']) %}
             <li>
               <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
             </li>

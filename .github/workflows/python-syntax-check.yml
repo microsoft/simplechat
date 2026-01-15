@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - Development
     paths:
       - 'application/single_app/**.py'
       - '.github/workflows/python-syntax-check.yml'
