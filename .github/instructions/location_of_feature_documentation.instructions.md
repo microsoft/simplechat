@@ -7,7 +7,7 @@ applyTo: '**'
 ## Documentation Directory
 All new feature documentation should be placed in:
 ```
-..\docs\features\
+..\docs\explanation\features\
 ```
 
 ## File Naming Convention

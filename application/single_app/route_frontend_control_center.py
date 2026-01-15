@@ -28,14 +28,30 @@ def register_route_frontend_control_center(app):
             stats = get_control_center_statistics()
             
             # Check user's role for frontend conditional rendering
+            # Determine if user has full admin access (can see all tabs)
             user = session.get('user', {})
-            has_admin_role = 'ControlCenterAdmin' in user.get('roles', [])
+            user_roles = user.get('roles', [])
+            require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
+            
+            # User has full admin access based on which role requirement is active:
+            # - When require_member_of_control_center_admin is ENABLED: Only ControlCenterAdmin role grants access
+            # - When require_member_of_control_center_admin is DISABLED: Only regular Admin role grants access
+            has_control_center_admin_role = 'ControlCenterAdmin' in user_roles
+            has_regular_admin_role = 'Admin' in user_roles
+            
+            # Full admin access means they can see dashboard + management tabs + activity logs
+            if require_member_of_control_center_admin:
+                # ControlCenterAdmin role is required - only that role grants full access
+                has_full_admin_access = has_control_center_admin_role
+            else:
+                # ControlCenterAdmin requirement is disabled - only regular Admin role grants full access
+                has_full_admin_access = has_regular_admin_role
             
             return render_template('control_center.html', 
                                  app_settings=public_settings, 
                                  settings=public_settings,
                                  statistics=stats,
-                                 has_control_center_admin=has_admin_role)
+                                 has_control_center_admin=has_full_admin_access)
         except Exception as e:
             debug_print(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")

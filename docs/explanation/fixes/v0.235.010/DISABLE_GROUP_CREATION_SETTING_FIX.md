@@ -1,7 +1,7 @@
 # Disable Group Creation Setting Fix
 
-**Version:** 0.235.005  
-**Fixed in:** 0.235.004, 0.235.005  
+**Version:** 0.235.010 
+**Fixed in:** 0.235.010  
 **Issue Type:** Bug Fix
 
 ## Problem Description
