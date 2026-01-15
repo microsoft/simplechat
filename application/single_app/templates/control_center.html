@@ -541,10 +541,11 @@
                             <!-- System Summary Cards -->
                             <div class="row mb-4 control-center-stats">
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('users-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('users-tab')" 
                                          title="Click to view User Management" role="button" tabindex="0" 
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('users-tab')"
-                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}">
+                                         aria-label="Navigate to User Management. Total users: {{ statistics.total_users or 0 }}"{% else %}title="User Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -563,10 +564,11 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('groups-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('groups-tab')" 
                                          title="Click to view Group Management" role="button" tabindex="0"
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('groups-tab')"
-                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}">
+                                         aria-label="Navigate to Group Management. Total groups: {{ statistics.total_groups or 0 }}"{% else %}title="Group Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
@@ -585,10 +587,11 @@
                                 </div>
                                 
                                 <div class="col-md-4 mb-3">
-                                    <div class="card stat-card h-100 clickable" onclick="navigateToTab('workspaces-tab')" 
+                                    <div class="card stat-card h-100{% if has_control_center_admin %} clickable{% endif %}" 
+                                         {% if has_control_center_admin %}onclick="navigateToTab('workspaces-tab')" 
                                          title="Click to view Public Workspaces Management" role="button" tabindex="0"
                                          onkeydown="if(event.key==='Enter'||event.key===' ') navigateToTab('workspaces-tab')"
-                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}">
+                                         aria-label="Navigate to Public Workspaces Management. Total workspaces: {{ statistics.total_public_workspaces or 0 }}"{% else %}title="Public Workspaces Management (Admin access required)"{% endif %}>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between align-items-center">
                                                 <div>
