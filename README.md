@@ -118,7 +118,7 @@ azd env select <environment>
 This step will begin the deployment process.  
 
 ```powershell
-Use azd up 
+azd up 
 ```
 
 ## Architecture
