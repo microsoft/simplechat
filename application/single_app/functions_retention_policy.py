@@ -625,7 +625,6 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
     ]
     
     debug_print(f"Querying aged documents: workspace_type={workspace_type}, partition_field={partition_field}, partition_value={partition_value}, cutoff_date={cutoff_iso}, retention_days={retention_days}")
-    debug_print(f"Document query: {query.strip()}")
     
     try:
         aged_documents = list(container.query_items(
@@ -636,54 +635,6 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
         debug_print(f"Found {len(aged_documents)} aged documents for {workspace_type} workspace")
     except Exception as query_error:
         debug_print(f"Error querying aged documents for {workspace_type} (partition_value={partition_value}): {query_error}")
-        # Try progressive diagnostic queries to isolate the issue
-        try:
-            # Test 1: Simple query without date
-            simple_query = f"SELECT c.id, c.file_name, c.last_updated FROM c WHERE c.{partition_field} = @partition_value"
-            simple_params = [{"name": "@partition_value", "value": partition_value}]
-            debug_print(f"Diagnostic test 1: Simple query without date filter...")
-            test_docs = list(container.query_items(
-                query=simple_query,
-                parameters=simple_params,
-                enable_cross_partition_query=True
-            ))
-            debug_print(f"  Test 1 PASSED - found {len(test_docs)} documents")
-            for doc in test_docs[:3]:
-                debug_print(f"    Document {doc.get('id')}: last_updated={doc.get('last_updated')} (type: {type(doc.get('last_updated')).__name__})")
-            
-            # Test 2: Simple date comparison only (for docs with last_updated)
-            date_query = f"SELECT c.id, c.last_updated FROM c WHERE c.{partition_field} = @partition_value AND c.last_updated < @cutoff_date"
-            date_params = [
-                {"name": "@partition_value", "value": partition_value},
-                {"name": "@cutoff_date", "value": cutoff_iso}
-            ]
-            debug_print(f"Diagnostic test 2: Date comparison query...")
-            try:
-                date_docs = list(container.query_items(
-                    query=date_query,
-                    parameters=date_params,
-                    enable_cross_partition_query=True
-                ))
-                debug_print(f"  Test 2 PASSED - found {len(date_docs)} documents older than cutoff")
-            except Exception as date_error:
-                debug_print(f"  Test 2 FAILED: {date_error}")
-            
-            # Test 3: IS_DEFINED check only
-            defined_query = f"SELECT c.id FROM c WHERE c.{partition_field} = @partition_value AND NOT IS_DEFINED(c.last_updated)"
-            defined_params = [{"name": "@partition_value", "value": partition_value}]
-            debug_print(f"Diagnostic test 3: NOT IS_DEFINED check...")
-            try:
-                defined_docs = list(container.query_items(
-                    query=defined_query,
-                    parameters=defined_params,
-                    enable_cross_partition_query=True
-                ))
-                debug_print(f"  Test 3 PASSED - found {len(defined_docs)} documents without last_updated")
-            except Exception as defined_error:
-                debug_print(f"  Test 3 FAILED: {defined_error}")
-            
-        except Exception as simple_error:
-            debug_print(f"Diagnostic queries failed: {simple_error}")
         return {'count': 0, 'details': []}
     
     deleted_details = []
