@@ -497,7 +497,6 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     configureApplicationPermissions: configureApplicationPermissions
 
     //enablePrivateNetworking: enablePrivateNetworking
-
   }
 }
 
@@ -542,11 +541,6 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
     openAiServiceName: openAI.outputs.openAIName
 
     enablePrivateNetworking: enablePrivateNetworking
-
-    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    // vNetId: enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
-    // #disable-next-line BCP318 // expect one value to be null if private networking is disabled
-    // privateEndpointSubnetId: enablePrivateNetworking ? virtualNetwork.outputs.privateNetworkSubnetId : ''     
   }
 }
 
@@ -571,6 +565,8 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
 
     #disable-next-line BCP318 // expect one value to be null
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null

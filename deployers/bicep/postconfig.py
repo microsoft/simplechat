@@ -45,8 +45,8 @@ embedding_models_list = json.loads(var_openAIEmbeddingModels)
 var_blobStorageEndpoint = os.getenv("var_blobStorageEndpoint")
 var_contentSafetyEndpoint = os.getenv("var_contentSafetyEndpoint")
 var_searchServiceEndpoint = os.getenv("var_searchServiceEndpoint")
-var_documentIntelligenceServiceEndpoint = os.getenv(
-    "var_documentIntelligenceServiceEndpoint")
+var_documentIntelligenceServiceEndpoint = os.getenv("var_documentIntelligenceServiceEndpoint")
+var_redisCacheHostName = os.getenv("var_redisCacheHostName")
 var_videoIndexerName = os.getenv("var_videoIndexerName")
 var_videoIndexerLocation = os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
@@ -142,6 +142,20 @@ if keyvault_client and var_authenticationType == "key":
     except Exception as e:
         print(
             f"Warning: Could not retrieve content-safety-key from Key Vault: {e}")
+
+# Redis Cache Configuration
+if var_redisCacheHostName and var_redisCacheHostName.strip():
+    item["enable_redis_cache"] = True
+item["redis_url"] = var_redisCacheHostName
+item["redis_auth_type"] = var_authenticationType
+if keyvault_client and var_authenticationType == "key":
+    try:
+        redis_key_secret = keyvault_client.get_secret("redis-cache-key")
+        item["redis_key"] = redis_key_secret.value
+        print("Retrieved redis cache key from Key Vault")
+    except Exception as e:
+        print(
+            f"Warning: Could not retrieve redis-cache-key from Key Vault: {e}")
 
 # Safety > Conversation Archiving
 item["enable_conversation_archiving"] = True

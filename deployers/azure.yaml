@@ -37,6 +37,7 @@ hooks:
         export var_contentSafetyEndpoint=${var_contentSafetyEndpoint}
         export var_searchServiceEndpoint=${var_searchServiceEndpoint}
         export var_documentIntelligenceServiceEndpoint=${var_documentIntelligenceServiceEndpoint}
+        export var_redisCacheHostName=${var_redisCacheHostName}
         export var_videoIndexerName=${var_videoIndexerName}
         export var_deploymentLocation=${var_deploymentLocation}
         export var_videoIndexerAccountId=${var_videoIndexerAccountId}
