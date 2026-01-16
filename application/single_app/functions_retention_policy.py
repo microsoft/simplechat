@@ -447,11 +447,14 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
     cutoff_iso = cutoff_date.isoformat()
     
     # Query for aged conversations
+    # Handle cases where last_activity_at is null, undefined, or older than cutoff
     query = f"""
         SELECT c.id, c.title, c.last_activity_at, c.{partition_field}
         FROM c
         WHERE c.{partition_field} = @partition_value
-        AND (c.last_activity_at < @cutoff_date OR IS_NULL(c.last_activity_at))
+        AND (c.last_activity_at < @cutoff_date 
+             OR NOT IS_DEFINED(c.last_activity_at) 
+             OR IS_NULL(c.last_activity_at))
     """
     
     parameters = [
@@ -535,7 +538,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 is_bulk_operation=True,
                 group_id=conversation_item.get('group_id'),
                 public_workspace_id=conversation_item.get('public_workspace_id'),
-                deletion_reason='retention_policy'
+                additional_context={'deletion_reason': 'retention_policy'}
             )
             
             # Delete conversation
@@ -597,11 +600,14 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
     cutoff_iso = cutoff_date.isoformat()
     
     # Query for aged documents
+    # Handle cases where last_activity_at is null, undefined, or older than cutoff
     query = f"""
         SELECT c.id, c.file_name, c.title, c.last_activity_at, c.{partition_field}, c.user_id
         FROM c
         WHERE c.{partition_field} = @partition_value
-        AND (c.last_activity_at < @cutoff_date OR IS_NULL(c.last_activity_at))
+        AND (c.last_activity_at < @cutoff_date 
+             OR NOT IS_DEFINED(c.last_activity_at) 
+             OR IS_NULL(c.last_activity_at))
     """
     
     parameters = [
