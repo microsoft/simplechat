@@ -1,6 +1,19 @@
 <!-- BEGIN release_notes.md BLOCK -->
 # Feature Release
 
+### **(v0.235.022)**
+
+#### Bug Fixes
+
+*   **Retention Policy Document Deletion Fix**
+    *   Fixed critical bug where retention policy execution failed when attempting to delete aged documents, while conversation deletion worked correctly.
+    *   **Root Cause 1**: Documents use `last_updated` field, but query was looking for `last_activity_at` (used by conversations).
+    *   **Root Cause 2**: Date format mismatch - documents store `YYYY-MM-DDTHH:MM:SSZ` but query used Python's `.isoformat()` with `+00:00` suffix.
+    *   **Root Cause 3**: Duplicate column in SELECT clause when `partition_field='user_id'` caused query errors.
+    *   **Root Cause 4**: Activity logging called with incorrect `deletion_reason` parameter instead of `additional_context`.
+    *   **Files Modified**: `functions_retention_policy.py` (query field names, date format, SELECT clause, activity logging).
+    *   (Ref: `delete_aged_documents()`, retention policy execution, Cosmos DB queries)
+
 ### **(v0.235.012)**
 
 #### Bug Fixes
