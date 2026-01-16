@@ -83,24 +83,6 @@ param enablePrivateNetworking bool
 @description('''Array of GPT model names to deploy to the OpenAI resource.''')
 param gptModels array = [
   {
-    modelName: 'gpt-5-chat'
-    modelVersion: '2025-10-03'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
-  }
-  {
-    modelName: 'gpt-5-nano'
-    modelVersion: '2025-08-07'
-    skuName: 'GlobalStandard'
-    skuCapacity: 250
-  }
-  {
-    modelName: 'o4-mini'
-    modelVersion: '2025-04-16'
-    skuName: 'GlobalStandard'
-    skuCapacity: 150
-  }
-  {
     modelName: 'gpt-4.1'
     modelVersion: '2025-04-14'
     skuName: 'GlobalStandard'
@@ -139,9 +121,7 @@ param allowedIpAddresses array = [
       {
         ipAddressOrRange: '0.0.0.0'  //--- required to allow Azure services to access cosmos db 
       }
-      {
-        ipAddressOrRange: '173.66.57.199' //--- replace with your own IP address
-      }
+      //--- Add your IP address here during development
 ]
 //----------------
 // optional services
@@ -505,7 +485,6 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
 //=========================================================
 module speechService 'modules/speechService.bicep' = if (deploySpeechService) {
   name: 'speechService'
-  dependsOn:[]
   scope: rg
   params: {
     location: location
@@ -644,8 +623,6 @@ output var_subscriptionId string = subscription().subscriptionId
 output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
-// #disable-next-line BCP318 // expect one value to be null
-// output var_vNetId string = enablePrivateNetworking ? virtualNetwork.outputs.vNetId : ''
 
 // output values required for predeploy script in azure.yaml
 output var_containerRegistry string = containerRegistry
