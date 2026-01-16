@@ -205,7 +205,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: 'https://sts.windows.net/${tenant().tenantId}/'
+          openIdIssuer: azurePlatform == 'AzureUSGovernment' ? 'https://login.microsoftonline.us/${tenant().tenantId}/' : 'https://sts.windows.net/${tenant().tenantId}/'
           clientId: enterpriseAppClientId
           clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
         }
