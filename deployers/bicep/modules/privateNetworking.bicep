@@ -23,37 +23,19 @@ param contentSafetyName string
 param speechServiceName string
 param videoIndexerName string
 
-//var vNetName = '${appName}-${environment}-vnet'
+//=========================================================
+// privateDNSZoneNames
+var cloudName = toLower(az.environment().name)
+var privateDnsZoneData = loadJsonContent('privateDNSZones.json')
 
-//=========================================================
-// Create Virtual Network if private networking is enabled
-//=========================================================
-// module virtualNetwork 'virtualNetwork.bicep' =  {
-//   name: 'virtualNetwork'
-//   params: {
-//     location: location
-//     vNetName: vNetName
-//     addressSpaces: ['10.0.0.0/21']
-//     subnetConfigs: [
-//       {
-//         name: 'AppServiceIntegration'
-//         addressPrefix: '10.0.0.0/24'
-//         enablePrivateEndpointNetworkPolicies: true
-//         enablePrivateLinkServiceNetworkPolicies: true
-//       }
-//       {
-//         name: 'PrivateEndpoints' // this subnet name must be present if private endpoints are to be used
-//         addressPrefix: '10.0.2.0/24'
-//         enablePrivateEndpointNetworkPolicies: true
-//         enablePrivateLinkServiceNetworkPolicies: true
-//       }
-//     ]
-//     tags: tags
-//   }
-// }
-// resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' existing = {
-//   name: vNetName  
-// }
+var aiSearchDnsZoneName = privateDnsZoneData[cloudName].aisearch
+var blobStorageDnsZoneName = privateDnsZoneData[cloudName].blobStorage
+var cognitiveServicesDnsZoneName = privateDnsZoneData[cloudName].cognitiveServices
+var containerRegistryDnsZoneName = privateDnsZoneData[cloudName].containerRegistry
+var cosmosDbDnsZoneName = privateDnsZoneData[cloudName].cosmosDb
+var keyVaultDnsZoneName = privateDnsZoneData[cloudName].keyVault
+var openAiDnsZoneName = privateDnsZoneData[cloudName].openAi
+var webSitesDnsZoneName = privateDnsZoneData[cloudName].webSites
 
 //=========================================================
 // key vault
@@ -65,7 +47,7 @@ resource kv 'Microsoft.KeyVault/vaults@2025-05-01' existing = {
 module keyVaultDNSZone 'privateDNS.bicep' = {
   name: 'keyVaultDNSZone'
   params: {
-    zoneName: 'privatelink.vaultcore.azure.net'
+    zoneName: keyVaultDnsZoneName
     appName: appName
     environment: environment
     name: 'kv'
@@ -106,7 +88,7 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = 
 module cosmosDbDNSZone 'privateDNS.bicep' = {
   name: 'cosmosDbDNSZone'
   params: {
-    zoneName: 'privatelink.documents.azure.com'
+    zoneName: cosmosDbDnsZoneName
     appName: appName
     environment: environment
     name: 'cosmosDb'
@@ -147,7 +129,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2025-04-01' existing = {
 module acrDNSZone 'privateDNS.bicep' = {
   name: 'acrDNSZone'
   params: {
-    zoneName: 'privatelink.azurecr.io'
+    zoneName: containerRegistryDnsZoneName
     appName: appName
     environment: environment
     name: 'acr'
@@ -188,7 +170,7 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
 module searchServiceDNSZone 'privateDNS.bicep' = {
   name: 'searchServiceDNSZone'
   params: {
-    zoneName: 'privatelink.search.windows.net'
+    zoneName: aiSearchDnsZoneName
     appName: appName
     environment: environment
     name: 'searchService'
@@ -229,7 +211,7 @@ resource docIntelService 'Microsoft.CognitiveServices/accounts@2024-10-01' exist
 module docIntelDNSZone 'privateDNS.bicep' = {
   name: 'docIntelDNSZone'
   params: {
-    zoneName: 'privatelink.cognitiveservices.azure.com'
+    zoneName: cognitiveServicesDnsZoneName
     appName: appName
     environment: environment
     name: 'docIntelService'
@@ -270,7 +252,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' existing 
 module storageAccountDNSZone 'privateDNS.bicep' = {
   name: 'storageAccountDNSZone'
   params: {
-    zoneName: 'privatelink.blob.core.windows.net'
+    zoneName: blobStorageDnsZoneName
     appName: appName
     environment: environment
     name: 'storage'
@@ -309,7 +291,7 @@ resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
 module openAiDNSZone 'privateDNS.bicep' = {
   name: 'openAiDNSZone'
   params: {
-    zoneName: 'privatelink.openai.azure.com'
+    zoneName: openAiDnsZoneName
     appName: appName
     environment: environment
     name: 'openAiService'
@@ -350,7 +332,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
 module webAppDNSZone 'privateDNS.bicep' = {
   name: 'webAppDNSZone'
   params: {
-    zoneName: 'privatelink.azurewebsites.net'
+    zoneName: webSitesDnsZoneName
     appName: appName
     environment: environment
     name: 'webApp'
@@ -376,7 +358,7 @@ module webAppPE 'privateEndpoint.bicep' = {
       'sites'
     ]
     privateDnsZoneIds: [
-      docIntelDNSZone.outputs.privateDnsZoneId
+      webAppDNSZone.outputs.privateDnsZoneId
     ]
     tags: tags
   }
