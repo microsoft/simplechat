@@ -196,6 +196,8 @@ def process_personal_retention():
             if conversation_retention_days == 'none' and document_retention_days == 'none':
                 continue
             
+            debug_print(f"Processing retention for user {user_id}: conversations={conversation_retention_days} days, documents={document_retention_days} days")
+            
             user_deletion_summary = {
                 'user_id': user_id,
                 'conversations_deleted': 0,
@@ -447,14 +449,14 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
     cutoff_iso = cutoff_date.isoformat()
     
     # Query for aged conversations
-    # Handle cases where last_activity_at is null, undefined, or older than cutoff
+    # Check for null/undefined FIRST to avoid comparing null values with dates
     query = f"""
         SELECT c.id, c.title, c.last_activity_at, c.{partition_field}
         FROM c
         WHERE c.{partition_field} = @partition_value
-        AND (c.last_activity_at < @cutoff_date 
-             OR NOT IS_DEFINED(c.last_activity_at) 
-             OR IS_NULL(c.last_activity_at))
+        AND (NOT IS_DEFINED(c.last_activity_at) 
+             OR IS_NULL(c.last_activity_at)
+             OR (IS_DEFINED(c.last_activity_at) AND NOT IS_NULL(c.last_activity_at) AND c.last_activity_at < @cutoff_date))
     """
     
     parameters = [
@@ -462,11 +464,18 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
         {"name": "@cutoff_date", "value": cutoff_iso}
     ]
     
-    aged_conversations = list(container.query_items(
-        query=query,
-        parameters=parameters,
-        enable_cross_partition_query=True
-    ))
+    debug_print(f"Querying aged conversations: workspace_type={workspace_type}, partition_field={partition_field}, partition_value={partition_value}, cutoff_date={cutoff_iso}, retention_days={retention_days}")
+    
+    try:
+        aged_conversations = list(container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+        debug_print(f"Found {len(aged_conversations)} aged conversations for {workspace_type} workspace")
+    except Exception as query_error:
+        debug_print(f"Error querying aged conversations for {workspace_type} (partition_value={partition_value}): {query_error}")
+        return {'count': 0, 'details': []}
     
     deleted_details = []
     
@@ -596,18 +605,18 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
         deletion_user_id = user_id
     
     # Calculate cutoff date
+    # Documents use format like '2026-01-08T21:49:15Z' so we match that format
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    cutoff_iso = cutoff_date.isoformat()
+    cutoff_iso = cutoff_date.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     # Query for aged documents
-    # Handle cases where last_activity_at is null, undefined, or older than cutoff
+    # Documents use 'last_updated' field (not 'last_activity_at' like conversations)
+    # Use simple date comparison - documents always have last_updated field
     query = f"""
-        SELECT c.id, c.file_name, c.title, c.last_activity_at, c.{partition_field}, c.user_id
+        SELECT c.id, c.file_name, c.title, c.last_updated, c.user_id
         FROM c
         WHERE c.{partition_field} = @partition_value
-        AND (c.last_activity_at < @cutoff_date 
-             OR NOT IS_DEFINED(c.last_activity_at) 
-             OR IS_NULL(c.last_activity_at))
+        AND c.last_updated < @cutoff_date
     """
     
     parameters = [
@@ -615,11 +624,67 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
         {"name": "@cutoff_date", "value": cutoff_iso}
     ]
     
-    aged_documents = list(container.query_items(
-        query=query,
-        parameters=parameters,
-        enable_cross_partition_query=True
-    ))
+    debug_print(f"Querying aged documents: workspace_type={workspace_type}, partition_field={partition_field}, partition_value={partition_value}, cutoff_date={cutoff_iso}, retention_days={retention_days}")
+    debug_print(f"Document query: {query.strip()}")
+    
+    try:
+        aged_documents = list(container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+        debug_print(f"Found {len(aged_documents)} aged documents for {workspace_type} workspace")
+    except Exception as query_error:
+        debug_print(f"Error querying aged documents for {workspace_type} (partition_value={partition_value}): {query_error}")
+        # Try progressive diagnostic queries to isolate the issue
+        try:
+            # Test 1: Simple query without date
+            simple_query = f"SELECT c.id, c.file_name, c.last_updated FROM c WHERE c.{partition_field} = @partition_value"
+            simple_params = [{"name": "@partition_value", "value": partition_value}]
+            debug_print(f"Diagnostic test 1: Simple query without date filter...")
+            test_docs = list(container.query_items(
+                query=simple_query,
+                parameters=simple_params,
+                enable_cross_partition_query=True
+            ))
+            debug_print(f"  Test 1 PASSED - found {len(test_docs)} documents")
+            for doc in test_docs[:3]:
+                debug_print(f"    Document {doc.get('id')}: last_updated={doc.get('last_updated')} (type: {type(doc.get('last_updated')).__name__})")
+            
+            # Test 2: Simple date comparison only (for docs with last_updated)
+            date_query = f"SELECT c.id, c.last_updated FROM c WHERE c.{partition_field} = @partition_value AND c.last_updated < @cutoff_date"
+            date_params = [
+                {"name": "@partition_value", "value": partition_value},
+                {"name": "@cutoff_date", "value": cutoff_iso}
+            ]
+            debug_print(f"Diagnostic test 2: Date comparison query...")
+            try:
+                date_docs = list(container.query_items(
+                    query=date_query,
+                    parameters=date_params,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"  Test 2 PASSED - found {len(date_docs)} documents older than cutoff")
+            except Exception as date_error:
+                debug_print(f"  Test 2 FAILED: {date_error}")
+            
+            # Test 3: IS_DEFINED check only
+            defined_query = f"SELECT c.id FROM c WHERE c.{partition_field} = @partition_value AND NOT IS_DEFINED(c.last_updated)"
+            defined_params = [{"name": "@partition_value", "value": partition_value}]
+            debug_print(f"Diagnostic test 3: NOT IS_DEFINED check...")
+            try:
+                defined_docs = list(container.query_items(
+                    query=defined_query,
+                    parameters=defined_params,
+                    enable_cross_partition_query=True
+                ))
+                debug_print(f"  Test 3 PASSED - found {len(defined_docs)} documents without last_updated")
+            except Exception as defined_error:
+                debug_print(f"  Test 3 FAILED: {defined_error}")
+            
+        except Exception as simple_error:
+            debug_print(f"Diagnostic queries failed: {simple_error}")
+        return {'count': 0, 'details': []}
     
     deleted_details = []
     
@@ -640,7 +705,7 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
                 'id': document_id,
                 'file_name': file_name,
                 'title': title,
-                'last_activity_at': doc.get('last_activity_at')
+                'last_updated': doc.get('last_updated')
             })
             
             debug_print(f"Deleted document {document_id} ({file_name}) due to retention policy")
