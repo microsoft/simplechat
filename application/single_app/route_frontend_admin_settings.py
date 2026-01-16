@@ -462,6 +462,7 @@ def register_route_frontend_admin_settings(app):
             file_timer_value = int(form_data.get('file_timer_value', 1))
             file_timer_unit = form_data.get('file_timer_unit', 'hours')
             file_processing_logs_turnoff_time = None
+            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             
             # Validate file timer values
             if file_timer_unit in timer_limits:
@@ -485,7 +486,6 @@ def register_route_frontend_admin_settings(app):
             file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
             
             # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
             if enable_file_processing_logs and file_processing_logs_timer_enabled:
                 # Only recalculate turnoff time if:
                 # 1. Timer settings have changed (value, unit, or enabled state), OR
