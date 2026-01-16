@@ -56,7 +56,7 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
 //=========================================================
 // store search Service keys in key vault if using key authentication and configure app permissions = true
 //=========================================================
-module searchServiceSecret 'keyVault-Secrets.bicep' = if (configureApplicationPermissions) {
+module searchServiceSecret 'keyVault-Secrets.bicep' = if (authenticationType == 'key' && configureApplicationPermissions) {
   name: 'storeSearchServiceSecret'
   params: {
     keyVaultName: keyVault
